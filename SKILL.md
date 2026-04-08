@@ -424,19 +424,36 @@ Reference: `output/reports/`, `connectors/`
 
 **Step 2 — Save the JSON and run the generator:**
 ```bash
-# Primary: Python generator — produces professional CTI Report with charts, diagrams, styled formatting
+# Primary: HYBRID generator — full narrative from MD + charts/diagrams from JSON
+# This produces a complete DOCX with ZERO content loss from the MD report
+python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx-hybrid.py \
+  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
+  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json" \
+  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
+
+# Fallback 1: JSON-only generator (charts + structured data, less narrative)
 python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx.py \
   "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json" \
   "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
 
-# Fallback: pandoc (basic text conversion if JSON not available)
-command -v pandoc >/dev/null 2>&1 || apt install -y pandoc
+# Fallback 2: MD-only mode (styled narrative, no charts — JSON optional)
+python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx-hybrid.py \
+  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
+  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
+
+# Fallback 3: pandoc (basic text conversion, no styling or charts)
 pandoc "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
   -o "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx" \
   --from markdown --to docx --standalone
 ```
 
-**Rich DOCX includes:** Cover page titled "CTI REPORT", table of contents, pie chart (finding types), bar chart (severity), risk gauge (exposure score), timeline chart, entity relationship diagram, network topology diagram, styled finding cards, source tables, header/footer with classification and page numbers.
+**How the hybrid generator works:**
+1. **Phase 1:** pandoc converts the MD file to a base DOCX (preserving ALL narrative content — tables, lists, formatting)
+2. **Phase 2:** python-docx post-processes to add CTI professional styling, prepend cover page + TOC, and inject charts/diagrams from JSON at matching section headings
+
+**The MD file is the primary content source.** It carries the full narrative (detailed person profiles, infrastructure tables, wallet addresses, corporate structure, legal history, etc.). The JSON file provides structured data for visual elements (charts, diagrams, risk gauge). Using both together produces a complete report with zero content loss.
+
+**Rich hybrid DOCX includes:** Cover page titled "CTI REPORT", table of contents, **all narrative content from MD** (every paragraph, table, list, code block), pie chart (finding types), bar chart (severity), risk gauge (exposure score), timeline chart, entity relationship diagram, network topology diagram, traffic/geo charts, CTI-themed styling (navy headings, styled tables), header/footer with classification and page numbers.
 
 **After saving, confirm all files to the user:**
 ```
@@ -655,13 +672,15 @@ cti-expert/
 │       └── attack-surface-map.md   Attack surface exposure map (/render attack-surface)
 │
 ├── scripts/                    DOCX report generation
-│   ├── generate-cti-docx.py   Main report generator
-│   ├── cti_docx_charts.py     Chart rendering (pie, bar, gauge)
-│   ├── cti_docx_diagrams.py   Entity relationship diagrams
-│   ├── cti_docx_sections.py   Report section formatting
-│   ├── cti_docx_styles.py     Document styling and themes
-│   ├── requirements.txt       Python dependencies
-│   └── sample-cti-report-data.json Example report data
+│   ├── generate-cti-docx-hybrid.py  PRIMARY: Hybrid MD+JSON generator (pandoc + post-process)
+│   ├── generate-cti-docx.py         Fallback: JSON-only generator
+│   ├── cti_docx_postprocess.py      Post-processing: styling, chart injection, cover page
+│   ├── cti_docx_charts.py           Chart rendering (pie, bar, gauge, timeline, traffic, geo)
+│   ├── cti_docx_diagrams.py         Entity relationship + network topology diagrams
+│   ├── cti_docx_sections.py         Report section formatting (used by JSON-only generator)
+│   ├── cti_docx_styles.py           Document styling, colors, cover page, header/footer
+│   ├── requirements.txt             Python dependencies
+│   └── sample-cti-report-data.json  Example JSON report data
 │
 ├── workflows/                  Professional workflow guides
 │   ├── wf-journalist.md
