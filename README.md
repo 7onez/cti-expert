@@ -172,7 +172,31 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 ## Installation
 
-### Quick Install (one command)
+> **Recommended:** Use **Claude Code CLI** — it gives you the full terminal workflow, persistent sessions, and direct skill invocation. [Download here](https://docs.anthropic.com/en/docs/claude-code/overview) or run `npm install -g @anthropic-ai/claude-code`.
+
+### Why Claude Code CLI?
+
+The entire CTI Expert workflow is optimized for Claude Code CLI. The CLI gives you:
+- **Persistent sessions** — investigations survive terminal restarts via `/cti-expert /workspace save`
+- **Full tool access** — file writes, Python scripts, DOCX generation, all run natively
+- **Skill invocation** — type `/cti-expert` directly in the terminal, no browser required
+- **Background agents** — parallel enrichment via AgentFlow works best with the CLI
+
+---
+
+### Step 1 &mdash; Install Claude Code CLI
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+> Requires Node.js 18+. Full docs: [docs.anthropic.com/en/docs/claude-code/overview](https://docs.anthropic.com/en/docs/claude-code/overview)
+
+---
+
+### Step 2 &mdash; Clone + All-in-One Installer
+
+The `scripts/install.sh` installer handles everything: Python venv dependencies, system tools (`whois`, `dig`, `jq`, `exiftool`), OSINT tools (`maigret`, `sherlock`, `holehe`, `h8mail`, and more), and optional headless browser + Go tools.
 
 <table>
 <tr>
@@ -184,76 +208,71 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 <td>
 
 ```bash
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert && pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
 ```
 
 </td>
 </tr>
 <tr>
-<td><b>Windows (PowerShell)</b></td>
+<td><b>Windows (Git Bash or WSL)</b></td>
+<td>
+
+```bash
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+```
+
+</td>
+</tr>
+<tr>
+<td><b>Windows (PowerShell — manual)</b></td>
 <td>
 
 ```powershell
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"; pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-```
-
-</td>
-</tr>
-<tr>
-<td><b>Windows (CMD)</b></td>
-<td>
-
-```cmd
-git clone https://github.com/7onez/cti-expert.git "%USERPROFILE%\.claude\skills\cti-expert" && pip3 install -r "%USERPROFILE%\.claude\skills\cti-expert\scripts\requirements.txt"
+git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
+pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
 ```
 
 </td>
 </tr>
 </table>
 
+> **Windows users:** The installer script runs natively in **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**. PowerShell is a fallback that installs Python dependencies only.
+
 ---
 
-### Option A &mdash; Claude Code CLI
-
-> Install the CLI first: `npm install -g @anthropic-ai/claude-code` &mdash; [CLI docs](https://docs.anthropic.com/en/docs/claude-code/overview)
-
-<details>
-<summary><b>Linux / macOS</b></summary>
+### Installer Options
 
 ```bash
-# Install Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# Clone skill + install dependencies
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
-pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
-
-# Verify
-ls ~/.claude/skills/cti-expert/SKILL.md
+bash scripts/install.sh               # Core: Python deps + system tools + OSINT tools
+bash scripts/install.sh --headless    # + Scrapling headless browser (~200MB Chromium)
+bash scripts/install.sh --go          # + Go tools (subfinder, amass, gau, gitleaks, httpx)
+bash scripts/install.sh --all         # + Everything above
 ```
 
-</details>
-
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# Install Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# Clone skill + install dependencies
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
-pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-
-# Verify
-Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
-```
-
-</details>
+| Flag | What it installs | Size |
+|------|-----------------|------|
+| *(none)* | Python packages, whois, dig, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
+| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
+| `--go` | subfinder, amass, gau, gitleaks, httpx, phoneinfoga | +150 MB |
+| `--all` | Everything | ~400 MB |
 
 ---
 
-### Option B &mdash; Claude Code Desktop (macOS / Windows)
+### Verify Installation
+
+```bash
+claude   # opens Claude Code CLI
+# then type:
+/cti-expert
+```
+
+> If the skill loads, you'll see the CTI Expert command menu. Type `/cti-expert /help` for the full command list.
+
+---
+
+### Alternative &mdash; Claude Code Desktop (macOS / Windows)
 
 > Download: [claude.ai/download](https://claude.ai/download) &mdash; available for **macOS** and **Windows**
 
@@ -270,27 +289,30 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 
    > **Note:** If the `skills` folder does not exist, create it inside the `.claude` folder first.
 
-4. **Install Python dependencies** &mdash; Open Claude Code Desktop and send this message to Claude:
+4. **Run the installer** &mdash; Open Claude Code Desktop terminal and run:
 
-   > *"Install the Python requirements for CTI Expert by running: pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt"*
+   ```bash
+   bash ~/.claude/skills/cti-expert/scripts/install.sh
+   ```
+
+   Or on Windows PowerShell (Python only):
+
+   ```powershell
+   pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   ```
 
 5. **Restart Claude Code Desktop** &mdash; Close and reopen the app
 6. **Verify** &mdash; Type `/cti-expert` in the chat to confirm the skill is loaded
 
----
-
-### Option C &mdash; Claude Code Web (Browser)
-
-> Use directly at [claude.ai/code](https://claude.ai/code) &mdash; skills load from your `~/.claude/skills/` directory. Run the quick install command above first.
-
 <details>
-<summary><b>Requirements</b></summary>
+<summary><b>System Requirements</b></summary>
 <br>
 
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
-| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Latest | Terminal runtime |
+| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Latest | **Recommended** terminal runtime |
 | [Claude Code Desktop](https://claude.ai/download) | Latest | GUI runtime (macOS/Windows) |
+| Node.js | 18+ | Required by Claude Code CLI |
 | Python | 3.10+ | DOCX report generation, Scrapling, AgentFlow |
 | pip packages | See `requirements.txt` | Charts, diagrams, styling |
 | git | Any | Clone the repository |
@@ -893,7 +915,31 @@ Một kỹ năng của Claude Code biến Claude thành một nhà phân tích t
 
 ### Cài đặt
 
-#### Cài đặt nhanh (một lệnh)
+> **Khuyến nghị:** Dùng **Claude Code CLI** — cho phép sử dụng đầy đủ workflow terminal, phiên làm việc liên tục và gọi skill trực tiếp. [Tải tại đây](https://docs.anthropic.com/en/docs/claude-code/overview) hoặc chạy `npm install -g @anthropic-ai/claude-code`.
+
+#### Tại sao nên dùng Claude Code CLI?
+
+Toàn bộ workflow CTI Expert được tối ưu cho Claude Code CLI:
+- **Phiên làm việc liên tục** — điều tra được lưu qua `/cti-expert /workspace save`
+- **Truy cập đầy đủ công cụ** — ghi file, chạy Python, tạo DOCX, tất cả chạy tự nhiên
+- **Gọi skill trực tiếp** — gõ `/cti-expert` ngay trong terminal
+- **Agent song song** — AgentFlow hoạt động tốt nhất với CLI
+
+---
+
+#### Bước 1 &mdash; Cài đặt Claude Code CLI
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+> Yêu cầu Node.js 18+. Tài liệu đầy đủ: [docs.anthropic.com/en/docs/claude-code/overview](https://docs.anthropic.com/en/docs/claude-code/overview)
+
+---
+
+#### Bước 2 &mdash; Clone + Cài đặt all-in-one
+
+Script `scripts/install.sh` xử lý tất cả: Python venv, công cụ hệ thống (`whois`, `dig`, `jq`, `exiftool`), công cụ OSINT (`maigret`, `sherlock`, `holehe`, `h8mail`, ...), và tùy chọn headless browser + Go tools.
 
 <table>
 <tr>
@@ -905,104 +951,95 @@ Một kỹ năng của Claude Code biến Claude thành một nhà phân tích t
 <td>
 
 ```bash
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert && pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
 ```
 
 </td>
 </tr>
 <tr>
-<td><b>Windows (PowerShell)</b></td>
+<td><b>Windows (Git Bash hoặc WSL)</b></td>
+<td>
+
+```bash
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+```
+
+</td>
+</tr>
+<tr>
+<td><b>Windows (PowerShell — thủ công)</b></td>
 <td>
 
 ```powershell
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"; pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-```
-
-</td>
-</tr>
-<tr>
-<td><b>Windows (CMD)</b></td>
-<td>
-
-```cmd
-git clone https://github.com/7onez/cti-expert.git "%USERPROFILE%\.claude\skills\cti-expert" && pip3 install -r "%USERPROFILE%\.claude\skills\cti-expert\scripts\requirements.txt"
+git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
+pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
 ```
 
 </td>
 </tr>
 </table>
 
+> **Người dùng Windows:** Script chạy trong **Git Bash** (đi kèm [Git for Windows](https://git-scm.com/download/win)) hoặc **WSL**. PowerShell là phương án dự phòng chỉ cài Python dependencies.
+
 ---
 
-#### Tùy chọn A &mdash; Claude Code CLI
-
-> Cài CLI trước: `npm install -g @anthropic-ai/claude-code` &mdash; [Tài liệu CLI](https://docs.anthropic.com/en/docs/claude-code/overview)
-
-<details>
-<summary><b>Linux / macOS</b></summary>
+#### Tùy chọn installer
 
 ```bash
-# Cài Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# Clone skill + cài dependencies
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
-pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
-
-# Xác nhận
-ls ~/.claude/skills/cti-expert/SKILL.md
+bash scripts/install.sh               # Cơ bản: Python + công cụ hệ thống + OSINT tools
+bash scripts/install.sh --headless    # + Scrapling headless browser (~200MB Chromium)
+bash scripts/install.sh --go          # + Go tools (subfinder, amass, gau, gitleaks, httpx)
+bash scripts/install.sh --all         # + Tất cả
 ```
 
-</details>
-
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# Cài Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# Clone skill + cài dependencies
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
-pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-
-# Xác nhận
-Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
-```
-
-</details>
+| Flag | Cài gì | Kích thước |
+|------|--------|-----------|
+| *(không có)* | Python packages, whois, dig, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
+| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
+| `--go` | subfinder, amass, gau, gitleaks, httpx, phoneinfoga | +150 MB |
+| `--all` | Tất cả | ~400 MB |
 
 ---
 
-#### Tùy chọn B &mdash; Claude Code Desktop (macOS / Windows)
+#### Kiểm tra cài đặt
+
+```bash
+claude   # mở Claude Code CLI
+# sau đó gõ:
+/cti-expert
+```
+
+---
+
+#### Tùy chọn khác &mdash; Claude Code Desktop (macOS / Windows)
 
 > Tải về: [claude.ai/download](https://claude.ai/download) &mdash; hỗ trợ **macOS** và **Windows**
 
-**Hướng dẫn từng bước (không cần terminal):**
-
 1. **Cài đặt Claude Code Desktop** &mdash; Tải từ [claude.ai/download](https://claude.ai/download) và cài đặt ứng dụng
 2. **Tải CTI Expert** &mdash; Vào [kho GitHub](https://github.com/7onez/cti-expert), nhấn nút **"Code"** màu xanh, sau đó chọn **"Download ZIP"**
-3. **Giải nén vào thư mục skills** &mdash; Giải nén file đã tải, sau đó di chuyển thư mục vào thư mục skills và đổi tên thành `cti-expert`:
+3. **Giải nén vào thư mục skills** &mdash; Giải nén file đã tải, di chuyển thư mục vào thư mục skills và đổi tên thành `cti-expert`:
 
    | Hệ điều hành | Cách điều hướng |
    |-------------|----------------|
-   | **macOS** | Mở **Finder** &rarr; Nhấn **Cmd + Shift + G** &rarr; Nhập `~/.claude/skills/` &rarr; Nhấn **Go** &rarr; Di chuyển thư mục vào đây |
-   | **Windows** | Mở **File Explorer** &rarr; Nhập `%USERPROFILE%\.claude\skills\` vào thanh địa chỉ &rarr; Nhấn **Enter** &rarr; Di chuyển thư mục vào đây |
+   | **macOS** | Mở **Finder** &rarr; Nhấn **Cmd + Shift + G** &rarr; Nhập `~/.claude/skills/` &rarr; Nhấn **Go** |
+   | **Windows** | Mở **File Explorer** &rarr; Nhập `%USERPROFILE%\.claude\skills\` vào thanh địa chỉ &rarr; Nhấn **Enter** |
 
-   > **Lưu ý:** Nếu thư mục `skills` chưa tồn tại, hãy tạo nó bên trong thư mục `.claude` trước.
+4. **Chạy installer** &mdash; Mở terminal trong Claude Code Desktop:
 
-4. **Cài đặt thư viện Python** &mdash; Mở Claude Code Desktop và gửi tin nhắn sau cho Claude:
+   ```bash
+   bash ~/.claude/skills/cti-expert/scripts/install.sh
+   ```
 
-   > *"Install the Python requirements for CTI Expert by running: pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt"*
+   Hoặc trên Windows PowerShell (chỉ Python):
+
+   ```powershell
+   pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   ```
 
 5. **Khởi động lại Claude Code Desktop** &mdash; Đóng và mở lại ứng dụng
 6. **Xác nhận** &mdash; Gõ `/cti-expert` trong chat để xác nhận skill đã được tải
-
----
-
-#### Tùy chọn C &mdash; Claude Code Web (Trình duyệt)
-
-> Sử dụng trực tiếp tại [claude.ai/code](https://claude.ai/code) &mdash; skills được tải từ thư mục `~/.claude/skills/` của bạn. Chạy lệnh cài đặt nhanh ở trên trước.
 
 <details>
 <summary><b>Yêu cầu hệ thống</b></summary>
@@ -1010,8 +1047,9 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 
 | Yêu cầu | Phiên bản | Mục đích |
 |----------|-----------|----------|
-| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Mới nhất | Runtime terminal |
+| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Mới nhất | **Khuyến nghị** — runtime terminal |
 | [Claude Code Desktop](https://claude.ai/download) | Mới nhất | Runtime giao diện (macOS/Windows) |
+| Node.js | 18+ | Yêu cầu bởi Claude Code CLI |
 | Python | 3.10+ | Tạo báo cáo DOCX, Scrapling, AgentFlow |
 | pip packages | Xem `requirements.txt` | Biểu đồ, sơ đồ, định dạng |
 | git | Bất kỳ | Clone repository |
@@ -1092,7 +1130,31 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 
 ### 安装
 
-#### 快速安装（一条命令）
+> **推荐：** 使用 **Claude Code CLI** — 提供完整的终端工作流、持久会话和直接技能调用。[点击下载](https://docs.anthropic.com/en/docs/claude-code/overview) 或运行 `npm install -g @anthropic-ai/claude-code`。
+
+#### 为什么推荐 Claude Code CLI？
+
+整个 CTI Expert 工作流针对 Claude Code CLI 进行了优化：
+- **持久会话** — 调查通过 `/cti-expert /workspace save` 跨重启保存
+- **完整工具访问** — 文件写入、Python 脚本、DOCX 生成均原生运行
+- **直接调用技能** — 在终端中直接输入 `/cti-expert`
+- **并行 Agent** — AgentFlow 在 CLI 下运行效果最佳
+
+---
+
+#### 第一步 &mdash; 安装 Claude Code CLI
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+> 需要 Node.js 18+。完整文档：[docs.anthropic.com/en/docs/claude-code/overview](https://docs.anthropic.com/en/docs/claude-code/overview)
+
+---
+
+#### 第二步 &mdash; 克隆 + 一键安装
+
+`scripts/install.sh` 安装脚本处理所有内容：Python venv 依赖、系统工具（`whois`、`dig`、`jq`、`exiftool`）、OSINT 工具（`maigret`、`sherlock`、`holehe`、`h8mail` 等），以及可选的无头浏览器和 Go 工具。
 
 <table>
 <tr>
@@ -1104,104 +1166,95 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 <td>
 
 ```bash
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert && pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
 ```
 
 </td>
 </tr>
 <tr>
-<td><b>Windows (PowerShell)</b></td>
+<td><b>Windows（Git Bash 或 WSL）</b></td>
+<td>
+
+```bash
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+```
+
+</td>
+</tr>
+<tr>
+<td><b>Windows（PowerShell — 手动）</b></td>
 <td>
 
 ```powershell
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"; pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-```
-
-</td>
-</tr>
-<tr>
-<td><b>Windows (CMD)</b></td>
-<td>
-
-```cmd
-git clone https://github.com/7onez/cti-expert.git "%USERPROFILE%\.claude\skills\cti-expert" && pip3 install -r "%USERPROFILE%\.claude\skills\cti-expert\scripts\requirements.txt"
+git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
+pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
 ```
 
 </td>
 </tr>
 </table>
 
+> **Windows 用户：** 安装脚本在 **Git Bash**（随 [Git for Windows](https://git-scm.com/download/win) 附带）或 **WSL** 中原生运行。PowerShell 是仅安装 Python 依赖的备用方案。
+
 ---
 
-#### 选项 A &mdash; Claude Code CLI
-
-> 先安装 CLI：`npm install -g @anthropic-ai/claude-code` &mdash; [CLI 文档](https://docs.anthropic.com/en/docs/claude-code/overview)
-
-<details>
-<summary><b>Linux / macOS</b></summary>
+#### 安装选项
 
 ```bash
-# 安装 Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# 克隆技能 + 安装依赖
-git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
-pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt
-
-# 验证
-ls ~/.claude/skills/cti-expert/SKILL.md
+bash scripts/install.sh               # 基础：Python 依赖 + 系统工具 + OSINT 工具
+bash scripts/install.sh --headless    # + Scrapling 无头浏览器（~200MB Chromium）
+bash scripts/install.sh --go          # + Go 工具（subfinder、amass、gau、gitleaks、httpx）
+bash scripts/install.sh --all         # + 以上所有内容
 ```
 
-</details>
-
-<details>
-<summary><b>Windows (PowerShell)</b></summary>
-
-```powershell
-# 安装 Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# 克隆技能 + 安装依赖
-git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
-pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
-
-# 验证
-Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
-```
-
-</details>
+| 标志 | 安装内容 | 大小 |
+|------|---------|------|
+| *(无)* | Python 包、whois、dig、jq、exiftool、maigret、sherlock、holehe、h8mail、theHarvester、trufflehog、waymore、xeuledoc、agentflow | ~50 MB |
+| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
+| `--go` | subfinder、amass、gau、gitleaks、httpx、phoneinfoga | +150 MB |
+| `--all` | 全部内容 | ~400 MB |
 
 ---
 
-#### 选项 B &mdash; Claude Code 桌面版（macOS / Windows）
+#### 验证安装
+
+```bash
+claude   # 打开 Claude Code CLI
+# 然后输入：
+/cti-expert
+```
+
+---
+
+#### 备选方案 &mdash; Claude Code 桌面版（macOS / Windows）
 
 > 下载：[claude.ai/download](https://claude.ai/download) &mdash; 支持 **macOS** 和 **Windows**
 
-**分步指南（无需终端）：**
-
 1. **安装 Claude Code 桌面版** &mdash; 从 [claude.ai/download](https://claude.ai/download) 下载并安装应用
 2. **下载 CTI Expert** &mdash; 访问 [GitHub 仓库](https://github.com/7onez/cti-expert)，点击绿色 **"Code"** 按钮，然后选择 **"Download ZIP"**
-3. **解压到 skills 文件夹** &mdash; 解压下载的文件，将解压后的文件夹移动到 skills 目录并重命名为 `cti-expert`：
+3. **解压到 skills 文件夹** &mdash; 解压文件，将文件夹重命名为 `cti-expert` 并移动到：
 
-   | 操作系统 | 导航方法 |
-   |---------|---------|
-   | **macOS** | 打开 **Finder** &rarr; 按 **Cmd + Shift + G** &rarr; 输入 `~/.claude/skills/` &rarr; 点击 **前往** &rarr; 将文件夹移动到此处 |
-   | **Windows** | 打开 **文件资源管理器** &rarr; 在地址栏输入 `%USERPROFILE%\.claude\skills\` &rarr; 按 **回车** &rarr; 将文件夹移动到此处 |
+   | 操作系统 | 路径 |
+   |---------|------|
+   | **macOS** | `~/.claude/skills/` （Finder &rarr; Cmd+Shift+G） |
+   | **Windows** | `%USERPROFILE%\.claude\skills\` （文件资源管理器地址栏） |
 
-   > **注意：** 如果 `skills` 文件夹不存在，请先在 `.claude` 文件夹内创建它。
+4. **运行安装脚本** &mdash; 在 Claude Code Desktop 终端中运行：
 
-4. **安装 Python 依赖** &mdash; 打开 Claude Code 桌面版，发送以下消息给 Claude：
+   ```bash
+   bash ~/.claude/skills/cti-expert/scripts/install.sh
+   ```
 
-   > *"Install the Python requirements for CTI Expert by running: pip3 install -r ~/.claude/skills/cti-expert/scripts/requirements.txt"*
+   或在 Windows PowerShell（仅 Python）：
+
+   ```powershell
+   pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   ```
 
 5. **重启 Claude Code 桌面版** &mdash; 关闭并重新打开应用
-6. **验证** &mdash; 在聊天中输入 `/cti-expert` 确认技能已加载
-
----
-
-#### 选项 C &mdash; Claude Code 网页版（浏览器）
-
-> 直接访问 [claude.ai/code](https://claude.ai/code) 使用 &mdash; 技能从您的 `~/.claude/skills/` 目录加载。请先运行上面的快速安装命令。
+6. **验证** &mdash; 输入 `/cti-expert` 确认技能已加载
 
 <details>
 <summary><b>系统要求</b></summary>
@@ -1209,8 +1262,9 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 
 | 要求 | 版本 | 用途 |
 |------|------|------|
-| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | 最新版 | 终端运行时 |
+| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | 最新版 | **推荐** — 终端运行时 |
 | [Claude Code 桌面版](https://claude.ai/download) | 最新版 | 图形界面运行时（macOS/Windows） |
+| Node.js | 18+ | Claude Code CLI 所需 |
 | Python | 3.10+ | DOCX 报告生成、Scrapling、AgentFlow |
 | pip 包 | 见 `requirements.txt` | 图表、图形、样式 |
 | git | 任意版本 | 克隆仓库 |
