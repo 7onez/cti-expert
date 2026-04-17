@@ -4,6 +4,11 @@ CTI Report Diagrams — entity relationship and network topology via networkx + 
 import matplotlib
 matplotlib.use("Agg")
 
+import numpy as np
+# NetworkX 2.x uses np.alltrue removed in NumPy 2.0 — patch for compatibility
+if not hasattr(np, "alltrue"):
+    np.alltrue = np.all
+
 import matplotlib.pyplot as plt
 import networkx as nx
 from io import BytesIO

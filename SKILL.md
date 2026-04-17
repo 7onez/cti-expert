@@ -725,7 +725,7 @@ Which techniques activate per target type in a `/case` run:
 | `/username` | ✅ | — | ✅* | ✅ | — | — |
 | `/email-deep` | ✅ | — | ✅* | — | ✅ | — |
 | `/phone` | ✅ | — | ✅* | — | — | — |
-| `/breach-deep` | ✅ | ✅ | ✅ | — | ✅ | — |
+| `/breach-deep` (LeakCheck + HudsonRock) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/subdomain` | — | ✅ | ✅ | — | — | — |
 | `/traffic` | — | ✅ | ✅ | — | — | — |
 | `/threat-check` | — | ✅ | ✅ | — | — | ✅ |
@@ -760,8 +760,18 @@ Which techniques activate per target type in a `/case` run:
 | `/source-check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/report ioc` | — | ✅ | ✅ | — | — | ✅ |
 | `/report` + `/brief` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Shodan InternetDB (ports/tags/vulns) | — | ✅ | ✅ | — | — | ✅ |
+| GreyNoise Community (noise/threat class) | — | ✅ | ✅ | — | — | ✅ |
+| URLScan.io passive (scan history) | — | ✅ | ✅ | — | — | — |
+| Disposable email check (kickbox) | ✅ | — | ✅* | — | ✅ | — |
+| URLhaus (malware URL hosting) | — | ✅ | ✅ | — | — | ✅ |
+| ThreatFox (IOC/C2 lookup) | — | ✅ | ✅ | — | — | ✅ |
+| MalwareBazaar (hash → malware family) | — | — | — | — | — | — |
+| ipwho.is (geo + ASN + ISP) | — | ✅ | ✅ | — | — | ✅ |
+| DMARC/SPF/DKIM check (DNS) | — | ✅ | ✅ | — | ✅ | — |
 
 `✅*` — runs for discovered key personnel within the organization
+`MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
 
 **Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
 

@@ -93,6 +93,19 @@ CLI-first cascade:
 - Search: `"example" site:s3.amazonaws.com OR site:blob.core.windows.net OR site:storage.googleapis.com`
 - Look for: Open S3 buckets, Azure blobs, GCS buckets with directory listing enabled
 
+**Breach & Leak Exposure — Domain (free APIs — no key required):**
+1. HudsonRock domain check: `curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/example.com"` — employee/client URLs in infostealer logs; `totalUrls > 0` = stolen credentials
+2. LeakCheck domain check: `curl -s "https://leakcheck.io/api/public?check=example.com"` — breach entries mentioning the domain
+3. Search: `"@example.com" site:pastebin.com` — email dumps referencing the domain
+
+**Threat Intelligence — Domain (free APIs — no key required):**
+1. URLScan.io passive: `curl -s "https://urlscan.io/api/v1/search/?q=domain:example.com&size=10"` — historical scan records, page screenshots, security verdicts
+2. URLhaus malware check: `curl -s -X POST "https://urlhaus-api.abuse.ch/v1/host/" -d "host=example.com"` — malware URL hosting records
+3. ThreatFox IOC: `curl -s -X POST "https://threatfox-api.abuse.ch/api/v1/" -H "Content-Type: application/json" -d '{"query":"search_ioc","search_term":"example.com"}'` — C2/malware IOC matches
+4. DMARC check: `dig TXT _dmarc.example.com` — email spoofing protection posture
+5. SPF check: `dig TXT example.com | grep spf` — sender policy framework
+6. DKIM check: `dig TXT default._domainkey.example.com` — signing key presence
+
 **Reputation & Mentions:**
 - Search: `"example.com" -site:example.com` (what others say about it)
 - Search: `"example.com" site:reddit.com`
@@ -140,6 +153,10 @@ CLI-first cascade:
 - Search: `"Full Name" site:youtube.com` (videos, interviews)
 - Search: `"Full Name" site:slideshare.net OR site:speakerdeck.com`
 
+**Breach & Leak Exposure — Person (free APIs — no key required):**
+- For each email address found: run LeakCheck + HudsonRock email lookup (see Email Recon section)
+- Search: `"Full Name" leak OR breach OR exposed`
+
 ---
 
 ## 3. Email Recon
@@ -162,10 +179,18 @@ CLI-first cascade:
 - If the email uses a custom domain (not gmail/outlook/yahoo), run Domain Recon on that domain
 - Search: `site:example.com` to understand the organization
 
-**Breach Exposure:**
-- Search: `"email@example.com" breach OR leak OR exposed`
-- Direct user to: haveibeenpwned.com (suggest they check manually)
-- Note: Never attempt to access actual breach data
+**Email Validation & Reputation (free APIs — no key required):**
+1. Disposable check: `curl -s "https://open.kickbox.com/v1/disposable/email@example.com"` — `{"disposable":true}` flags throwaway accounts (low trust, short-lived)
+2. MX record check: `dig MX example.com` — validates domain can receive email; absence = spoofed/invalid domain
+3. DMARC posture: `dig TXT _dmarc.example.com` — reveals if domain enforces anti-spoofing
+
+**Breach & Leak Exposure (free APIs — no key required):**
+1. LeakCheck public API: `curl -s "https://leakcheck.io/api/public?check=email@example.com"` — breach count, exposed fields (password, SSN, DOB, phone), source list
+2. HudsonRock Cavalier: `curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email=email@example.com"` — infostealer log hit; returns machine name, date compromised, services count → CRITICAL if found
+3. Search: `"email@example.com" site:pastebin.com OR site:paste.org` — paste site exposure
+- If disposable: mark subject credibility LOW, flag account as likely throwaway
+- If LeakCheck `found > 0`: document each source name, date, and exposed fields
+- If HudsonRock returns data: mark finding CRITICAL (live infostealer = active credential theft risk)
 
 **Mailing Lists & Forums:**
 - Search: `"email@example.com" site:groups.google.com`
@@ -222,6 +247,10 @@ CLI-first cascade:
 - Look for: Bio text (often reveals real name, location, interests), posting patterns, shared links
 - Cross-reference: Does the bio on Platform A mention Platform B?
 
+**Breach & Leak Exposure — Username (free APIs — no key required):**
+1. LeakCheck username check: `curl -s "https://leakcheck.io/api/public?check=username"` — breach entries for this username (password, IP, DOB, phone)
+2. Search: `"username" site:pastebin.com` — paste site exposure
+
 **Pivot Extraction:**
 - Real names mentioned in bios
 - Emails visible in profiles
@@ -262,6 +291,17 @@ CLI-first cascade:
 3. `curl "https://otx.alienvault.com/api/v1/indicators/IPv4/<IP>/general"` — OTX pulse data, malware associations
 - If any source returns HIGH confidence malicious: escalate to `/threat-check` for full analysis
 - Pivot on: Associated malware families, attack campaigns, C2 infrastructure
+
+**Threat Intelligence — IP (free APIs — no key required):**
+1. Shodan InternetDB: `curl -s "https://internetdb.shodan.io/1.2.3.4"` — open ports, CPEs, hostnames, tags (tor/proxy/self-signed), known vulns — **no key, instant**
+2. GreyNoise Community: `curl -s "https://api.greynoise.io/v3/community/1.2.3.4"` — noise/scanner/malicious classification
+3. ipwho.is geo: `curl -s "https://ipwho.is/1.2.3.4"` — country, ASN, ISP, org, lat/lon
+4. URLhaus: `curl -s -X POST "https://urlhaus-api.abuse.ch/v1/host/" -d "host=1.2.3.4"` — malware URL hosting
+5. ThreatFox IOC: `curl -s -X POST "https://threatfox-api.abuse.ch/api/v1/" -H "Content-Type: application/json" -d '{"query":"search_ioc","search_term":"1.2.3.4"}'` — C2/IOC matches
+
+**Breach & Leak Exposure — IP (free APIs — no key required):**
+1. LeakCheck IP check: `curl -s "https://leakcheck.io/api/public?check=1.2.3.4"` — breach records containing this IP
+2. Search: `"1.2.3.4" site:pastebin.com` — paste dumps referencing the IP
 
 ---
 
