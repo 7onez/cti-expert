@@ -1,6 +1,6 @@
 ---
 name: cti-expert
-description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, subdomain enumeration, case investigation, recon, due diligence, image forensics, face search, blockchain investigation, crypto tracing, flight tracking, maritime tracking, vehicle lookup, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model. Techniques: social media platforms, advanced geolocation, web/DNS forensics, image forensics, blockchain, transport tracking, darknet, people search, cloud audit, incident triage, OWASP audit, prompt injection audit. Author: Hieu Ngo - chongluadao.vn"
+description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, subdomain enumeration, case investigation, recon, due diligence, image forensics, face search, blockchain investigation, crypto tracing, flight tracking, maritime tracking, vehicle lookup, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, M365 recon, Azure tenant enumeration. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon. Techniques: social media platforms, advanced geolocation, web/DNS forensics, image forensics, blockchain, transport tracking, darknet, people search, cloud audit, incident triage, OWASP audit, prompt injection audit. Author: Hieu Ngo - chongluadao.vn"
 version: "2.0"
 author: "Hieu Ngo - chongluadao.vn"
 ---
@@ -71,6 +71,7 @@ Commands grouped by AEAD phase.
 | `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
 | `/ransomware-check [org]` | Check if org is a ransomware victim | `/ransomware-check "Acme Corp"` |
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
+| `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | `/msftrecon example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
 | `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS | `/dns-history example.com` |
 | `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) | `/cert-history example.com` |
@@ -304,6 +305,7 @@ Reference directory: `techniques/`
 | `wifi-ssid-osint.md` | WiFi SSID/BSSID geolocation via Wigle.net, encryption analysis, travel patterns |
 | `scam-check.md` | Phishing/scam domain verification and detection |
 | `cloud-audit.md` | Cloud infrastructure security (AWS/GCP/Azure): IAM, network, storage, compute, logging, secrets |
+| `microsoft-tenant-recon.md` | M365/Azure tenant enumeration — federation, tenant ID, Azure AD config, MDI detection |
 | `dependency-audit.md` | Supply chain security: CVE audit, framework-specific vulns, typosquatting, CI/CD security |
 | `disk-forensics.md` | Digital evidence analysis: image integrity, Sleuth Kit, file carving, artifact recovery, timeline |
 | `incident-triage.md` | Security incident response: NIST 800-61 methodology, containment, evidence preservation, IOC extraction |
@@ -630,6 +632,7 @@ cti-expert/
 │   ├── fx-visitor-intelligence.md Visitor stats, tech stack, geo analysis
 │   ├── scam-check.md           Phishing/scam domain verification
 │   ├── cloud-audit.md          Cloud infrastructure security audit
+│   ├── microsoft-tenant-recon.md M365/Azure tenant enumeration
 │   ├── dependency-audit.md     Supply chain security audit
 │   ├── disk-forensics.md       Digital evidence analysis
 │   ├── incident-triage.md      Security incident response
@@ -746,6 +749,7 @@ Which techniques activate per target type in a `/case` run:
 | `/wifi` (SSID/BSSID) | ✅ | ✅ | ✅ | — | — | ✅ |
 | Visitor intelligence | — | ✅ | ✅ | — | — | ✅ |
 | Cloud audit | — | ✅ | ✅ | — | — | ✅ |
+| MSFTRecon (M365/Azure tenant) | — | ✅ | ✅ | — | — | — |
 | Dependency audit | — | ✅ | ✅ | — | — | — |
 | Disk forensics | — | — | — | — | — | — |
 | Incident triage | — | ✅ | ✅ | — | — | ✅ |
@@ -774,6 +778,10 @@ Which techniques activate per target type in a `/case` run:
 `MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
 
 **Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
+
+When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX record and SPF TXT record. If MX ends in `protection.outlook.com` OR SPF contains `spf.protection.outlook.com`, `/msftrecon` auto-fires as part of the Acquire phase. Results feed back into the subject registry as `infrastructure` findings (tenant ID, federation type, MDI presence) and into `/exposure` scoring.
+
+**`/case` pipeline walkthrough (M365-hosted Domain/Org):** (a) standard DNS/WHOIS/subdomain/traffic/scam-check/breach-deep checks run first, (b) if M365 indicators present → `/msftrecon` fires automatically with no extra flag, (c) tenant ID discovered becomes a pivot for `/branch` in Enrich phase (search other domains under the same tenant). No user intervention required.
 
 **Parallel enrichment (3+ subjects):** When Acquire discovers 3+ subjects, enrichment commands fan out in parallel via AgentFlow DAG orchestration. Each subject's enrichment runs independently, results merge with dedup before Assess phase. Disable with `--sequential` flag. See `techniques/agentflow-enrichment.md`.
 
@@ -831,6 +839,7 @@ Which techniques activate per target type in a `/case` run:
 | Amass | `command -v amass` | `go install github.com/owasp-amass/amass/v4/...@master` |
 | GAU | `command -v gau` | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | Xeuledoc | `command -v xeuledoc` | `pip3 install xeuledoc` |
+| MSFTRecon | `command -v msftrecon` | `pip3 install git+https://github.com/Arcanum-Sec/msftrecon.git` |
 | ShareTrace | `python -m sharetrace --help 2>/dev/null` | `git clone https://github.com/soxoj/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` |
 | exiftool | `command -v exiftool` | `apt install -y libimage-exiftool-perl` |
 | pdfinfo | `command -v pdfinfo` | `apt install -y poppler-utils` |

@@ -47,6 +47,22 @@ Use this ordered fallback cascade:
 - Look for: A records (IP addresses), MX records (email provider), NS records, TXT records (SPF, DKIM)
 - Pivot on: IP addresses (what else is hosted there?), email provider choice
 
+**Microsoft 365 / Azure Tenant Recon (load `techniques/microsoft-tenant-recon.md`):**
+
+Auto-fires when MX record ends in `protection.outlook.com` OR SPF includes `spf.protection.outlook.com`.
+
+1. `msftrecon -d example.com -j` — full tenant enumeration (JSON output)
+2. Fallback — direct curl:
+   - `curl -s "https://login.microsoftonline.com/getuserrealm.srf?login=user@example.com&json=1"` — federation type
+   - `curl -s "https://login.microsoftonline.com/example.com/v2.0/.well-known/openid-configuration"` — tenant ID from `issuer` field
+3. SharePoint existence: `curl -I "https://{tenant}.sharepoint.com"` — 401/403 = present, 404 = not present
+4. Azure App Service tenant: `curl -I "https://{tenant}.azurewebsites.net"` — same 401/403/404 logic
+5. Gov cloud variant: `msftrecon -d domain.gov --gov`
+6. China cloud variant: `msftrecon -d domain.cn --cn`
+
+- Look for: Tenant ID (GUID), federation type (Managed/Federated), brand name, MDI instance, Azure services exposure
+- Pivot on: Tenant ID (unique Azure identifier — query for other domains under same tenant), federation type (Federated = SSO provider present → potential SAML attack surface)
+
 **Technology Stack:**
 - Search: `site:builtwith.com "example.com"` or `"example.com" technology stack`
 - Look for: CMS, frameworks, analytics tools, CDN, hosting provider
@@ -332,6 +348,11 @@ CLI-first cascade:
 - Identify primary domain → run Domain Recon
 - Search: `"OrgName" site:github.com` (open source presence)
 - Search: `"OrgName" app site:play.google.com OR site:apps.apple.com`
+
+**Microsoft 365 / Azure Tenant Intel:**
+- If org owns M365-backed domain, run `/msftrecon` on primary domain
+- Tenant ID can correlate multiple domains to same organization (reverse mapping)
+- See: `techniques/microsoft-tenant-recon.md`
 
 **Reputation & News:**
 - Search: `"OrgName" news` (recent coverage)

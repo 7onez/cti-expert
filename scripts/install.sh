@@ -218,6 +218,43 @@ pip_install  cloudscraper cloudscraper
 pip_install  xeuledoc xeuledoc
 pip_install  agentflow agentflow            # correct PyPI name (not agentflow-py)
 
+# msftrecon — not on PyPI, install via git
+if "$VENV_PYTHON" -c "import msftrecon" &>/dev/null 2>&1; then
+  log_skip "msftrecon"
+else
+  if "$VENV_PIP" install --quiet "git+https://github.com/Arcanum-Sec/msftrecon.git" 2>/dev/null; then
+    log_ok "msftrecon (M365/Azure tenant recon)"
+  else
+    log_fail "msftrecon" "pip install from git failed"
+  fi
+fi
+
+# sharetrace — not on PyPI, no setup.py; clone + install deps + register via .pth
+if "$VENV_PYTHON" -c "import sharetrace" &>/dev/null 2>&1; then
+  log_skip "sharetrace"
+else
+  SHARETRACE_DIR="$HOME/.claude/skills/cti-expert/vendor/sharetrace"
+  mkdir -p "$(dirname "$SHARETRACE_DIR")"
+  if [[ -d "$SHARETRACE_DIR/.git" ]]; then
+    git -C "$SHARETRACE_DIR" pull --quiet 2>/dev/null
+  else
+    rm -rf "$SHARETRACE_DIR" 2>/dev/null
+    git clone --quiet --depth 1 https://github.com/soxoj/sharetrace.git "$SHARETRACE_DIR" 2>/dev/null
+  fi
+  if [[ -d "$SHARETRACE_DIR/sharetrace" ]] && \
+     "$VENV_PIP" install --quiet -r "$SHARETRACE_DIR/requirements.txt" 2>/dev/null; then
+    SITE_PKG="$("$VENV_PYTHON" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)"
+    if [[ -n "$SITE_PKG" ]]; then
+      echo "$SHARETRACE_DIR" > "$SITE_PKG/sharetrace.pth"
+      log_ok "sharetrace (share link identity extraction, 11 platforms)"
+    else
+      log_fail "sharetrace" "could not resolve venv site-packages"
+    fi
+  else
+    log_fail "sharetrace" "clone or pip install -r requirements.txt failed"
+  fi
+fi
+
 # ── Python: Scrapling headless (optional) ─────────────────────
 section "Python: Scrapling headless browser"
 if "$VENV_PYTHON" -c "from scrapling.fetchers import StealthyFetcher" &>/dev/null 2>&1; then
@@ -264,7 +301,6 @@ fi
 # ── Manual-only tools ─────────────────────────────────────────
 section "Manual-install tools (not automated)"
 echo "  ASN:        bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)"
-echo "  ShareTrace: git clone https://github.com/soxoj/sharetrace.git && cd sharetrace && pip install -r requirements.txt"
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""
