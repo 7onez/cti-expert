@@ -204,46 +204,12 @@ Track organizational donors through FEC filings.
 
 ## 9. WHOIS Deep Investigation
 
-### Basic WHOIS
-
-```bash
-whois example.com
-```
-
-**Key fields:** Registrant name/email/org, creation/expiration dates, name servers, registrar.
-
-### Historical WHOIS
-
-Before privacy was enabled, registrant details were public:
-
-```bash
-# SecurityTrails API
-curl "https://api.securitytrails.com/v1/domain/example.com/whois" \
-  -H "APIKEY: YOUR_KEY"
-```
-
-### Reverse WHOIS
-
-Find all domains registered by same entity — search by email, org name, or phone:
-
-```bash
-curl "https://reverse-whois-api.whoisxmlapi.com/api/v2" \
-  -d '{"searchType":"current","mode":"purchase","basicSearchTerms":{"include":["target@email.com"]}}'
-```
-
-### IP/ASN Lookup
-
-```bash
-# IP WHOIS (find network owner)
-whois 1.2.3.4
-# Look for: NetName, OrgName, CIDR range, abuse contact
-
-# ASN lookup
-whois -h whois.radb.net AS12345
-# Or: https://bgp.tools/as/12345
-```
-
-**Key insight:** Most useful for timeline correlation (when registered relative to events?), reverse lookups (what other domains share same registrant?), and identifying shared infrastructure.
+> **Moved to dedicated module:** See `techniques/whois-universal.md` for the full
+> multi-TLD WHOIS cascade with support for all ccTLDs (.vn, .th, .sg, .kr, etc.),
+> reverse WHOIS, historical WHOIS, and IP/ASN lookups — all free, no API keys.
+>
+> Covers: 4-layer fallback (whoisdomain → CLI whois → Whoxy API → web scrape),
+> 27+ ccTLD server mappings, .vn deep dive, confidence ratings.
 
 ---
 

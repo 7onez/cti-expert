@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 67+ commands, 35 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 67+ commands, 38 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -16,10 +16,10 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.1-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.1"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.3-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.3"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-35-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="35 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -117,6 +117,21 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 <br>
 
+## What's New in v2.3
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **WHOIS** | Universal WHOIS for all TLDs | whoisdomain + CLI + Whoxy API; .vn, .th, .sg, .kr, 27+ ccTLD servers |
+| **WHOIS** | Reverse & historical WHOIS (free) | Whoxy reverse API, historical lookup, ViewDNS |
+| **Web Collection** | Scrapling adaptive scraping | 3-tier: static → anti-bot → JS rendering; headless auto-open |
+| **Web Collection** | Headless browser auto-open default | JS-heavy sites auto-detected and rendered via DynamicFetcher |
+| **Orchestration** | AgentFlow parallel enrichment | DAG-based parallel pivot expansion for 3+ subjects |
+| **Performance** | HTML parsing ~2ms | Scrapling parser replaces slow HTTP scraping |
+| **Platform** | Python 3.10+ minimum | Required by Scrapling and AgentFlow |
+
+<details>
+<summary><b>What's New in v2.2</b></summary>
+
 ## What's New in v2.2
 
 | Category | What's New | Details |
@@ -144,6 +159,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Data Model** | Source Reliability A-F | Complements trust scores with source-level grading |
 | **Data Model** | 4 new entity types | Device, Image, Crypto Address, Custom |
 | **Data Model** | HIGH conflict severity | 4-level severity: CRITICAL/HIGH/NOTABLE/MINOR |
+
+</details>
 
 </details>
 
@@ -274,7 +291,7 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 |-------------|---------|---------|
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Latest | Terminal runtime |
 | [Claude Code Desktop](https://claude.ai/download) | Latest | GUI runtime (macOS/Windows) |
-| Python | 3.8+ | DOCX report generation |
+| Python | 3.10+ | DOCX report generation, Scrapling, AgentFlow |
 | pip packages | See `requirements.txt` | Charts, diagrams, styling |
 | git | Any | Clone the repository |
 
@@ -675,7 +692,10 @@ cti-expert/
 │   ├── workspace-format.md        Workspace serialization spec
 │   └── conflict-resolver.md       CONTESTED finding resolution
 │
-├── techniques/                    Collection techniques (29 files)
+├── techniques/                    Collection techniques (32 files)
+│   ├── whois-universal.md         Universal multi-TLD WHOIS cascade
+│   ├── web-collection-scrapling.md Scrapling adaptive web collection
+│   ├── agentflow-enrichment.md    Parallel enrichment orchestration
 │   ├── fx-metadata-parsing.md, fx-image-verification.md, ...
 │   ├── username-osint.md, phone-osint.md, email-osint.md
 │   ├── cloud-audit.md, dependency-audit.md, disk-forensics.md
@@ -992,7 +1012,7 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 |----------|-----------|----------|
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Mới nhất | Runtime terminal |
 | [Claude Code Desktop](https://claude.ai/download) | Mới nhất | Runtime giao diện (macOS/Windows) |
-| Python | 3.8+ | Tạo báo cáo DOCX |
+| Python | 3.10+ | Tạo báo cáo DOCX, Scrapling, AgentFlow |
 | pip packages | Xem `requirements.txt` | Biểu đồ, sơ đồ, định dạng |
 | git | Bất kỳ | Clone repository |
 
@@ -1191,7 +1211,7 @@ Test-Path "$env:USERPROFILE\.claude\skills\cti-expert\SKILL.md"
 |------|------|------|
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | 最新版 | 终端运行时 |
 | [Claude Code 桌面版](https://claude.ai/download) | 最新版 | 图形界面运行时（macOS/Windows） |
-| Python | 3.8+ | DOCX 报告生成 |
+| Python | 3.10+ | DOCX 报告生成、Scrapling、AgentFlow |
 | pip 包 | 见 `requirements.txt` | 图表、图形、样式 |
 | git | 任意版本 | 克隆仓库 |
 

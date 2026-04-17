@@ -765,6 +765,8 @@ Which techniques activate per target type in a `/case` run:
 
 **Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
 
+**Parallel enrichment (3+ subjects):** When Acquire discovers 3+ subjects, enrichment commands fan out in parallel via AgentFlow DAG orchestration. Each subject's enrichment runs independently, results merge with dedup before Assess phase. Disable with `--sequential` flag. See `techniques/agentflow-enrichment.md`.
+
 ---
 
 ## Exposure Score Bands
@@ -781,9 +783,12 @@ Which techniques activate per target type in a `/case` run:
 ## Tool Priority & Fallback
 
 1. Check `agent-browser` availability first
-2. Use `agent-browser` for: JavaScript-heavy sites, infinite scroll, screenshot evidence, UI-rendered content
-3. Fall back to web search → web fetch → direct curl — no investigation blockers
-4. Tag each key finding with collection method used: `[browser]` · `[search]` · `[fetch]` · `[manual]`
+2. Use `agent-browser` for: screenshot evidence, interactive UI, complex multi-step browser flows
+3. Use Scrapling DynamicFetcher for: JS-heavy sites, SPA content, auto-escalation from static
+4. Use Scrapling StealthyFetcher for: anti-bot bypass, Cloudflare-protected targets
+5. Use Scrapling Fetcher for: fast static page collection, HTML parsing (~2ms)
+6. Fall back to web search → web fetch → direct curl — no investigation blockers
+7. Tag each finding with collection method: `[browser]` · `[scrapling-dynamic]` · `[scrapling-stealth]` · `[scrapling-static]` · `[search]` · `[fetch]` · `[manual]` · `[whois-lib]` · `[whois-cli]` · `[whois-api]`
 
 ---
 
@@ -828,6 +833,10 @@ Which techniques activate per target type in a `/case` run:
 | ASN | `command -v asn` | `bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)` |
 | Waymore | `command -v waymore` | `pip3 install waymore` |
 | Pandoc | `command -v pandoc` | `apt install -y pandoc` |
+| whoisdomain | `python -c "import whoisdomain" 2>/dev/null` | `pip3 install whoisdomain` |
+| Scrapling | `python -c "import scrapling" 2>/dev/null` | `pip3 install scrapling` |
+| Scrapling (full) | `python -c "from scrapling.fetchers import StealthyFetcher" 2>/dev/null` | `pip3 install "scrapling[fetchers]" && scrapling install` |
+| AgentFlow | `python -c "import agentflow" 2>/dev/null` | `pip3 install agentflow-py` |
 
 ### Behavior Rules
 

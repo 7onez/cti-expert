@@ -37,7 +37,9 @@ Track which discovery paths have been attempted and their yield for each subject
 
 | Discovery path | Checked | Result | Finding IDs |
 |----------------|---------|--------|-------------|
-| WHOIS registration | ☐ | | |
+| WHOIS registration (universal cascade) | ☐ | | |
+| WHOIS reverse lookup (free) | ☐ | | |
+| WHOIS historical records | ☐ | | |
 | DNS records (A, MX, TXT, NS) | ☐ | | |
 | Certificate transparency (crt.sh) | ☐ | | |
 | Subdomain sweep | ☐ | | |
@@ -45,6 +47,7 @@ Track which discovery paths have been attempted and their yield for each subject
 | Admin panel discovery | ☐ | | |
 | API endpoint discovery | ☐ | | |
 | Third-party references (GitHub, Pastebin) | ☐ | | |
+| Scrapling web collection (static/stealth/dynamic) | ☐ | | |
 | Email security (SPF, DKIM, DMARC) | ☐ | | |
 | Port / service scan (Shodan / Censys) | ☐ | | |
 | SSL certificate details | ☐ | | |
@@ -56,7 +59,7 @@ Track which discovery paths have been attempted and their yield for each subject
 | Legal / regulatory filings | ☐ | | |
 | Social media presence | ☐ | | |
 
-**Coverage score:** `___ / 18 paths checked = ___% `
+**Coverage score:** `___ / 22 paths checked = ___% `
 
 ---
 

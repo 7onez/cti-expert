@@ -8,6 +8,10 @@ Free-tier domain and URL reputation checking using zero-cost public services. No
 
 Determine whether a domain or URL is associated with phishing, scams, malware, or other malicious activity using exclusively free, no-authentication-required services.
 
+> **Collection enhancement:** Web scraping steps (PhishTank, CheckPhish, etc.)
+> use Scrapling fetchers for resilient data collection. See
+> `techniques/web-collection-scrapling.md` for auto-escalation behavior.
+
 ---
 
 ## Execution Sequence

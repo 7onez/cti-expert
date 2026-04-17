@@ -25,8 +25,12 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | ShareTrace | `git clone https://github.com/soxoj/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` | Python | Share Link Analysis |
 | **Waymore** | `pip3 install waymore` | Python | Archive URL Mining |
 | **cloudscraper** | `pip3 install cloudscraper` | Python | Anti-bot bypass (USPhoneBook) |
+| **whoisdomain** | `pip3 install whoisdomain` | Python | Universal WHOIS (IANA auto-detect) |
+| **Scrapling** | `pip3 install scrapling` | Python | Adaptive web scraping (static) |
+| **Scrapling (full)** | `pip3 install "scrapling[fetchers]" && scrapling install` | Python | Anti-bot + JS rendering |
+| **AgentFlow** | `pip3 install agentflow-py` | Python | Orchestration (parallel enrichment) |
 
-> Last updated: 2026-03-30. Always verify install commands against upstream repos.
+> Last updated: 2026-04-16. Always verify install commands against upstream repos.
 
 ---
 
@@ -203,6 +207,28 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | 1 (Email/Phone) | Epieos | `https://epieos.com/` | Multi-source email+phone reverse lookup |
 | 2 (Multi) | SynapsInt | `https://synapsint.com/` | Aggregated multi-source OSINT search |
 | 3 (Domain) | web-check | `https://github.com/Lissy93/web-check` | All-in-one website analysis |
+
+### WHOIS / Domain Registration
+
+| Priority | Tool | Method | Notes |
+|----------|------|--------|-------|
+| 1 (Primary) | whoisdomain | `python3 -c "import whoisdomain; print(whoisdomain.query('<domain>'))"` | IANA auto-detect, ~90% TLDs |
+| 2 (Secondary) | CLI whois | `whois -h <tld-server> <domain>` | Direct ccTLD server query |
+| 3 (Tertiary) | Whoxy API | `curl "https://api.whoxy.com/?key=free&whois=<domain>"` | 1595+ TLDs, free |
+| 4 (Quaternary) | who.is web | `who.is/whois/<domain>` | Web UI, manual or scrape |
+| 5 (Reverse) | Whoxy reverse | `curl "https://api.whoxy.com/?key=free&reverse=whois&email=<email>"` | Free reverse WHOIS |
+
+### Web Collection / Page Fetching
+
+| Priority | Tool | Method | Notes |
+|----------|------|--------|-------|
+| 1 (Screenshots) | agent-browser | Playwright full automation | Interactive, visual evidence |
+| 2 (JS-heavy) | Scrapling DynamicFetcher | `DynamicFetcher.get(url)` | Playwright-backed, JS rendering |
+| 3 (Anti-bot) | Scrapling StealthyFetcher | `StealthyFetcher.get(url)` | Cloudflare bypass, fingerprint spoofing |
+| 4 (Fast static) | Scrapling Fetcher | `Fetcher.get(url)` | ~2ms parse, adaptive selectors |
+| 5 (CLI) | WebFetch | Claude tool | Built-in, no deps |
+| 6 (Search) | WebSearch | Claude tool | Google results only |
+| 7 (Raw) | curl | `curl -sL url` | Last resort |
 
 ---
 
