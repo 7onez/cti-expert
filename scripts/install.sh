@@ -239,7 +239,7 @@ else
     git -C "$SHARETRACE_DIR" pull --quiet 2>/dev/null
   else
     rm -rf "$SHARETRACE_DIR" 2>/dev/null
-    git clone --quiet --depth 1 https://github.com/soxoj/sharetrace.git "$SHARETRACE_DIR" 2>/dev/null
+    git clone --quiet --depth 1 https://github.com/7onez/sharetrace.git "$SHARETRACE_DIR" 2>/dev/null
   fi
   if [[ -d "$SHARETRACE_DIR/sharetrace" ]] && \
      "$VENV_PIP" install --quiet -r "$SHARETRACE_DIR/requirements.txt" 2>/dev/null; then

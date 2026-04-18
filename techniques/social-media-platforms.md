@@ -207,13 +207,13 @@ Cross-reference extracted codes with postal code databases, phone number registr
 
 ## 9. Share Link Identity Extraction (ShareTrace)
 
-**Tool:** [sharetrace](https://github.com/soxoj/sharetrace) (Python)
+**Tool:** [sharetrace](https://github.com/7onez/sharetrace) (Python)
 
 Extracts identity information embedded in social media and platform share links. When users share content via platform-generated links, those links often contain metadata about the sharer — usernames, user IDs, avatars, and account details.
 
 **Installation:**
 ```bash
-git clone https://github.com/soxoj/sharetrace.git
+git clone https://github.com/7onez/sharetrace.git
 cd sharetrace
 pip3 install -r requirements.txt
 ```

@@ -840,7 +840,7 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 | GAU | `command -v gau` | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | Xeuledoc | `command -v xeuledoc` | `pip3 install xeuledoc` |
 | MSFTRecon | `command -v msftrecon` | `pip3 install git+https://github.com/Arcanum-Sec/msftrecon.git` |
-| ShareTrace | `python -m sharetrace --help 2>/dev/null` | `git clone https://github.com/soxoj/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` |
+| ShareTrace | `python -m sharetrace --help 2>/dev/null` | `git clone https://github.com/7onez/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` |
 | exiftool | `command -v exiftool` | `apt install -y libimage-exiftool-perl` |
 | pdfinfo | `command -v pdfinfo` | `apt install -y poppler-utils` |
 | oletools | `python -c "import oletools" 2>/dev/null` | `pip3 install oletools` |

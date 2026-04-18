@@ -22,7 +22,7 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | GAU | `go install github.com/lc/gau/v2/cmd/gau@latest` | Go | URL discovery |
 | ASN | `bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)` | Bash | Network |
 | Xeuledoc | `pip3 install xeuledoc` | Python | Google Doc Intel |
-| ShareTrace | `git clone https://github.com/soxoj/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` | Python | Share Link Analysis |
+| ShareTrace | `git clone https://github.com/7onez/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` | Python | Share Link Analysis |
 | **Waymore** | `pip3 install waymore` | Python | Archive URL Mining |
 | **cloudscraper** | `pip3 install cloudscraper` | Python | Anti-bot bypass (USPhoneBook) |
 | **whoisdomain** | `pip3 install whoisdomain` | Python | Universal WHOIS (IANA auto-detect) |
