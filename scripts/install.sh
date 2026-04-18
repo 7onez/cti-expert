@@ -230,16 +230,28 @@ else
 fi
 
 # sharetrace — not on PyPI, no setup.py; clone + install deps + register via .pth
-if "$VENV_PYTHON" -c "import sharetrace" &>/dev/null 2>&1; then
+SHARETRACE_REPO="https://github.com/7onez/sharetrace.git"
+SHARETRACE_DIR="$HOME/.claude/skills/cti-expert/vendor/sharetrace"
+
+# Fast-skip: already importable AND vendor clone origin matches current fork
+if "$VENV_PYTHON" -c "import sharetrace" &>/dev/null 2>&1 && \
+   [[ -d "$SHARETRACE_DIR/.git" ]] && \
+   [[ "$(git -C "$SHARETRACE_DIR" remote get-url origin 2>/dev/null)" == "$SHARETRACE_REPO" ]]; then
   log_skip "sharetrace"
 else
-  SHARETRACE_DIR="$HOME/.claude/skills/cti-expert/vendor/sharetrace"
   mkdir -p "$(dirname "$SHARETRACE_DIR")"
   if [[ -d "$SHARETRACE_DIR/.git" ]]; then
-    git -C "$SHARETRACE_DIR" pull --quiet 2>/dev/null
+    CURRENT_ORIGIN="$(git -C "$SHARETRACE_DIR" remote get-url origin 2>/dev/null)"
+    if [[ "$CURRENT_ORIGIN" == "$SHARETRACE_REPO" ]]; then
+      git -C "$SHARETRACE_DIR" pull --quiet 2>/dev/null
+    else
+      echo "  sharetrace: origin mismatch ($CURRENT_ORIGIN) — re-cloning from 7onez fork"
+      rm -rf "$SHARETRACE_DIR" 2>/dev/null
+      git clone --quiet --depth 1 "$SHARETRACE_REPO" "$SHARETRACE_DIR" 2>/dev/null
+    fi
   else
     rm -rf "$SHARETRACE_DIR" 2>/dev/null
-    git clone --quiet --depth 1 https://github.com/7onez/sharetrace.git "$SHARETRACE_DIR" 2>/dev/null
+    git clone --quiet --depth 1 "$SHARETRACE_REPO" "$SHARETRACE_DIR" 2>/dev/null
   fi
   if [[ -d "$SHARETRACE_DIR/sharetrace" ]] && \
      "$VENV_PIP" install --quiet -r "$SHARETRACE_DIR/requirements.txt" 2>/dev/null; then
