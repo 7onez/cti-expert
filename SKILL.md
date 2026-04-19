@@ -73,6 +73,10 @@ Commands grouped by AEAD phase.
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
 | `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | `/msftrecon example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
+<!-- dork-integration:phase-05 start -->
+| `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Zero-auth dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier fallback cascade | `/dork-sweep example.com --filetype` |
+| `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW) | `/docleak "Acme Corp"` |
+<!-- dork-integration:phase-05 end -->
 | `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS | `/dns-history example.com` |
 | `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) | `/cert-history example.com` |
 | `/email-permute [name] [domain]` | Generate email permutations from name + domain | `/email-permute "John Smith" company.com` |
@@ -290,6 +294,10 @@ Reference directory: `techniques/`
 | `fx-document-forensics.md` | Document forensics and metadata extraction |
 | `fx-http-fingerprint.md` | HTTP fingerprinting and server signature analysis |
 | `fx-leak-monitoring.md` | Leak and breach monitoring, paste site search |
+<!-- dork-integration:phase-05 start -->
+| `fx-dork-sweep.md` | Zero-auth Google/Bing dork sweeps — Telegram ecosystem, doc-hosts, filetype families + 4-tier fallback cascade (WebSearch → Bing → DDG → agent-browser) |
+| `fx-document-leak-hunt.md` | 18-platform document leak discovery with severity classification, paywall handling, auto-snapshot |
+<!-- dork-integration:phase-05 end -->
 | `username-osint.md` | 3000+ platform enumeration with pivot extraction |
 | `phone-osint.md` | Carrier lookup, VoIP detection, spam databases, FreeCNAM CallerID, WhoCalld, USPhoneBook reverse lookup |
 | `email-osint.md` | Full email investigation: accounts, breaches, infra, Proton API, PGP keys, permutation, manual reference tools |
@@ -737,6 +745,10 @@ Which techniques activate per target type in a `/case` run:
 | `/branch` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/gdoc` | — | ✅ | ✅ | — | — | — |
 | `/sharelink` | ✅ | — | ✅ | ✅ | ✅ | — |
+<!-- dork-integration:phase-05 start -->
+| `/dork-sweep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
+| `/docleak` | ✅ | ✅ | ✅ | ✅* | — | — |
+<!-- dork-integration:phase-05 end -->
 | Social media platforms | ✅ | — | ✅ | ✅ | — | — |
 | Metadata forensics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Photo verification | ✅ | — | ✅* | ✅ | — | — |
@@ -778,6 +790,20 @@ Which techniques activate per target type in a `/case` run:
 `MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
 
 **Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
+
+<!-- dork-integration:phase-05 start -->
+**`✅*` dork coverage notes:** `/dork-sweep` on IP runs against reverse-DNS hostname once resolved (graceful skip if no rDNS); `/docleak` on Username targets document-author/uploader fields on scribd, slideshare, academia.edu, researchgate.
+
+**Dork auto-fire matrix — every `/case` target type gains coverage:**
+- Person → `/dork-sweep --telegram --docs` + `/docleak` on full name
+- Domain → `/dork-sweep --filetype --docs` + `/docleak` on domain + org name
+- Org → `/dork-sweep --filetype --docs --telegram` + `/docleak` on org + primary domain
+- Username → `/dork-sweep --telegram --docs` + `/docleak` (author-angle)
+- Email → `/dork-sweep --telegram --docs` on email + `@domain`
+- IP → `/dork-sweep` on rDNS-resolved hostname (skipped if no rDNS)
+
+Adaptive fan-out: discovered emails → Telegram dork; discovered personnel → `/docleak`; discovered subdomains → filetype dork; discovered usernames → Telegram + doc sweep; discovered IPs → rDNS → dork-sweep.
+<!-- dork-integration:phase-05 end -->
 
 When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX record and SPF TXT record. If MX ends in `protection.outlook.com` OR SPF contains `spf.protection.outlook.com`, `/msftrecon` auto-fires as part of the Acquire phase. Results feed back into the subject registry as `infrastructure` findings (tenant ID, federation type, MDI presence) and into `/exposure` scoring.
 

@@ -92,6 +92,11 @@ CLI-first cascade:
 - Search: `"example.com" site:github.com` (code repos referencing the domain)
 - Search: `"example.com" site:pastebin.com OR site:paste.org`
 - Look for: Exposed documents, admin panels, credentials in code repos
+<!-- dork-integration:phase-05 start -->
+- Run: `/dork-sweep example.com --filetype --clean` — full filetype sweep (pdf/doc/xls/ppt/csv/xml) with noise reduction
+- Run: `/docleak example.com` — 18-platform document leak hunt (scribd/issuu/slideshare/etc.) with severity tiers
+- Details: [`../techniques/fx-dork-sweep.md`](../techniques/fx-dork-sweep.md), [`../techniques/fx-document-leak-hunt.md`](../techniques/fx-document-leak-hunt.md)
+<!-- dork-integration:phase-05 end -->
 
 **Secret Scanning (load `modules/secret-scanning.md`):**
 - Search: `org:example "password" OR "secret" OR "api_key"` on GitHub
@@ -168,6 +173,11 @@ CLI-first cascade:
 - Search: `"Full Name" filetype:pdf`
 - Search: `"Full Name" site:youtube.com` (videos, interviews)
 - Search: `"Full Name" site:slideshare.net OR site:speakerdeck.com`
+<!-- dork-integration:phase-05 start -->
+- Run: `/docleak "Full Name"` — cross-platform document sweep (18 doc-hosts)
+- Run: `/dork-sweep "Full Name" --telegram` — Telegram ecosystem presence (t.me, tgstat, telemetr, etc.)
+- Use `/docleak` on persons only with investigative authorization (journalism, HR, PI, cyber).
+<!-- dork-integration:phase-05 end -->
 
 **Breach & Leak Exposure — Person (free APIs — no key required):**
 - For each email address found: run LeakCheck + HudsonRock email lookup (see Email Recon section)
@@ -184,6 +194,9 @@ CLI-first cascade:
 **Direct Presence:**
 - Search: `"email@example.com"` (exact match — where does this email appear publicly?)
 - Look for: Forum posts, mailing list archives, data breach mentions, code commits
+<!-- dork-integration:phase-05 start -->
+- Run: `/dork-sweep "email@example.com" --telegram --docs` — Telegram ecosystem + 18-platform doc-host sweep on the address
+<!-- dork-integration:phase-05 end -->
 
 **Associated Accounts:**
 - Search: `"email@example.com" site:github.com`
@@ -348,6 +361,11 @@ CLI-first cascade:
 - Identify primary domain → run Domain Recon
 - Search: `"OrgName" site:github.com` (open source presence)
 - Search: `"OrgName" app site:play.google.com OR site:apps.apple.com`
+<!-- dork-integration:phase-05 start -->
+- Run: `/docleak "OrgName"` — corp leak sweep across 18 doc-host platforms with severity classification
+- Run: `/dork-sweep primary-domain.com --filetype --docs` — filetype + doc-host sweep on org's primary domain
+- Run: `/dork-sweep "OrgName" --telegram` — Telegram ecosystem presence (channels, bots, groups)
+<!-- dork-integration:phase-05 end -->
 
 **Microsoft 365 / Azure Tenant Intel:**
 - If org owns M365-backed domain, run `/msftrecon` on primary domain
