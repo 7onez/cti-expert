@@ -66,6 +66,7 @@ Commands grouped by AEAD phase.
 | `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) | `/techstack example.com` |
 | `/competitors [domain]` | Competitor & related site discovery | `/competitors example.com` |
 | `/secrets [target]` | Exposed credentials in repos and paste sites | `/secrets github.com/org` |
+| `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks | `/github-osint github.com/org/repo` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
 | `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
@@ -305,6 +306,7 @@ Reference directory: `techniques/`
 | `threat-intel.md` | AbuseIPDB, GreyNoise, OTX, VirusTotal, **URLScan.io**, **CIRCL CVE**, **NVD API**, **ransomware.live** |
 | `web-traffic-analysis.md` | SimilarWeb/Semrush estimation, audience data |
 | `secret-scanning.md` | Credential/secret detection in repos and pastes |
+| `github-osint.md` | GitHub user/org/repo profiling, code search, commit metadata, forks, collaboration networks |
 | `domain-advanced.md` | Subfinder, Amass, CT log enumeration |
 | `social-media-platforms.md` | Twitter/X Snowflake IDs, Discord, Strava, BlueSky, ShareTrace share link analysis |
 | `advanced-geolocation-techniques.md` | Overpass Turbo, road sign analysis, reflected text |
@@ -632,6 +634,7 @@ cti-expert/
 │   ├── threat-intel.md         Threat intelligence free lookups
 │   ├── web-traffic-analysis.md Traffic estimation methods
 │   ├── secret-scanning.md      Credential/secret detection
+│   ├── github-osint.md         GitHub profiles, repos, code, commits, forks
 │   ├── domain-advanced.md      Subdomain enumeration methods
 │   ├── social-media-platforms.md Platform-specific techniques
 │   ├── advanced-geolocation-techniques.md Overpass Turbo, road signs, reflected text
@@ -741,6 +744,7 @@ Which techniques activate per target type in a `/case` run:
 | `/traffic` | — | ✅ | ✅ | — | — | — |
 | `/threat-check` | — | ✅ | ✅ | — | — | ✅ |
 | `/secrets` | — | ✅ | ✅ | ✅ | — | — |
+| `/github-osint` | ✅* | ✅ | ✅ | ✅ | ✅* | — |
 | `/scam-check` | — | ✅ | ✅ | — | — | — |
 | `/branch` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/gdoc` | — | ✅ | ✅ | — | — | — |
@@ -790,6 +794,13 @@ Which techniques activate per target type in a `/case` run:
 `MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
 
 **Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
+
+**GitHub OSINT auto-fire in `/case`:**
+- Domain/Org target → run `/github-osint` on the org name, primary domain, discovered GitHub orgs/repos, and developer-platform hits from `/query` or `/dork-sweep`.
+- Username target → run `/github-osint` directly when the handle has a GitHub profile or GitHub search hit.
+- Person target → run `/github-osint` only after discovering a likely GitHub handle, commit email, repo author, or developer profile link.
+- Email target → run `/github-osint` only after discovering commit attribution, GitHub noreply patterns, profile links, or repo references.
+- Results feed into `/secrets`, `/branch`, `/timeline`, `/crossref`, `/exposure`, and final `/report` automatically.
 
 <!-- dork-integration:phase-05 start -->
 **`✅*` dork coverage notes:** `/dork-sweep` on IP runs against reverse-DNS hostname once resolved (graceful skip if no rDNS); `/docleak` on Username targets document-author/uploader fields on scribd, slideshare, academia.edu, researchgate.
@@ -861,6 +872,7 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 | theHarvester | `command -v theHarvester` | `pip3 install theHarvester` |
 | TruffleHog | `command -v trufflehog` | `pip3 install trufflehog` |
 | Gitleaks | `command -v gitleaks` | `go install github.com/gitleaks/gitleaks@latest` |
+| GitHub CLI | `command -v gh` | `winget install --id GitHub.cli` or `apt install -y gh` |
 | Subfinder | `command -v subfinder` | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
 | Amass | `command -v amass` | `go install github.com/owasp-amass/amass/v4/...@master` |
 | GAU | `command -v gau` | `go install github.com/lc/gau/v2/cmd/gau@latest` |

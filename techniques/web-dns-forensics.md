@@ -141,6 +141,8 @@ https://metrics.torproject.org/rs.html#simple/<FINGERPRINT>
 
 ## 6. GitHub Repository Analysis
 
+> **Expanded module:** See `techniques/github-osint.md` for the full GitHub OSINT workflow covering user/org profiling, repository inventory, code search, commit metadata, account creation dates, forks, branches, and reporting.
+
 Hidden information often exists in GitHub repo comments, not just code:
 
 ```bash

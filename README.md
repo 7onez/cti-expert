@@ -56,7 +56,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **67+ commands** across **35 techniques** — no API keys required for core functionality. Some techniques offer optional enhanced access via free API keys (e.g., Wigle, VirusTotal, URLScan.io).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **67+ commands** across **36 techniques** — no API keys required for core functionality. Some techniques offer optional enhanced access via free API keys (e.g., Wigle, VirusTotal, URLScan.io).
 
 <table>
 <tr>
@@ -355,6 +355,7 @@ claude   # opens Claude Code CLI
 /cti-expert /username johndoe                   # Platform enumeration (3000+)
 /cti-expert /email-deep user@domain.com         # Deep email investigation
 /cti-expert /subdomain example.com              # Certificate transparency + brute-force
+/cti-expert /github-osint github.com/org/repo   # GitHub profiles, repos, code, commits, forks
 /cti-expert /threat-check 185.1.1.1             # IP/domain/URL threat intelligence
 /cti-expert /scam-check suspicious-site.xyz     # Phishing/scam domain check
 /cti-expert /breach-deep user@domain.com        # Multi-source breach lookup
@@ -396,6 +397,7 @@ claude   # opens Claude Code CLI
 - Phone — carrier, reputation, associations
 - Email — accounts, breaches, infrastructure
 - Username — 3000+ platform enumeration
+- GitHub developer footprint — profiles, orgs, repos, commits, forks
 
 </td>
 <td width="33%" valign="top">
@@ -517,6 +519,7 @@ Every investigation follows four automated phases:
 | `/cti-expert /phone [number]` | Carrier lookup, reputation, associations |
 | `/cti-expert /email-deep [email]` | Accounts, breaches, infrastructure |
 | `/cti-expert /subdomain [domain]` | CT logs + passive enumeration |
+| `/cti-expert /github-osint [target]` | GitHub user/org/repo profiles, code, commits, forks |
 | `/cti-expert /threat-check [target]` | IP/domain/URL/hash threat intelligence |
 | `/cti-expert /breach-deep [email]` | Multi-source breach lookup |
 
@@ -610,7 +613,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>35 techniques</b> — click to expand full catalog</summary>
+<summary><b>36 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -649,6 +652,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 | `fx-social-topology.md` | Social graph construction and analysis | No |
 | `fx-geolocation.md` | GPS, W3W, Plus Codes, MGRS, Street View | No |
 | `secret-scanning.md` | Credential/secret detection in code | Optional (GitHub token for GitDorker) |
+| `github-osint.md` | GitHub profile, org, repo, code, commit, fork, and collaboration recon | Optional (GitHub token for higher API limits) |
 | `fx-email-header-analysis.md` | Email header analysis, SPF/DKIM | No |
 
 </details>
@@ -901,7 +905,7 @@ See [LICENSE](LICENSE) for full text.
 
 ### CTI Expert là gì?
 
-Một kỹ năng của Claude Code biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở chuyên nghiệp. Chạy thu thập tình báo có cấu trúc sử dụng **67+ lệnh** trên **35 kỹ thuật** — không cần API key cho chức năng cốt lõi. Một số kỹ thuật hỗ trợ API key miễn phí tùy chọn để truy cập nâng cao (VD: Wigle, VirusTotal, URLScan.io).
+Một kỹ năng của Claude Code biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở chuyên nghiệp. Chạy thu thập tình báo có cấu trúc sử dụng **67+ lệnh** trên **36 kỹ thuật** — không cần API key cho chức năng cốt lõi. Một số kỹ thuật hỗ trợ API key miễn phí tùy chọn để truy cập nâng cao (VD: Wigle, VirusTotal, URLScan.io).
 
 **Mới trong v2.2:** Pháp y hình ảnh & tìm kiếm khuôn mặt (FaceCheck.id, TinEye, FotoForensics, picarta.ai AI geolocation), điều tra blockchain (Blockchair, Etherscan, WalletExplorer, Chainabuse), theo dõi vận tải (ADS-B Exchange theo dõi máy bay, Marine Traffic theo dõi tàu, VIN decoder), điều tra darknet (Ahmia.fi tìm kiếm Tor, ransomwatch), mạng xã hội mở rộng (Reddit, Instagram, TikTok, Telegram), tra cứu người (TruePeopleSearch, IDCrawl), 11 mẫu Google mega-dork bao phủ 73 domain.
 
@@ -1068,6 +1072,7 @@ claude   # mở Claude Code CLI
 /cti-expert /query example.com                  # 12-15 truy vấn tìm kiếm nâng cao
 /cti-expert /username johndoe                   # Liệt kê nền tảng (3000+)
 /cti-expert /email-deep user@domain.com         # Điều tra email chuyên sâu
+/cti-expert /github-osint github.com/org/repo   # Hồ sơ GitHub, repo, code, commit, fork
 /cti-expert /exposure domain.com                # Điểm rủi ro tổng hợp (0-100)
 /cti-expert /report                             # Báo cáo kỹ thuật INTSUM
 /cti-expert /workspace save                     # Lưu workspace + tự động tạo .docx
@@ -1079,7 +1084,7 @@ claude   # mở Claude Code CLI
 
 | Lĩnh vực | Khả năng |
 |-----------|----------|
-| **Danh tính & Con người** | Tra cứu cá nhân (50+ điểm dữ liệu), điều tra số điện thoại, email chuyên sâu, liệt kê tên người dùng (3000+ nền tảng) |
+| **Danh tính & Con người** | Tra cứu cá nhân (50+ điểm dữ liệu), điều tra số điện thoại, email chuyên sâu, liệt kê tên người dùng (3000+ nền tảng), dấu vết nhà phát triển GitHub |
 | **Tên miền & Hạ tầng** | Liệt kê subdomain, fingerprint kỹ thuật, pháp y DNS, phân tích lưu lượng |
 | **Phân tích & Xác minh** | Xác minh hình ảnh, pháp y metadata, pháp y web, cơ sở dữ liệu rò rỉ |
 | **WiFi & Định vị** | Định vị WiFi qua Wigle.net, định vị nâng cao (W3W, Plus Codes, MGRS) |
@@ -1116,7 +1121,7 @@ claude   # mở Claude Code CLI
 
 ### 什么是 CTI Expert？
 
-一个 Claude Code 技能，将 Claude 转变为���练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**35 种技术**进行结构化情报收集——核心功能无需 API 密钥。部分技术支持可选的免费 API 密钥以获取增强访问（如 Wigle、VirusTotal、URLScan.io）。
+一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**36 种技术**进行结构化情报收集——核心功能无需 API 密钥。部分技术支持可选的免费 API 密钥以获取增强访问（如 Wigle、VirusTotal、URLScan.io）。
 
 **v2.2 新功能：** 图像取证与人脸搜索（FaceCheck.id、TinEye、FotoForensics、picarta.ai AI地理定位）、区块链调查（Blockchair、Etherscan、WalletExplorer、Chainabuse）、交通追踪（ADS-B Exchange飞机追踪、Marine Traffic船舶追踪、VIN解码器）、暗网调查（Ahmia.fi Tor搜索、ransomwatch）、社交媒体扩展（Reddit、Instagram、TikTok、Telegram）、人员搜索（TruePeopleSearch、IDCrawl）、11个跨平台Google mega-dork模板覆盖73个域名。
 
@@ -1283,6 +1288,7 @@ claude   # 打开 Claude Code CLI
 /cti-expert /query example.com                  # 12-15 个高级搜索查询
 /cti-expert /username johndoe                   # 平台枚举（3000+）
 /cti-expert /email-deep user@domain.com         # 深度电子邮件调查
+/cti-expert /github-osint github.com/org/repo   # GitHub 资料、仓库、代码、提交、分叉
 /cti-expert /exposure domain.com                # 综合风险评分（0-100）
 /cti-expert /report                             # 技术 INTSUM 报告
 /cti-expert /workspace save                     # 保存工作空间 + 自动生成 .docx
@@ -1294,7 +1300,7 @@ claude   # 打开 Claude Code CLI
 
 | 领域 | 能力 |
 |------|------|
-| **身份与人员** | 人员查询（50+ 数据点）、电话调查、深度邮件分析、用户名枚举（3000+ 平台） |
+| **身份与人员** | 人员查询（50+ 数据点）、电话调查、深度邮件分析、用户名枚举（3000+ 平台）、GitHub 开发者足迹 |
 | **域名与基础设施** | 子域枚举、技术指纹、DNS 取证、流量分析 |
 | **分析与验证** | 图像验证、元数据取证、网页取证、泄露数据库 |
 | **WiFi 与地理定位** | 通过 Wigle.net WiFi 定位、高级地理定位（W3W、Plus Codes、MGRS） |

@@ -319,7 +319,10 @@ Public repos searchable without login (~60 req/hr unauth cap).
 - URL: `https://github.com/search?q={ENCODED_QUERY}&type=code`
 - Credential dorks: `"example.com" filename:.env`, `"example.com" "AWS_SECRET_ACCESS_KEY"`, `"example.com" "BEGIN RSA PRIVATE KEY"`
 - Org-scoped: `org:example "password"`, `org:example filename:credentials.json`
-- Related: `/secrets` command + [`../techniques/secret-scanning.md`](../techniques/secret-scanning.md).
+- User/repo-scoped: `user:username "api_key"`, `repo:owner/repo "DATABASE_URL"`
+- File/path filters: `extension:env`, `extension:yml`, `filename:docker-compose.yml`, `path:.github/workflows`, `path:src/config`, `path:database`
+- Infra indicators: `"herokuapp.com"`, `"firebaseio.com"`, `"192.168."`, `"10."`, `"localhost"`, `"staging"`, `"internal"`
+- Related: `/secrets` command + [`../techniques/secret-scanning.md`](../techniques/secret-scanning.md) + [`../techniques/github-osint.md`](../techniques/github-osint.md).
 
 ---
 
