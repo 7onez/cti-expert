@@ -325,6 +325,7 @@ Reference directory: `techniques/`
 | `owasp-audit.md` | OWASP Top 10 (2021) source code audit with grep patterns and CWE references |
 | `prompt-injection-audit.md` | AI/LLM security: prompt injection classes, agent/MCP security, permission boundary audit |
 | `stealer-log-analysis.md` | Infostealer-log triage: family fingerprinting (RedLine/Vidar/StealC/Lumma/META/traffer), victim-vs-operator profiling, cross-log actor correlation, IOC + attribution extraction (`uv run` parser, raw artifacts shown) |
+| `agent-browser.md` | Interactive browser collection & evidence capture via vercel-labs/agent-browser (CDP, accessibility-tree `@eN` snapshots, screenshots; primary interactive collector, complementary to Scrapling) |
 
 ---
 
@@ -648,6 +649,7 @@ cti-expert/
 │   ├── owasp-audit.md          OWASP Top 10 source code audit
 │   ├── prompt-injection-audit.md AI/LLM security audit
 │   ├── stealer-log-analysis.md Infostealer-log triage, actor attribution & IOC extraction
+│   ├── agent-browser.md        Interactive browser collection & evidence capture (vercel-labs/agent-browser)
 │   └── ioc-export.md           IOC export (STIX 2.1, flat list)
 │
 ├── experience/                 UX, tiers, and guided flows
@@ -841,9 +843,11 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 
 ## Tool Priority & Fallback
 
-1. Check `agent-browser` availability first
-2. Use `agent-browser` for: screenshot evidence, interactive UI, complex multi-step browser flows
-3. Use Scrapling DynamicFetcher for: JS-heavy sites, SPA content, auto-escalation from static
+**Primary interactive collector: [`agent-browser`](https://github.com/vercel-labs/agent-browser)** (vercel-labs) — a fast native-Rust CDP browser that returns accessibility-tree snapshots (`@eN` element refs) + screenshots; **no API key** for core automation; cross-platform; also an MCP server. Full how-to + per-command usage in [`techniques/agent-browser.md`](techniques/agent-browser.md). It is **complementary to Scrapling, not in conflict** (different ecosystems — Rust binary via npm/brew/cargo vs Python via pip — each manages its own browser): use **agent-browser to *interact with and witness* a page** (logins, clicks, screenshots, JS render) and **Scrapling to *fetch and parse* pages programmatically**.
+
+1. Check `agent-browser` first (`agent-browser --version`; load its guide via `agent-browser skills get core`; install per the auto-install policy if missing)
+2. Use `agent-browser` for: screenshot evidence, logins/interactive UI, JS-rendered/SPA pages, complex multi-step browser flows
+3. Use Scrapling DynamicFetcher for: JS-heavy sites, SPA content, auto-escalation from static (programmatic)
 4. Use Scrapling StealthyFetcher for: anti-bot bypass, Cloudflare-protected targets
 5. Use Scrapling Fetcher for: fast static page collection, HTML parsing (~2ms)
 6. Fall back to web search → web fetch → direct curl — no investigation blockers
@@ -912,6 +916,7 @@ If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv`
 | git, gh, jq, exiftool, pandoc, poppler/pdfinfo, qpdf, whois | `winget install <Id>` | `brew install <pkg>` | `sudo apt install -y <pkg>` |
 | Go toolchain | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` |
 | mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
+| **agent-browser** (interactive browser) | `npm i -g agent-browser` or `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` (or `cargo install`) → `agent-browser install` |
 
 **Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga → GitHub release binary per OS/arch. **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
 

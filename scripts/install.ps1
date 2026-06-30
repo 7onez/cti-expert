@@ -123,6 +123,18 @@ function Install-Uv {
     else { Log-Skip "uv (install manually from https://astral.sh/uv; using pip/venv fallback)" }
 }
 
+# Interactive browser collector (vercel-labs/agent-browser) — primary browser tool.
+function Install-AgentBrowser {
+    if (Test-Command "agent-browser") { Log-Ok "agent-browser (present)" }
+    elseif (Test-Command "npm")   { Invoke-Step "agent-browser" { npm install -g agent-browser | Out-Host; if ($LASTEXITCODE -ne 0) { throw "npm install -g agent-browser failed" }; Log-Ok "agent-browser (npm)" } | Out-Null }
+    elseif (Test-Command "cargo") { Invoke-Step "agent-browser" { cargo install agent-browser | Out-Host; if ($LASTEXITCODE -ne 0) { throw "cargo install agent-browser failed" }; Log-Ok "agent-browser (cargo)" } | Out-Null }
+    elseif (Test-Command "scoop") { Invoke-Step "agent-browser" { scoop install agent-browser | Out-Host; if (!(Test-Command "agent-browser")) { throw "scoop install agent-browser failed" }; Log-Ok "agent-browser (scoop)" } | Out-Null }
+    else { Write-Host "  --  agent-browser needs npm, cargo, or scoop (see techniques/agent-browser.md)" -ForegroundColor Yellow; $script:Skipped++ }
+    if (Test-Command "agent-browser") {
+        Invoke-Step "agent-browser Chrome" { agent-browser install 2>&1 | Out-Null; Log-Ok "agent-browser Chrome runtime" } | Out-Null
+    }
+}
+
 function Install-WingetPackage {
     param(
         [string]$Name,
@@ -477,6 +489,14 @@ if ($Headless) {
 }
 else {
     Write-Host "  --  Scrapling headless not requested (add -Headless, downloads ~200MB)" -ForegroundColor Yellow
+}
+
+Write-Section "agent-browser (interactive browser, vercel-labs)"
+if ($Headless) {
+    Install-AgentBrowser
+}
+else {
+    Write-Host "  --  agent-browser not requested (add -Headless; installs CLI + Chrome)" -ForegroundColor Yellow
 }
 
 Write-Section "Go tools"

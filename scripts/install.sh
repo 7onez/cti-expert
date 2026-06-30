@@ -105,6 +105,24 @@ ensure_uv() {
   fi
 }
 
+# Interactive browser collector (vercel-labs/agent-browser) — primary browser tool.
+ensure_agent_browser() {
+  if has agent-browser; then
+    log_ok "agent-browser (present)"
+  elif has npm; then
+    npm install -g agent-browser &>/dev/null 2>&1 && log_ok "agent-browser (npm)" || log_fail "agent-browser" "npm install -g agent-browser failed"
+  elif [[ "$OS" == "macos" ]] && has brew; then
+    brew install agent-browser &>/dev/null 2>&1 && log_ok "agent-browser (brew)" || log_fail "agent-browser" "brew install agent-browser failed"
+  elif has cargo; then
+    cargo install agent-browser &>/dev/null 2>&1 && log_ok "agent-browser (cargo)" || log_fail "agent-browser" "cargo install agent-browser failed"
+  else
+    log_skip "agent-browser (needs npm, brew, or cargo — see techniques/agent-browser.md)"
+  fi
+  if has agent-browser; then
+    agent-browser install &>/dev/null 2>&1 && log_ok "agent-browser Chrome runtime" || log_skip "agent-browser Chrome (run: agent-browser install)"
+  fi
+}
+
 apt_install() {
   local pkg="$1" cmd="${2:-$1}"
   if has "$cmd"; then
@@ -456,6 +474,14 @@ if [[ "$OPT_HEADLESS" == true ]]; then
   fi
 else
   echo -e "  ${YELLOW}–${NC} Scrapling headless not requested (add --headless, downloads ~200MB)"
+fi
+
+# ── agent-browser (interactive browser collector) ─────────────
+section "agent-browser (interactive browser, vercel-labs)"
+if [[ "$OPT_HEADLESS" == true ]]; then
+  ensure_agent_browser
+else
+  echo -e "  ${YELLOW}–${NC} agent-browser not requested (add --headless; installs CLI + Chrome)"
 fi
 
 # ── Go tools (optional) ────────────────────────────────────────

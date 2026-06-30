@@ -181,6 +181,9 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | dig | `dig` | use `nslookup` (built-in) or `dnspython` | preinstalled | `sudo apt install -y dnsutils` |
 | mat2 | `mat2` | **not supported** → use `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
 | Go | `go` | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` (or go.dev/dl) |
+| agent-browser | `agent-browser` | `npm i -g agent-browser` / `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` / `cargo install` → `agent-browser install` |
+
+> **agent-browser** ([vercel-labs](https://github.com/vercel-labs/agent-browser)) is the skill's primary interactive browser collector (CDP, accessibility-tree snapshots, screenshots). No API key for core automation. `agent-browser install` downloads Chrome for Testing (first run). It is complementary to Scrapling — see `techniques/agent-browser.md`. The bundled installers add it under `--headless`/`-Headless`.
 
 ### Go tools (need Go installed first; then identical on all OSes)
 
