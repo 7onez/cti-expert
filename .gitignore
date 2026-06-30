@@ -14,6 +14,9 @@ Thumbs.db
 osint-reports/
 OSINT-REPORT-*
 CTI-REPORT-*
+# ...but NOT the HTML report template: on case-insensitive filesystems (Windows/macOS)
+# the CTI-REPORT-* rule above otherwise swallows scripts/cti-report-template.html.
+!scripts/cti-report-template.html
 plans/
 
 # Runtime-installed third-party tools (cloned by the installer)
