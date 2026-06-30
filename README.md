@@ -126,6 +126,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Portability** | Cross-agent support | Runs in Claude Code **and** OpenAI Codex via `AGENTS.md` + a ready-to-copy `/cti-expert` Codex prompt |
 | **CTI** | Infostealer-log analyzer (`/stealer-log`) | Family ID, victim-vs-operator profiling, cross-log actor correlation, IOC + raw-artifact extraction |
 | **Recon** | Admin / sensitive-endpoint detection | Subdomain-prefix + path + CJK classifier (`admin`, `adm`, `kef`, `ador`, `panel`…) |
+| **Collection** | agent-browser integration | Primary interactive browser ([vercel-labs](https://github.com/vercel-labs/agent-browser)): CDP, accessibility-tree snapshots, screenshots; complementary to Scrapling, no API key for core |
 | **Reliability** | Fresh-VPS install hardening + CI | root/sudo + prereq bootstrap; smoke test + GitHub Actions on a minimal root Ubuntu container |
 
 <details>
@@ -970,6 +971,10 @@ See [LICENSE](LICENSE) for full text.
 
 Một kỹ năng của Claude Code biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở chuyên nghiệp. Chạy thu thập tình báo có cấu trúc sử dụng **67+ lệnh** trên **36 kỹ thuật** — không cần API key cho chức năng cốt lõi. Một số kỹ thuật hỗ trợ API key miễn phí tùy chọn để truy cập nâng cao (VD: Wigle, VirusTotal, URLScan.io).
 
+**Mới trong v2.4:** Phát hiện hệ điều hành đa nền tảng (Windows/macOS/Linux) với tự động cài đặt theo OS và tạo DOCX tự khắc phục (UTF-8 + pandoc); bộ công cụ ưu tiên **uv** (uv venv/pip/tool, script `uv run` PEP 723 không cần thiết lập); hỗ trợ **đa tác nhân** — chạy trên Claude Code **và** OpenAI Codex qua `AGENTS.md`; trình phân tích nhật ký stealer (`/cti-expert /stealer-log`) — định danh họ mã độc, phân tích nạn nhân-vs-kẻ vận hành, tương quan đa nhật ký, trích xuất IOC + dữ liệu thô; phát hiện trang quản trị & điểm cuối nhạy cảm (admin/adm/kef/ador/panel…); tích hợp **agent-browser** (vercel-labs) làm trình thu thập trình duyệt tương tác chính; gia cố cài đặt trên máy/VPS sạch + CI.
+
+**Mới trong v2.3:** WHOIS toàn cầu cho mọi TLD (whoisdomain + CLI + Whoxy API; .vn, .th, .sg, .kr…), WHOIS đảo ngược & lịch sử; thu thập web Scrapling thích ứng (tĩnh → chống bot → kết xuất JS); trình duyệt headless tự động mở; làm giàu song song AgentFlow (DAG); phân tích HTML ~2ms; yêu cầu tối thiểu Python 3.10+.
+
 **Mới trong v2.2:** Pháp y hình ảnh & tìm kiếm khuôn mặt (FaceCheck.id, TinEye, FotoForensics, picarta.ai AI geolocation), điều tra blockchain (Blockchair, Etherscan, WalletExplorer, Chainabuse), theo dõi vận tải (ADS-B Exchange theo dõi máy bay, Marine Traffic theo dõi tàu, VIN decoder), điều tra darknet (Ahmia.fi tìm kiếm Tor, ransomwatch), mạng xã hội mở rộng (Reddit, Instagram, TikTok, Telegram), tra cứu người (TruePeopleSearch, IDCrawl), 11 mẫu Google mega-dork bao phủ 73 domain.
 
 **Mới trong v2.1:** Trực quan hóa đường tấn công (`/cti-expert /render threat-path`), bề mặt tấn công (`/cti-expert /render attack-surface`), xuất IOC STIX 2.1 (`/cti-expert /report ioc`), theo dõi rủi ro theo thời gian (`/cti-expert /drift`), ảnh chụp Wayback (`/cti-expert /snapshots`, `/cti-expert /diff`), hướng dẫn người mới (`/cti-expert /onboard`), giải thích phát hiện (`/cti-expert /clarify`), phân tích khoảng trống (`/cti-expert /blind-spots`), kiểm tra nguồn (`/cti-expert /source-check`), so sánh phiên (`/cti-expert /workspace diff`), điểm chất lượng (`/cti-expert /quality`), thang độ tin cậy nguồn A-F, 4 loại thực thể mới.
@@ -1180,7 +1185,7 @@ claude   # mở Claude Code CLI
 
 ---
 
-**Tác giả:** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **Phiên bản:** 2.2 &bull; **Giấy phép:** MIT
+**Tác giả:** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **Phiên bản:** 2.4 &bull; **Giấy phép:** MIT
 
 </details>
 
@@ -1199,6 +1204,10 @@ claude   # mở Claude Code CLI
 ### 什么是 CTI Expert？
 
 一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**36 种技术**进行结构化情报收集——核心功能无需 API 密钥。部分技术支持可选的免费 API 密钥以获取增强访问（如 Wigle、VirusTotal、URLScan.io）。
+
+**v2.4 新功能：** 跨平台操作系统检测（Windows/macOS/Linux），按系统自动安装，DOCX 生成自愈（UTF-8 + pandoc）；**uv** 优先工具链（uv venv/pip/tool，PEP 723 `uv run` 零配置脚本）；**跨代理**支持——可在 Claude Code **和** OpenAI Codex 上通过 `AGENTS.md` 运行；信息窃取日志分析器（`/cti-expert /stealer-log`）——家族识别、受害者与操作者画像、跨日志关联、IOC 与原始数据提取；管理后台 / 敏感端点检测（admin/adm/kef/ador/panel…）；集成 **agent-browser**（vercel-labs）作为主要交互式浏览器采集器；全新干净环境/VPS 安装加固 + CI。
+
+**v2.3 新功能：** 面向所有 TLD 的通用 WHOIS（whoisdomain + CLI + Whoxy API；.vn、.th、.sg、.kr…）、反向与历史 WHOIS；Scrapling 自适应网页采集（静态 → 反爬 → JS 渲染）；无头浏览器自动开启；AgentFlow 并行富化（DAG）；HTML 解析 ~2ms；最低要求 Python 3.10+。
 
 **v2.2 新功能：** 图像取证与人脸搜索（FaceCheck.id、TinEye、FotoForensics、picarta.ai AI地理定位）、区块链调查（Blockchair、Etherscan、WalletExplorer、Chainabuse）、交通追踪（ADS-B Exchange飞机追踪、Marine Traffic船舶追踪、VIN解码器）、暗网调查（Ahmia.fi Tor搜索、ransomwatch）、社交媒体扩展（Reddit、Instagram、TikTok、Telegram）、人员搜索（TruePeopleSearch、IDCrawl）、11个跨平台Google mega-dork模板覆盖73个域名。
 
@@ -1410,6 +1419,6 @@ claude   # 打开 Claude Code CLI
 
 ---
 
-**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.2 &bull; **许可证：** MIT
+**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.4 &bull; **许可证：** MIT
 
 </details>
