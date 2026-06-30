@@ -37,9 +37,7 @@
 
 <!-- Language Selector -->
 <p>
-  <a href="README.md"><img src="https://img.shields.io/badge/lang-English-blue?style=flat-square" alt="English"></a>&nbsp;
-  <a href="README.vi.md"><img src="https://img.shields.io/badge/lang-Tiếng_Việt-red?style=flat-square" alt="Tiếng Việt"></a>&nbsp;
-  <a href="README.zh.md"><img src="https://img.shields.io/badge/lang-中文-red?style=flat-square" alt="中文"></a>
+  🇬🇧 <a href="README.md"><b>English</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;🇻🇳 <a href="README.vi.md">Tiếng Việt</a>&nbsp;&nbsp;·&nbsp;&nbsp;🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
 <br>

@@ -1,6 +1,6 @@
 # :vietnam: CTI Expert — Tình Báo Mối Đe Dọa Mạng & OSINT
 
-**Ngôn ngữ:** [English](README.md) · [Tiếng Việt](README.vi.md) · [中文](README.zh.md)
+🇬🇧 [English](README.md)&nbsp;&nbsp;·&nbsp;&nbsp;🇻🇳 **[Tiếng Việt](README.vi.md)**&nbsp;&nbsp;·&nbsp;&nbsp;🇨🇳 [中文](README.zh-CN.md)
 
 ---
 

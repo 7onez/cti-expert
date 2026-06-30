@@ -1,6 +1,6 @@
 # :cn: CTI Expert — 网络威胁情报与开源情报
 
-**语言：** [English](README.md) · [Tiếng Việt](README.vi.md) · [中文](README.zh.md)
+🇬🇧 [English](README.md)&nbsp;&nbsp;·&nbsp;&nbsp;🇻🇳 [Tiếng Việt](README.vi.md)&nbsp;&nbsp;·&nbsp;&nbsp;🇨🇳 **[中文](README.zh-CN.md)**
 
 ---
 
