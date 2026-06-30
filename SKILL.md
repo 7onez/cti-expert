@@ -41,7 +41,7 @@ Every investigation follows four phases:
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain` |
 | **Enrich** | Expand leads — `/branch`, `/crossref`, `/link-subjects`, `/signatures` |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding` |
-| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .docx** |
+| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle** |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
 
@@ -133,11 +133,13 @@ Commands grouped by AEAD phase.
 
 | Command | What It Does | Example |
 |---------|-------------|---------|
-| `/report` | Formal structured intelligence report | `/report` |
+| `/report` | Full report — auto-saves .md + .html + .json + .csv + IOC bundle | `/report` |
+| `/report html` | Interactive self-contained HTML report (primary deliverable) | `/report html` |
 | `/report brief` | Single-page executive brief | `/report brief` |
 | `/report json` | Raw data as JSON | `/report json` |
 | `/report csv` | Spreadsheet-compatible export | `/report csv` |
-| `/report legal` | Evidence-formatted for legal proceedings | `/report legal` |
+| `/report docx` | Word document (rich charts/diagrams) — on request | `/report docx` |
+| `/report legal` | Evidence-formatted for legal proceedings (adds DOCX/PDF) | `/report legal` |
 | `/report journalist` | Source-citation-heavy format | `/report journalist` |
 | `/brief` | Plain-language summary (non-technical) | `/brief` |
 | `/render entities` | ASCII subject relationship diagram | `/render entities` |
@@ -350,16 +352,26 @@ Reference: `output/reports/`, `connectors/`
 
 ### Mandatory File Export (CRITICAL)
 
-**Every `/report`, `/brief`, and `/case` command MUST auto-save two files to disk at the end of delivery:**
+**Every `/report`, `/brief`, and `/case` command MUST auto-save the default export set to disk at the end of delivery:**
 
-1. **Markdown report** — saved as `OSINT-REPORT-[CASE-ID]-[YYYY-MM-DD].md`
-2. **Word document** — saved as `OSINT-REPORT-[CASE-ID]-[YYYY-MM-DD].docx`
+| # | Format | File | Role |
+|---|--------|------|------|
+| 1 | **Markdown** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md` | Diffable, greppable source of truth; also the input to the HTML/DOCX generators |
+| 2 | **Interactive HTML** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].html` | **Primary human-facing deliverable** — self-contained, OFFLINE; charts + 2D entity graph + topology + timeline + indicator panel + search |
+| 3 | **JSON** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json` | Structured case data (the report JSON below); feeds the generators and downstream tooling |
+| 4 | **CSV** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv` | Findings (and indicators, via the IOC export) for spreadsheets / SIEM lookups |
+| 5 | **IOC / selector bundle** | `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv}` | Comprehensive indicators & selectors — STIX 2.1 + flat + CSV |
 
 **Save location:** Current working directory, or `./osint-reports/` subdirectory if it exists.
 
-**DOCX generation (Rich format with charts & diagrams):**
+- **`--yolo`:** save the five-format default set with no prompt.
+- **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
+- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). HTML **"Print → Save as PDF"** covers most PDF needs for free.
+- Explicit machine-format subcommands always emit that format directly: `/report json`, `/report csv`, `/report ioc`.
 
-**Step 1 — Build the DOCX-ready JSON file.** The Python generator expects a SPECIFIC flat format (NOT the engine case-schema.json). You MUST construct the JSON matching this exact structure before calling the script. Reference: `scripts/sample-cti-report-data.json`.
+**The HTML, JSON, CSV and IOC outputs all derive from one `report JSON`.** Build it once, then run the generators below.
+
+**Step 1 — Build the report JSON file.** The generators expect a SPECIFIC flat format (NOT the engine case-schema.json). You MUST construct the JSON matching this exact structure before calling the scripts. Reference: `scripts/sample-cti-report-data.json`.
 
 ```json
 {
@@ -439,7 +451,27 @@ Reference: `output/reports/`, `connectors/`
 - All fields shown above should be **populated with actual data** — empty strings or "N/A" defeat the purpose
 - Populate `executive_summary` with a full paragraph — this is the most-read section of the report
 
-**Step 2 — Save the JSON and run the generator.** The generators carry **PEP 723 inline dependency metadata**, so the simplest, most portable runner is **`uv run`** — it provisions the deps on the fly with zero venv/pip setup, identically on every OS. The generator is also **self-healing**: it forces UTF-8 output and auto-locates pandoc (including Windows `%LOCALAPPDATA%\Pandoc`), so **no `PYTHONUTF8` / PATH prelude is needed**. Replace `REPORT` with `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]`.
+**Optional enrichment fields (backward-compatible — used by the HTML report & IOC export when present):**
+- `subjects[].role` — `actor` | `victim` | `infrastructure` | `associate` | `witness` (drives the role chips and actor↔victim attribution; otherwise inferred from type/links)
+- `subjects[].selectors[]` — contact/social points attached to a person/org: `{type, value, platform, url}` (e.g. a victim's phone, an actor's Telegram or LinkedIn) — surfaced in the Indicators panel and IOC export
+- `indicators[]` — analyst-curated indicators to force into the export verbatim: `{type, value, category, role, confidence, source_url}`
+
+**Step 2 — Generate the interactive HTML report (PRIMARY human-facing deliverable).** Self-contained, OFFLINE, zero toolchain to view — opens in any browser:
+```bash
+S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md
+uv run "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   # any OS, zero setup
+# no uv installed: python3 "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   (Windows: py …)
+```
+It injects the report JSON into `cti-report-template.html` and renders, entirely client-side and offline (no CDN, no network calls): KPI cards, an exposure gauge, a finding-type pie, severity bars, a draggable/zoomable **2D entity graph**, **infrastructure topology**, an **event timeline**, and the **comprehensive Indicators & Selectors panel** (network IOCs + contacts + identities + social/messaging handles + wallets + actor↔victim attribution) — with global search, category menus, dark/light themes and a print-to-PDF stylesheet.
+
+**Step 3 — Generate the comprehensive IOC / selector bundle.**
+```bash
+uv run "$S/generate-cti-iocs.py" "REPORT.json" "IOC-[CASE-ID]-[YYYY-MM-DD]" --format all
+# single format: --format stix | flat | csv
+```
+Extracts EVERY indicator that profiles or can reach an actor/victim — network IOCs, emails/phones, usernames/names/aliases, social-media profiles, messaging handles, crypto wallets, and the attribution links between subjects. Full spec: [`techniques/ioc-export.md`](techniques/ioc-export.md).
+
+**Step 4 — DOCX (on request, or automatically for `/report legal`).** Word is no longer auto-generated by default. When the user asks for it (or for evidentiary reports), build it from the SAME report JSON + MD. The generators carry **PEP 723 inline dependency metadata**, so the simplest, most portable runner is **`uv run`** — it provisions the deps on the fly with zero venv/pip setup, identically on every OS. The generator is also **self-healing**: it forces UTF-8 output and auto-locates pandoc (including Windows `%LOCALAPPDATA%\Pandoc`), so **no `PYTHONUTF8` / PATH prelude is needed**. Replace `REPORT` with `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]`.
 
 **Preferred — `uv run` (any OS, any agent, zero setup):**
 ```bash
@@ -468,25 +500,32 @@ uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
 
 **After saving, confirm all files to the user:**
 ```
-📄 Report saved:
+📄 Report saved (default export set):
    → CTI-REPORT-CASE001-2026-03-30.md
+   → CTI-REPORT-CASE001-2026-03-30.html   (interactive — open in any browser, fully offline)
    → CTI-REPORT-CASE001-2026-03-30.json
-   → CTI-REPORT-CASE001-2026-03-30.docx  (rich format with charts & diagrams)
+   → CTI-REPORT-CASE001-2026-03-30.csv
+   → IOC-CASE001-2026-03-30.stix.json / .txt / .csv   (indicators & selectors)
+
+   Need a Word (.docx) or PDF too? (PDF = open the .html and Print → Save as PDF)
 ```
 
 ### Report Formats
 
 | Format | Command | Audience |
 |--------|---------|---------|
+| Interactive HTML | `/report` (default) · `/report html` | Everyone — analysts to execs; the primary deliverable |
 | Technical INTSUM | `/report` | Analysts, security teams |
 | Executive Brief | `/report brief` | Decision-makers, management |
 | Plain-Language Summary | `/brief` | Non-technical stakeholders |
-| Legal Evidence Format | `/report legal` | Attorneys, compliance teams |
+| Legal Evidence Format | `/report legal` | Attorneys, compliance teams (auto-adds DOCX/PDF) |
 | Journalist Format | `/report journalist` | Reporters, media |
 | JSON Export | `/report json` | Downstream tools, pipelines |
 | CSV Export | `/report csv` | Spreadsheets, databases |
+| IOC / selector bundle | `/report ioc` | SIEM/TIP ingest, threat-intel sharing |
+| Word document | `/report docx` | Formal sharing (on request) |
 
-All formats above auto-save as .md + .docx unless the format is inherently machine-only (JSON, CSV — those save as their native format only).
+Every narrative report auto-saves the **default export set** (.md + .html + .json + .csv + IOC bundle — see Mandatory File Export above). `/report legal` additionally produces DOCX/PDF. Machine-only subcommands (`json`, `csv`, `ioc`) emit their native format directly.
 
 ### Visual Outputs
 
@@ -498,6 +537,8 @@ All formats above auto-save as .md + .docx unless the format is inherently machi
 | Network topology | `/render network` | **ASCII** |
 
 **All visual outputs use ASCII box-drawing by default.** Mermaid only on explicit `--mermaid` flag.
+
+The **interactive HTML report** (default deliverable) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
 
 ### Connectors
 
@@ -686,12 +727,15 @@ cti-expert/
 │       ├── attack-path-diagram.md  Attack path flow visualization (/render threat-path)
 │       └── attack-surface-map.md   Attack surface exposure map (/render attack-surface)
 │
-├── scripts/                    Cross-platform install + DOCX report generation
+├── scripts/                    Cross-platform install + HTML / IOC / DOCX report generation
 │   ├── platform-setup.md            Cross-platform reference: OS detection, uv-first install matrix, gotchas
 │   ├── install.ps1                  Windows installer (uv-first: uv venv/pip/tool; winget + pip/pipx fallback)
 │   ├── install.sh                   macOS/Linux/Git-Bash/WSL installer (uv-first; brew/apt + pip/pipx fallback)
 │   ├── stealer_log_parse.py         Infostealer-log analyzer — attribution, profiling, IOCs (PEP 723 / `uv run`, zero-dep)
-│   ├── generate-cti-docx-hybrid.py  PRIMARY: Hybrid MD+JSON generator (PEP 723 / `uv run`; self-heals UTF-8 + pandoc)
+│   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
+│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
+│   ├── generate-cti-iocs.py         Comprehensive IOC/selector exporter → STIX 2.1 / flat / CSV (network IOCs + contacts + identities + social/messaging + wallets + attribution; PEP 723 / `uv run`, zero-dep)
+│   ├── generate-cti-docx-hybrid.py  Hybrid MD+JSON DOCX generator — on request / `/report legal` (PEP 723 / `uv run`; self-heals UTF-8 + pandoc)
 │   ├── generate-cti-docx.py         Fallback: JSON-only generator (PEP 723 / `uv run`)
 │   ├── cti_docx_postprocess.py      Post-processing: styling, chart injection, cover page
 │   ├── cti_docx_charts.py           Chart rendering (pie, bar, gauge, timeline, traffic, geo)

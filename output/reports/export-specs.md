@@ -8,12 +8,13 @@ Schema definitions for case data export. Machine-readable formats.
 
 | Format | Use case | Schema type |
 |--------|----------|-------------|
+| **HTML (interactive)** | **Primary deliverable — analyst→exec; self-contained & OFFLINE** | **`cti-report-template.html` + `generate-cti-html.py` (report JSON injected)** |
 | JSON | API integration, tooling | Object schema below |
 | CSV | Spreadsheet import | Flat row per finding |
-| STIX 2.1 | Threat intel sharing | OASIS standard |
+| **IOC / selector bundle** | **SIEM/TIP ingest, threat-intel sharing; comprehensive actor/victim selectors** | **STIX 2.1 + flat + CSV via `generate-cti-iocs.py` — see [`techniques/ioc-export.md`](../../techniques/ioc-export.md)** |
+| STIX 2.1 | Threat intel sharing | OASIS standard (emitted as part of the IOC bundle) |
 | Markdown bundle | Archive, human review | Directory + index |
-| **DOCX** | **Formal reports, sharing with non-technical stakeholders** | **Pandoc-converted from Markdown** |
-| **IOC** | **SIEM/TIP ingest, threat intel sharing** | **STIX bundle, flat list, or CSV — see [`techniques/ioc-export.md`](../../techniques/ioc-export.md)** |
+| DOCX | Formal reports — **on request** / `/report legal` | Hybrid MD+JSON via `generate-cti-docx-hybrid.py` |
 
 ---
 
@@ -120,6 +121,53 @@ export-CASE-ID-YYYYMMDD/
 
 ---
 
+## HTML Export Specification (PRIMARY)
+
+### Generation
+
+```bash
+S="$SKILL_DIR/scripts"
+uv run "$S/generate-cti-html.py" "CTI-REPORT-[CASE-ID]-[DATE].json" "CTI-REPORT-[CASE-ID]-[DATE].html"
+# no uv installed: python3 "$S/generate-cti-html.py" …   (Windows: py …)
+```
+
+The generator injects the report JSON into `cti-report-template.html` (replacing the
+`__CTI_CASE_DATA__` data island, with `<` escaped for `</script>` safety) and writes a
+single file. **Stdlib only — no external dependencies.**
+
+### Guarantees
+
+- **Self-contained & OFFLINE** — all CSS/JS inlined; no CDN, fonts, scripts, or network calls. Safe for air-gapped / classified handling; leaks no "report-opened" telemetry.
+- **Zero toolchain to view** — opens in any browser, on any OS.
+- Charts, the 2D force-directed entity graph, topology, timeline and the indicator extraction all run client-side in vanilla JS/SVG (no D3 / Chart.js).
+
+### What's included
+
+| Element | Rendering |
+|---------|-----------|
+| Classification banner | Top + bottom, colored by OPEN / INTERNAL / RESTRICTED / CONFIDENTIAL |
+| Overview | KPI cards, exposure gauge, finding-type pie, severity bars, indicators-by-role, traffic/geo (if `visitor_stats`) |
+| Entities | Profile cards by type with role chips (actor / victim / infra / …), confidence, aliases |
+| Findings | Severity-colored cards; sortable; severity filter; source links |
+| Network graph | Draggable / zoomable 2D force-directed graph; click node → detail drawer; filter by type; search-highlight |
+| Topology | Org → domain → host tiers |
+| Timeline | Interactive event timeline |
+| Indicators & Selectors | Grouped: network IOCs, contacts, identities, social, messaging, financial, geo + attribution; copy / copy-all; defang toggle |
+| Sources / Gaps / Recommendations / Caveats | Tables and lists |
+| Search · menus · themes · print | Global search, category nav, dark/light toggle, print-to-PDF stylesheet |
+
+### Optional enrichment fields (backward-compatible)
+
+Used by the HTML report and the IOC export when present; safely ignored otherwise:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `subjects[].role` | enum: actor / victim / infrastructure / associate / witness | Role chips + actor↔victim attribution (otherwise inferred from type/links) |
+| `subjects[].selectors[]` | `{type, value, platform, url}[]` | Contact/social points attached to a person/org (victim phone, actor Telegram/LinkedIn…) |
+| `indicators[]` | `{type, value, category, role, confidence, source_url}[]` | Analyst-curated indicators forced into the export verbatim |
+
+---
+
 ## DOCX Export Specification
 
 ### Generation Method
@@ -181,7 +229,7 @@ CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json      # Structured data (input to DOCX gen
 
 ### Mandatory Auto-Save Rule
 
-**Every `/report`, `/brief`, and `/case` command must auto-save both .md and .docx to disk.** No user action required — files appear in CWD or `./osint-reports/` if it exists. Confirm both file paths to the user after saving.
+**Every `/report`, `/brief`, and `/case` command must auto-save the default export set** — `.md` + `.html` + `.json` + `.csv` + the IOC bundle (`.stix.json` / `.txt` / `.csv`) — to disk. No user action required; files appear in CWD or `./osint-reports/` if it exists. Confirm all paths to the user after saving. DOCX is generated only on request (`/report docx`) or for `/report legal`. In `--yolo`, save the default set with no prompt; in interactive mode, offer DOCX/PDF at the end.
 
 ---
 

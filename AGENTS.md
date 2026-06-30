@@ -61,18 +61,25 @@ If uv truly can't be installed, fall back to `py`/`python3` + `pip`/`pipx` (see
 
 ---
 
-## 4. Generate a DOCX report (works on any OS / any agent)
+## 4. Generate report outputs (works on any OS / any agent)
 
 The generators carry **PEP 723 inline dependencies**, so `uv run` provisions them
-automatically. They also self-heal: force UTF-8 output and auto-locate pandoc
-(including Windows `%LOCALAPPDATA%\Pandoc`) — no `PYTHONUTF8`/PATH prelude needed.
+automatically (the HTML/IOC generators are stdlib-only — nothing to install). They
+self-heal: force UTF-8 output and auto-locate pandoc — no `PYTHONUTF8`/PATH prelude needed.
+
+The **default export set** is `.md` + `.html` + `.json` + `.csv` + the IOC bundle. Build
+the report JSON once (see `SKILL.md` §8), then run the generators:
 
 ```bash
 # Bash (macOS / Linux / Git Bash). Windows PowerShell: use $env:USERPROFILE\... and backslashes.
 S="$SKILL_DIR/scripts"
-uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx   # full: narrative + charts
-uv run "$S/generate-cti-docx.py"        REPORT.json REPORT.docx             # JSON-only (no pandoc)
-# No-uv fallback: python3 (Unix) / py (Windows) "$S/generate-cti-docx-hybrid.py" ...
+# PRIMARY: interactive, self-contained, OFFLINE HTML report (opens in any browser)
+uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
+# Comprehensive IOC / selector bundle -> STIX 2.1 + flat + CSV
+uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
+# DOCX — on request / `/report legal` only:
+uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx   # narrative + charts
+# No-uv fallback: python3 (Unix) / py (Windows) "$S/<script>" ...
 ```
 
 ---
@@ -94,8 +101,8 @@ The **analyst reasoning** — query/dork generation, source interpretation, find
 framework, exposure scoring, report drafting — works in any LLM with no execution. Only
 the **local steps** (DOCX build, tool installs, CLI recon) need a code-capable harness
 (Codex sandbox, Claude Code). In a no-exec environment: produce the full **Markdown**
-report and note the `.docx` build + any CLI enrichment as follow-ups to run where
-execution is available. Do not claim a tool ran when it didn't.
+report **and the report JSON**, and note the **HTML / IOC / `.docx` builds** + any CLI
+enrichment as follow-ups to run where execution is available. Do not claim a tool ran when it didn't.
 
 ---
 
@@ -122,4 +129,4 @@ open network**: a **CLI** (Claude Code CLI / Codex CLI) or a **local desktop/IDE
 (claude.ai/code web, Codex cloud / ChatGPT web), reasoning and query generation still
 work, but generated files won't persist to the user's disk and outbound network is often
 restricted. **If you detect you're in such an environment, say so**, produce the Markdown
-report, and flag the `.docx` build + any CLI recon as steps to run in a local CLI/desktop.
+report + report JSON, and flag the **HTML / IOC / `.docx` builds** + any CLI recon as steps to run in a local CLI/desktop.

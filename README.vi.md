@@ -18,7 +18,7 @@ Một kỹ năng của Claude Code biến Claude thành một nhà phân tích t
 
 **Khả năng cốt lõi:** Trinh sát đa vector trên mọi loại mục tiêu (cá nhân, tên miền, tổ chức, tên người dùng, email, IP, WiFi) với xác thực phát hiện tự động, chấm điểm rủi ro phơi bày, và báo cáo tình báo có cấu trúc ở nhiều định dạng.
 
-**Quy trình:** Vòng đời AEAD — Thu thập dữ liệu thô &rarr; Làm giàu bằng mở rộng pivot &rarr; Đánh giá phát hiện &rarr; Phân phối báo cáo có cấu trúc (Markdown + Word với biểu đồ, sơ đồ, định dạng chuyên nghiệp).
+**Quy trình:** Vòng đời AEAD — Thu thập dữ liệu thô &rarr; Làm giàu bằng mở rộng pivot &rarr; Đánh giá phát hiện &rarr; Phân phối báo cáo có cấu trúc (HTML tương tác + Markdown + JSON/CSV + gói IOC; Word khi cần).
 
 ---
 
@@ -37,7 +37,7 @@ Toàn bộ workflow CTI Expert được tối ưu cho Claude Code CLI:
 #### 🖥️ Nên chạy ở đâu — CLI là tốt nhất cho skill này
 
 > [!IMPORTANT]
-> CTI Expert **chạy nhiều tác vụ thực thi**: chạy `uv`/Python, cài công cụ OSINT, ghi báo cáo `.md`/`.docx`/`.json`, truy cập nhiều trang web bên ngoài, và lưu workspace vụ việc. Điều quan trọng là **shell cục bộ thật + file lưu bền + mạng không bị chặn** — **CLI hoặc app desktop cục bộ** cho bạn điều đó; còn **sandbox đám mây tạm thời thì không**. Điều này áp dụng cho cả **Claude** lẫn **Codex**.
+> CTI Expert **chạy nhiều tác vụ thực thi**: chạy `uv`/Python, cài công cụ OSINT, ghi báo cáo `.md`/`.html`/`.json`/`.csv` + gói IOC, truy cập nhiều trang web bên ngoài, và lưu workspace vụ việc. Điều quan trọng là **shell cục bộ thật + file lưu bền + mạng không bị chặn** — **CLI hoặc app desktop cục bộ** cho bạn điều đó; còn **sandbox đám mây tạm thời thì không**. Điều này áp dụng cho cả **Claude** lẫn **Codex**.
 
 | Môi trường | Chạy điều tra | Lý do |
 |---|---|---|
@@ -46,7 +46,7 @@ Toàn bộ workflow CTI Expert được tối ưu cho Claude Code CLI:
 | **claude.ai/code (web)** · **Codex cloud / ChatGPT web** | ⚠️ Hạn chế | Suy luận phân tích & tạo truy vấn vẫn chạy, nhưng file không lưu vào ổ đĩa của bạn và mạng ra ngoài thường bị giới hạn |
 
 > [!TIP]
-> **Chạy điều tra trong CLI** (Claude Code hoặc Codex); mở file `.docx`/báo cáo trong cửa sổ Desktop/IDE nếu bạn thích đọc ở đó. Chỉ dùng môi trường web/đám mây cho phần suy luận phân tích, không dùng cho recon nặng về thực thi.
+> **Chạy điều tra trong CLI** (Claude Code hoặc Codex); mở báo cáo `.html`/`.docx` trong cửa sổ Desktop/IDE nếu bạn thích đọc ở đó. Chỉ dùng môi trường web/đám mây cho phần suy luận phân tích, không dùng cho recon nặng về thực thi.
 
 ---
 
@@ -194,7 +194,7 @@ claude   # mở Claude Code CLI
 /cti-expert /github-osint github.com/org/repo   # Hồ sơ GitHub, repo, code, commit, fork
 /cti-expert /exposure domain.com                # Điểm rủi ro tổng hợp (0-100)
 /cti-expert /report                             # Báo cáo kỹ thuật INTSUM
-/cti-expert /workspace save                     # Lưu workspace + tự động tạo .docx
+/cti-expert /workspace save                     # Lưu trạng thái workspace để tiếp tục sau
 ```
 
 ---
@@ -208,7 +208,7 @@ claude   # mở Claude Code CLI
 | **Phân tích & Xác minh** | Xác minh hình ảnh, pháp y metadata, pháp y web, cơ sở dữ liệu rò rỉ |
 | **WiFi & Định vị** | Định vị WiFi qua Wigle.net, định vị nâng cao (W3W, Plus Codes, MGRS) |
 | **Kiểm tra bảo mật** | Kiểm tra đám mây (AWS/GCP/Azure), kiểm tra OWASP, kiểm tra dependency, kiểm tra prompt injection |
-| **Báo cáo & Xuất** | Báo cáo Markdown, DOCX với biểu đồ, workspace case, định dạng chuyên nghiệp |
+| **Báo cáo & Xuất** | Báo cáo HTML tương tác (đồ thị thực thể 2D, biểu đồ, dòng thời gian), Markdown, JSON/CSV, gói IOC (STIX 2.1), DOCX khi cần |
 
 ---
 

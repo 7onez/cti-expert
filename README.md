@@ -69,7 +69,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 **AEAD Workflow**
 
-**A**cquire raw data &rarr; **E**nrich with pivot expansion &rarr; **A**ssess findings &rarr; **D**eliver structured reports (Markdown + Word with charts, diagrams, styled formatting).
+**A**cquire raw data &rarr; **E**nrich with pivot expansion &rarr; **A**ssess findings &rarr; **D**eliver structured reports (interactive HTML + Markdown + JSON/CSV + IOC bundle; Word on request).
 
 </td>
 </tr>
@@ -200,7 +200,7 @@ The entire CTI Expert workflow is optimized for Claude Code CLI. The CLI gives y
 #### 🖥️ Where to run it — the CLI is best for this skill
 
 > [!IMPORTANT]
-> CTI Expert is **execution-heavy**: it runs `uv`/Python, installs OSINT tools, writes `.md`/`.docx`/`.json` reports, reaches many external sites, and saves case workspaces. What matters is a **real local shell + persistent files + open network** — a **CLI or local desktop agent** gives you that; an ephemeral **cloud sandbox does not**. This applies equally to **Claude** and **Codex**.
+> CTI Expert is **execution-heavy**: it runs `uv`/Python, installs OSINT tools, writes `.md`/`.html`/`.json`/`.csv` reports + IOC bundles, reaches many external sites, and saves case workspaces. What matters is a **real local shell + persistent files + open network** — a **CLI or local desktop agent** gives you that; an ephemeral **cloud sandbox does not**. This applies equally to **Claude** and **Codex**.
 
 | Environment | Running cases | Why |
 |---|---|---|
@@ -399,7 +399,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 /cti-expert /case example.com
 ```
 
-> Runs every applicable technique for the target type. Auto-generates `.md` and `.docx` reports.
+> Runs every applicable technique for the target type. Auto-generates the default export set: `.md` + interactive `.html` + `.json` + `.csv` + IOC bundle.
 
 ### 2 &mdash; Guided Flows
 
@@ -438,7 +438,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 /cti-expert /report                             # Technical INTSUM report
 /cti-expert /report brief                       # Executive summary
 /cti-expert /brief                              # Plain-language summary
-/cti-expert /workspace save                     # Save workspace + auto-generate .docx
+/cti-expert /workspace save                     # Save case workspace state (resume later)
 ```
 
 <br>
@@ -552,7 +552,7 @@ Every investigation follows four automated phases:
                                     ▼
    ┌─── DELIVER ────────────────────────────────────────────────────────┐
    │  Package output via /report, /brief, /render, /workspace save     │
-   │  Auto-save .md + .docx with charts & diagrams                     │
+   │  Auto-saves .md, .html, .json, .csv + IOC set                     │
    └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -623,7 +623,7 @@ Every investigation follows four automated phases:
 | `/cti-expert /report` | Technical INTSUM report |
 | `/cti-expert /report brief` | Executive summary |
 | `/cti-expert /brief` | Plain-language summary |
-| `/cti-expert /workspace save` | Save workspace + auto-generate .docx |
+| `/cti-expert /workspace save` | Persist case workspace state (resume later) |
 
 </details>
 
@@ -727,35 +727,37 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 
 ## Report Formats
 
-Every `/report`, `/brief`, and `/case` auto-saves two files:
+Every `/report`, `/brief`, and `/case` auto-saves the **default export set** — Markdown, an interactive HTML report, JSON, CSV, and a comprehensive IOC/selector bundle:
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### Markdown Report
+### 🌐 Interactive HTML report — *primary*
 
-- INTSUM format (technical)
-- Executive brief (decision-makers)
-- Plain-language summary (non-technical)
-- Legal evidence format (attorneys)
+- **Self-contained & offline** — one file, no CDN, opens in any browser
+- KPI dashboard, exposure gauge, pie / bar / donut charts
+- **2D force-directed entity graph** (drag · zoom · click-to-inspect)
+- Infrastructure topology + interactive event timeline
+- **Indicators & Selectors** panel — network IOCs, contacts, social / messaging handles, wallets + **actor↔victim attribution**
+- Global search, category menus, dark / light, print-to-PDF
 
 </td>
 <td width="50%" valign="top">
 
-### Word Document (.docx)
+### 📄 Markdown · JSON · CSV · IOC bundle
 
-- Cover page with classification
-- Table of contents & styled finding cards
-- Charts: pie, bar, gauge, timeline
-- Entity relationship & network topology diagrams
-- Source attribution table with page numbers
+- **Markdown** — INTSUM, executive brief, plain-language, legal formats
+- **JSON** — structured case data for tooling/pipelines
+- **CSV** — findings + indicators for spreadsheets / SIEM
+- **IOC bundle** — STIX 2.1 + flat + CSV (every actor/victim selector)
+- **Word (.docx)** — on request / `/report legal` (cover page, TOC, charts, diagrams)
 
 </td>
 </tr>
 </table>
 
-<sub>Generated by <code>scripts/generate-cti-docx.py</code></sub>
+<sub>HTML via <code>scripts/generate-cti-html.py</code> · IOCs via <code>scripts/generate-cti-iocs.py</code> · DOCX via <code>scripts/generate-cti-docx-hybrid.py</code></sub>
 
 <br>
 
@@ -803,10 +805,11 @@ cti-expert/
 │   ├── reports/                   Report templates
 │   └── visuals/                   Chart & render engine specs
 │
-├── scripts/                       DOCX report generation
-│   ├── generate-cti-docx.py       Main generator
-│   ├── cti_docx_charts.py         Chart rendering
-│   ├── cti_docx_diagrams.py       Entity relationship diagrams
+├── scripts/                       HTML / IOC / DOCX report generation
+│   ├── cti-report-template.html   Interactive HTML report template (offline)
+│   ├── generate-cti-html.py       HTML report generator (primary)
+│   ├── generate-cti-iocs.py       Comprehensive IOC/selector exporter (STIX/flat/CSV)
+│   ├── generate-cti-docx-hybrid.py DOCX generator (on request / legal)
 │   └── requirements.txt           Python dependencies
 │
 ├── workflows/                     Professional use-case guides

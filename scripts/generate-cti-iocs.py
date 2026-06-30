@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.8"
+# dependencies = []
+# ///
+"""
+generate-cti-iocs.py — CTI Expert comprehensive indicator / selector exporter.
+
+Extracts EVERY indicator that can profile or reach an actor or a victim, not just
+classic network IOCs:
+  * Network IOCs ...... IPv4/IPv6, domains, URLs, file hashes (MD5/SHA1/SHA256)
+  * Contact selectors . emails, phone numbers (how a threat actor reaches a victim)
+  * Identity selectors  real names, usernames, aliases (profile the actor / victim)
+  * Social / web ...... LinkedIn, X, Facebook, Instagram, GitHub, TikTok, ... profiles
+  * Messaging ......... Telegram, WhatsApp, Discord, Signal, Skype handles
+  * Financial ......... BTC / ETH wallets and payment handles
+  * Attribution ....... who is linked to / can reach whom (case connections)
+
+Sources scanned: subjects (typed + aliases + attached selectors + notes),
+findings (description + source_url + tags), case connections, and source URLs,
+plus any explicit top-level `indicators[]`.
+
+Outputs three machine-readable formats for SIEM / TIP ingest and sharing.
+
+Usage:
+    uv run generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|all]
+    python3 generate-cti-iocs.py <case.json> IOC-CASE-2026-03-30 --format all
+
+With --format all (default) writes <out_prefix>.stix.json, .txt and .csv.
+With a single format, <out_prefix> is treated as the exact output path.
+
+Author: Hieu Ngo - chongluadao.vn
+"""
+import sys
+import os
+import re
+import csv
+import json
+import uuid
+from datetime import datetime, timezone
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+# ----------------------------- patterns -----------------------------
+RX = {
+    "ipv4": re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"),
+    "ipv6": re.compile(r"\b(?:[A-F0-9]{1,4}:){3,7}[A-F0-9]{1,4}\b", re.I),
+    "url": re.compile(r"\bhttps?://[^\s\"'<>)\]]+", re.I),
+    "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
+    "domain": re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.I),
+    "md5": re.compile(r"\b[a-f0-9]{32}\b", re.I),
+    "sha1": re.compile(r"\b[a-f0-9]{40}\b", re.I),
+    "sha256": re.compile(r"\b[a-f0-9]{64}\b", re.I),
+    "btc": re.compile(r"\b(?:bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b"),
+    "eth": re.compile(r"\b0x[a-fA-F0-9]{40}\b"),
+}
+SOCIAL = [
+    (re.compile(r"(?:linkedin\.com)/(?:in|company|pub)/([^/?#\s]+)", re.I), "LinkedIn"),
+    (re.compile(r"(?:twitter\.com|x\.com)/([^/?#\s]+)", re.I), "X/Twitter"),
+    (re.compile(r"(?:facebook\.com|fb\.com)/([^/?#\s]+)", re.I), "Facebook"),
+    (re.compile(r"instagram\.com/([^/?#\s]+)", re.I), "Instagram"),
+    (re.compile(r"github\.com/([^/?#\s]+)", re.I), "GitHub"),
+    (re.compile(r"(?:youtube\.com/(?:@|channel/|user/)|youtu\.be/)([^/?#\s]+)", re.I), "YouTube"),
+    (re.compile(r"tiktok\.com/@?([^/?#\s]+)", re.I), "TikTok"),
+    (re.compile(r"reddit\.com/(?:u|user)/([^/?#\s]+)", re.I), "Reddit"),
+    (re.compile(r"medium\.com/@?([^/?#\s]+)", re.I), "Medium"),
+    (re.compile(r"bsky\.app/profile/([^/?#\s]+)", re.I), "Bluesky"),
+    (re.compile(r"vk\.com/([^/?#\s]+)", re.I), "VK"),
+    (re.compile(r"threads\.net/@?([^/?#\s]+)", re.I), "Threads"),
+]
+MSG = [
+    (re.compile(r"(?:t\.me|telegram\.me|telegram\.dog)/(?:s/)?([^/?#\s]+)", re.I), "Telegram"),
+    (re.compile(r"(?:wa\.me|(?:api\.)?whatsapp\.com/send\?phone=)/?(\+?\d{6,15})", re.I), "WhatsApp"),
+    (re.compile(r"(?:discord\.gg|discord\.com/invite)/([^/?#\s]+)", re.I), "Discord"),
+    (re.compile(r"signal\.(?:me|group)/#?(?:p/)?([^/?#\s]+)", re.I), "Signal"),
+]
+COMMON_FP = set("""github.com linkedin.com twitter.com x.com facebook.com instagram.com t.me
+youtube.com youtu.be haveibeenpwned.com shodan.io crt.sh google.com docs.google.com medium.com
+reddit.com archive.org web.archive.org ssllabs.com grayhatwarfare.com securitytrails.com
+virustotal.com""".split())
+
+SUBJECT_MAP = {
+    "domain": ("network", "domain"), "url": ("network", "url"),
+    "ip": ("network", "ipv4"), "network_addr": ("network", "ipv4"), "device": ("network", "device"),
+    "email": ("contact", "email"), "phone": ("contact", "phone"),
+    "username": ("identity", "username"), "handle": ("identity", "username"),
+    "person": ("identity", "name"), "individual": ("identity", "name"),
+    "organization": ("identity", "org-name"), "org": ("identity", "org-name"),
+    "wallet": ("financial", "wallet"), "crypto_address": ("financial", "wallet"),
+    "location": ("geo", "location"),
+}
+INFRA_TYPES = {"ip", "domain", "url", "network_addr", "device", "asn"}
+REACH_RELS = {"communicated_with", "communicates", "reaches", "reaches_out", "contacted"}
+
+
+def role_of(s):
+    r = str(s.get("role", "")).lower()
+    if r in ("actor", "victim", "infrastructure", "associate", "witness"):
+        return r
+    if str(s.get("type", "")).lower() in INFRA_TYPES:
+        return "infrastructure"
+    return "unknown"
+
+
+def detect_social(u):
+    for rx, plat in SOCIAL:
+        m = rx.search(u)
+        if m and m.group(1) and len(m.group(1)) > 1 and m.group(1).lower() not in (
+                "p", "status", "share", "intent", "home", "about"):
+            return {"platform": plat, "handle": m.group(1), "url": u}
+    return None
+
+
+def detect_msg(u):
+    for rx, plat in MSG:
+        m = rx.search(u)
+        if m and m.group(1):
+            return {"platform": plat, "handle": m.group(1), "url": u}
+    return None
+
+
+def host_of(u):
+    m = re.match(r"^(?:https?://)?([^/?#\s]+)", u or "", re.I)
+    if not m:
+        return ""
+    h = m.group(1).split("@")[-1].lower()
+    return h[4:] if h.startswith("www.") else h
+
+
+def extract(data):
+    subjects = data.get("subjects", []) or []
+    findings = data.get("findings", []) or []
+    conns = data.get("connections", []) or []
+    sources = data.get("sources", []) or []
+    out, seen = [], {}
+
+    def add(cat, typ, value, role="unknown", conf=0, platform=None, source=None, sid=None):
+        if value is None:
+            return
+        value = str(value).strip()
+        if not value:
+            return
+        key = "%s|%s|%s" % (cat, typ, value.lower())
+        if key in seen:
+            ex = seen[key]
+            if int(conf or 0) > int(ex.get("confidence") or 0):
+                ex["confidence"] = conf
+            if ex.get("role") == "unknown" and role != "unknown":
+                ex["role"] = role
+            if not ex.get("source") and source:
+                ex["source"] = source
+            return
+        rec = {"category": cat, "type": typ, "value": value, "role": role,
+               "confidence": conf, "platform": platform, "source": source, "subject_id": sid}
+        seen[key] = rec
+        out.append(rec)
+
+    def scan(text, role, conf, source=None, sid=None):
+        if not text:
+            return
+        text = str(text)
+        for u in RX["url"].findall(text):
+            u = u.rstrip(".,);]")
+            so = detect_social(u)
+            if so:
+                add("social", so["platform"], so["handle"], role, conf, so["platform"], u, sid)
+                continue
+            mo = detect_msg(u)
+            if mo:
+                add("messaging", mo["platform"], mo["handle"], role, conf, mo["platform"], u, sid)
+                continue
+            if host_of(u) in COMMON_FP:  # research/tool/source host, not a target IOC
+                continue
+            add("network", "url", u, role, conf, None, source, sid)
+        for v in RX["email"].findall(text):
+            add("contact", "email", v.lower(), role, conf, None, source, sid)
+        for v in RX["ipv4"].findall(text):
+            add("network", "ipv4", v, role, conf, None, source, sid)
+        for v in RX["ipv6"].findall(text):
+            if ":" in v and not re.fullmatch(r"[0-9a-fA-F]{4,}", v):
+                add("network", "ipv6", v, role, conf, None, source, sid)
+        for v in RX["sha256"].findall(text):
+            add("network", "sha256", v.lower(), role, conf, None, source, sid)
+        for v in RX["sha1"].findall(text):
+            add("network", "sha1", v.lower(), role, conf, None, source, sid)
+        for v in RX["md5"].findall(text):
+            add("network", "md5", v.lower(), role, conf, None, source, sid)
+        for v in RX["eth"].findall(text):
+            add("financial", "eth-wallet", v, role, conf, None, source, sid)
+        for v in RX["btc"].findall(text):
+            add("financial", "btc-wallet", v, role, conf, None, source, sid)
+        dl = RX["email"].sub(" ", RX["url"].sub(" ", text))
+        for v in RX["domain"].findall(dl):
+            v = v.lower().rstrip(".")
+            if v not in COMMON_FP and "." in v:
+                add("network", "domain", v, role, conf, None, source, sid)
+
+    # 1) subjects
+    for s in subjects:
+        role, conf, t = role_of(s), int(s.get("confidence") or 0), str(s.get("type", "")).lower()
+        if t in SUBJECT_MAP:
+            cat, typ = SUBJECT_MAP[t]
+            add(cat, typ, s.get("label"), role, conf, None, None, s.get("id"))
+        pcat, ptyp = SUBJECT_MAP.get(t, (None, None))
+        for a in (s.get("aliases") or []):
+            if pcat in ("network", "contact", "financial"):
+                add(pcat, ptyp, a, role, max(conf - 10, 0), None, None, s.get("id"))
+            else:
+                add("identity", "alias", a, role, max(conf - 10, 0), None, None, s.get("id"))
+        for sel in (s.get("selectors") or []):
+            if not sel or not sel.get("value"):
+                continue
+            u = sel.get("url") or sel.get("value")
+            so = detect_social(str(u))
+            if so:
+                add("social", so["platform"], so["handle"], role, conf, so["platform"], so["url"], s.get("id"))
+                continue
+            mo = detect_msg(str(u))
+            if mo:
+                add("messaging", mo["platform"], mo["handle"], role, conf, mo["platform"], mo["url"], s.get("id"))
+                continue
+            cat = {"email": "contact", "phone": "contact", "username": "identity",
+                   "wallet": "financial"}.get(str(sel.get("type", "")).lower(), "identity")
+            add(cat, sel.get("type", "selector"), sel.get("value"), role, conf,
+                sel.get("platform"), sel.get("url"), s.get("id"))
+        scan(s.get("notes"), role, conf, None, s.get("id"))
+
+    # 2) explicit indicators
+    for o in (data.get("indicators") or []):
+        if o and o.get("value"):
+            add(o.get("category", "network"), o.get("type", "indicator"), o.get("value"),
+                o.get("role", "unknown"), int(o.get("confidence") or 0), None,
+                o.get("source_url"), o.get("subject_id"))
+
+    # 3) findings
+    by_id = {s.get("id"): s for s in subjects}
+    for f in findings:
+        sub = by_id.get(f.get("subject_id"))
+        role = role_of(sub) if sub else "unknown"
+        conf = int(f.get("confidence") or 0)
+        text = "%s %s %s" % (f.get("description", ""), f.get("source_url", ""), " ".join(f.get("tags", []) or []))
+        scan(text, role, conf, f.get("source_url"), f.get("subject_id"))
+
+    # 4) source URLs
+    for s in sources:
+        if s.get("url"):
+            scan(s["url"], "unknown", 55, s["url"], None)
+
+    return out
+
+
+def attribution(data):
+    by_id = {s.get("id"): s for s in (data.get("subjects") or [])}
+    rows = []
+    for c in (data.get("connections") or []):
+        a, b = by_id.get(c.get("from_id")), by_id.get(c.get("to_id"))
+        rel = str(c.get("relationship") or c.get("type") or "linked_to")
+        rows.append({
+            "from": a.get("label") if a else c.get("from_id"),
+            "to": b.get("label") if b else c.get("to_id"),
+            "rel": rel, "strength": c.get("strength", ""),
+            "reach": rel.lower() in REACH_RELS,
+        })
+    return rows
+
+
+# ----------------------------- writers -----------------------------
+def write_flat(inds, attr, case, path):
+    lines = ["# CTI Expert indicator/selector export",
+             "# Case: %s   Generated: %s" % (case.get("id") or case.get("label") or "?",
+                                             datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")),
+             "# Fields: type:value  (role / confidence in CSV/STIX export)", ""]
+    for cat in ["network", "contact", "identity", "social", "messaging", "financial", "geo"]:
+        rows = [i for i in inds if i["category"] == cat]
+        if not rows:
+            continue
+        lines.append("# --- %s (%d) ---" % (cat.upper(), len(rows)))
+        for i in rows:
+            lines.append("%s:%s" % (i["type"], i["value"]))
+        lines.append("")
+    if attr:
+        lines.append("# --- ATTRIBUTION / RELATIONSHIPS (%d) ---" % len(attr))
+        for a in attr:
+            lines.append("rel:%s|%s%s|%s" % (a["from"], a["rel"], " [reach]" if a["reach"] else "", a["to"]))
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def write_csv(inds, path):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["category", "type", "value", "role", "confidence", "platform", "source", "subject_id"])
+        for i in inds:
+            w.writerow([i["category"], i["type"], i["value"], i["role"], i["confidence"],
+                        i.get("platform") or "", i.get("source") or "", i.get("subject_id") or ""])
+
+
+def _now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def write_stix(inds, attr, data, path):
+    case = data.get("case", {})
+    now = _now()
+    producer = "identity--" + str(uuid.uuid4())
+    objs = [{
+        "type": "identity", "spec_version": "2.1", "id": producer,
+        "created": now, "modified": now,
+        "name": "CTI Expert case %s" % (case.get("id") or case.get("label") or "?"),
+        "identity_class": "system",
+    }]
+    STIX_SCO = {
+        "ipv4": "ipv4-addr", "ipv6": "ipv6-addr", "domain": "domain-name",
+        "url": "url", "email": "email-addr",
+    }
+    HASH_KEYS = {"md5": "MD5", "sha1": "SHA-1", "sha256": "SHA-256"}
+
+    def pattern_for(i):
+        t = i["type"]
+        if t in STIX_SCO:
+            return "[%s:value = '%s']" % (STIX_SCO[t], i["value"].replace("'", "\\'"))
+        if t in HASH_KEYS:
+            return "[file:hashes.'%s' = '%s']" % (HASH_KEYS[t], i["value"])
+        return None
+
+    sub_stix = {}  # subject_id -> stix id (for relationships)
+
+    for i in inds:
+        t, val = i["type"], i["value"]
+        sco_id = None
+        if t in STIX_SCO:
+            sco_id = "%s--%s" % (STIX_SCO[t], uuid.uuid4())
+            objs.append({"type": STIX_SCO[t], "spec_version": "2.1", "id": sco_id, "value": val})
+        elif t in HASH_KEYS:
+            sco_id = "file--%s" % uuid.uuid4()
+            objs.append({"type": "file", "spec_version": "2.1", "id": sco_id, "hashes": {HASH_KEYS[t]: val}})
+        elif i["category"] in ("social", "messaging") or t == "username":
+            sco_id = "user-account--%s" % uuid.uuid4()
+            objs.append({"type": "user-account", "spec_version": "2.1", "id": sco_id,
+                         "account_login": val, "account_type": (i.get("platform") or "osint").lower()})
+        elif t in ("name", "org-name"):
+            sco_id = "identity--%s" % uuid.uuid4()
+            objs.append({"type": "identity", "spec_version": "2.1", "id": sco_id,
+                         "created": now, "modified": now, "name": val,
+                         "identity_class": "individual" if t == "name" else "organization"})
+        else:
+            # phone, wallet, alias, location, device... -> custom selector observable
+            sco_id = "x-cti-selector--%s" % uuid.uuid4()
+            objs.append({"type": "x-cti-selector", "spec_version": "2.1", "id": sco_id,
+                         "selector_type": t, "category": i["category"], "value": val,
+                         "role": i["role"]})
+        if i.get("subject_id") and i["subject_id"] not in sub_stix:
+            sub_stix[i["subject_id"]] = sco_id
+        pat = pattern_for(i)
+        if pat:
+            objs.append({
+                "type": "indicator", "spec_version": "2.1", "id": "indicator--%s" % uuid.uuid4(),
+                "created": now, "modified": now, "created_by_ref": producer,
+                "name": "%s %s" % (t, val), "pattern": pat, "pattern_type": "stix",
+                "valid_from": now, "confidence": int(i.get("confidence") or 0),
+                "labels": [i["category"], i["role"]],
+            })
+
+    for a in attr:
+        fid = sub_stix.get(_find_sid(data, a["from"]))
+        tid = sub_stix.get(_find_sid(data, a["to"]))
+        if fid and tid:
+            objs.append({
+                "type": "relationship", "spec_version": "2.1", "id": "relationship--%s" % uuid.uuid4(),
+                "created": now, "modified": now, "created_by_ref": producer,
+                "relationship_type": a["rel"].replace("_", "-"),
+                "source_ref": fid, "target_ref": tid,
+                "description": ("can reach / contacted" if a["reach"] else a["rel"]),
+            })
+
+    bundle = {"type": "bundle", "id": "bundle--%s" % uuid.uuid4(), "objects": objs}
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(bundle, f, indent=2, ensure_ascii=False)
+
+
+def _find_sid(data, label):
+    for s in (data.get("subjects") or []):
+        if s.get("label") == label:
+            return s.get("id")
+    return None
+
+
+def main(argv):
+    fmt = "all"
+    args = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--format" and i + 1 < len(argv):
+            fmt = argv[i + 1].lower()
+            i += 2
+        else:
+            args.append(argv[i])
+            i += 1
+    if len(args) < 2:
+        print("usage: generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|all]")
+        return 2
+    case_path, out = args[0], args[1]
+    try:
+        with open(case_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        print("error: cannot read/parse case JSON %r: %s" % (case_path, e))
+        return 1
+
+    inds = extract(data)
+    attr = attribution(data)
+    case = data.get("case", {})
+
+    out_dir = os.path.dirname(os.path.abspath(out))
+    if out_dir and not os.path.isdir(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
+    written = []
+    if fmt in ("all", "flat"):
+        p = (out + ".txt") if fmt == "all" else out
+        write_flat(inds, attr, case, p)
+        written.append(p)
+    if fmt in ("all", "csv"):
+        p = (out + ".csv") if fmt == "all" else out
+        write_csv(inds, p)
+        written.append(p)
+    if fmt in ("all", "stix"):
+        p = (out + ".stix.json") if fmt == "all" else out
+        write_stix(inds, attr, data, p)
+        written.append(p)
+
+    by_cat = {}
+    for x in inds:
+        by_cat[x["category"]] = by_cat.get(x["category"], 0) + 1
+    print("Extracted %d indicators/selectors + %d attribution links" % (len(inds), len(attr)))
+    print("  by category: " + ", ".join("%s=%d" % (k, v) for k, v in sorted(by_cat.items())))
+    for p in written:
+        print("  wrote: %s" % p)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

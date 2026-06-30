@@ -18,7 +18,7 @@
 
 **核心能力：** 对任何目标类型（个人、域名、组织、用户名、电子邮件、IP、WiFi）进行多向量侦察，具备自动发现验证、暴露风险评分，以及多格式结构化情报交付。
 
-**工作流程：** AEAD 生命周期——获取原始数据 &rarr; 通过枢轴扩展丰富 &rarr; 评估发现 &rarr; 交付结构化报告（Markdown + 带图表、图形、专业格式的 Word 文档）。
+**工作流程：** AEAD 生命周期——获取原始数据 &rarr; 通过枢轴扩展丰富 &rarr; 评估发现 &rarr; 交付结构化报告（交互式 HTML + Markdown + JSON/CSV + IOC 包；Word 按需）。
 
 ---
 
@@ -37,7 +37,7 @@
 #### 🖥️ 在哪里运行 — 本技能在 CLI 中体验最佳
 
 > [!IMPORTANT]
-> CTI Expert **执行密集**：运行 `uv`/Python、安装 OSINT 工具、写入 `.md`/`.docx`/`.json` 报告、访问大量外部站点、保存案例工作区。关键在于**真实的本地 shell + 持久化文件 + 开放网络**——**CLI 或本地桌面代理**能提供这些，而临时的**云沙箱则不能**。这对 **Claude** 和 **Codex** 同样适用。
+> CTI Expert **执行密集**：运行 `uv`/Python、安装 OSINT 工具、写入 `.md`/`.html`/`.json`/`.csv` 报告 + IOC 包、访问大量外部站点、保存案例工作区。关键在于**真实的本地 shell + 持久化文件 + 开放网络**——**CLI 或本地桌面代理**能提供这些，而临时的**云沙箱则不能**。这对 **Claude** 和 **Codex** 同样适用。
 
 | 环境 | 运行调查 | 原因 |
 |---|---|---|
@@ -46,7 +46,7 @@
 | **claude.ai/code（网页）** · **Codex 云端 / ChatGPT 网页** | ⚠️ 受限 | 分析推理与查询生成可用，但文件不会持久化到你的磁盘，且对外网络通常受限 |
 
 > [!TIP]
-> **在 CLI 中运行调查**（Claude Code 或 Codex）；如果你更喜欢在桌面/IDE 窗口中阅读，可在那里打开生成的 `.docx`/报告。网页/云端环境仅用于分析推理，不要用于执行密集的侦察。
+> **在 CLI 中运行调查**（Claude Code 或 Codex）；如果你更喜欢在桌面/IDE 窗口中阅读，可在那里打开生成的 `.html`/`.docx` 报告。网页/云端环境仅用于分析推理，不要用于执行密集的侦察。
 
 ---
 
@@ -173,7 +173,7 @@ claude   # 打开 Claude Code CLI
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | 最新版 | **推荐** — 终端运行时 |
 | [Claude Code 桌面版](https://claude.ai/download) | 最新版 | 图形界面运行时（macOS/Windows） |
 | Node.js | 18+ | Claude Code CLI 所需 |
-| Python | 3.10+ | DOCX 报告生成、Scrapling、AgentFlow |
+| Python | 3.10+ | HTML/DOCX 报告生成、Scrapling、AgentFlow |
 | pip 包 | 见 `requirements.txt` | 图表、图形、样式 |
 | git | 任意版本 | 克隆仓库 |
 
@@ -194,7 +194,7 @@ claude   # 打开 Claude Code CLI
 /cti-expert /github-osint github.com/org/repo   # GitHub 资料、仓库、代码、提交、分叉
 /cti-expert /exposure domain.com                # 综合风险评分（0-100）
 /cti-expert /report                             # 技术 INTSUM 报告
-/cti-expert /workspace save                     # 保存工作空间 + 自动生成 .docx
+/cti-expert /workspace save                     # 保存案例工作区状态（稍后恢复）
 ```
 
 ---
@@ -208,7 +208,7 @@ claude   # 打开 Claude Code CLI
 | **分析与验证** | 图像验证、元数据取证、网页取证、泄露数据库 |
 | **WiFi 与地理定位** | 通过 Wigle.net WiFi 定位、高级地理定位（W3W、Plus Codes、MGRS） |
 | **安全审计** | 云审计（AWS/GCP/Azure）、OWASP 审计、依赖审计、提示注入审计 |
-| **报告与导出** | Markdown 报告、带图表的 DOCX、案例工作空间、专业格式 |
+| **报告与导出** | 交互式 HTML 报告（2D 实体图、图表、时间线）、Markdown、JSON/CSV、IOC 包（STIX 2.1）、按需 DOCX |
 
 ---
 
