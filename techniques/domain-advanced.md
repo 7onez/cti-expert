@@ -13,6 +13,8 @@ Performs deep subdomain discovery and infrastructure clustering using passive an
 
 **When to use:** Attack surface mapping, org infrastructure recon, pre-pentest scope validation, exposure assessment.
 
+**Admin / sensitive-endpoint flagging:** after enumerating subdomains (and any discovered paths), classify each against [`handbook/admin-endpoint-indicators.md`](../handbook/admin-endpoint-indicators.md) — leftmost-label/path prefixes like `admin`, `adm`, `kef`, `ador`, `panel`, `cpanel`, `backend`, `dashboard`, plus CJK 后台/管理/客服/代理. Promote hits to high-priority findings (exposed admin panels / sensitive endpoints) and feed them into `/exposure` and `/report ioc`.
+
 **Passive vs Active:**
 - **Passive** — queries third-party databases; no direct contact with target. Safe, stealthy.
 - **Active** — sends DNS queries or probes directly to target infrastructure. Leaves footprint.
