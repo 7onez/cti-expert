@@ -182,6 +182,20 @@ The entire CTI Expert workflow is optimized for Claude Code CLI. The CLI gives y
 - **Skill invocation** — type `/cti-expert` directly in the terminal, no browser required
 - **Background agents** — parallel enrichment via AgentFlow works best with the CLI
 
+#### 🖥️ Where to run it — the CLI is best for this skill
+
+> [!IMPORTANT]
+> CTI Expert is **execution-heavy**: it runs `uv`/Python, installs OSINT tools, writes `.md`/`.docx`/`.json` reports, reaches many external sites, and saves case workspaces. What matters is a **real local shell + persistent files + open network** — a **CLI or local desktop agent** gives you that; an ephemeral **cloud sandbox does not**. This applies equally to **Claude** and **Codex**.
+
+| Environment | Running cases | Why |
+|---|---|---|
+| **Claude Code CLI** · **Codex CLI** | ✅ **Best** | Real shell, persistence, background tasks, open network — what the skill is built for |
+| **Claude Code Desktop** · **Codex IDE extension** | ✅ Great | Same local execution; nicest for **reading** rendered reports, charts & diagrams |
+| **claude.ai/code (web)** · **Codex cloud / ChatGPT web** | ⚠️ Limited | Reasoning & query generation work, but files don't persist to your disk and outbound network is often restricted |
+
+> [!TIP]
+> **Run investigations in a CLI** (Claude Code or Codex); open the generated `.docx`/report in a Desktop/IDE window if you prefer reading there. Use web/cloud surfaces only for analyst-reasoning, not execution-heavy recon.
+
 ---
 
 ### Step 1 &mdash; Install Claude Code CLI
@@ -196,7 +210,7 @@ npm install -g @anthropic-ai/claude-code
 
 ### Step 2 &mdash; Clone + All-in-One Installer
 
-The `scripts/install.sh` installer handles everything: Python venv dependencies, system tools (`whois`, `dig`, `jq`, `exiftool`), OSINT tools (`maigret`, `sherlock`, `holehe`, `h8mail`, and more), and optional headless browser + Go tools.
+The installer handles everything: Python dependencies, system tools (`whois`, `dig`, `jq`, `exiftool`), OSINT tools (`maigret`, `sherlock`, `holehe`, `h8mail`, and more), and optional headless browser + Go tools. It is **powered by [uv](https://docs.astral.sh/uv/)** (Astral's ultra-fast Rust package manager) — the script bootstraps uv, then uses `uv venv` / `uv pip` / `uv tool` for all Python installs, falling back to `pip`/`pipx`/`venv` only if uv can't be installed. Use `install.ps1` on Windows (PowerShell) or `install.sh` on macOS/Linux/Git Bash/WSL.
 
 <table>
 <tr>
@@ -226,29 +240,40 @@ bash ~/.claude/skills/cti-expert/scripts/install.sh
 </td>
 </tr>
 <tr>
-<td><b>Windows (PowerShell — manual)</b></td>
+<td><b>Windows (PowerShell — native)</b></td>
 <td>
 
 ```powershell
 git clone https://github.com/7onez/cti-expert.git "$env:USERPROFILE\.claude\skills\cti-expert"
-pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-expert\scripts\install.ps1"
 ```
 
 </td>
 </tr>
 </table>
 
-> **Windows users:** The installer script runs natively in **Git Bash** (bundled with [Git for Windows](https://git-scm.com/download/win)) or **WSL**. PowerShell is a fallback that installs Python dependencies only.
+> **Windows users:** `install.ps1` is a **full native installer** (winget system tools + Python venv + OSINT tools) — no Git Bash or WSL required. It accepts the same `-Headless`, `-Go`, and `-All` flags (e.g. `install.ps1 -All`). Git Bash / WSL users can run `install.sh` instead. The DOCX generator self-heals UTF-8 output and auto-locates pandoc, so reports build on Windows with no extra environment setup. The skill itself detects the OS at runtime and installs any missing tool with the right manager (`winget` / `brew` / `apt`) — see `scripts/platform-setup.md`.
 
 ---
 
 ### Installer Options
+
+**macOS / Linux / Git Bash / WSL:**
 
 ```bash
 bash scripts/install.sh               # Core: Python deps + system tools + OSINT tools
 bash scripts/install.sh --headless    # + Scrapling headless browser (~200MB Chromium)
 bash scripts/install.sh --go          # + Go tools (subfinder, amass, gau, gitleaks, httpx)
 bash scripts/install.sh --all         # + Everything above
+```
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1              # Core
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Headless    # + Scrapling headless browser
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Go          # + Go tools
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Everything above
 ```
 
 | Flag | What it installs | Size |
@@ -269,6 +294,27 @@ claude   # opens Claude Code CLI
 ```
 
 > If the skill loads, you'll see the CTI Expert command menu. Type `/cti-expert /help` for the full command list.
+
+---
+
+### Use in ChatGPT / Codex (cross-agent)
+
+CTI Expert is portable: the analyst logic is plain Markdown and the scripts are OS-detecting Python/shell, so it runs in **OpenAI Codex** (and other [`AGENTS.md`](AGENTS.md)-aware agents), not just Claude Code.
+
+```bash
+# 1. Clone the skill anywhere
+git clone https://github.com/7onez/cti-expert.git
+
+# 2a. In-repo: open Codex inside the clone — it auto-loads AGENTS.md. Then ask it to follow SKILL.md.
+# 2b. Slash command: copy the bundled Codex prompt so /cti-expert works in the Codex CLI/IDE
+cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: copy to %USERPROFILE%\.codex\prompts\
+```
+
+- **[`AGENTS.md`](AGENTS.md)** is the cross-agent runtime contract (OS detection, uv, paths). Codex auto-concatenates it from the repo root; you can also reference it from `~/.codex/AGENTS.md`.
+- **`codex/cti-expert.md`** is a ready-to-copy custom prompt → gives Codex a `/cti-expert <target>` slash command.
+- **Plain ChatGPT (no code execution):** the reasoning, query generation, and report drafting all work (load `SKILL.md`/`AGENTS.md` as instructions or Custom-GPT knowledge); only local steps (DOCX build, CLI tool runs) need a code-capable harness like Codex or Claude Code.
+
+> Paths are resolved relative to the skill directory (the folder containing `SKILL.md`), so nothing assumes the Claude-specific `~/.claude/skills/` location.
 
 ---
 
@@ -313,7 +359,8 @@ claude   # opens Claude Code CLI
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview) | Latest | **Recommended** terminal runtime |
 | [Claude Code Desktop](https://claude.ai/download) | Latest | GUI runtime (macOS/Windows) |
 | Node.js | 18+ | Required by Claude Code CLI |
-| Python | 3.10+ | DOCX report generation, Scrapling, AgentFlow |
+| [uv](https://docs.astral.sh/uv/) | Latest | **Recommended** — bootstrapped by the installer; manages Python, venv, packages & CLI tools |
+| Python | 3.10+ | DOCX report generation, Scrapling, AgentFlow (uv can install this for you) |
 | pip packages | See `requirements.txt` | Charts, diagrams, styling |
 | git | Any | Clone the repository |
 
@@ -929,6 +976,20 @@ Toàn bộ workflow CTI Expert được tối ưu cho Claude Code CLI:
 - **Gọi skill trực tiếp** — gõ `/cti-expert` ngay trong terminal
 - **Agent song song** — AgentFlow hoạt động tốt nhất với CLI
 
+#### 🖥️ Nên chạy ở đâu — CLI là tốt nhất cho skill này
+
+> [!IMPORTANT]
+> CTI Expert **chạy nhiều tác vụ thực thi**: chạy `uv`/Python, cài công cụ OSINT, ghi báo cáo `.md`/`.docx`/`.json`, truy cập nhiều trang web bên ngoài, và lưu workspace vụ việc. Điều quan trọng là **shell cục bộ thật + file lưu bền + mạng không bị chặn** — **CLI hoặc app desktop cục bộ** cho bạn điều đó; còn **sandbox đám mây tạm thời thì không**. Điều này áp dụng cho cả **Claude** lẫn **Codex**.
+
+| Môi trường | Chạy điều tra | Lý do |
+|---|---|---|
+| **Claude Code CLI** · **Codex CLI** | ✅ **Tốt nhất** | Shell thật, lưu bền, tác vụ nền, mạng mở — đúng thứ skill cần |
+| **Claude Code Desktop** · **Tiện ích IDE Codex** | ✅ Rất tốt | Cùng khả năng thực thi cục bộ; đọc báo cáo, biểu đồ, sơ đồ thoải mái nhất |
+| **claude.ai/code (web)** · **Codex cloud / ChatGPT web** | ⚠️ Hạn chế | Suy luận phân tích & tạo truy vấn vẫn chạy, nhưng file không lưu vào ổ đĩa của bạn và mạng ra ngoài thường bị giới hạn |
+
+> [!TIP]
+> **Chạy điều tra trong CLI** (Claude Code hoặc Codex); mở file `.docx`/báo cáo trong cửa sổ Desktop/IDE nếu bạn thích đọc ở đó. Chỉ dùng môi trường web/đám mây cho phần suy luận phân tích, không dùng cho recon nặng về thực thi.
+
 ---
 
 #### Bước 1 &mdash; Cài đặt Claude Code CLI
@@ -1144,6 +1205,20 @@ claude   # mở Claude Code CLI
 - **完整工具访问** — 文件写入、Python 脚本、DOCX 生成均原生运行
 - **直接调用技能** — 在终端中直接输入 `/cti-expert`
 - **并行 Agent** — AgentFlow 在 CLI 下运行效果最佳
+
+#### 🖥️ 在哪里运行 — 本技能在 CLI 中体验最佳
+
+> [!IMPORTANT]
+> CTI Expert **执行密集**：运行 `uv`/Python、安装 OSINT 工具、写入 `.md`/`.docx`/`.json` 报告、访问大量外部站点、保存案例工作区。关键在于**真实的本地 shell + 持久化文件 + 开放网络**——**CLI 或本地桌面代理**能提供这些，而临时的**云沙箱则不能**。这对 **Claude** 和 **Codex** 同样适用。
+
+| 环境 | 运行调查 | 原因 |
+|---|---|---|
+| **Claude Code CLI** · **Codex CLI** | ✅ **最佳** | 真实 shell、持久化、后台任务、开放网络——正是本技能所需 |
+| **Claude Code 桌面版** · **Codex IDE 扩展** | ✅ 很好 | 同样的本地执行能力；阅读渲染后的报告、图表与示意图最为舒适 |
+| **claude.ai/code（网页）** · **Codex 云端 / ChatGPT 网页** | ⚠️ 受限 | 分析推理与查询生成可用，但文件不会持久化到你的磁盘，且对外网络通常受限 |
+
+> [!TIP]
+> **在 CLI 中运行调查**（Claude Code 或 Codex）；如果你更喜欢在桌面/IDE 窗口中阅读，可在那里打开生成的 `.docx`/报告。网页/云端环境仅用于分析推理，不要用于执行密集的侦察。
 
 ---
 

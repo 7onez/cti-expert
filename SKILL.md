@@ -1,6 +1,6 @@
 ---
 name: cti-expert
-description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, subdomain enumeration, case investigation, recon, due diligence, image forensics, face search, blockchain investigation, crypto tracing, flight tracking, maritime tracking, vehicle lookup, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, M365 recon, Azure tenant enumeration. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon. Techniques: social media platforms, advanced geolocation, web/DNS forensics, image forensics, blockchain, transport tracking, darknet, people search, cloud audit, incident triage, OWASP audit, prompt injection audit. Author: Hieu Ngo - chongluadao.vn"
+description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, subdomain enumeration, case investigation, recon, due diligence, image forensics, face search, blockchain investigation, crypto tracing, flight tracking, maritime tracking, vehicle lookup, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, stealer log analysis, infostealer log triage, malware log attribution, admin panel discovery, sensitive endpoint detection, M365 recon, Azure tenant enumeration. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log. Techniques: social media platforms, advanced geolocation, web/DNS forensics, image forensics, blockchain, transport tracking, darknet, people search, cloud audit, incident triage, OWASP audit, prompt injection audit. Author: Hieu Ngo - chongluadao.vn"
 version: "2.0"
 author: "Hieu Ngo - chongluadao.vn"
 ---
@@ -8,6 +8,8 @@ author: "Hieu Ngo - chongluadao.vn"
 # CTI Expert
 
 Cyber threat intelligence and open-source intelligence skill. Turns Claude into a trained CTI/OSINT analyst. Generates precision search queries, interprets public data, builds case timelines, and delivers structured intelligence products — no API keys, no paid subscriptions.
+
+> **Runs anywhere.** Works in **Claude Code** (Desktop & CLI) and in **OpenAI Codex / ChatGPT** and other `AGENTS.md`-aware agents — see [`AGENTS.md`](AGENTS.md) for the cross-agent runtime contract. Throughout this file, **`$SKILL_DIR`** = the directory containing this `SKILL.md` (Claude Code: `~/.claude/skills/cti-expert`; Codex/manual clone: the repo you are working in). Resolve it by locating `SKILL.md` — never hard-assume `~/.claude`. Detect the OS once (Windows/macOS/Linux) and prefer **uv** for all Python — see §13 Tool Auto-Install Policy.
 
 Collection method: `agent-browser` when available (JavaScript-heavy sites, infinite-scroll, screenshot evidence), with automatic fallback to web search / web fetch / direct URL fetch. Tool limitations are logged as collection gaps — never as case blockers.
 
@@ -59,7 +61,7 @@ Commands grouped by AEAD phase.
 | `/username [handle]` | Enumerate handle across 3000+ platforms | `/username johndoe` |
 | `/phone [number]` | Carrier, line type, reputation, public associations | `/phone +84901234567` |
 | `/email-deep [email]` | Accounts, breach history, infrastructure | `/email-deep u@domain.com` |
-| `/subdomain [domain]` | CT logs, brute-force, passive enumeration | `/subdomain example.com` |
+| `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` | `/subdomain example.com` |
 | `/breach-deep [email]` | Multi-source breach lookup with context | `/breach-deep u@domain.com` |
 | `/traffic [domain]` | Traffic estimation, ranking, audience data | `/traffic example.com` |
 | `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics | `/visitors example.com` |
@@ -71,6 +73,7 @@ Commands grouped by AEAD phase.
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
 | `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
 | `/ransomware-check [org]` | Check if org is a ransomware victim | `/ransomware-check "Acme Corp"` |
+| `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
 | `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | `/msftrecon example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
@@ -321,6 +324,7 @@ Reference directory: `techniques/`
 | `incident-triage.md` | Security incident response: NIST 800-61 methodology, containment, evidence preservation, IOC extraction |
 | `owasp-audit.md` | OWASP Top 10 (2021) source code audit with grep patterns and CWE references |
 | `prompt-injection-audit.md` | AI/LLM security: prompt injection classes, agent/MCP security, permission boundary audit |
+| `stealer-log-analysis.md` | Infostealer-log triage: family fingerprinting (RedLine/Vidar/StealC/Lumma/META/traffer), victim-vs-operator profiling, cross-log actor correlation, IOC + attribution extraction (`uv run` parser, raw artifacts shown) |
 
 ---
 
@@ -434,30 +438,24 @@ Reference: `output/reports/`, `connectors/`
 - All fields shown above should be **populated with actual data** — empty strings or "N/A" defeat the purpose
 - Populate `executive_summary` with a full paragraph — this is the most-read section of the report
 
-**Step 2 — Save the JSON and run the generator:**
+**Step 2 — Save the JSON and run the generator.** The generators carry **PEP 723 inline dependency metadata**, so the simplest, most portable runner is **`uv run`** — it provisions the deps on the fly with zero venv/pip setup, identically on every OS. The generator is also **self-healing**: it forces UTF-8 output and auto-locates pandoc (including Windows `%LOCALAPPDATA%\Pandoc`), so **no `PYTHONUTF8` / PATH prelude is needed**. Replace `REPORT` with `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]`.
+
+**Preferred — `uv run` (any OS, any agent, zero setup):**
 ```bash
-# Primary: HYBRID generator — full narrative from MD + charts/diagrams from JSON
-# This produces a complete DOCX with ZERO content loss from the MD report
-python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx-hybrid.py \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json" \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
-
-# Fallback 1: JSON-only generator (charts + structured data, less narrative)
-python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx.py \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json" \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
-
-# Fallback 2: MD-only mode (styled narrative, no charts — JSON optional)
-python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx-hybrid.py \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
-  "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx"
-
-# Fallback 3: pandoc (basic text conversion, no styling or charts)
-pandoc "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md" \
-  -o "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].docx" \
-  --from markdown --to docx --standalone
+S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md (Claude Code: ~/.claude/skills/cti-expert; Codex/clone: the repo)
+# Primary: HYBRID — full narrative from MD + charts/diagrams from JSON (zero content loss)
+uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"
+# Fallback 1: JSON-only (charts + structured data; no pandoc needed)
+uv run "$S/generate-cti-docx.py" "REPORT.json" "REPORT.docx"
+# Fallback 2: MD-only (styled narrative, no charts)
+uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
 ```
+> Windows PowerShell: set `$S = "$env:USERPROFILE\.claude\skills\cti-expert\scripts"` (Claude Code) or `"<repo>\scripts"` (Codex/clone), and use backslash paths.
+
+**Fallback — no uv installed.** Use the OS interpreter; the script's `ensure_deps()` installs the libs on first run (via uv if present, else pip):
+- macOS / Linux (Bash): `python3 "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"`
+- Windows (PowerShell): `py "$S\generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"` — the Store `python3` stub will not run; use `py` or the venv python
+- Last resort (no styling/charts): `pandoc "REPORT.md" -o "REPORT.docx" --from markdown --to docx --standalone`
 
 **How the hybrid generator works:**
 1. **Phase 1:** pandoc converts the MD file to a base DOCX (preserving ALL narrative content — tables, lists, formatting)
@@ -649,6 +647,7 @@ cti-expert/
 │   ├── incident-triage.md      Security incident response
 │   ├── owasp-audit.md          OWASP Top 10 source code audit
 │   ├── prompt-injection-audit.md AI/LLM security audit
+│   ├── stealer-log-analysis.md Infostealer-log triage, actor attribution & IOC extraction
 │   └── ioc-export.md           IOC export (STIX 2.1, flat list)
 │
 ├── experience/                 UX, tiers, and guided flows
@@ -685,9 +684,13 @@ cti-expert/
 │       ├── attack-path-diagram.md  Attack path flow visualization (/render threat-path)
 │       └── attack-surface-map.md   Attack surface exposure map (/render attack-surface)
 │
-├── scripts/                    DOCX report generation
-│   ├── generate-cti-docx-hybrid.py  PRIMARY: Hybrid MD+JSON generator (pandoc + post-process)
-│   ├── generate-cti-docx.py         Fallback: JSON-only generator
+├── scripts/                    Cross-platform install + DOCX report generation
+│   ├── platform-setup.md            Cross-platform reference: OS detection, uv-first install matrix, gotchas
+│   ├── install.ps1                  Windows installer (uv-first: uv venv/pip/tool; winget + pip/pipx fallback)
+│   ├── install.sh                   macOS/Linux/Git-Bash/WSL installer (uv-first; brew/apt + pip/pipx fallback)
+│   ├── stealer_log_parse.py         Infostealer-log analyzer — attribution, profiling, IOCs (PEP 723 / `uv run`, zero-dep)
+│   ├── generate-cti-docx-hybrid.py  PRIMARY: Hybrid MD+JSON generator (PEP 723 / `uv run`; self-heals UTF-8 + pandoc)
+│   ├── generate-cti-docx.py         Fallback: JSON-only generator (PEP 723 / `uv run`)
 │   ├── cti_docx_postprocess.py      Post-processing: styling, chart injection, cover page
 │   ├── cti_docx_charts.py           Chart rendering (pie, bar, gauge, timeline, traffic, geo)
 │   ├── cti_docx_diagrams.py         Entity relationship + network topology diagrams
@@ -707,6 +710,7 @@ cti-expert/
 │   ├── quick-report.md         Rapid reporting reference
 │   ├── discovery-paths.md      Per-target-type search paths
 │   ├── report-template.md      INTSUM format specification
+│   ├── admin-endpoint-indicators.md  Admin-panel / sensitive-endpoint detection vocab & rules
 │   └── tool-cascade-reference.md Tool priority and fallback chains
 │
 ├── guides/                     Worked case walkthroughs
@@ -849,57 +853,82 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 
 ## Tool Auto-Install Policy
 
-**Before running any CLI tool, check if it exists on the system. If not, install it automatically and silently.** This ensures zero-friction investigation — the analyst never stalls on missing dependencies.
+**Before running any CLI tool, detect the OS, check whether the tool exists, and if not, install it automatically and silently using the method correct for that OS.** This ensures zero-friction investigation on Windows, macOS, and Linux alike — the analyst never stalls on a missing dependency and never runs a Linux-only command on Windows.
+
+> **Full cross-platform reference:** [`scripts/platform-setup.md`](scripts/platform-setup.md) — OS detection, `$PY`/shell conventions, package managers, the complete per-tool × per-OS install matrix, and known gotchas. Consult it whenever this summary is not enough.
+
+### Step 0 — Detect the platform (once per session)
+
+Determine the OS before running anything, and cache it for the rest of the session. In Claude Code the environment block already reports it (e.g. `Platform: win32` → Windows). Otherwise probe: PowerShell `$IsWindows`/`$IsMacOS`, or Bash `uname -s` (`Darwin`=macOS, `Linux`=Linux, `MINGW*`/`MSYS*`/`CYGWIN*`=Windows/Git Bash). Then fix these conventions:
+
+| | Windows | macOS / Linux |
+|--|---------|---------------|
+| **Shell** | PowerShell | Bash |
+| **Python runner** (`$PY`) | **`uv run`** (preferred) · else venv `…\.venv\Scripts\python.exe` · else **`py`** | **`uv run`** (preferred) · else venv `…/.venv/bin/python3` · else **`python3`** |
+| **"exists?" check** | `Get-Command <tool> -ErrorAction SilentlyContinue` (or `where.exe <tool>`) | `command -v <tool>` |
+| **System pkg manager** | `winget` (→ `choco`/`scoop`) | `brew` (macOS) · `sudo apt`/`dnf`/`pacman` (Linux) |
+
+> On Windows, `python3`/`python` in the Bash tool is often a non-functional Microsoft Store stub. Prefer **uv** (it brings its own Python and sidesteps the stub); otherwise use `py` via PowerShell.
+
+### Step 0.5 — Ensure uv (the primary Python toolchain)
+
+**[uv](https://docs.astral.sh/uv/) is the preferred way to install and run everything Python in this skill.** It is a single fast, cross-platform tool that replaces `pip`, `pipx`, `venv`, and `pyenv`, manages its own Python (so the Windows Store-stub problem disappears), and resolves script dependencies on the fly. Using uv also **collapses the per-OS split for Python tools** — the same command works on Windows, macOS, and Linux.
+
+- **Check:** `uv --version`
+- **Install if missing:**
+  - Windows: `winget install --id astral-sh.uv` — or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+  - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh` — or `brew install uv`
+  - Any OS that already has pip: `python -m pip install uv`
+
+If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv` path — nothing here hard-requires uv.
 
 ### Auto-Install Protocol
 
-1. **Check:** `command -v <tool> >/dev/null 2>&1` (or `python -m <module> --help` for Python modules)
-2. **Install:** If missing, run the install command from the table below
-3. **Verify:** Confirm installation succeeded before proceeding
+1. **Check:** OS-correct existence test from the table above (or `<$PY> -c "import <module>"` for Python modules)
+2. **Install:** If missing, run the OS-correct install command (see dispatch below / `platform-setup.md`)
+3. **Verify:** Confirm the tool resolves before proceeding — re-check; on Windows a fresh install may need a new shell or a probe of its install dir
 4. **Log:** Note `[auto-installed]` in the finding's collection method tag
 5. **Continue:** Proceed with the investigation — never block on tool availability
 
-### Install Commands by Tool
+### Install Dispatch by Category
 
-| Tool | Check Command | Install Command |
-|------|--------------|-----------------|
-| Maigret | `command -v maigret` | `pip3 install maigret` |
-| Sherlock | `command -v sherlock` | `pipx install sherlock-project` |
-| Blackbird | `command -v blackbird` | `pip3 install blackbird-osint` |
-| PhoneInfoga | `command -v phoneinfoga` | `go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest` |
-| Holehe | `command -v holehe` | `pip3 install holehe` |
-| h8mail | `command -v h8mail` | `pip3 install h8mail` |
-| theHarvester | `command -v theHarvester` | `pip3 install theHarvester` |
-| TruffleHog | `command -v trufflehog` | `pip3 install trufflehog` |
-| Gitleaks | `command -v gitleaks` | `go install github.com/gitleaks/gitleaks@latest` |
-| GitHub CLI | `command -v gh` | `winget install --id GitHub.cli` or `apt install -y gh` |
-| Subfinder | `command -v subfinder` | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
-| Amass | `command -v amass` | `go install github.com/owasp-amass/amass/v4/...@master` |
-| GAU | `command -v gau` | `go install github.com/lc/gau/v2/cmd/gau@latest` |
-| Xeuledoc | `command -v xeuledoc` | `pip3 install xeuledoc` |
-| MSFTRecon | `command -v msftrecon` | `pip3 install git+https://github.com/Arcanum-Sec/msftrecon.git` |
-| ShareTrace | `python -m sharetrace --help 2>/dev/null` | `git clone https://github.com/7onez/sharetrace.git && cd sharetrace && pip3 install -r requirements.txt` |
-| exiftool | `command -v exiftool` | `apt install -y libimage-exiftool-perl` |
-| pdfinfo | `command -v pdfinfo` | `apt install -y poppler-utils` |
-| oletools | `python -c "import oletools" 2>/dev/null` | `pip3 install oletools` |
-| qpdf | `command -v qpdf` | `apt install -y qpdf` |
-| mat2 | `command -v mat2` | `apt install -y mat2` |
-| whois | `command -v whois` | `apt install -y whois` |
-| dig | `command -v dig` | `apt install -y dnsutils` |
-| jq | `command -v jq` | `apt install -y jq` |
-| ASN | `command -v asn` | `bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)` |
-| Waymore | `command -v waymore` | `pip3 install waymore` |
-| Pandoc | `command -v pandoc` | `apt install -y pandoc` |
-| whoisdomain | `python -c "import whoisdomain" 2>/dev/null` | `pip3 install whoisdomain` |
-| Scrapling | `python -c "import scrapling" 2>/dev/null` | `pip3 install scrapling` |
-| Scrapling (full) | `python -c "from scrapling.fetchers import StealthyFetcher" 2>/dev/null` | `pip3 install "scrapling[fetchers]" && scrapling install` |
-| AgentFlow | `python -c "import agentflow" 2>/dev/null` | `pip3 install agentflow-py` |
+**Python tools — uv, identical on every OS** (the big win: no per-OS split). CLIs use `uv tool`; libraries go into the skill venv via `uv pip`. No-uv fallback in the last column.
+
+| Python tool(s) | Install (any OS, uv) | No-uv fallback |
+|----------------|----------------------|----------------|
+| CLIs — maigret, sherlock-project, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc | `uv tool install <pkg>` | `pipx install <pkg>` |
+| Libraries — cloudscraper, oletools, whoisdomain, scrapling | `uv pip install --python <venv> <pkg>` | `<$PY> -m pip install <pkg>` |
+| Scrapling headless | `uv tool install "scrapling[fetchers]"` then `scrapling install` | `<$PY> -m pip install "scrapling[fetchers]"` then `scrapling install` |
+| AgentFlow | `uv pip install --python <venv> --no-deps agentflow` | `<$PY> -m pip install --no-deps agentflow` |
+| Git-only — msftrecon, blackbird, sharetrace | `uv pip install "git+https://…/msftrecon.git"` · clone + `uv pip install -r requirements.txt` | clone + `<$PY> -m pip install -r requirements.txt` |
+| **Run a generator script** | `uv run <script.py> ARGS` (deps auto via inline metadata) | `<$PY> <script.py> ARGS` |
+
+`<$PY>` = `py` (Windows) / `python3` (macOS/Linux), or the venv python. On PEP-668 Linux add `--break-system-packages` to the pip fallback.
+
+**System binaries — OS package manager** (uv does not manage these):
+
+| Tool(s) | Windows | macOS | Linux |
+|---------|---------|-------|-------|
+| git, gh, jq, exiftool, pandoc, poppler/pdfinfo, qpdf, whois | `winget install <Id>` | `brew install <pkg>` | `sudo apt install -y <pkg>` |
+| Go toolchain | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` |
+| mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
+
+**Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga → GitHub release binary per OS/arch. **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
+
+The exact winget IDs, brew formulae, apt packages, uv commands, import names, and Go module paths for **every** tool are tabulated in [`scripts/platform-setup.md`](scripts/platform-setup.md) §5. To provision a fresh machine in one shot, run the bundled installer for the detected OS:
+
+- **Windows:** `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-expert\scripts\install.ps1"`
+- **macOS / Linux / Git Bash / WSL:** `bash ~/.claude/skills/cti-expert/scripts/install.sh`
+
+(both accept `--headless`/`-Headless`, `--go`/`-Go`, `--all`/`-All`)
 
 ### Behavior Rules
 
-- **Silent install:** Do not ask permission — install and proceed. Tool installation is a normal part of the investigation workflow.
-- **pip vs pipx:** Use `pip` by default. Use `pipx` only for tools that explicitly require it (Sherlock).
-- **Go tools:** Require Go installed. If `command -v go` fails, note the gap and fall back to next tool in cascade.
-- **apt tools:** May require root. Use `sudo apt install -y` if not running as root.
-- **Git-based install:** For tools without PyPI packages (ShareTrace), clone the repo and install dependencies via `git clone ... && cd ... && pip3 install -r requirements.txt`
-- **Fallback on install failure:** If installation fails, skip to the next tool in the cascade — never block the investigation.
+- **uv first (anything Python):** prefer uv — `uv tool install` for CLIs, `uv pip install` for libraries, `uv run` for scripts. It behaves identically on every OS, so reach for it before per-OS pip/pipx. Fall back to `<$PY> -m pip` / `pipx` only when uv cannot be installed.
+- **Detect before install (system binaries):** dispatch by the OS detected in Step 0 — never run `apt` on Windows or `winget` on Linux.
+- **Silent install:** do not ask permission — install and proceed. Tool installation is a normal part of the investigation workflow.
+- **Go tools:** require Go installed. If `go` is missing, install it via the OS package manager (`winget install GoLang.Go` / `brew install go` / `sudo apt install -y golang`), or note the gap and fall back to the next tool in the cascade.
+- **Linux privileges:** system installs need `sudo` unless running as root.
+- **Windows specifics:** `winget` may prompt UAC; a freshly installed tool may not be on PATH until the shell is reopened (probe its install dir or restart the shell before declaring failure). The DOCX generator self-heals UTF-8 output and pandoc location — see `platform-setup.md` §6.
+- **Git-based install:** for tools without a PyPI package (msftrecon, blackbird, sharetrace), clone the repo and install its `requirements.txt` with `<$PY> -m pip install -r requirements.txt`.
+- **Fallback on install failure:** if installation fails, log a collection gap and skip to the next tool in the cascade — never block the investigation.

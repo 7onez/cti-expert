@@ -1,0 +1,40 @@
+name: smoke
+
+# Validates that a FRESH machine/VPS can clone → install → run the skill's tooling.
+# The first job runs inside a minimal root Ubuntu container (no sudo, no curl/git/python
+# pre-installed) — the true "fresh VPS" scenario. The others cover normal runners.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  fresh-minimal-vps:
+    name: fresh minimal VPS (ubuntu container, root, no sudo)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+    steps:
+      - name: Prereqs for checkout (minimal image ships no git)
+        run: |
+          apt-get update
+          apt-get install -y git ca-certificates
+      - uses: actions/checkout@v4
+      - name: Run installer (uv-first — bootstraps uv, venv, tools from scratch)
+        run: bash scripts/install.sh || true
+      - name: Readiness smoke test (gate)
+        run: bash scripts/smoke-test.sh
+
+  fresh-desktop:
+    name: fresh desktop (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer
+        run: bash scripts/install.sh || true
+      - name: Readiness smoke test (gate)
+        run: bash scripts/smoke-test.sh
