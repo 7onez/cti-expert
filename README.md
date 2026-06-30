@@ -16,7 +16,7 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.3-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.3"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.4-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.4"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
   <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
@@ -117,6 +117,20 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 <br>
 
+## What's New in v2.4
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **Platform** | Cross-platform OS detection (Windows/macOS/Linux) | OS-aware auto-install; self-healing DOCX (UTF-8 + auto-located pandoc) |
+| **Packaging** | uv-first toolchain | `uv venv` / `uv pip` / `uv tool`; PEP 723 `uv run` zero-setup scripts; pip/pipx/venv fallback |
+| **Portability** | Cross-agent support | Runs in Claude Code **and** OpenAI Codex via `AGENTS.md` + a ready-to-copy `/cti-expert` Codex prompt |
+| **CTI** | Infostealer-log analyzer (`/stealer-log`) | Family ID, victim-vs-operator profiling, cross-log actor correlation, IOC + raw-artifact extraction |
+| **Recon** | Admin / sensitive-endpoint detection | Subdomain-prefix + path + CJK classifier (`admin`, `adm`, `kef`, `ador`, `panel`…) |
+| **Reliability** | Fresh-VPS install hardening + CI | root/sudo + prereq bootstrap; smoke test + GitHub Actions on a minimal root Ubuntu container |
+
+<details>
+<summary><b>What's New in v2.3</b></summary>
+
 ## What's New in v2.3
 
 | Category | What's New | Details |
@@ -159,6 +173,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Data Model** | Source Reliability A-F | Complements trust scores with source-level grading |
 | **Data Model** | 4 new entity types | Device, Image, Crypto Address, Custom |
 | **Data Model** | HIGH conflict severity | 4-level severity: CRITICAL/HIGH/NOTABLE/MINOR |
+
+</details>
 
 </details>
 
