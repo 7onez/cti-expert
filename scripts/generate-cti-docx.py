@@ -9,24 +9,61 @@ Usage:
 
 Input: JSON file matching the CTI report data schema (see sample-cti-report-data.json)
 Output: Professional .docx with cover page, TOC, charts, diagrams, styled sections.
+
+Recommended runner (zero setup, any OS): `uv run generate-cti-docx.py ...`
+uv reads the inline dependency metadata below and provisions an ephemeral env.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "python-docx>=1.0.0",
+#     "matplotlib>=3.8.0",
+#     "networkx>=3.2.0",
+# ]
+# ///
 import sys
 import os
 import json
+import shutil
 import subprocess
 import datetime
 
-# Auto-install dependencies
+# Force UTF-8 console output so non-ASCII chars don't crash under Windows cp1252.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
+
+# Auto-install dependencies — prefer uv (fast, cross-platform), fall back to pip.
+# Under `uv run` the inline metadata above already provides these, so this is a no-op.
 def ensure_deps():
     required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx"}
+    missing = []
     for pkg, mod in required.items():
         try:
             __import__(mod)
         except ImportError:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--break-system-packages", pkg],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
+            missing.append(pkg)
+    if not missing:
+        return
+    if shutil.which("uv"):
+        try:
+            subprocess.check_call(["uv", "pip", "install", "--python", sys.executable, *missing],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except (subprocess.CalledProcessError, OSError):
+            pass
+    # pip fallback: --break-system-packages is needed on Debian/PEP-668 envs but
+    # rejected by pip < 23; retry without it so all platforms install.
+    base = [sys.executable, "-m", "pip", "install"]
+    try:
+        subprocess.check_call(base + ["--break-system-packages", *missing],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        subprocess.check_call(base + missing,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 ensure_deps()
 

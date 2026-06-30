@@ -5,7 +5,9 @@
 #   --go        Install Go-based tools (requires Go 1.21+)
 #   --all       Install everything including headless + Go tools
 #
-# Supported platforms: Linux (apt), macOS (brew), Windows (Git Bash / WSL)
+# Package engine: uv-first (Astral's uv handles the venv, `uv pip`, and `uv tool`);
+# bootstraps uv automatically, and falls back to python3 -m venv + pip/pipx if uv
+# cannot be installed. Supported platforms: Linux (apt), macOS (brew), Windows (Git Bash / WSL).
 
 set -euo pipefail
 
@@ -27,10 +29,11 @@ case "$ARCH" in
 esac
 
 # ── Venv paths differ on Windows ─────────────────────────────
+VENV_DIR="$HOME/.claude/skills/.venv"
 if [[ "$OS" == "windows" ]]; then
-  VENV_BIN="$HOME/.claude/skills/.venv/Scripts"
+  VENV_BIN="$VENV_DIR/Scripts"
 else
-  VENV_BIN="$HOME/.claude/skills/.venv/bin"
+  VENV_BIN="$VENV_DIR/bin"
 fi
 VENV_PIP="$VENV_BIN/pip"
 VENV_PYTHON="$VENV_BIN/python3"
@@ -59,11 +62,54 @@ section()  { echo -e "\n${BOLD}${CYAN}▶ $1${NC}"; }
 has()    { command -v "$1" &>/dev/null; }
 has_py() { "$VENV_PYTHON" -c "import $1" &>/dev/null 2>&1; }
 
+# Root/sudo handling — VPSes & containers frequently run as root with no `sudo`
+# binary installed, so never hard-assume `sudo` exists.
+if [[ "$(id -u 2>/dev/null)" == "0" ]]; then
+  SUDO=""
+elif has sudo; then
+  SUDO="sudo"
+else
+  SUDO=""   # non-root without sudo: system-package installs may fail, but uv/pip --user still work
+fi
+
+# Install Python packages into the skill venv. uv-first (a uv-created venv has no
+# pip, so we must target it with `uv pip --python`); fall back to the venv's pip.
+vpip() { if has uv; then uv pip install --python "$VENV_PYTHON" "$@"; else "$VENV_PYTHON" -m pip install "$@"; fi; }
+
+# Bootstrap uv itself — the one dependency the uv-first path needs.
+ensure_uv() {
+  has uv && { log_ok "uv $(uv --version 2>/dev/null | awk '{print $2}') (present)"; return 0; }
+  # On a fresh Linux box (esp. minimal VPS/containers) install the prerequisites the
+  # uv installer + venv fallback need, before anything else.
+  if [[ "$OS" == "linux" ]] && has apt-get; then
+    $SUDO apt-get update -y &>/dev/null 2>&1 || true
+    $SUDO apt-get install -y curl ca-certificates git python3 python3-venv &>/dev/null 2>&1 || true
+  fi
+  if [[ "$OS" == "macos" ]] && has brew; then brew install uv &>/dev/null 2>&1 || true; fi
+  if ! has uv && has curl; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh &>/dev/null 2>&1 || true
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  fi
+  if ! has uv && has wget; then
+    wget -qO- https://astral.sh/uv/install.sh | sh &>/dev/null 2>&1 || true
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  fi
+  if ! has uv && has pip3; then
+    pip3 install --user uv &>/dev/null 2>&1 || true
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+  if has uv; then
+    log_ok "uv $(uv --version 2>/dev/null | awk '{print $2}') installed"
+  else
+    log_skip "uv (could not install — using pip/venv fallback; see https://astral.sh/uv)"
+  fi
+}
+
 apt_install() {
   local pkg="$1" cmd="${2:-$1}"
   if has "$cmd"; then
     if [[ "$OS" == "linux" ]]; then
-      if sudo apt-get install --only-upgrade -y "$pkg" &>/dev/null 2>&1; then
+      if $SUDO apt-get install --only-upgrade -y "$pkg" &>/dev/null 2>&1; then
         log_ok "$pkg updated"
       else
         log_skip "$pkg"
@@ -78,7 +124,7 @@ apt_install() {
       log_skip "$pkg"
     fi
   elif [[ "$OS" == "linux" ]]; then
-    if sudo apt-get install -y "$pkg" &>/dev/null 2>&1; then
+    if $SUDO apt-get install -y "$pkg" &>/dev/null 2>&1; then
       log_ok "$pkg"
     else
       log_fail "$pkg" "try: sudo apt-get update && sudo apt install $pkg"
@@ -101,14 +147,14 @@ pip_install() {
   local already=false
   has_py "$check_name" && already=true
 
-  if "$VENV_PYTHON" -m pip install --quiet --upgrade "$pkg" 2>/dev/null; then
+  if vpip --quiet --upgrade "$pkg" 2>/dev/null; then
     if [[ "$already" == true ]]; then
       log_ok "$pkg updated"
     else
       log_ok "$pkg"
     fi
   else
-    log_fail "$pkg" "pip install --upgrade failed"
+    log_fail "$pkg" "install (uv pip / pip) failed"
   fi
 }
 
@@ -124,7 +170,19 @@ blackbird_install() {
     rm -rf "$blackbird_dir" 2>/dev/null
     git clone --quiet --depth 1 "$blackbird_repo" "$blackbird_dir" 2>/dev/null
   fi
-  if [[ -f "$blackbird_dir/requirements.txt" ]] &&      "$VENV_PYTHON" -m pip install --quiet --upgrade -r "$blackbird_dir/requirements.txt" 2>/dev/null; then
+  # Relax version pins that prevent Python 3.14 binary wheels from being used
+  if [[ -f "$blackbird_dir/requirements.txt" ]]; then
+    sed -i \
+      -e 's/aiohttp==.*/aiohttp>=3.13/' \
+      -e 's/yarl==.*/yarl>=1.17/' \
+      -e 's/multidict==.*/multidict>=6.0/' \
+      -e 's/aiohappyeyeballs==.*/aiohappyeyeballs>=2.3/' \
+      -e 's/aiosignal==.*/aiosignal>=1.3/' \
+      -e 's/frozenlist==.*/frozenlist>=1.4/' \
+      -e 's/propcache==.*/propcache>=0.2/' \
+      "$blackbird_dir/requirements.txt" 2>/dev/null || true
+  fi
+  if [[ -f "$blackbird_dir/requirements.txt" ]] && { { has uv && uv pip install --python "$VENV_PYTHON" --quiet --upgrade -r "$blackbird_dir/requirements.txt"; } || "$VENV_PYTHON" -m pip install --quiet --upgrade --prefer-binary -r "$blackbird_dir/requirements.txt"; } 2>/dev/null; then
     SITE_PKG="$("$VENV_PYTHON" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)"
     if [[ -n "$SITE_PKG" ]]; then
       echo "$blackbird_dir" > "$SITE_PKG/blackbird.pth"
@@ -144,24 +202,33 @@ blackbird_install() {
 agentflow_install() {
   local already=false
   has_py "agentflow" && already=true
-  if "$VENV_PYTHON" -m pip install --quiet --upgrade --no-deps agentflow 2>/dev/null; then
+  if vpip --quiet --upgrade --no-deps agentflow 2>/dev/null; then
     if [[ "$already" == true ]]; then
       log_ok "agentflow updated"
     else
       log_ok "agentflow"
     fi
   else
-    log_fail "agentflow" "pip install --upgrade --no-deps agentflow failed"
+    log_fail "agentflow" "install (uv pip / pip) --no-deps agentflow failed"
   fi
 }
 
-# Install via pipx (for tools with complex system-level deps)
+# Install an isolated CLI tool. uv-first (`uv tool`, the pipx replacement); fall back to pipx.
 pipx_install() {
   local tool="$1" cmd="${2:-$1}" pre_pkg="${3:-}"
   local already=false
   has "$cmd" && already=true
   if [[ -n "$pre_pkg" ]] && [[ "$OS" == "linux" ]]; then
-    sudo apt-get install -y "$pre_pkg" &>/dev/null 2>&1 || true
+    $SUDO apt-get install -y "$pre_pkg" &>/dev/null 2>&1 || true
+  fi
+  if has uv; then
+    if [[ "$already" == true ]] && uv tool upgrade "$tool" &>/dev/null 2>&1; then
+      log_ok "$tool updated (uv tool)"; return
+    elif uv tool install "$tool" &>/dev/null 2>&1; then
+      [[ "$already" == true ]] && log_ok "$tool updated (uv tool)" || log_ok "$tool (uv tool)"
+      return
+    fi
+    # uv tool failed (e.g. package exposes no CLI entry point) — fall through to pipx
   fi
   if has pipx; then
     if [[ "$already" == true ]]; then
@@ -180,7 +247,7 @@ pipx_install() {
       log_fail "$tool" "pipx install $tool failed"
     fi
   else
-    log_fail "$tool" "pipx not found — install with: pip3 install pipx"
+    log_fail "$tool" "no uv or pipx — install uv (https://astral.sh/uv) or run: pip3 install pipx"
   fi
 }
 
@@ -204,6 +271,10 @@ gh_binary_install() {
   local tool="$1" cmd="$2" repo="$3" asset_pattern="$4" install_dir="${5:-/usr/local/bin}"
   local already=false
   has "$cmd" && already=true
+  if $already; then
+    log_ok "$tool (already installed)"
+    return
+  fi
   if ! has gh; then
     log_fail "$tool" "gh CLI not found — install from https://cli.github.com"
     return
@@ -219,7 +290,7 @@ gh_binary_install() {
   if curl -sL "$url" | tar -xz -C "$tmp" 2>/dev/null; then
     local bin; bin=$(find "$tmp" -name "$cmd" -type f | head -1)
     if [[ -n "$bin" ]]; then
-      sudo mv "$bin" "$install_dir/$cmd" 2>/dev/null || mv "$bin" "$HOME/.local/bin/$cmd" 2>/dev/null
+      $SUDO mv "$bin" "$install_dir/$cmd" 2>/dev/null || mv "$bin" "$HOME/.local/bin/$cmd" 2>/dev/null
       log_ok "$tool"
     else
       log_fail "$tool" "binary '$cmd' not found in archive"
@@ -232,21 +303,37 @@ gh_binary_install() {
 
 # ── Header ───────────────────────────────────────────────────
 echo -e "${BOLD}CTI Expert — Tool Installer${NC}"
-echo "Platform: $OS/$ARCH"
-echo "Skill:    $SKILL_DIR"
-echo "Venv:     $HOME/.claude/skills/.venv"
+echo "Platform:  $OS/$ARCH"
+echo "Skill:     $SKILL_DIR"
+echo "Venv:      $HOME/.claude/skills/.venv"
+echo "Installer: uv-first (pip/pipx/venv fallback)"
 [[ "$OPT_HEADLESS" == true ]] && echo "Mode:     +headless"
 [[ "$OPT_GO" == true ]]       && echo "Mode:     +go"
 
-# ── Venv check ──────────────────────────────────────────────
+# ── uv bootstrap ────────────────────────────────────────────
+section "uv (Astral package manager)"
+ensure_uv
+
+# ── Venv check / create ─────────────────────────────────────
 section "Python environment"
-if [[ ! -f "$VENV_PIP" ]]; then
-  echo -e "  ${RED}✘${NC} Venv not found at $HOME/.claude/skills/.venv"
-  echo "  Run: python3 -m venv ~/.claude/skills/.venv"
-  exit 1
+if [[ ! -f "$VENV_PYTHON" ]]; then
+  if has uv; then
+    if uv venv "$VENV_DIR" &>/dev/null 2>&1; then log_ok "created venv via uv: $VENV_DIR"; else log_fail "venv" "uv venv failed"; fi
+  elif has python3; then
+    if python3 -m venv "$VENV_DIR" &>/dev/null 2>&1; then log_ok "created venv: $VENV_DIR"; else log_fail "venv" "python3 -m venv failed"; fi
+  else
+    echo -e "  ${RED}✘${NC} No uv or python3 available to create a venv at $VENV_DIR"
+    echo "  Install uv (https://astral.sh/uv) or Python 3, then re-run."
+    exit 1
+  fi
+fi
+if [[ ! -f "$VENV_PYTHON" ]]; then
+  echo -e "  ${RED}✘${NC} Venv python missing at $VENV_PYTHON after creation attempt"; exit 1
 fi
 echo -e "  ${GREEN}✔${NC} $("$VENV_PYTHON" --version 2>&1)"
-if "$VENV_PYTHON" -m pip install --quiet --upgrade pip 2>/dev/null; then
+if has uv; then
+  log_ok "uv manages package installs (pip bootstrap not needed)"
+elif "$VENV_PYTHON" -m pip install --quiet --upgrade pip 2>/dev/null; then
   log_ok "pip upgraded"
 else
   log_fail "pip upgrade" "python -m pip install --upgrade pip failed"
@@ -260,21 +347,21 @@ apt_install jq jq
 apt_install libimage-exiftool-perl exiftool
 apt_install poppler-utils pdfinfo
 apt_install qpdf qpdf
-apt_install mat2 mat2
+if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
 # libcairo2-dev needed by maigret on Linux
 if [[ "$OS" == "linux" ]] && ! dpkg -l libcairo2-dev &>/dev/null 2>&1; then
-  sudo apt-get install -y libcairo2-dev &>/dev/null 2>&1 && log_ok "libcairo2-dev (maigret dep)" || true
+  $SUDO apt-get install -y libcairo2-dev &>/dev/null 2>&1 && log_ok "libcairo2-dev (maigret dep)" || true
 fi
 
 # ── Python: core skill deps ───────────────────────────────────
 section "Python: core skill requirements"
 REQ="$SKILL_DIR/scripts/requirements.txt"
 if [[ -f "$REQ" ]]; then
-  if "$VENV_PYTHON" -m pip install --quiet --upgrade -r "$REQ" 2>/dev/null; then
+  if vpip --quiet --upgrade -r "$REQ" 2>/dev/null; then
     log_ok "requirements.txt (python-docx, matplotlib, networkx, numpy, whoisdomain, scrapling)"
   else
-    log_fail "requirements.txt" "pip install -r failed"
+    log_fail "requirements.txt" "install (uv pip / pip) -r failed"
   fi
 else
   log_fail "requirements.txt" "not found at $REQ"
@@ -297,14 +384,14 @@ agentflow_install                       # no-deps avoids urllib3 conflict with m
 # msftrecon — not on PyPI, install via git
 MSFTRECON_ALREADY=false
 "$VENV_PYTHON" -c "import msftrecon" &>/dev/null 2>&1 && MSFTRECON_ALREADY=true
-if "$VENV_PYTHON" -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git" 2>/dev/null; then
+if { { has uv && uv pip install --python "$VENV_PYTHON" --quiet --reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; } || "$VENV_PYTHON" -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; } 2>/dev/null; then
   if [[ "$MSFTRECON_ALREADY" == true ]]; then
     log_ok "msftrecon updated"
   else
     log_ok "msftrecon (M365/Azure tenant recon)"
   fi
 else
-  log_fail "msftrecon" "pip install from git failed"
+  log_fail "msftrecon" "install from git (uv pip / pip) failed"
 fi
 
 # agentflow 0.0.2 and msftrecon 0.1.0 require incompatible urllib3 ranges.
@@ -334,7 +421,7 @@ else
   rm -rf "$SHARETRACE_DIR" 2>/dev/null
   git clone --quiet --depth 1 "$SHARETRACE_REPO" "$SHARETRACE_DIR" 2>/dev/null
 fi
-if [[ -d "$SHARETRACE_DIR/sharetrace" ]] &&    "$VENV_PYTHON" -m pip install --quiet --upgrade -r "$SHARETRACE_DIR/requirements.txt" 2>/dev/null; then
+if [[ -d "$SHARETRACE_DIR/sharetrace" ]] &&    vpip --quiet --upgrade -r "$SHARETRACE_DIR/requirements.txt" 2>/dev/null; then
   SITE_PKG="$("$VENV_PYTHON" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)"
   if [[ -n "$SITE_PKG" ]]; then
     echo "$SHARETRACE_DIR" > "$SITE_PKG/sharetrace.pth"
@@ -358,7 +445,7 @@ if [[ "$OPT_HEADLESS" == true ]]; then
   echo "  Installing/updating Scrapling[fetchers] + Chromium (~200MB)..."
   SCRAPLING_CLI="$VENV_BIN/scrapling"
   [[ "$OS" == "windows" ]] && SCRAPLING_CLI="$VENV_BIN/scrapling.exe"
-  if "$VENV_PYTHON" -m pip install --quiet --upgrade "scrapling[fetchers]" 2>/dev/null &&      { [[ -x "$SCRAPLING_CLI" ]] && "$SCRAPLING_CLI" install &>/dev/null || scrapling install &>/dev/null; }; then
+  if vpip --quiet --upgrade "scrapling[fetchers]" 2>/dev/null &&      { [[ -x "$SCRAPLING_CLI" ]] && "$SCRAPLING_CLI" install &>/dev/null || scrapling install &>/dev/null; }; then
     if [[ "$SCRAPLING_HEADLESS_ALREADY" == true ]]; then
       log_ok "Scrapling headless updated"
     else

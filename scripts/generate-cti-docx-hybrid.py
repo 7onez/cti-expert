@@ -12,28 +12,70 @@ Usage:
 Phase 1: pandoc converts MD to DOCX (preserves all tables, lists, formatting).
 Phase 2: python-docx post-processes to add CTI styling, cover page, TOC, and
          injects charts/diagrams from JSON at matching section headings.
+
+Recommended runner (zero setup, any OS): `uv run generate-cti-docx-hybrid.py ...`
+uv reads the inline dependency metadata below and provisions an ephemeral env.
 """
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "python-docx>=1.0.0",
+#     "matplotlib>=3.8.0",
+#     "networkx>=3.2.0",
+# ]
+# ///
 import sys
 import os
 import json
+import shutil
 import subprocess
 import tempfile
 import datetime
+
+# Force UTF-8 console output so arrow/box-drawing chars (→, ✔, ─) don't crash
+# under Windows' default cp1252 code page. Harmless no-op on macOS/Linux.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS_DIR)
 
 
 def ensure_deps():
+    """Ensure runtime deps are importable. Prefer uv (fast, cross-platform); fall back to pip.
+
+    Under `uv run` the deps are already provided by the inline metadata above, so this
+    is a no-op — it only does work under a bare `python script.py` invocation.
+    """
     required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx"}
+    missing = []
     for pkg, mod in required.items():
         try:
             __import__(mod)
         except ImportError:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--break-system-packages", pkg],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+            missing.append(pkg)
+    if not missing:
+        return
+    # Prefer uv: installs into the current interpreter, fast, identical on every OS.
+    if shutil.which("uv"):
+        try:
+            subprocess.check_call(["uv", "pip", "install", "--python", sys.executable, *missing],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except (subprocess.CalledProcessError, OSError):
+            pass
+    # pip fallback: --break-system-packages is needed on Debian/PEP-668 envs but
+    # rejected by pip < 23; retry without it so all platforms install.
+    base = [sys.executable, "-m", "pip", "install"]
+    try:
+        subprocess.check_call(base + ["--break-system-packages", *missing],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        subprocess.check_call(base + missing,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 ensure_deps()
@@ -45,9 +87,60 @@ from cti_docx_postprocess import (
 
 
 def ensure_pandoc():
-    if subprocess.run(["command", "-v", "pandoc"], shell=True, capture_output=True).returncode != 0:
-        subprocess.check_call(["apt", "install", "-y", "pandoc"],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Locate pandoc on any OS; install via the platform package manager if missing.
+
+    pandoc is required for Phase 1 (Markdown -> DOCX). On Windows it is commonly
+    installed under %LOCALAPPDATA%\\Pandoc but not added to PATH, so probe the
+    usual locations before attempting an install.
+    """
+    if shutil.which("pandoc"):
+        return
+
+    # Probe common install dirs that may not be on PATH (esp. Windows).
+    probe_dirs = []
+    if os.name == "nt":
+        for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles"),
+                     os.environ.get("ProgramFiles(x86)")):
+            if base:
+                probe_dirs.append(os.path.join(base, "Pandoc"))
+    else:
+        probe_dirs += ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]
+    exe = "pandoc.exe" if os.name == "nt" else "pandoc"
+    for d in probe_dirs:
+        if os.path.isfile(os.path.join(d, exe)):
+            os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+            return
+
+    # Still missing — try a quiet, OS-appropriate install, then re-check.
+    install_cmd = None
+    if sys.platform == "darwin" and shutil.which("brew"):
+        install_cmd = ["brew", "install", "pandoc"]
+    elif sys.platform.startswith("linux"):
+        if shutil.which("apt-get"):
+            install_cmd = ["sudo", "apt-get", "install", "-y", "pandoc"]
+        elif shutil.which("dnf"):
+            install_cmd = ["sudo", "dnf", "install", "-y", "pandoc"]
+        elif shutil.which("pacman"):
+            install_cmd = ["sudo", "pacman", "-S", "--noconfirm", "pandoc"]
+    elif os.name == "nt" and shutil.which("winget"):
+        install_cmd = ["winget", "install", "--id", "JohnMacFarlane.Pandoc", "--exact",
+                       "--accept-package-agreements", "--accept-source-agreements"]
+
+    if install_cmd:
+        try:
+            subprocess.run(install_cmd, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, check=False)
+        except OSError:
+            pass
+
+    if not shutil.which("pandoc"):
+        raise RuntimeError(
+            "pandoc not found and automatic install was unavailable. Install it manually:\n"
+            "  Windows: winget install JohnMacFarlane.Pandoc\n"
+            "  macOS:   brew install pandoc\n"
+            "  Linux:   sudo apt install pandoc   (or dnf/pacman)\n"
+            "Then re-run, or fall back to generate-cti-docx.py (JSON-only, no pandoc needed)."
+        )
 
 
 def convert_md_to_docx(md_path: str) -> str:

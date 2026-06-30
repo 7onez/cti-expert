@@ -1,3 +1,6 @@
+# Core skill dependencies. Installed by scripts/install.{sh,ps1} via `uv pip install -r`
+# (preferred) or `pip install -r` (fallback). The DOCX generators also declare these
+# inline (PEP 723), so `uv run scripts/generate-cti-docx-hybrid.py ...` needs no pre-install.
 python-docx>=1.0.0
 matplotlib>=3.8.0
 networkx>=3.2.0

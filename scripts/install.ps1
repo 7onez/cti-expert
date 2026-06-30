@@ -5,6 +5,9 @@ Usage: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 [-Headless
   -Go        Install Go-based tools (requires Go 1.21+)
   -All       Install everything including headless + Go tools
 
+Package engine: uv-first. Bootstraps Astral's uv (winget / official installer / pip),
+creates the venv with `uv venv`, installs libs with `uv pip` and CLI tools with `uv tool`.
+Falls back to py/python venv + pip/pipx when uv cannot be installed.
 Supported platforms: Windows PowerShell 5.1+ and PowerShell 7+.
 #>
 
@@ -87,6 +90,39 @@ function Invoke-Step {
     }
 }
 
+# Install Python packages into the skill venv. uv-first (a uv-created venv has no
+# pip, so we target it via `uv pip --python`); fall back to the venv's own pip.
+# Leaves $LASTEXITCODE set for the caller to check.
+function Invoke-VenvPip {
+    param([Parameter(ValueFromRemainingArguments = $true)] [string[]]$PipArgs)
+    if (Test-Command "uv") {
+        & uv pip install --python $VenvPython @PipArgs
+    }
+    else {
+        & $VenvPython -m pip install @PipArgs
+    }
+}
+
+# Bootstrap uv itself — the one dependency the uv-first path needs.
+function Install-Uv {
+    if (Test-Command "uv") { Log-Ok "uv present: $(uv --version)"; return }
+    if (Test-Command "winget") {
+        winget install --id astral-sh.uv --exact --accept-package-agreements --accept-source-agreements 2>&1 | Out-Host
+    }
+    if (!(Test-Command "uv")) {
+        try { Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression } catch {}
+        $uvBin = Join-Path $env:USERPROFILE ".local\bin"
+        if ((Test-Path (Join-Path $uvBin "uv.exe")) -and ($env:PATH -notlike "*$uvBin*")) {
+            $env:PATH = "$uvBin;$env:PATH"
+        }
+    }
+    if ((!(Test-Command "uv")) -and (Get-Command "py" -ErrorAction SilentlyContinue)) {
+        py -m pip install --user uv *> $null
+    }
+    if (Test-Command "uv") { Log-Ok "uv installed" }
+    else { Log-Skip "uv (install manually from https://astral.sh/uv; using pip/venv fallback)" }
+}
+
 function Install-WingetPackage {
     param(
         [string]$Name,
@@ -147,8 +183,8 @@ function Install-PipPackage {
     $alreadyInstalled = Test-PythonImport $checkName
 
     Invoke-Step $Package {
-        & $VenvPython -m pip install --quiet --upgrade $Package
-        if ($LASTEXITCODE -ne 0) { throw "pip install --upgrade failed" }
+        Invoke-VenvPip --quiet --upgrade $Package
+        if ($LASTEXITCODE -ne 0) { throw "install (uv pip / pip) --upgrade failed" }
         if ($alreadyInstalled) { Log-Ok "$Package updated" } else { Log-Ok $Package }
     } | Out-Null
 }
@@ -168,8 +204,8 @@ function Install-Blackbird {
             git clone --quiet --depth 1 $blackbirdRepo $blackbirdDir
             if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
         }
-        & $VenvPython -m pip install --quiet --upgrade -r (Join-Path $blackbirdDir "requirements.txt")
-        if ($LASTEXITCODE -ne 0) { throw "pip install -r blackbird requirements failed" }
+        Invoke-VenvPip --quiet --upgrade -r (Join-Path $blackbirdDir "requirements.txt")
+        if ($LASTEXITCODE -ne 0) { throw "install -r blackbird requirements failed" }
         $sitePackages = & $VenvPython -c "import site; print(site.getsitepackages()[0])"
         Set-Content -Path (Join-Path $sitePackages "blackbird.pth") -Value $blackbirdDir -Encoding ASCII
         if ($alreadyInstalled) { Log-Ok "blackbird updated from source" } else { Log-Ok "blackbird (source checkout)" }
@@ -179,8 +215,8 @@ function Install-Blackbird {
 function Install-AgentFlow {
     $alreadyInstalled = Test-PythonImport "agentflow"
     Invoke-Step "agentflow" {
-        & $VenvPython -m pip install --quiet --upgrade --no-deps agentflow
-        if ($LASTEXITCODE -ne 0) { throw "pip install --upgrade --no-deps agentflow failed" }
+        Invoke-VenvPip --quiet --upgrade --no-deps agentflow
+        if ($LASTEXITCODE -ne 0) { throw "install --upgrade --no-deps agentflow failed" }
         if ($alreadyInstalled) { Log-Ok "agentflow updated" } else { Log-Ok "agentflow" }
     } | Out-Null
 }
@@ -190,6 +226,21 @@ function Install-PipxPackage {
         [string]$Package,
         [string]$Command
     )
+
+    # uv-first: `uv tool` is the pipx replacement.
+    if (Test-Command "uv") {
+        $already = Test-Command $Command
+        Invoke-Step $Package {
+            $ok = $false
+            if ($already) { uv tool upgrade $Package *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true } }
+            if (-not $ok) {
+                uv tool install $Package *> $null
+                if ($LASTEXITCODE -ne 0) { throw "uv tool install failed" }
+            }
+            if ($already) { Log-Ok "$Package updated (uv tool)" } else { Log-Ok "$Package (uv tool)" }
+        } | Out-Null
+        return
+    }
 
     if (!(Test-Command "pipx")) {
         Invoke-Step "pipx" {
@@ -284,24 +335,30 @@ function Install-GitHubReleaseBinary {
 }
 
 Write-Host "CTI Expert - Tool Installer" -ForegroundColor White
-Write-Host "Platform: Windows / $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
-Write-Host "Skill:    $SkillDir"
-Write-Host "Venv:     $VenvDir"
-if ($Headless) { Write-Host "Mode:     +headless" }
-if ($Go) { Write-Host "Mode:     +go" }
+Write-Host "Platform:  Windows / $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+Write-Host "Skill:     $SkillDir"
+Write-Host "Venv:      $VenvDir"
+Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
+if ($Headless) { Write-Host "Mode:      +headless" }
+if ($Go) { Write-Host "Mode:      +go" }
+
+Write-Section "uv (Astral package manager)"
+Install-Uv
 
 Write-Section "Python environment"
 if (!(Test-Path $VenvPython)) {
     Invoke-Step "Python virtual environment" {
-        $pythonCmd = Get-Command "py" -ErrorAction SilentlyContinue
-        if ($pythonCmd) {
+        if (Test-Command "uv") {
+            uv venv $VenvDir
+        }
+        elseif (Get-Command "py" -ErrorAction SilentlyContinue) {
             py -3 -m venv $VenvDir
         }
         elseif (Test-Command "python") {
             python -m venv $VenvDir
         }
         else {
-            throw "Python 3 not found; install from https://www.python.org/downloads/"
+            throw "Neither uv nor Python 3 found; install uv (https://astral.sh/uv) or Python"
         }
         if (!(Test-Path $VenvPython)) { throw "venv creation failed" }
         Log-Ok "created $VenvDir"
@@ -311,11 +368,16 @@ else {
     Log-Skip "Python virtual environment"
 }
 & $VenvPython --version
-Invoke-Step "pip upgrade" {
-    & $VenvPython -m pip install --quiet --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
-    Log-Ok "pip upgraded"
-} | Out-Null
+if (Test-Command "uv") {
+    Log-Ok "uv manages package installs (pip bootstrap not needed)"
+}
+else {
+    Invoke-Step "pip upgrade" {
+        & $VenvPython -m pip install --quiet --upgrade pip
+        if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed" }
+        Log-Ok "pip upgraded"
+    } | Out-Null
+}
 
 Write-Section "System tools"
 Install-WingetPackage "Git" "git" "Git.Git"
@@ -330,8 +392,8 @@ Write-Section "Python: core skill requirements"
 $requirements = Join-Path $SkillDir "scripts\requirements.txt"
 if (Test-Path $requirements) {
     Invoke-Step "requirements.txt" {
-        & $VenvPython -m pip install --quiet --upgrade -r $requirements
-        if ($LASTEXITCODE -ne 0) { throw "pip install --upgrade -r failed" }
+        Invoke-VenvPip --quiet --upgrade -r $requirements
+        if ($LASTEXITCODE -ne 0) { throw "install (uv pip / pip) --upgrade -r failed" }
         Log-Ok "requirements.txt (python-docx, matplotlib, networkx, numpy, whoisdomain, scrapling)"
     } | Out-Null
 }
@@ -354,14 +416,19 @@ Install-AgentFlow
 
 $msftreconAlreadyInstalled = Test-PythonImport "msftrecon"
 Invoke-Step "msftrecon" {
-    & $VenvPython -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"
-    if ($LASTEXITCODE -ne 0) { throw "pip install from git failed" }
+    if (Test-Command "uv") {
+        uv pip install --python $VenvPython --quiet --reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"
+    }
+    else {
+        & $VenvPython -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"
+    }
+    if ($LASTEXITCODE -ne 0) { throw "install from git (uv pip / pip) failed" }
     if ($msftreconAlreadyInstalled) { Log-Ok "msftrecon updated" } else { Log-Ok "msftrecon (M365/Azure tenant recon)" }
 } | Out-Null
 
 # agentflow 0.0.2 and msftrecon 0.1.0 require incompatible urllib3 ranges.
 # Keep msftrecon's modern urllib3 dependency and let AgentFlow fall back to sequential enrichment if needed.
-if (Test-PythonImport "agentflow" -and Test-PythonImport "msftrecon") {
+if ((Test-PythonImport "agentflow") -and (Test-PythonImport "msftrecon")) {
     Write-Host "  !!  agentflow and msftrecon have incompatible urllib3 requirements; keeping msftrecon-compatible urllib3 and using sequential enrichment fallback if AgentFlow fails" -ForegroundColor Yellow
     $script:Skipped++
 }
@@ -381,8 +448,8 @@ Invoke-Step "sharetrace" {
         git clone --quiet --depth 1 $sharetraceRepo $sharetraceDir
         if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
     }
-    & $VenvPython -m pip install --quiet --upgrade -r (Join-Path $sharetraceDir "requirements.txt")
-    if ($LASTEXITCODE -ne 0) { throw "pip install --upgrade -r sharetrace requirements failed" }
+    Invoke-VenvPip --quiet --upgrade -r (Join-Path $sharetraceDir "requirements.txt")
+    if ($LASTEXITCODE -ne 0) { throw "install --upgrade -r sharetrace requirements failed" }
     $sitePackages = & $VenvPython -c "import site; print(site.getsitepackages()[0])"
     Set-Content -Path (Join-Path $sitePackages "sharetrace.pth") -Value $sharetraceDir -Encoding ASCII
     if ($sharetraceOk) { Log-Ok "sharetrace updated" } else { Log-Ok "sharetrace (share link identity extraction, 11 platforms)" }
@@ -392,8 +459,8 @@ Write-Section "Python: Scrapling headless browser"
 $scraplingHeadlessAlreadyInstalled = Test-PythonImport "scrapling.fetchers"
 if ($Headless) {
     Invoke-Step "Scrapling headless" {
-        & $VenvPython -m pip install --quiet --upgrade "scrapling[fetchers]"
-        if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+        Invoke-VenvPip --quiet --upgrade "scrapling[fetchers]"
+        if ($LASTEXITCODE -ne 0) { throw "scrapling[fetchers] install failed" }
         $scraplingCli = Join-Path $VenvScripts "scrapling.exe"
         if (Test-Path $scraplingCli) {
             & $scraplingCli install
