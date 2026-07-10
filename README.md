@@ -345,7 +345,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
    | Platform | How to navigate |
    |----------|----------------|
-   | **macOS** | Open **Finder** &rarr; Press **Cmd + Shift + G** &rarr; Type `~/.claude/skills/` &rarr; Press **Go** &rarr; Move the folder here |
+   | **macOS** | Open **Finder** &rarr; Press **Shift + Cmd + G** &rarr; Type `~/.claude/skills/` &rarr; Press **Go** &rarr; Move the folder here |
    | **Windows** | Open **File Explorer** &rarr; Type `%USERPROFILE%\.claude\skills\` in the address bar &rarr; Press **Enter** &rarr; Move the folder here |
 
    > **Note:** If the `skills` folder does not exist, create it inside the `.claude` folder first.
