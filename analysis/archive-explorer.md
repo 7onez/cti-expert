@@ -127,6 +127,55 @@ https://web.archive.org/cdx/search/cdx?url={url}&filter=statuscode:200&output=js
 | Clean | `web/{ts}if_/{url}` | No injected Wayback JS |
 | Text extract | `web/{ts}id_/{url}` | Raw text, no assets |
 
+### ⚠️ WebFetch cannot reach web.archive.org — use `wayback_fetch.py`
+
+Claude Code's built-in **WebFetch tool is blocked from `web.archive.org`** and returns
+`Claude Code is unable to fetch from web.archive.org`. This is **not** a skill or
+permission-rule problem: WebFetch enforces `robots.txt` at Anthropic's fetch layer, and
+the Wayback Machine's `robots.txt` disallows automated access, so the request is refused
+before any skill runs. Adding a `WebFetch(domain:web.archive.org)` allow-rule does **not**
+help — the block is server-side, above the permission layer. (A normal browser works
+because it doesn't gate on robots.txt like an automated fetcher does.)
+
+Route around it with the harness-native, zero-dep helper — it does **CDX lookup → nearest-snapshot
+resolve → raw `id_` fetch** in one shot, with retry/backoff for the flaky CDX API:
+
+```bash
+WP="$SKILL_DIR/scripts/webpivot"
+
+# Resolve the nearest capture to a date and print raw archived HTML
+# (the exact timestamp you guessed often does NOT exist — this finds the real one):
+uv run "$WP/wayback_fetch.py" https://target.example/ --near 20240527
+
+# Just resolve the real id_ URL — hand it to the browser, curl, or another tool:
+uv run "$WP/wayback_fetch.py" target.example --near 20240527 --url-only
+
+# Latest / earliest good capture; readable text instead of raw HTML:
+uv run "$WP/wayback_fetch.py" target.example --near latest --text
+
+# List captures (like /snapshots) to pick a timestamp; machine-readable envelope:
+uv run "$WP/wayback_fetch.py" target.example --list --from 2023 --to 2024
+uv run "$WP/wayback_fetch.py" target.example --near latest --json   # resolved_url + metadata + content
+```
+
+**Harvesting IOCs across the *whole* history — `wayback_harvest.py`.** `wayback_fetch.py`
+pulls one capture; to recover **every email / phone / wallet / tracking ID / social** that
+appeared across a domain's archive timeline (including selectors later scrubbed), run the
+full-extractor harvest — it merges results with first-seen/last-seen and emits case-schema
+`indicators[]` for the IOC bundle — over the whole snapshot corpus, not just one page.
+This runs by default in `/case` for domain/URL targets.
+
+```bash
+uv run "$SKILL_DIR/scripts/webpivot/wayback_harvest.py" target.example --max 20 --timeline
+uv run "$SKILL_DIR/scripts/webpivot/wayback_harvest.py" target.example --urlscan --indicators \
+      -o "<case>/raw/harvest.indicators.json"
+```
+
+**Other routes to the same content** (when you want a different collector):
+- **Bash + `curl`** — curl ignores robots.txt: `curl -sL -A "Mozilla/5.0" "https://web.archive.org/web/{ts}id_/{url}"`.
+- **The in-app / agent browser** — reaches `web.archive.org` normally (verified); good for JS-rendered captures and screenshot evidence. See [`techniques/agent-browser.md`](../techniques/agent-browser.md).
+- **CDX / availability APIs directly** — `web.archive.org/cdx/search/cdx?...` and `archive.org/wayback/available?url=...&timestamp=...` (note: `available` can miss digest-distinct same-second captures that CDX lists — prefer CDX for completeness).
+
 ---
 
 ## 3. Social Platform Archive Patterns

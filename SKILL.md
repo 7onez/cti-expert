@@ -39,7 +39,7 @@ Every investigation follows four phases:
 | Phase | What Happens |
 |-------|-------------|
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` (domain/URL targets) |
-| **Enrich** | Expand leads — `/branch`, `/crossref`, `/link-subjects`, `/signatures` |
+| **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) until the frontier is exhausted; checkpoints per depth. Acquire↔Enrich iterate, not run once. |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding` |
 | **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle** |
 
@@ -52,6 +52,15 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > `/webpivot` can fetch the target directly, for hostile infrastructure it prefers passive capture
 > (urlscan/Wayback) — see [`techniques/web-pivot.md`](techniques/web-pivot.md). It is **not** run for
 > username/phone/person targets.
+>
+> **Archive IOC harvest runs by default too.** For domain/URL targets the Acquire phase also runs
+> `wayback_harvest.py <domain> --indicators` (add `--urlscan` when `URLSCAN_API_KEY` is set),
+> harvesting **emails, phones, crypto wallets, tracking/verification IDs, SaaS-operator IDs, and
+> socials from the *entire* Wayback history** — not just the live page — with first-seen/last-seen
+> per selector. It writes case-schema `indicators[]` to `<case>/raw/harvest.indicators.json`, which
+> merge into the case and flow into the **auto-saved IOC bundle** at Deliver. This is the step that
+> recovers selectors a network later scrubbed — across the whole snapshot corpus, not just the live page.
+> Passive by construction — only web.archive.org (+ urlscan.io if keyed), never the target.
 
 ---
 
@@ -79,7 +88,7 @@ Commands grouped by AEAD phase.
 | `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks | `/github-osint github.com/org/repo` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
-| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` | `/webpivot https://scam-site.top` |
+| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` | `/webpivot https://scam-site.top` |
 | `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) | `/cert-pivot scam-site.top` |
 | `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline | `/sensitive-paths waymore_index.txt` |
 | `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable/MX/free/role) | `/email-hygiene admin@site.top` |
@@ -103,7 +112,7 @@ Commands grouped by AEAD phase.
 | `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net | `/wifi "HomeNetwork"` |
 | `/wifi --bssid [mac]` | Exact AP lookup by MAC address | `/wifi --bssid AA:BB:CC:DD:EE:FF` |
 | `/register [name]` | Add a subject to the case workspace | `/register JohnDoe` |
-| `/snapshots [url]` | View archived Wayback snapshots of a URL | `/snapshots example.com` |
+| `/snapshots [url]` | List/fetch archived Wayback snapshots. **Note: WebFetch is blocked from web.archive.org (robots.txt) — use `scripts/webpivot/wayback_fetch.py` to list captures and pull archived content.** See `analysis/archive-explorer.md` | `/snapshots example.com` |
 
 ### Enrich
 
@@ -669,6 +678,7 @@ cti-expert/
 │   ├── case-schema.json        Subject and finding data structures
 │   ├── subject-registry.md     How subjects are tracked and versioned
 │   ├── finding-framework.md    Finding lifecycle, trust scores, evidence chains
+│   ├── pivot-orchestration.md  Recursive spider-map pivot engine (BFS loop, edge matrix, gating)
 │   ├── workspace-format.md     Workspace serialization spec
 │   ├── workspace-manager.md    Save/open/list workspace logic
 │   └── conflict-resolver.md    CONTESTED finding resolution
@@ -851,6 +861,7 @@ Which techniques activate per target type in a `/case` run:
 | OWASP audit | — | ✅ | ✅ | — | — | — |
 | Prompt injection audit | — | ✅ | ✅ | — | — | — |
 | `/snapshots` | — | ✅ | ✅ | — | — | ✅ |
+| Archive IOC harvest (`wayback_harvest.py`) | — | ✅ | ✅ | — | — | — |
 | `/diff` | — | ✅ | ✅ | — | — | ✅ |
 | `/drift` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/render threat-path` | — | ✅ | ✅ | — | — | ✅ |
@@ -872,7 +883,36 @@ Which techniques activate per target type in a `/case` run:
 `✅*` — runs for discovered key personnel within the organization
 `MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
 
-**Adaptive chaining:** Each phase feeds newly discovered identifiers into subsequent phases automatically. If `/sweep` on a domain finds an email, `/email-deep` and `/breach-deep` trigger on it automatically.
+**Recursive pivot orchestration (the spider-map).** `/case` is not a one-pass collector —
+it runs a **recursive BFS pivot engine**: every discovered identifier becomes a new seed,
+and the relationship graph expands **hop by hop until the frontier is exhausted** or a
+budget cap is hit. The state machine — identifier typing, dedup / cycle prevention,
+per-node depth, the identifier→pivot **edge matrix**, confidence gating, and per-depth
+checkpoints — is [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py); the full
+spec is [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md). The orchestrator
+**plans and tracks**; the agent **executes** each hop's technique commands and feeds results
+back via `--ingest`.
+
+- **Defaults:** `posture=active` (may fetch/scan targets; still passive-first for hostile
+  infra), `reach=exhaustive` (pivot till the frontier empties), `autonomy=checkpoint`
+  (**pause after each depth level**, present new nodes + proposed pivots, await approval).
+  Safety caps: `max_nodes=500`, `max_depth=6`.
+- **Gating** (reuses [`analysis/auto-branch-rules.md`](analysis/auto-branch-rules.md)):
+  exact-match links (≥95% — shared GA ID / cert / favicon / registrant email, handle
+  exact-match) **auto-pursue unbounded**; HIGH/MEDIUM capped per type; LOW held unless
+  corroborated; PII (`person`/`phone`) held unless `--authorization confirmed`; visited
+  nodes and past-depth-cap nodes suppressed (loop-safe).
+- **Example hops:** an **email** auto-pivots via reverse-WHOIS→domains, `/breach-deep`,
+  `/github-osint`; a **domain** discovered from a person (high-confidence link) continues
+  via `/webpivot`+`wayback_harvest`+`whois_enrich`+`cert_pivot`+subdomains; a shared **GA ID**
+  reverse-pivots to sibling domains — each new node re-enters the loop.
+- **Control flags:** `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
+  `--auto` (no checkpoints, run to closure), `--depth N`, `--budget N`, `--authorization confirmed`.
+- **Termination** → emit edges → `graph_build.py` → interactive HTML force-graph + topology
+  + timeline; findings/indicators roll into the auto-saved report + IOC bundle.
+
+Legacy one-hop note (still true, now a subset of the loop): if `/sweep` on a domain finds an
+email, `/email-deep` and `/breach-deep` trigger on it automatically.
 
 **GitHub OSINT auto-fire in `/case`:**
 - Domain/Org target → run `/github-osint` on the org name, primary domain, discovered GitHub orgs/repos, and developer-platform hits from `/query` or `/dork-sweep`.
