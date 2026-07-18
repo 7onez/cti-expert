@@ -25,6 +25,8 @@ Integrated from the **WebPivot** toolkit by **[Zeroska](https://github.com/Zeros
 | `/webpivot <url> --render` | `pivot_extract.py --render` | render a JS-heavy SPA first (needs playwright) |
 | `/webpivot <url> --crawl [N]` | `pivot_extract.py --crawl N` | walk same-site nav/tabs and merge artifacts |
 | `/webpivot <domain> --history` | `wayback_ga.py <domain> --timeline` | scrubbed GA/AdSense IDs across Wayback (Bellingcat) |
+| `/webpivot <url> --fetch [--near D]` | `wayback_fetch.py <url> --near D` | fetch archived page content (WebFetch can't reach Wayback) |
+| `/webpivot <domain> --harvest` | `wayback_harvest.py <domain> --indicators` | full-IOC harvest (emails/phones/wallets/IDs/socials) across the whole archive history → IOC bundle |
 | `/webpivot <domain> --whois` | `whois_enrich.py <domain>` | current + historic + reverse WHOIS (needs key) |
 | `/webpivot --graph <case>` | `graph_build.py <case>/raw/*.json` | cluster many pages into one link graph |
 | `/webpivot --rank <case>` | `rank_relations.py <case>/raw/*.json` | score + rank same-operator relations (noise-filtered) |
@@ -114,6 +116,44 @@ web.archive.org). Reuses `pivot_extract`'s extractors.
 uv run "$WP/wayback_ga.py" suspect.example --max 15 --timeline
 uv run "$WP/wayback_ga.py" -f domains.txt --pretty > "<case>/history.json"
 ```
+
+**Fetching archived content — use `wayback_fetch.py`, not WebFetch.** Claude Code's WebFetch
+is blocked from `web.archive.org` (robots.txt enforced at Anthropic's fetch layer — a
+`WebFetch(domain:...)` allow-rule won't override it). `wayback_fetch.py` routes around it:
+**CDX lookup → nearest-snapshot resolve → raw `id_` fetch** in one call (with retry/backoff),
+so you get the *real* nearest capture even when the timestamp you guessed doesn't exist.
+
+```bash
+uv run "$WP/wayback_fetch.py" target.example --near 20240527            # raw HTML of nearest capture
+uv run "$WP/wayback_fetch.py" target.example --near latest --url-only   # resolved id_ URL for browser/curl
+uv run "$WP/wayback_fetch.py" target.example --list --from 2023 --to 2024
+uv run "$WP/wayback_fetch.py" target.example --near latest --json       # resolved_url + metadata + content
+```
+Full detail + non-WebFetch alternatives (curl, in-app browser, CDX/availability APIs) in
+[`analysis/archive-explorer.md`](../analysis/archive-explorer.md#2-internet-archive-cdx-api).
+
+### 2b. `wayback_harvest.py` — full-IOC harvest across the whole archive history
+
+`wayback_ga.py` mines only *tracking/verification IDs* over time, and `pivot_extract.py`
+runs the full extractor on just **one** capture — so a phone/email/wallet that appeared
+in an old snapshot and was later scrubbed is never collected. `wayback_harvest.py` runs
+the **full extractor over every sampled snapshot** and merges results with
+first-seen/last-seen. It harvests **emails, phones** (via the shared
+`pivot_extract.extract_phones` — `tel:` links + phone-formatted numbers, bare digit-runs
+rejected), **crypto wallets, tracking IDs, verification IDs, SaaS/operator IDs, and
+socials**. Optionally folds in urlscan prior-scan related domains/IPs (`--urlscan`, needs
+`URLSCAN_API_KEY`). Passive — only touches web.archive.org (+ urlscan.io if keyed).
+
+```bash
+uv run "$WP/wayback_harvest.py" suspect.example --max 20 --timeline           # human review
+uv run "$WP/wayback_harvest.py" suspect.example --urlscan --indicators \
+      -o "<case>/raw/harvest.indicators.json"                                  # → IOC bundle
+```
+
+`--indicators` emits **case-schema `indicators[]`** (category/type/value/role/confidence/
+source_url/first_seen/last_seen) — the exact shape `scripts/generate-cti-iocs.py` already
+ingests, so harvested selectors roll straight into the `/case` IOC bundle. Confidence
+scales with how many captures a value appears in.
 
 ### 3. `whois_enrich.py` — registration pivots (needs `WHOISXML_API_KEY`)
 

@@ -1013,6 +1013,38 @@ def extract_crypto(text: str):
     return found
 
 
+_TEL_RE = re.compile(r"tel:\s*(\+?[\d().\-\s]{7,20})", re.I)
+
+
+def _valid_phone(digits: str) -> bool:
+    if not (9 <= len(digits) <= 15):
+        return False
+    if len(set(digits)) <= 2:                       # 000…, repeated-digit noise
+        return False
+    if re.fullmatch(r"(19|20)\d{2}[01]\d[0-3]\d.*", digits):
+        return False                                # date/timestamp-ish sequence
+    return True
+
+
+def extract_phones(html: str):
+    """Phone numbers, high-precision. PHONE_RE alone is very noisy (bare digit runs are
+    IDs/sizes, not phones), so: trust `tel:` links, and otherwise require phone-like
+    formatting (a separator or a leading +). Rejects bare all-digit runs."""
+    out = []
+    for m in uniq(_TEL_RE.findall(html)):           # 1) tel: links — highest confidence
+        digits = re.sub(r"\D", "", m)
+        if _valid_phone(digits):
+            out.append(("+" if m.strip().startswith("+") else "") + digits)
+    for m in uniq(PHONE_RE.findall(html)):          # 2) inline, only if phone-formatted
+        s = m.strip()
+        if not (s.startswith("+") or re.search(r"[ ().\-]", s)):
+            continue                                # bare digit run → an ID, not a phone
+        digits = re.sub(r"\D", "", s)
+        if _valid_phone(digits):
+            out.append(("+" if s.startswith("+") else "") + digits)
+    return uniq(out)[:25]
+
+
 def extract_socials(hosts_hrefs):
     out = {}
     for href in hosts_hrefs:
@@ -1269,6 +1301,13 @@ def build_pivots(art: dict, base_host: str):
             {"service": "hunter.io / Epieos", "query": e},
         ], "Registrant/contact email pivots to other domains.")
 
+    for ph in art.get("phones", []):
+        add("phone", ph, "medium", [
+            {"service": "reverse-phone (TrueCaller/Sync.me)", "query": ph},
+            {"service": "search engine / PublicWWW", "query": f'"{ph}"'},
+            {"service": "messaging (WhatsApp/Telegram)", "query": ph},
+        ], "Contact phone pivots to owner identity / other sites reusing it.")
+
     for net, handles in art.get("socials", {}).items():
         for h in handles:
             add(f"social:{net}", h, "medium", [
@@ -1317,6 +1356,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     emails = [e for e in uniq(EMAIL_RE.findall(html))
               if (el := e.lower()) and not el.endswith((".png", ".jpg", ".gif", ".svg", ".webp"))
               and not el.split("@")[-1].endswith(BOILERPLATE_EMAIL_HOSTS)][:40]
+    phones = extract_phones(html)
 
     script_srcs = uniq(SCRIPT_SRC_RE.findall(html))
     all_hrefs = uniq(LINK_HREF_RE.findall(html))
@@ -1392,6 +1432,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "saas_ids": saas_ids,
         "crypto": crypto,
         "emails": emails,
+        "phones": phones,
         "socials": socials,
         "script_srcs": script_srcs[:60],
         "third_party_hosts": third_party_hosts,
