@@ -61,6 +61,7 @@ import functools
 import gzip
 import itertools
 import zlib
+import time
 import socket
 import shutil
 import subprocess
@@ -363,20 +364,38 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30):
     return {"query": query, "total": data.get("total", len(doms)), "domains": doms[:60]}
 
 
-def crtsh_search(domain: str, timeout: int = 25):
+def crtsh_search(domain: str, timeout: int = 25, retries: int = 4, backoff: int = 3):
     """Certificate-transparency search via crt.sh for subdomains of `domain`.
 
     Keyless. Returns {'query','total','subdomains':[...]} or {'error':...}.
-    crt.sh is frequently overloaded — errors are returned, never raised.
+    crt.sh is frequently overloaded (502/503/504, timeouts, empty bodies) — those
+    are retried with exponential backoff; only the final failure is returned as an
+    error, never raised.
     """
     query = f"%.{domain}"
     api = "https://crt.sh/?" + urlencode({"q": query, "output": "json"})
-    try:
-        req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except Exception as e:
-        return {"query": query, "error": str(e)}
+    last_err = None
+    data = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = r.read().decode("utf-8", "replace").strip()
+            if not body:
+                raise ValueError("empty response")  # crt.sh overloaded — retry
+            data = json.loads(body)
+            break
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code}: {e.reason}"
+            if e.code not in (429, 500, 502, 503, 504):
+                break  # 4xx (other than 429) won't recover on retry
+        except Exception as e:
+            last_err = str(e)
+        if attempt < retries - 1:
+            time.sleep(backoff * (attempt + 1))
+    if data is None:
+        return {"query": query, "error": last_err or "request failed",
+                "attempts": attempt + 1}
     subs = set()
     for row in data if isinstance(data, list) else []:
         for name in str(row.get("name_value", "")).splitlines():

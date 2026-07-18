@@ -126,7 +126,7 @@ EDGE_MATRIX = {
     "domain": [
         {"method": "webpivot-dom", "tool": "pivot_extract.py <domain> --leads", "yields": ["email", "phone", "btc", "eth", "ga_id", "adsense_id", "social_handle", "favicon_mmh3"], "rel": "CONTROLS", "confidence": 80, "active": True},
         {"method": "wayback-harvest", "tool": "wayback_harvest.py <domain> --indicators", "yields": ["email", "phone", "btc", "eth", "ga_id", "social_handle"], "rel": "CONTROLS", "confidence": 78, "active": False},
-        {"method": "whois-current+history+reverse", "tool": "whois_enrich.py <domain>", "yields": ["email", "person", "domain"], "rel": "REGISTERED", "confidence": 85, "active": False},
+        {"method": "whois-current+history+reverse", "tool": "whois_enrich.py <domain>", "yields": ["email", "person", "phone", "domain"], "rel": "REGISTERED", "confidence": 85, "active": False},
         {"method": "subdomains", "tool": "/subdomain <domain>", "yields": ["domain"], "rel": "ENCOMPASSES", "confidence": 92, "active": False},
         {"method": "cert-pivot", "tool": "cert_pivot.py <domain>", "yields": ["domain", "ipv4", "cert_sha256"], "rel": "LINKED_TO", "confidence": 82, "active": True},
         {"method": "dns->ip+mx+txt", "tool": "/sweep <domain>", "yields": ["ipv4", "domain", "email"], "rel": "HOSTS", "confidence": 95, "active": True},

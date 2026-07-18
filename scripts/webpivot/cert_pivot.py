@@ -30,6 +30,7 @@ Never raises on network/parse errors — every failure degrades to an "error" no
 import sys
 import os
 import ssl
+import time
 import json
 import socket
 import hashlib
@@ -38,6 +39,7 @@ import argparse
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -80,14 +82,31 @@ def _secret(*names):
     return None
 
 
-def _get(url, timeout=20, headers=None):
-    """GET → (text, error). Never raises."""
-    try:
-        req = Request(url, headers={"User-Agent": _UA, **(headers or {})})
-        with urlopen(req, timeout=timeout) as r:
-            return r.read().decode("utf-8", "replace"), None
-    except Exception as e:  # noqa: BLE001
-        return None, f"{type(e).__name__}: {e}"
+def _get(url, timeout=20, headers=None, retries=4, backoff=3):
+    """GET → (text, error). Never raises.
+
+    Transient failures (429/5xx, timeouts, resets, empty bodies) are retried with
+    exponential backoff — crt.sh in particular is frequently overloaded. Only the
+    final failure is returned as an error string. Non-retryable 4xx bail early.
+    """
+    last = None
+    for attempt in range(retries):
+        try:
+            req = Request(url, headers={"User-Agent": _UA, **(headers or {})})
+            with urlopen(req, timeout=timeout) as r:
+                text = r.read().decode("utf-8", "replace")
+            if not text.strip():
+                raise ValueError("empty response")  # overloaded — worth retrying
+            return text, None
+        except HTTPError as e:  # noqa: BLE001
+            last = f"HTTPError: {e.code} {e.reason}"
+            if e.code not in (429, 500, 502, 503, 504):
+                return None, last  # 4xx (other than 429) won't recover on retry
+        except Exception as e:  # noqa: BLE001
+            last = f"{type(e).__name__}: {e}"
+        if attempt < retries - 1:
+            time.sleep(backoff * (attempt + 1))
+    return None, last or "request failed"
 
 
 # ---------------------------------------------------------------- live cert fetch
