@@ -6,11 +6,14 @@
 
 ### 什么是 CTI Expert？
 
-一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**36 种技术**进行结构化情报收集——核心功能无需 API 密钥。部分技术支持可选的免费 API 密钥以获取增强访问（如 Wigle、VirusTotal、URLScan.io）。
+一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**36 种技术**进行结构化情报收集——核心功能无需 API 密钥。若想充分发挥技能的全部能力，你可以将自己的**免费*或*付费** API 密钥添加到 `.env` 文件——每个密钥都会被**自动检测**并解锁更高级别的访问（如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
-**v2.5 新功能：** 原生 `asn` 命令——Windows 上无需 API 密钥的 IP/ASN/域名查询（ipwho.is + RDAP）；Linux/macOS/WSL 自动安装完整版 nitefood/asn。Windows 上自动安装 `whois` + `dig` + `asn`（winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`，此前需手动）；**Windows PowerShell 5.1** 安装加固（修复 native-stderr 导致脚本中止、`OSArchitecture` 探测崩溃、maigret 改用 `uv tool --force`）；自动将 `~/.local/bin`（uv 工具 + `asn`）加入 PATH——当前会话**及**永久生效。
+> [!TIP]
+> **默认免费——有了你的密钥更强大。** 所有功能零密钥即可运行。若要解锁全部能力，将任意**免费或付费** API 密钥放入 `.env`（或运行 `/apikeys set <服务> <KEY>`）；它们会被**自动检测**，并立即为 `/webpivot` 及其他技术升级：反向 favicon→主机、被动 DNS、证书搜索、同源兄弟域名枢轴。缺失/错误的密钥只会降级为提示。完整列表与设置：[README-apikeys.zh-CN.md](README-apikeys.zh-CN.md)。
 
-**v2.4 新功能：** 跨平台操作系统检测（Windows/macOS/Linux），按系统自动安装，DOCX 生成自愈（UTF-8 + pandoc）；**uv** 优先工具链（uv venv/pip/tool，PEP 723 `uv run` 零配置脚本）；**跨代理**支持——可在 Claude Code **和** OpenAI Codex 上通过 `AGENTS.md` 运行；信息窃取日志分析器（`/cti-expert /stealer-log`）——家族识别、受害者与操作者画像、跨日志关联、IOC 与原始数据提取；管理后台 / 敏感端点检测（admin/adm/kef/ador/panel…）；集成 **agent-browser**（vercel-labs）作为主要交互式浏览器采集器；全新干净环境/VPS 安装加固 + CI。**Web 基础设施枢轴**（`/cti-expert /webpivot`）从页面 DOM 提取 favicon/追踪码/钱包/SaaS 运营者标识 &rarr; 排序后的枢轴查询，并配套**同一运营者**关联套件：`/cti-expert /rank-relations`（加权评分 + 噪声黑名单）、`/cti-expert /cert-pivot`（TLS 证书指纹枢轴）、`/cti-expert /pivot-suggest`、`/cti-expert /crypto-balance`、`/cti-expert /email-hygiene`、`/cti-expert /sensitive-paths`；**证据门控**分析——每条论断都必须引用一个真实存在的发现，采集到的不可信数据会被标记且绝不执行。
+**v2.5 新功能：** 原生 `asn` 命令——Windows 上无需 API 密钥的 IP/ASN/域名查询（ipwho.is + RDAP）；Linux/macOS/WSL 自动安装完整版 nitefood/asn。Windows 上自动安装 `whois` + `dig` + `asn`（winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`，此前需手动）；**Windows PowerShell 5.1** 安装加固（修复 native-stderr 导致脚本中止、`OSArchitecture` 探测崩溃、maigret 改用 `uv tool --force`）；自动将 `~/.local/bin`（uv 工具 + `asn`）加入 PATH——当前会话**及**永久生效。**Web 基础设施枢轴**（`/cti-expert /webpivot`）——**默认免费/无需密钥**（crt.sh + 被动 DNS + 匿名 urlscan 始终运行），并**自动检测高级 API 密钥**（Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML）自动升级、无需参数——从页面 DOM 提取 favicon/追踪码/钱包/SaaS 运营者标识 &rarr; 排序后的枢轴查询，并配套**同一运营者**关联套件：`/cti-expert /rank-relations`（加权评分 + 噪声黑名单）、`/cti-expert /cert-pivot`（TLS 证书指纹枢轴）、`/cti-expert /pivot-suggest`、`/cti-expert /crypto-balance`、`/cti-expert /email-hygiene`、`/cti-expert /sensitive-paths`；**证据门控**分析——每条论断都必须引用一个真实存在的发现，采集到的不可信数据会被标记且绝不执行。
+
+**v2.4 新功能：** 跨平台操作系统检测（Windows/macOS/Linux），按系统自动安装，DOCX 生成自愈（UTF-8 + pandoc）；**uv** 优先工具链（uv venv/pip/tool，PEP 723 `uv run` 零配置脚本）；**跨代理**支持——可在 Claude Code **和** OpenAI Codex 上通过 `AGENTS.md` 运行；信息窃取日志分析器（`/cti-expert /stealer-log`）——家族识别、受害者与操作者画像、跨日志关联、IOC 与原始数据提取；管理后台 / 敏感端点检测（admin/adm/kef/ador/panel…）；集成 **agent-browser**（vercel-labs）作为主要交互式浏览器采集器；全新干净环境/VPS 安装加固 + CI。
 
 **v2.3 新功能：** 面向所有 TLD 的通用 WHOIS（whoisdomain + CLI + Whoxy API；.vn、.th、.sg、.kr…）、反向与历史 WHOIS；Scrapling 自适应网页采集（静态 → 反爬 → JS 渲染）；无头浏览器自动开启；AgentFlow 并行富化（DAG）；HTML 解析 ~2ms；最低要求 Python 3.10+。
 
