@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 67+ commands, 38 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 67+ commands, 36 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.5-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.5"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-36-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="36 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
