@@ -191,8 +191,32 @@ site:twitter.com/[subjectA]/following  (compare against subjectB manually)
 
 ---
 
+## 8. Mechanized Suggestion Engine (`pivot_suggest.py`)
+
+The identity/credential/domain rules above are computed deterministically by
+[`scripts/webpivot/pivot_suggest.py`](../scripts/webpivot/pivot_suggest.py) so `/branch` and
+`/crossref` rank concrete correlations instead of re-deriving them by hand. It reads the
+case findings (or ad-hoc `--usernames`/`--emails`/`--domains`) and emits ranked
+`PivotSuggestion`s — each with `pivot_type`, `target`, `priority`, `confidence`, and a
+`rationale` — deduped by `(pivot_type, target)` and sorted priority → confidence.
+
+| Suggestion `pivot_type` | Implements | Method |
+|---|---|---|
+| `username_variant` | IBR-01 (leet), IBR-02 (sequential) | leet-normalize `4→a 3→e 1→i 0→o 5→s 7→t`; strip trailing digits; strip `_ - .` |
+| `username_reuse` | Handle exact match (other platform) | same handle, different platform → HIGH |
+| `email_name_mismatch` | CBR-01 | email local part fuzzy-matches no known person name |
+| `temporal_sync` | (new) coordination | ≥2 platforms active inside one time window |
+| `domain_cluster` / `domain_stem_cluster` | (new) infra | shared TLD (≥3) or shared base stem (≥2) |
+
+Fuzzy matching: Levenshtein for strings < 8 chars, trigram Jaccard otherwise (`--xref A B`
+prints the 0–100 similarity). Feed the output through the **Branch Priority Matrix** (§5)
+and **Branch Suppression** (§6) before expanding — the script proposes, the matrix gates.
+
+---
+
 ## Cross-References
 
 - `analysis/cross-reference-engine.md` — scoring connections between branched subjects
 - `analysis/deviation-detector.md` — IDENTITY_DRIFT triggers that may initiate branches
 - `techniques/username-enumeration.md` — handle variant generation
+- `scripts/webpivot/pivot_suggest.py` — deterministic engine behind these rules (`/pivot-suggest`)

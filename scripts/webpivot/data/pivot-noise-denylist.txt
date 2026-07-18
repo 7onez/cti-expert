@@ -1,0 +1,113 @@
+# cti-expert — PIVOT NOISE DENYLIST (ported from Quarry: data/urlscan-noise-denylist.yaml)
+#
+# Apex domains listed here are ubiquitous CDN / cloud / analytics / font / consent /
+# social-widget infrastructure — present on virtually every site and therefore NOT a
+# target-specific relation. They are dropped BEFORE relation-strength ranking so a
+# shared Cloudflare/Google/Fastly host never fabricates a "same operator" link.
+#
+# This filter applies ONLY to relation ranking (rank_relations.py). It does NOT affect
+# artifact/IOC extraction (pivot_extract.py) — emails, wallets, tracker IDs, etc. are
+# still collected in full.
+#
+# Matching rule (case-insensitive): a candidate host is dropped if its registrable apex
+# equals an entry below OR the host ends with ".<entry>" (subdomain match).
+#   e.g. "googleapis.com" drops both "fonts.googleapis.com" and "googleapis.com".
+#
+# Editable: add/remove entries freely, one apex per line. Blank lines and #-comments are
+# ignored. Set env CTI_PIVOT_NOISE_DISABLE=1 (or URLSCAN_NOISE_DENYLIST_DISABLE=1) to
+# bypass this list entirely (keep every candidate, noise included).
+
+# ── CDNs / edge / static hosting ───────────────────────────────
+cloudflare.com
+cloudflare.net
+cloudflareinsights.com
+cloudflarestream.com
+akamai.net
+akamaized.net
+akamaiedge.net
+akamaihd.net
+fastly.net
+fastlylb.net
+jsdelivr.net
+unpkg.com
+bootstrapcdn.com
+maxcdn.com
+stackpathdns.com
+cdn77.org
+keycdn.com
+polyfill.io
+cdninstagram.com
+
+# ── Google infra / analytics / ads / fonts ────────────────────
+googleapis.com
+gstatic.com
+googletagmanager.com
+google-analytics.com
+googlesyndication.com
+googleadservices.com
+googletagservices.com
+doubleclick.net
+recaptcha.net
+gstatic.cn
+ggpht.com
+withgoogle.com
+googleusercontent.com
+
+# ── Meta / social widgets + pixels ────────────────────────────
+facebook.net
+fbcdn.net
+connect.facebook.net
+platform.twitter.com
+ads-twitter.com
+licdn.com
+ads.linkedin.com
+analytics.tiktok.com
+
+# ── Microsoft / Azure ─────────────────────────────────────────
+msftncsi.com
+azureedge.net
+azure.com
+windows.net
+aspnetcdn.com
+clarity.ms
+
+# ── Amazon / AWS edge ─────────────────────────────────────────
+amazonaws.com
+cloudfront.net
+awsstatic.com
+
+# ── Analytics / tag managers / monitoring ─────────────────────
+hotjar.com
+hotjar.io
+segment.com
+segment.io
+mixpanel.com
+amplitude.com
+sentry.io
+sentry-cdn.com
+newrelic.com
+nr-data.net
+bugsnag.com
+fullstory.com
+mouseflow.com
+crazyegg.com
+optimizely.com
+
+# ── Consent / CMP ─────────────────────────────────────────────
+cookielaw.org
+onetrust.com
+cookiebot.com
+usercentrics.eu
+
+# ── Fonts / icon / widget libs ────────────────────────────────
+typekit.net
+use.fontawesome.com
+fontawesome.com
+fonts.net
+
+# ── Misc ubiquitous / standards ───────────────────────────────
+w3.org
+schema.org
+gravatar.com
+jquery.com
+gmpg.org

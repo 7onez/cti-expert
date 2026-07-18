@@ -17,6 +17,23 @@ Blockchain and cryptocurrency investigation for OSINT. Covers transaction tracin
 
 ## 2. Tool Inventory
 
+### 2.0 Automated — `crypto_balance.py` (keyless balance/flow)
+
+For a wallet discovered on a page or in a case, get on-chain intel in one call — current
+balance, lifetime received/sent, tx count, valued at spot (CoinGecko) — without any key.
+
+```bash
+WP="$SKILL_DIR/scripts/webpivot"
+uv run "$WP/crypto_balance.py" 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa --pretty   # auto-detects chain
+uv run "$WP/crypto_balance.py" 0xADDR… --coin eth
+```
+
+Keyless public explorers per chain (BTC→blockstream, LTC→litecoinspace, ETH→Blockscout,
+TRON→Tronscan, ADA→Koios, DOT→Subscan); `BLOCKCHAIR_API_KEY` unlocks full received/sent flows
+on more chains. Never raises — a flaky explorer degrades to `supported:false` with an `error`.
+Balance + first/last activity is a fast triage signal for a scam/ransom address before deeper
+clustering below. See also [`techniques/web-pivot.md`](web-pivot.md) §9.
+
 ### 2.1 Blockchair — Multi-Chain Explorer
 **URL:** https://blockchair.com/
 
