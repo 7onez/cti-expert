@@ -16,7 +16,7 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.4-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.4"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.5-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.5"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
   <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
@@ -115,6 +115,18 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 <br>
 
+## What's New in v2.5
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **Recon** | Native `asn` command | Keyless IP/ASN/domain lookups (ipwho.is + RDAP) on Windows; full nitefood/asn auto-installed on Linux/macOS/WSL |
+| **System tools** | `whois` + `dig` + `asn` auto-install on Windows | winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`; previously manual steps |
+| **Reliability** | Windows PowerShell 5.1 hardening | Fixes native-stderr script aborts, the `OSArchitecture` probe crash, and maigret via `uv tool --force`; installs clean on WinPS 5.1 |
+| **Packaging** | Auto-PATH for CLI tools | `~/.local/bin` (uv tools + `asn`) added to PATH automatically — current session **and** persistent |
+
+<details>
+<summary><b>What's New in v2.4</b></summary>
+
 ## What's New in v2.4
 
 | Category | What's New | Details |
@@ -126,6 +138,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Recon** | Admin / sensitive-endpoint detection | Subdomain-prefix + path + CJK classifier (`admin`, `adm`, `kef`, `ador`, `panel`…) |
 | **Collection** | agent-browser integration | Primary interactive browser ([vercel-labs](https://github.com/vercel-labs/agent-browser)): CDP, accessibility-tree snapshots, screenshots; complementary to Scrapling, no API key for core |
 | **Reliability** | Fresh-VPS install hardening + CI | root/sudo + prereq bootstrap; smoke test + GitHub Actions on a minimal root Ubuntu container |
+| **Pivoting** | Web-infra pivoting + same-operator correlation | `/webpivot` artifact extraction → ranked pivots; `/rank-relations` (weighted scoring + noise denylist), `/cert-pivot`, `/pivot-suggest`, `/crypto-balance`, `/email-hygiene`, `/sensitive-paths` |
+| **Integrity** | Evidence-gated analysis | every asserted claim cites a resolvable finding; untrusted collected data is tagged, never executed |
 
 <details>
 <summary><b>What's New in v2.3</b></summary>
@@ -179,6 +193,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 </details>
 
+</details>
+
 <br>
 
 ---
@@ -225,7 +241,7 @@ npm install -g @anthropic-ai/claude-code
 
 ### Step 2 &mdash; Clone + All-in-One Installer
 
-The installer handles everything: Python dependencies, system tools (`whois`, `dig`, `jq`, `exiftool`), OSINT tools (`maigret`, `sherlock`, `holehe`, `h8mail`, and more), and optional headless browser + Go tools. It is **powered by [uv](https://docs.astral.sh/uv/)** (Astral's ultra-fast Rust package manager) — the script bootstraps uv, then uses `uv venv` / `uv pip` / `uv tool` for all Python installs, falling back to `pip`/`pipx`/`venv` only if uv can't be installed. Use `install.ps1` on Windows (PowerShell) or `install.sh` on macOS/Linux/Git Bash/WSL.
+The installer handles everything: Python dependencies, system tools (`whois`, `dig`, `asn`, `jq`, `exiftool`), OSINT tools (`maigret`, `sherlock`, `holehe`, `h8mail`, and more), and optional headless browser + Go tools. It is **powered by [uv](https://docs.astral.sh/uv/)** (Astral's ultra-fast Rust package manager) — the script bootstraps uv, then uses `uv venv` / `uv pip` / `uv tool` for all Python installs, falling back to `pip`/`pipx`/`venv` only if uv can't be installed. Use `install.ps1` on Windows (PowerShell) or `install.sh` on macOS/Linux/Git Bash/WSL.
 
 <table>
 <tr>
@@ -293,7 +309,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 | Flag | What it installs | Size |
 |------|-----------------|------|
-| *(none)* | Python packages, whois, dig, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
+| *(none)* | Python packages, whois, dig, asn, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
 | `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
 | `--go` | subfinder, amass, gau, gitleaks, httpx, phoneinfoga | +150 MB |
 | `--all` | Everything | ~400 MB |
@@ -560,6 +576,24 @@ Every investigation follows four automated phases:
 
 <br>
 
+### Workflow diagrams
+
+**Full `/case` pipeline (AEAD)** — where `/webpivot`, correlation, and premium keys fit:
+
+<div align="center">
+<img src="assets/workflow-case.png" alt="cti-expert /case pipeline (AEAD)" width="820">
+</div>
+
+**`/webpivot` + correlation + premium API-key flow:**
+
+<div align="center">
+<img src="assets/workflow-apikeys.png" alt="cti-expert /webpivot + correlation + API-key workflow" width="820">
+</div>
+
+<sub>Sources: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — see the <a href="README-apikeys.md">API-keys &amp; webpivot guide</a>.</sub>
+
+<br>
+
 ---
 
 <br>
@@ -624,6 +658,22 @@ Every investigation follows four automated phases:
 | `/cti-expert /report brief` | Executive summary |
 | `/cti-expert /brief` | Plain-language summary |
 | `/cti-expert /workspace save` | Persist case workspace state (resume later) |
+
+</details>
+
+<details>
+<summary><b>Web-Infra Pivoting & Correlation</b> — infrastructure & same-operator analysis</summary>
+<br>
+
+| Command | Purpose |
+|---------|---------|
+| `/cti-expert /webpivot [url]` | Extract favicon/tracker/wallet/SaaS-operator artifacts &rarr; ranked pivot queries (Shodan/FOFA/urlscan). Flags: `--rank`, `--cert`, `--graph`, `--history`, `--whois` |
+| `/cti-expert /rank-relations` | Score + rank same-operator relations across pages (weighted signals, noise-filtered, clustered) |
+| `/cti-expert /cert-pivot [domain]` | Find other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) |
+| `/cti-expert /pivot-suggest` | Rank "what to pivot next" from findings (leet/variant/temporal/domain clusters) |
+| `/cti-expert /crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot |
+| `/cti-expert /email-hygiene [email]` | Grade an email domain 0-100 + A-F (disposable/MX/free/role) |
+| `/cti-expert /sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) |
 
 </details>
 

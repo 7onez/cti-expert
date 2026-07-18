@@ -19,7 +19,14 @@ param(
 )
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
+# Intentionally NOT 'Stop'. In Windows PowerShell 5.1, $ErrorActionPreference='Stop'
+# turns ANY native-command stderr write into a terminating NativeCommandError -- even
+# when redirected (*>$null / 2>&1 | Out-Null all still throw) -- which aborts the script
+# on tools that legitimately use stderr (pip/uv/git/go progress, python import probes).
+# PowerShell 7 dropped that behavior. This script gates every native call on
+# $LASTEXITCODE and throws explicitly, so 'Continue' is both sufficient and correct;
+# cmdlets whose silent failure would mislog as success pass -ErrorAction Stop locally.
+$ErrorActionPreference = "Continue"
 
 if ($All) {
     $Headless = $true
@@ -65,6 +72,24 @@ function Log-Fail {
 function Test-Command {
     param([string]$Name)
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+# Detect OS architecture robustly. RuntimeInformation.OSArchitecture is absent on
+# some Windows PowerShell 5.1 / .NET Framework configs, where accessing it under
+# Set-StrictMode throws PropertyNotFoundStrict; fall back to PROCESSOR_ARCHITECTURE.
+function Get-OSArchitecture {
+    try {
+        $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        if ($osArch) { return "$osArch" }
+    }
+    catch { }
+    $procArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    switch ("$procArch".ToUpperInvariant()) {
+        "AMD64" { return "X64" }
+        "ARM64" { return "Arm64" }
+        "X86"   { return "X86" }
+        default { if ($procArch) { return "$procArch" } else { return "Unknown" } }
+    }
 }
 
 function Test-PythonImport {
@@ -216,10 +241,23 @@ function Install-Blackbird {
             git clone --quiet --depth 1 $blackbirdRepo $blackbirdDir
             if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
         }
-        Invoke-VenvPip --quiet --upgrade -r (Join-Path $blackbirdDir "requirements.txt")
+        # Relax version pins that block Python 3.14 binary wheels (mirrors install.sh).
+        $blackbirdReq = Join-Path $blackbirdDir "requirements.txt"
+        if (Test-Path $blackbirdReq) {
+            $relaxed = (Get-Content $blackbirdReq) `
+                -replace 'aiohttp==.*', 'aiohttp>=3.13' `
+                -replace 'yarl==.*', 'yarl>=1.17' `
+                -replace 'multidict==.*', 'multidict>=6.0' `
+                -replace 'aiohappyeyeballs==.*', 'aiohappyeyeballs>=2.3' `
+                -replace 'aiosignal==.*', 'aiosignal>=1.3' `
+                -replace 'frozenlist==.*', 'frozenlist>=1.4' `
+                -replace 'propcache==.*', 'propcache>=0.2'
+            Set-Content -Path $blackbirdReq -Value $relaxed -Encoding ASCII
+        }
+        Invoke-VenvPip --quiet --upgrade -r $blackbirdReq
         if ($LASTEXITCODE -ne 0) { throw "install -r blackbird requirements failed" }
         $sitePackages = & $VenvPython -c "import site; print(site.getsitepackages()[0])"
-        Set-Content -Path (Join-Path $sitePackages "blackbird.pth") -Value $blackbirdDir -Encoding ASCII
+        Set-Content -Path (Join-Path $sitePackages "blackbird.pth") -Value $blackbirdDir -Encoding ASCII -ErrorAction Stop
         if ($alreadyInstalled) { Log-Ok "blackbird updated from source" } else { Log-Ok "blackbird (source checkout)" }
     } | Out-Null
 }
@@ -246,7 +284,9 @@ function Install-PipxPackage {
             $ok = $false
             if ($already) { uv tool upgrade $Package *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true } }
             if (-not $ok) {
-                uv tool install $Package *> $null
+                # --force overwrites a stale shim left by a prior pip/pipx install
+                # (uv refuses otherwise: "Executables already exist ... use --force").
+                uv tool install --force $Package *> $null
                 if ($LASTEXITCODE -ne 0) { throw "uv tool install failed" }
             }
             if ($already) { Log-Ok "$Package updated (uv tool)" } else { Log-Ok "$Package (uv tool)" }
@@ -336,7 +376,7 @@ function Install-GitHubReleaseBinary {
             if (!$binary) { throw "binary '$binaryName' not found in archive" }
 
             $target = Join-Path $InstallDir $binaryName
-            Copy-Item -Path $binary.FullName -Destination $target -Force
+            Copy-Item -Path $binary.FullName -Destination $target -Force -ErrorAction Stop
             if ($env:PATH -notlike "*$InstallDir*") { $env:PATH = "$env:PATH;$InstallDir" }
             if ($alreadyInstalled) { Log-Ok "$Name updated" } else { Log-Ok $Name }
         }
@@ -347,7 +387,7 @@ function Install-GitHubReleaseBinary {
 }
 
 Write-Host "CTI Expert - Tool Installer" -ForegroundColor White
-Write-Host "Platform:  Windows / $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+Write-Host "Platform:  Windows / $(Get-OSArchitecture)"
 Write-Host "Skill:     $SkillDir"
 Write-Host "Venv:      $VenvDir"
 Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
@@ -356,6 +396,26 @@ if ($Go) { Write-Host "Mode:      +go" }
 
 Write-Section "uv (Astral package manager)"
 Install-Uv
+# uv installs CLI tools (maigret) into ~\.local\bin, and we drop the native `asn`
+# wrapper there too. Put it on PATH for THIS session (immediate) and persist it to the
+# user PATH (future shells) so the tools are found without a manual step.
+$UvToolBin = Join-Path $env:USERPROFILE ".local\bin"
+New-Item -ItemType Directory -Force -Path $UvToolBin | Out-Null
+if ($env:PATH -notlike "*$UvToolBin*") { $env:PATH = "$UvToolBin;$env:PATH" }
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+if ("$userPath" -notlike "*$UvToolBin*") {
+    $newUserPath = if ([string]::IsNullOrEmpty($userPath)) { $UvToolBin } else { "$userPath;$UvToolBin" }
+    try {
+        [Environment]::SetEnvironmentVariable("PATH", $newUserPath, "User")
+        Log-Ok "added $UvToolBin to your user PATH (new shells pick it up; reopen this one)"
+    }
+    catch {
+        Write-Host "  !!  Could not persist PATH automatically ($($_.Exception.Message)). Run: uv tool update-shell" -ForegroundColor Yellow
+    }
+}
+else {
+    Log-Skip "$UvToolBin already on user PATH"
+}
 
 Write-Section "Python environment"
 if (!(Test-Path $VenvPython)) {
@@ -399,6 +459,8 @@ Install-WingetPackage "ExifTool" "exiftool" "OliverBetz.ExifTool"
 Install-WingetPackage "Pandoc" "pandoc" "JohnMacFarlane.Pandoc"
 Install-WingetPackage "Poppler" "pdfinfo" "oschwartz10612.Poppler"
 Install-WingetPackage "QPDF" "qpdf" "QPDF.QPDF"
+Install-WingetPackage "whois (Sysinternals)" "whois" "Microsoft.Sysinternals.Whois"
+Install-WingetPackage "dig (ISC BIND)" "dig" "ISC.Bind"
 
 Write-Section "Python: core skill requirements"
 $requirements = Join-Path $SkillDir "scripts\requirements.txt"
@@ -452,8 +514,17 @@ $sharetraceOk = Test-PythonImport "sharetrace"
 Invoke-Step "sharetrace" {
     New-Item -ItemType Directory -Force -Path $VendorDir | Out-Null
     if (Test-Path (Join-Path $sharetraceDir ".git")) {
-        git -C $sharetraceDir pull --quiet
-        if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+        $currentOrigin = (git -C $sharetraceDir remote get-url origin 2>$null)
+        if ($currentOrigin -eq $sharetraceRepo) {
+            git -C $sharetraceDir pull --quiet
+            if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+        }
+        else {
+            Write-Host "  --  sharetrace: origin mismatch ($currentOrigin); re-cloning from 7onez fork" -ForegroundColor Yellow
+            Remove-Item -Recurse -Force $sharetraceDir
+            git clone --quiet --depth 1 $sharetraceRepo $sharetraceDir
+            if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+        }
     }
     else {
         if (Test-Path $sharetraceDir) { Remove-Item -Recurse -Force $sharetraceDir }
@@ -463,7 +534,7 @@ Invoke-Step "sharetrace" {
     Invoke-VenvPip --quiet --upgrade -r (Join-Path $sharetraceDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "install --upgrade -r sharetrace requirements failed" }
     $sitePackages = & $VenvPython -c "import site; print(site.getsitepackages()[0])"
-    Set-Content -Path (Join-Path $sitePackages "sharetrace.pth") -Value $sharetraceDir -Encoding ASCII
+    Set-Content -Path (Join-Path $sitePackages "sharetrace.pth") -Value $sharetraceDir -Encoding ASCII -ErrorAction Stop
     if ($sharetraceOk) { Log-Ok "sharetrace updated" } else { Log-Ok "sharetrace (share link identity extraction, 11 platforms)" }
 } | Out-Null
 
@@ -511,7 +582,7 @@ if ($Go) {
         $goBin = Join-Path $goPath "bin"
         if ($env:PATH -notlike "*$goBin*") { $env:PATH = "$env:PATH;$goBin" }
 
-        $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+        $arch = Get-OSArchitecture
         $phoneInfogaArch = if ($arch -eq "Arm64") { "arm64" } else { "x86_64|amd64" }
         Install-GitHubReleaseBinary "PhoneInfoga" "phoneinfoga" "sundowndev/phoneinfoga" "Windows.*($phoneInfogaArch).*(zip|tar\.gz)$" $goBin
         Install-GoTool "Subfinder" "subfinder" "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
@@ -525,9 +596,15 @@ else {
     Write-Host "  --  Skipped (add -Go to install Go tools, requires Go 1.21+)" -ForegroundColor Yellow
 }
 
-Write-Section "Manual-install tools"
-Write-Host "  ASN:        use Git Bash/WSL: bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)"
-Write-Host "  whois/dig:  install BIND tools or use WSL for native Unix networking commands"
+Write-Section "ASN lookup (native asn command)"
+$asnSrc = Join-Path $SkillDir "scripts\asn.ps1"
+$asnWrapper = Join-Path $UvToolBin "asn.cmd"
+Invoke-Step "asn" {
+    if (!(Test-Path $asnSrc)) { throw "asn.ps1 not found at $asnSrc" }
+    Set-Content -Path $asnWrapper -Value "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -File `"$asnSrc`" %*" -Encoding ASCII -ErrorAction Stop
+    Log-Ok "asn (native keyless IP/ASN/domain lookup; e.g. 'asn 8.8.8.8', 'asn AS15169')"
+} | Out-Null
+Write-Host "  Full nitefood/asn (BGP graphs, traceroute, RPKI) needs a Unix shell -- run scripts/install.sh in WSL." -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "-----------------------------------------"

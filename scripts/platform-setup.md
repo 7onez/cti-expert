@@ -178,7 +178,9 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | poppler (pdfinfo) | `pdfinfo` | `winget install oschwartz10612.Poppler` | `brew install poppler` | `sudo apt install -y poppler-utils` |
 | qpdf | `qpdf` | `winget install QPDF.QPDF` | `brew install qpdf` | `sudo apt install -y qpdf` |
 | whois | `whois` | `winget install Microsoft.Sysinternals.Whois` (or use `whoisdomain` lib) | preinstalled / `brew install whois` | `sudo apt install -y whois` |
-| dig | `dig` | use `nslookup` (built-in) or `dnspython` | preinstalled | `sudo apt install -y dnsutils` |
+| dig | `dig` | `winget install ISC.Bind` | preinstalled | `sudo apt install -y dnsutils` |
+
+> **whois, dig, and asn are now auto-installed** by the bundled installers (`install.ps1` / `install.sh`) — no longer manual steps.
 | mat2 | `mat2` | **not supported** → use `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
 | Go | `go` | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` (or go.dev/dl) |
 | agent-browser | `agent-browser` | `npm i -g agent-browser` / `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` / `cargo install` → `agent-browser install` |
@@ -199,11 +201,14 @@ location differs (`%USERPROFILE%\go\bin` vs `$HOME/go/bin`); ensure it's on PATH
 | httpx | `httpx` | `github.com/projectdiscovery/httpx/cmd/httpx@latest` |
 | PhoneInfoga | `phoneinfoga` | go module broken — fetch the GitHub **release binary** for the OS/arch (`Windows_`, `Darwin_`, `Linux_` + `x86_64`/`arm64`) |
 
-### Shell-only tools
+### ASN / network intelligence
 
-| Tool | Check | Install | Windows handling |
-|------|-------|---------|------------------|
-| ASN | `asn` | `bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)` | run in **Git Bash / WSL**; or use the `ipwho.is` / RDAP HTTP fallbacks |
+| Platform | `asn` command | How it's installed | Capabilities |
+|----------|---------------|--------------------|--------------|
+| Linux / macOS / WSL | nitefood/asn | `install.sh` downloads it to `~/.local/bin` + deps (whois, dig, mtr, aha, jq, ipcalc, grepcidr, nmap) | full: BGP graph, whois, traceroute, RPKI, port scan |
+| Windows (native) | `scripts/asn.ps1` | `install.ps1` writes an `asn.cmd` wrapper into `~\.local\bin` (on PATH) | keyless IP/ASN/domain lookups via ipwho.is + RDAP |
+
+**Why the split:** nitefood/asn is a 4,800-line bash script driving Unix `whois` (`whois -h <server>`); it hangs under Git Bash because Windows `whois` (Sysinternals) is incompatible, and it needs no API key. On Windows use the native `asn` command (`asn 8.8.8.8`, `asn AS15169`, `asn example.com`); for full BGP/traceroute features run `install.sh` inside WSL.
 
 ---
 

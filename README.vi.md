@@ -8,7 +8,9 @@
 
 Một kỹ năng của Claude Code biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở chuyên nghiệp. Chạy thu thập tình báo có cấu trúc sử dụng **67+ lệnh** trên **36 kỹ thuật** — không cần API key cho chức năng cốt lõi. Một số kỹ thuật hỗ trợ API key miễn phí tùy chọn để truy cập nâng cao (VD: Wigle, VirusTotal, URLScan.io).
 
-**Mới trong v2.4:** Phát hiện hệ điều hành đa nền tảng (Windows/macOS/Linux) với tự động cài đặt theo OS và tạo DOCX tự khắc phục (UTF-8 + pandoc); bộ công cụ ưu tiên **uv** (uv venv/pip/tool, script `uv run` PEP 723 không cần thiết lập); hỗ trợ **đa tác nhân** — chạy trên Claude Code **và** OpenAI Codex qua `AGENTS.md`; trình phân tích nhật ký stealer (`/cti-expert /stealer-log`) — định danh họ mã độc, phân tích nạn nhân-vs-kẻ vận hành, tương quan đa nhật ký, trích xuất IOC + dữ liệu thô; phát hiện trang quản trị & điểm cuối nhạy cảm (admin/adm/kef/ador/panel…); tích hợp **agent-browser** (vercel-labs) làm trình thu thập trình duyệt tương tác chính; gia cố cài đặt trên máy/VPS sạch + CI.
+**Mới trong v2.5:** Lệnh `asn` bản địa — tra cứu IP/ASN/tên miền không cần API key (ipwho.is + RDAP) trên Windows; nitefood/asn đầy đủ được tự động cài trên Linux/macOS/WSL. Tự động cài `whois` + `dig` + `asn` trên Windows (winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`, trước đây phải cài thủ công); gia cố trình cài đặt cho **Windows PowerShell 5.1** (sửa lỗi native-stderr làm dừng script, lỗi dò `OSArchitecture`, và maigret qua `uv tool --force`); tự động thêm `~/.local/bin` (công cụ uv + `asn`) vào PATH — phiên hiện tại **và** vĩnh viễn.
+
+**Mới trong v2.4:** Phát hiện hệ điều hành đa nền tảng (Windows/macOS/Linux) với tự động cài đặt theo OS và tạo DOCX tự khắc phục (UTF-8 + pandoc); bộ công cụ ưu tiên **uv** (uv venv/pip/tool, script `uv run` PEP 723 không cần thiết lập); hỗ trợ **đa tác nhân** — chạy trên Claude Code **và** OpenAI Codex qua `AGENTS.md`; trình phân tích nhật ký stealer (`/cti-expert /stealer-log`) — định danh họ mã độc, phân tích nạn nhân-vs-kẻ vận hành, tương quan đa nhật ký, trích xuất IOC + dữ liệu thô; phát hiện trang quản trị & điểm cuối nhạy cảm (admin/adm/kef/ador/panel…); tích hợp **agent-browser** (vercel-labs) làm trình thu thập trình duyệt tương tác chính; gia cố cài đặt trên máy/VPS sạch + CI. **Pivot hạ tầng web** (`/cti-expert /webpivot`) trích xuất artifact (favicon/tracker/ví/token nhà vận hành) &rarr; truy vấn pivot xếp hạng, kèm bộ tương quan **cùng nhà vận hành**: `/cti-expert /rank-relations` (chấm điểm có trọng số + danh sách chặn nhiễu), `/cti-expert /cert-pivot` (pivot vân tay chứng chỉ TLS), `/cti-expert /pivot-suggest`, `/cti-expert /crypto-balance`, `/cti-expert /email-hygiene`, `/cti-expert /sensitive-paths`; phân tích **có kiểm soát bằng chứng** — mọi khẳng định phải trích dẫn một phát hiện tồn tại, dữ liệu thu thập không đáng tin được gắn thẻ và không bao giờ được thực thi.
 
 **Mới trong v2.3:** WHOIS toàn cầu cho mọi TLD (whoisdomain + CLI + Whoxy API; .vn, .th, .sg, .kr…), WHOIS đảo ngược & lịch sử; thu thập web Scrapling thích ứng (tĩnh → chống bot → kết xuất JS); trình duyệt headless tự động mở; làm giàu song song AgentFlow (DAG); phân tích HTML ~2ms; yêu cầu tối thiểu Python 3.10+.
 
@@ -146,7 +148,7 @@ claude   # mở Claude Code CLI
 
    | Hệ điều hành | Cách điều hướng |
    |-------------|----------------|
-   | **macOS** | Mở **Finder** &rarr; Nhấn **Cmd + Shift + G** &rarr; Nhập `~/.claude/skills/` &rarr; Nhấn **Go** |
+   | **macOS** | Mở **Finder** &rarr; Nhấn **Shift + Cmd + G** &rarr; Nhập `~/.claude/skills/` &rarr; Nhấn **Go** |
    | **Windows** | Mở **File Explorer** &rarr; Nhập `%USERPROFILE%\.claude\skills\` vào thanh địa chỉ &rarr; Nhấn **Enter** |
 
 4. **Chạy installer** &mdash; Mở terminal trong Claude Code Desktop:
@@ -192,6 +194,9 @@ claude   # mở Claude Code CLI
 /cti-expert /username johndoe                   # Liệt kê nền tảng (3000+)
 /cti-expert /email-deep user@domain.com         # Điều tra email chuyên sâu
 /cti-expert /github-osint github.com/org/repo   # Hồ sơ GitHub, repo, code, commit, fork
+/cti-expert /webpivot https://scam-site.top     # Pivot hạ tầng web → truy vấn pivot xếp hạng
+/cti-expert /rank-relations                      # Xếp hạng quan hệ cùng nhà vận hành (lọc nhiễu)
+/cti-expert /cert-pivot scam-site.top           # Pivot vân tay chứng chỉ TLS + tên miền SAN
 /cti-expert /exposure domain.com                # Điểm rủi ro tổng hợp (0-100)
 /cti-expert /report                             # Báo cáo kỹ thuật INTSUM
 /cti-expert /workspace save                     # Lưu trạng thái workspace để tiếp tục sau
@@ -208,7 +213,22 @@ claude   # mở Claude Code CLI
 | **Phân tích & Xác minh** | Xác minh hình ảnh, pháp y metadata, pháp y web, cơ sở dữ liệu rò rỉ |
 | **WiFi & Định vị** | Định vị WiFi qua Wigle.net, định vị nâng cao (W3W, Plus Codes, MGRS) |
 | **Kiểm tra bảo mật** | Kiểm tra đám mây (AWS/GCP/Azure), kiểm tra OWASP, kiểm tra dependency, kiểm tra prompt injection |
+| **Pivot hạ tầng & Tương quan** | Pivot hạ tầng web (favicon/tracker/ví &rarr; truy vấn pivot), xếp hạng quan hệ cùng nhà vận hành (lọc nhiễu, phân cụm), pivot vân tay chứng chỉ TLS, gợi ý pivot, số dư ví on-chain, chấm điểm hygiene email, phân loại đường dẫn nhạy cảm |
 | **Báo cáo & Xuất** | Báo cáo HTML tương tác (đồ thị thực thể 2D, biểu đồ, dòng thời gian), Markdown, JSON/CSV, gói IOC (STIX 2.1), DOCX khi cần |
+
+---
+
+### Sơ đồ quy trình
+
+**Pipeline `/case` đầy đủ (AEAD)** — vị trí của `/webpivot`, tương quan và key trả phí:
+
+![Pipeline /case của cti-expert](assets/workflow-case.png)
+
+**Luồng `/webpivot` + tương quan + API key trả phí:**
+
+![Luồng /webpivot + API key của cti-expert](assets/workflow-apikeys.png)
+
+<sub>Nguồn: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — xem <a href="README-apikeys.vi.md">hướng dẫn API key & webpivot</a>.</sub>
 
 ---
 
@@ -250,4 +270,4 @@ CTI Expert được xây dựng trên thành quả của cộng đồng mã ngu�
 
 ---
 
-**Tác giả:** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **Phiên bản:** 2.4 &bull; **Giấy phép:** MIT
+**Tác giả:** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **Phiên bản:** 2.5 &bull; **Giấy phép:** MIT

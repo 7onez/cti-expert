@@ -8,7 +8,9 @@
 
 一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **67+ 个命令**、**36 种技术**进行结构化情报收集——核心功能无需 API 密钥。部分技术支持可选的免费 API 密钥以获取增强访问（如 Wigle、VirusTotal、URLScan.io）。
 
-**v2.4 新功能：** 跨平台操作系统检测（Windows/macOS/Linux），按系统自动安装，DOCX 生成自愈（UTF-8 + pandoc）；**uv** 优先工具链（uv venv/pip/tool，PEP 723 `uv run` 零配置脚本）；**跨代理**支持——可在 Claude Code **和** OpenAI Codex 上通过 `AGENTS.md` 运行；信息窃取日志分析器（`/cti-expert /stealer-log`）——家族识别、受害者与操作者画像、跨日志关联、IOC 与原始数据提取；管理后台 / 敏感端点检测（admin/adm/kef/ador/panel…）；集成 **agent-browser**（vercel-labs）作为主要交互式浏览器采集器；全新干净环境/VPS 安装加固 + CI。
+**v2.5 新功能：** 原生 `asn` 命令——Windows 上无需 API 密钥的 IP/ASN/域名查询（ipwho.is + RDAP）；Linux/macOS/WSL 自动安装完整版 nitefood/asn。Windows 上自动安装 `whois` + `dig` + `asn`（winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`，此前需手动）；**Windows PowerShell 5.1** 安装加固（修复 native-stderr 导致脚本中止、`OSArchitecture` 探测崩溃、maigret 改用 `uv tool --force`）；自动将 `~/.local/bin`（uv 工具 + `asn`）加入 PATH——当前会话**及**永久生效。
+
+**v2.4 新功能：** 跨平台操作系统检测（Windows/macOS/Linux），按系统自动安装，DOCX 生成自愈（UTF-8 + pandoc）；**uv** 优先工具链（uv venv/pip/tool，PEP 723 `uv run` 零配置脚本）；**跨代理**支持——可在 Claude Code **和** OpenAI Codex 上通过 `AGENTS.md` 运行；信息窃取日志分析器（`/cti-expert /stealer-log`）——家族识别、受害者与操作者画像、跨日志关联、IOC 与原始数据提取；管理后台 / 敏感端点检测（admin/adm/kef/ador/panel…）；集成 **agent-browser**（vercel-labs）作为主要交互式浏览器采集器；全新干净环境/VPS 安装加固 + CI。**Web 基础设施枢轴**（`/cti-expert /webpivot`）从页面 DOM 提取 favicon/追踪码/钱包/SaaS 运营者标识 &rarr; 排序后的枢轴查询，并配套**同一运营者**关联套件：`/cti-expert /rank-relations`（加权评分 + 噪声黑名单）、`/cti-expert /cert-pivot`（TLS 证书指纹枢轴）、`/cti-expert /pivot-suggest`、`/cti-expert /crypto-balance`、`/cti-expert /email-hygiene`、`/cti-expert /sensitive-paths`；**证据门控**分析——每条论断都必须引用一个真实存在的发现，采集到的不可信数据会被标记且绝不执行。
 
 **v2.3 新功能：** 面向所有 TLD 的通用 WHOIS（whoisdomain + CLI + Whoxy API；.vn、.th、.sg、.kr…）、反向与历史 WHOIS；Scrapling 自适应网页采集（静态 → 反爬 → JS 渲染）；无头浏览器自动开启；AgentFlow 并行富化（DAG）；HTML 解析 ~2ms；最低要求 Python 3.10+。
 
@@ -146,7 +148,7 @@ claude   # 打开 Claude Code CLI
 
    | 操作系统 | 路径 |
    |---------|------|
-   | **macOS** | `~/.claude/skills/` （Finder &rarr; Cmd+Shift+G） |
+   | **macOS** | `~/.claude/skills/` （Finder &rarr; Shift+Cmd+G） |
    | **Windows** | `%USERPROFILE%\.claude\skills\` （文件资源管理器地址栏） |
 
 4. **运行安装脚本** &mdash; 在 Claude Code Desktop 终端中运行：
@@ -192,6 +194,9 @@ claude   # 打开 Claude Code CLI
 /cti-expert /username johndoe                   # 平台枚举（3000+）
 /cti-expert /email-deep user@domain.com         # 深度电子邮件调查
 /cti-expert /github-osint github.com/org/repo   # GitHub 资料、仓库、代码、提交、分叉
+/cti-expert /webpivot https://scam-site.top     # Web 基础设施枢轴 → 排序枢轴查询
+/cti-expert /rank-relations                      # 同一运营者关系排序（过滤噪声）
+/cti-expert /cert-pivot scam-site.top           # TLS 证书指纹枢轴 + SAN 兄弟域名
 /cti-expert /exposure domain.com                # 综合风险评分（0-100）
 /cti-expert /report                             # 技术 INTSUM 报告
 /cti-expert /workspace save                     # 保存案例工作区状态（稍后恢复）
@@ -208,7 +213,22 @@ claude   # 打开 Claude Code CLI
 | **分析与验证** | 图像验证、元数据取证、网页取证、泄露数据库 |
 | **WiFi 与地理定位** | 通过 Wigle.net WiFi 定位、高级地理定位（W3W、Plus Codes、MGRS） |
 | **安全审计** | 云审计（AWS/GCP/Azure）、OWASP 审计、依赖审计、提示注入审计 |
+| **基础设施枢轴与关联** | Web 基础设施枢轴（favicon/追踪码/钱包 &rarr; 枢轴查询）、同一运营者关系排序（噪声过滤、聚类）、TLS 证书指纹枢轴、枢轴建议、链上钱包余额、邮箱域名评分、敏感路径分类 |
 | **报告与导出** | 交互式 HTML 报告（2D 实体图、图表、时间线）、Markdown、JSON/CSV、IOC 包（STIX 2.1）、按需 DOCX |
+
+---
+
+### 工作流程图
+
+**完整 `/case` 流水线（AEAD）** —— `/webpivot`、关联分析与付费密钥的位置：
+
+![cti-expert /case 流水线](assets/workflow-case.png)
+
+**`/webpivot` + 关联 + 付费 API 密钥流程：**
+
+![cti-expert /webpivot + API 密钥工作流](assets/workflow-apikeys.png)
+
+<sub>来源：<a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> —— 参见 <a href="README-apikeys.zh-CN.md">API 密钥与 webpivot 指南</a>。</sub>
 
 ---
 
@@ -250,4 +270,4 @@ CTI Expert 站在开源社区和免费公益数据提供方的肩膀上。在此
 
 ---
 
-**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.4 &bull; **许可证：** MIT
+**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.5 &bull; **许可证：** MIT

@@ -242,7 +242,7 @@ pipx_install() {
   if has uv; then
     if [[ "$already" == true ]] && uv tool upgrade "$tool" &>/dev/null 2>&1; then
       log_ok "$tool updated (uv tool)"; return
-    elif uv tool install "$tool" &>/dev/null 2>&1; then
+    elif uv tool install --force "$tool" &>/dev/null 2>&1; then   # --force overwrites a stale shim from a prior pip/pipx install
       [[ "$already" == true ]] && log_ok "$tool updated (uv tool)" || log_ok "$tool (uv tool)"
       return
     fi
@@ -293,13 +293,22 @@ gh_binary_install() {
     log_ok "$tool (already installed)"
     return
   fi
-  if ! has gh; then
-    log_fail "$tool" "gh CLI not found — install from https://cli.github.com"
+  # Resolve the release asset URL. Prefer gh; fall back to curl/wget + jq (both
+  # ensured earlier) so PhoneInfoga installs on boxes without the GitHub CLI.
+  local api_path="repos/$repo/releases/latest"
+  local api_url="https://api.github.com/$api_path"
+  local jq_filter=".assets[] | select(.name | test(\"$asset_pattern\")) | .browser_download_url"
+  local url=""
+  if has gh; then
+    url=$(gh api "$api_path" --jq "$jq_filter" 2>/dev/null | head -1)
+  elif has jq && has curl; then
+    url=$(curl -sL "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1)
+  elif has jq && has wget; then
+    url=$(wget -qO- "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1)
+  else
+    log_fail "$tool" "need gh, or curl/wget + jq, to query GitHub releases"
     return
   fi
-  local url
-  url=$(gh api "repos/$repo/releases/latest" \
-    --jq ".assets[] | select(.name | test(\"$asset_pattern\")) | .browser_download_url" 2>/dev/null | head -1)
   if [[ -z "$url" ]]; then
     log_fail "$tool" "no matching release asset (pattern: $asset_pattern)"
     return
@@ -331,6 +340,13 @@ echo "Installer: uv-first (pip/pipx/venv fallback)"
 # ── uv bootstrap ────────────────────────────────────────────
 section "uv (Astral package manager)"
 ensure_uv
+# uv installs CLI tools (maigret) into ~/.local/bin, and we drop the `asn` script there
+# too. Put it on PATH for this run and persist it (uv's own shell hook) for new shells.
+UV_TOOL_BIN="$HOME/.local/bin"
+[[ ":$PATH:" != *":$UV_TOOL_BIN:"* ]] && export PATH="$UV_TOOL_BIN:$PATH"
+if has uv; then
+  uv tool update-shell &>/dev/null 2>&1 && log_ok "~/.local/bin on PATH (uv tool update-shell — open a new shell)" || true
+fi
 
 # ── Venv check / create ─────────────────────────────────────
 section "Python environment"
@@ -511,9 +527,32 @@ else
   echo -e "  ${YELLOW}–${NC} Skipped (add --go to install Go tools, requires Go 1.21+)"
 fi
 
-# ── Manual-only tools ─────────────────────────────────────────
-section "Manual-install tools (not automated)"
-echo "  ASN:        bash <(curl -sL https://raw.githubusercontent.com/nitefood/asn/master/asn)"
+# ── ASN lookup tool (nitefood/asn) ────────────────────────────
+# asn is a self-contained bash script; install its runtime deps (whois/dig/jq are
+# already installed above) then drop the script into ~/.local/bin. Linux/macOS/WSL.
+section "ASN lookup tool (nitefood/asn)"
+ASN_RAW="https://raw.githubusercontent.com/nitefood/asn/master/asn"
+ASN_DIR="$HOME/.claude/skills/cti-expert/vendor/asn"
+ASN_BIN="$HOME/.local/bin"
+if [[ "$OS" == "linux" ]] && has apt-get; then
+  # mtr-tiny/bind9-dnsutils on newer Debian; mtr/dnsutils on older — try both, tolerate misses
+  $SUDO apt-get install -y curl whois jq mtr-tiny aha ipcalc grepcidr nmap bind9-dnsutils &>/dev/null 2>&1 \
+    || $SUDO apt-get install -y curl whois jq mtr aha ipcalc grepcidr nmap dnsutils &>/dev/null 2>&1 || true
+elif [[ "$OS" == "macos" ]] && has brew; then
+  brew install curl whois jq mtr aha ipcalc grepcidr nmap &>/dev/null 2>&1 || true
+fi
+if has curl || has wget; then
+  mkdir -p "$ASN_DIR" "$ASN_BIN"
+  if { has curl && curl -fsSL "$ASN_RAW" -o "$ASN_DIR/asn"; } || { has wget && wget -qO "$ASN_DIR/asn" "$ASN_RAW"; }; then
+    chmod +x "$ASN_DIR/asn"
+    ln -sf "$ASN_DIR/asn" "$ASN_BIN/asn" 2>/dev/null || cp -f "$ASN_DIR/asn" "$ASN_BIN/asn"
+    log_ok "asn (nitefood/asn -> $ASN_BIN/asn)"
+  else
+    log_fail "asn" "download failed from $ASN_RAW"
+  fi
+else
+  log_fail "asn" "need curl or wget to download the asn script"
+fi
 
 # ── Summary ───────────────────────────────────────────────────
 echo ""

@@ -1,7 +1,7 @@
 ---
 name: cti-expert
-description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, subdomain enumeration, case investigation, recon, due diligence, image forensics, face search, blockchain investigation, crypto tracing, flight tracking, maritime tracking, vehicle lookup, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, stealer log analysis, infostealer log triage, malware log attribution, admin panel discovery, sensitive endpoint detection, M365 recon, Azure tenant enumeration. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log. Techniques: social media platforms, advanced geolocation, web/DNS forensics, image forensics, blockchain, transport tracking, darknet, people search, cloud audit, incident triage, OWASP audit, prompt injection audit. Author: Hieu Ngo - chongluadao.vn"
-version: "2.4"
+description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain/subdomain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, case investigation, due diligence, image forensics, face search, blockchain/crypto tracing, flight/maritime/vehicle tracking, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, infostealer/stealer log triage, admin panel & sensitive endpoint discovery, M365/Azure recon, web-infra pivoting, favicon/tracker-ID reverse lookup, campaign clustering, phishing-kit fingerprinting, premium API-key management. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log, /webpivot, /rank-relations, /cert-pivot, /pivot-suggest, /crypto-balance, /email-hygiene, /sensitive-paths, /apikeys."
+version: "2.5"
 author: "Hieu Ngo - chongluadao.vn"
 ---
 
@@ -38,12 +38,20 @@ Every investigation follows four phases:
 
 | Phase | What Happens |
 |-------|-------------|
-| **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain` |
+| **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` (domain/URL targets) |
 | **Enrich** | Expand leads — `/branch`, `/crossref`, `/link-subjects`, `/signatures` |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding` |
 | **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle** |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
+
+> **`/case` and web-infra pivoting.** For a **domain or URL** target, `/case` includes
+> web-infrastructure pivoting (`/webpivot`) in the Acquire phase. It runs **keyless by default**
+> (crt.sh + passive DNS + anonymous urlscan) and **upgrades automatically when premium keys are
+> set** via `/apikeys` (Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML). Because
+> `/webpivot` can fetch the target directly, for hostile infrastructure it prefers passive capture
+> (urlscan/Wayback) — see [`techniques/web-pivot.md`](techniques/web-pivot.md). It is **not** run for
+> username/phone/person targets.
 
 ---
 
@@ -71,6 +79,10 @@ Commands grouped by AEAD phase.
 | `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks | `/github-osint github.com/org/repo` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
+| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` | `/webpivot https://scam-site.top` |
+| `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) | `/cert-pivot scam-site.top` |
+| `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline | `/sensitive-paths waymore_index.txt` |
+| `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable/MX/free/role) | `/email-hygiene admin@site.top` |
 | `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
 | `/ransomware-check [org]` | Check if org is a ransomware victim | `/ransomware-check "Acme Corp"` |
 | `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
@@ -96,6 +108,9 @@ Commands grouped by AEAD phase.
 | Command | What It Does | Example |
 |---------|-------------|---------|
 | `/branch [data]` | Expand a discovered identifier laterally | `/branch john@mail.com` |
+| `/pivot-suggest` | Rank "what to pivot on next" from findings — leet/variant/reuse/temporal/domain clusters | `/pivot-suggest` |
+| `/rank-relations` | Score + rank same-operator relations across analyzed pages (noise-filtered, clustered) | `/rank-relations` |
+| `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot | `/crypto-balance 1A1z…` |
 | `/timeline [subject]` | Assemble dated event sequence | `/timeline Company Inc` |
 | `/crossref` | Detect shared identifiers across subjects | `/crossref` |
 | `/link-subjects [A] [B]` | Define a connection between two subjects | `/link-subjects John Jane` |
@@ -168,6 +183,12 @@ Commands grouped by AEAD phase.
 | `/opsec` | OPSEC checklist for current task | `/opsec` |
 | `/onboard` | Interactive first-time onboarding guide | `/onboard` |
 | `/quality` | Investigation quality composite score | `/quality` |
+
+### Configure
+
+| Command | What It Does | Example |
+|---------|-------------|---------|
+| `/apikeys` | Manage premium/pro API keys (Shodan, Censys, FOFA, SecurityTrails, DNSLytics, urlscan-PRO, WhoisXML, Hudson Rock, IntelX, GitHub, SerpAPI…) — `status`/`set`/`unset`/`test`/`unlocks`. Keys **upgrade existing techniques** (especially `/webpivot`); keyless/free stays the default. Stored chmod-600 in `$SKILL_DIR/.env` (gitignored), env-var override. See `handbook/api-keys.md` | `/apikeys set shodan <KEY>` |
 
 ---
 
@@ -537,6 +558,8 @@ Every narrative report auto-saves the **default export set** (.md + .html + .jso
 | Network topology | `/render network` | **ASCII** |
 
 **All visual outputs use ASCII box-drawing by default.** Mermaid only on explicit `--mermaid` flag.
+
+**Diagram tradecraft:** [`output/visuals/diagram-patterns.md`](output/visuals/diagram-patterns.md) — compile-check a Mermaid diagram before presenting it, and pick the right diagram type per CTI question (attack → sequence, lifecycle → state, handoffs → swimlane, infra → graph).
 
 The **interactive HTML report** (default deliverable) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
 
