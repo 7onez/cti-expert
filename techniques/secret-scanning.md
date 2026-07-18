@@ -152,6 +152,27 @@ No tool available
 
 ---
 
+## 7a. Read-Only Credential Validation (liveness check)
+
+When a secret is discovered during an **authorized** assessment, confirm whether it is *live* using only **read-only / identity** endpoints — never an endpoint that creates, modifies, deletes, or sends. This upgrades a finding from "pattern matched" (MEDIUM) to "confirmed live" (CRITICAL) with an account/scope for the disclosure report.
+
+> **Discipline:** call an identity/whoami endpoint only; record `checked_at` (UTC), the truncated response, and the returned scope/account-ID; then **stop**. Do not enumerate resources or reuse the credential. On third-party assets, do not validate at all without written authorization — validation is a live API call that may alert the owner.
+
+| Secret type | Read-only validation probe | Confirms |
+|-------------|----------------------------|----------|
+| AWS access key | `aws sts get-caller-identity` | Account ID + principal ARN |
+| GitHub PAT | `curl -sI -H "Authorization: token <t>" https://api.github.com/user` → read `X-OAuth-Scopes` | Validity + granted scopes |
+| Slack token | `curl -s -H "Authorization: Bearer xox...-" -X POST https://slack.com/api/auth.test` | Workspace + bot/user identity |
+| Anthropic key | `curl -s -H "x-api-key: sk-ant-..." -H "anthropic-version: 2023-06-01" https://api.anthropic.com/v1/models` | Key validity |
+| OpenAI key | `curl -s -H "Authorization: Bearer sk-..." https://api.openai.com/v1/models` | Key validity |
+| Postman key | `curl -s -H "X-Api-Key: PMAK-..." https://api.getpostman.com/me` | Account identity |
+| DataDog key | `curl -s -H "DD-API-KEY: ..." -H "DD-APPLICATION-KEY: ..." https://api.datadoghq.com/api/v1/validate` | Key validity |
+| Stripe key | `curl -s https://api.stripe.com/v1/balance -u sk_live_...:` | Account + (do not move funds) |
+
+A confirmed-live result → **CRITICAL**, attach account/scope evidence, and trigger the responsible-disclosure flow below immediately.
+
+---
+
 ## 8. Limitations
 
 - **TruffleHog verification** makes live API calls — may trigger security alerts at target

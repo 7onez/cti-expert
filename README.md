@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 67+ commands, 36 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 69+ commands, 38 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.5-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.5"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-36-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="36 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **67+ commands** across **36 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **69+ commands** across **38 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [README-apikeys.md](README-apikeys.md).
@@ -125,6 +125,9 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Web pivoting** | `/webpivot` — map the infra behind a page | Favicon **mmh3**, GA/GTM/AdSense IDs, wallets & SaaS-operator tokens from a page's DOM → ranked pivots; same-operator correlation via `/rank-relations` (weighted scoring + noise denylist), `/cert-pivot`, `/pivot-suggest`, `/crypto-balance`, `/email-hygiene`, `/sensitive-paths`. Auto-runs in `/case` for domain/URL targets |
 | **Keyless by default** | 100% free — no key, no signup | crt.sh (certificate transparency) + passive DNS + anonymous urlscan **always run**; full pivoting at zero cost, nothing to configure |
 | **Premium auto-detect** | Drop in a key → it upgrades itself | `/webpivot` **auto-detects** any premium key you've set (Shodan, Censys, FOFA, DNSLytics, SecurityTrails, urlscan-PRO, WhoisXML) and unlocks its higher tier — no flag, no re-run; a missing/bad key degrades to a note, never breaks the run. Manage keys with `/apikeys` |
+| **Attack surface** | `/appliance-scan` — edge/VPN appliance → KEV mapping | Passive-first fingerprint of internet-facing Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange appliances (Shodan InternetDB/Censys) → matched **CISA KEV/CVE** list; feeds `/vuln-check` + `/threat-model` |
+| **Identity fabric** | `/saas-map` — SaaS tenancy + IdP surface | DNS-TXT tenancy tokens (Google/Atlassian/Zscaler/Salesforce/Workday…), non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauthenticated API/GraphQL/OpenAPI-spec discovery |
+| **Credentials** | Read-only liveness validation | A discovered key is confirmed live via identity-only endpoints (AWS STS, GitHub scopes, Slack `auth.test`, `…/v1/models`) — never a mutating call — upgrading it to CRITICAL with account/scope evidence |
 | **Integrity** | Evidence-gated analysis | every asserted claim cites a resolvable finding; untrusted collected data is tagged, never executed |
 | **Recon** | Native `asn` command | Keyless IP/ASN/domain lookups (ipwho.is + RDAP) on Windows; full nitefood/asn auto-installed on Linux/macOS/WSL |
 | **System tools** | `whois` + `dig` + `asn` auto-install on Windows | winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`; previously manual steps |
@@ -730,7 +733,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>36 techniques</b> — click to expand full catalog</summary>
+<summary><b>38 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -771,6 +774,8 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 | `secret-scanning.md` | Credential/secret detection in code | Optional (GitHub token for GitDorker) |
 | `github-osint.md` | GitHub profile, org, repo, code, commit, fork, and collaboration recon | Optional (GitHub token for higher API limits) |
 | `fx-email-header-analysis.md` | Email header analysis, SPF/DKIM | No |
+| `fx-edge-appliance-recon.md` | Edge/VPN appliance fingerprint → CISA KEV/CVE catalog + port-risk matrix | No (Shodan/Censys optional) |
+| `fx-saas-identity-recon.md` | SaaS tenancy (DNS-TXT) + IdP fingerprint + API/GraphQL/spec discovery | No |
 
 </details>
 
@@ -837,7 +842,7 @@ cti-expert/
 │   ├── workspace-format.md        Workspace serialization spec
 │   └── conflict-resolver.md       CONTESTED finding resolution
 │
-├── techniques/                    Collection techniques (32 files)
+├── techniques/                    Collection techniques (34 files)
 │   ├── whois-universal.md         Universal multi-TLD WHOIS cascade
 │   ├── web-collection-scrapling.md Scrapling adaptive web collection
 │   ├── agentflow-enrichment.md    Parallel enrichment orchestration
