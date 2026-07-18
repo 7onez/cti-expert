@@ -57,7 +57,7 @@
 A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **69+ commands** across **38 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
-> **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [README-apikeys.md](README-apikeys.md).
+> **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [handbook/api-keys.md](handbook/api-keys.md).
 
 <table>
 <tr>
@@ -122,6 +122,9 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 | Category | What's New | Details |
 |----------|-----------|---------|
+| **Recursive pivoting** | `/case` is a **spider-map** — expands the whole network | `/case` now runs a recursive BFS pivot engine ([`pivot_orchestrator.py`](scripts/pivot_orchestrator.py) + [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md)): every discovered identifier (email/domain/IP/username/wallet/…) becomes a new seed and the relationship graph expands hop-by-hop **until the frontier is exhausted**. Confidence-gated (exact-match links auto-pursue, weak/PII links held), cycle-safe (dedup + depth caps), with **per-depth checkpoints**. Defaults: active · exhaustive · checkpoint-per-depth |
+| **Archive IOC harvest** | `/webpivot --harvest` — every selector the site ever exposed | [`wayback_harvest.py`](scripts/webpivot/wayback_harvest.py) runs the full extractor over a domain's **entire Wayback history**, merging **emails, phones, crypto wallets, tracking/verification IDs, SaaS-operator IDs and socials** with first-seen/last-seen — recovering selectors a network later scrubbed. Emits case-schema `indicators[]` straight into the IOC bundle; auto-runs in `/case` for domain/URL targets. `/webpivot` now also extracts **phone numbers** (`tel:` + formatted) as ranked pivot leads |
+| **Archive access** | Fetch archived pages Claude Code's WebFetch can't reach | WebFetch is blocked from `web.archive.org` (robots.txt at the fetch layer). [`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py) routes around it — CDX lookup → nearest-snapshot resolve → raw `id_` fetch, with retry/backoff (`--near`, `--list`, `--url-only`, `--json`) |
 | **Web pivoting** | `/webpivot` — map the infra behind a page | Favicon **mmh3**, GA/GTM/AdSense IDs, wallets & SaaS-operator tokens from a page's DOM → ranked pivots; same-operator correlation via `/rank-relations` (weighted scoring + noise denylist), `/cert-pivot`, `/pivot-suggest`, `/crypto-balance`, `/email-hygiene`, `/sensitive-paths`. Auto-runs in `/case` for domain/URL targets |
 | **Keyless by default** | 100% free — no key, no signup | crt.sh (certificate transparency) + passive DNS + anonymous urlscan **always run**; full pivoting at zero cost, nothing to configure |
 | **Premium auto-detect** | Drop in a key → it upgrades itself | `/webpivot` **auto-detects** any premium key you've set (Shodan, Censys, FOFA, DNSLytics, SecurityTrails, urlscan-PRO, WhoisXML) and unlocks its higher tier — no flag, no re-run; a missing/bad key degrades to a note, never breaks the run. Manage keys with `/apikeys` |
@@ -598,7 +601,7 @@ Every investigation follows four automated phases:
 <img src="assets/workflow-apikeys.png" alt="cti-expert /webpivot + correlation + API-key workflow" width="820">
 </div>
 
-<sub>Sources: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — see the <a href="README-apikeys.md">API-keys &amp; webpivot guide</a>.</sub>
+<sub>Sources: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — see the <a href="handbook/api-keys.md">API-keys &amp; webpivot guide</a>.</sub>
 
 <br>
 
