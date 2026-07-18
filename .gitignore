@@ -24,3 +24,7 @@ vendor/
 
 # Virtual environments
 .venv/
+
+# API keys (managed by /apikeys) — NEVER commit
+.env
+scripts/**/.env
