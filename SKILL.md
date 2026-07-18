@@ -1,6 +1,6 @@
 ---
 name: cti-expert
-description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain/subdomain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, case investigation, due diligence, image forensics, face search, blockchain/crypto tracing, flight/maritime/vehicle tracking, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, infostealer/stealer log triage, admin panel & sensitive endpoint discovery, M365/Azure recon, web-infra pivoting, favicon/tracker-ID reverse lookup, campaign clustering, phishing-kit fingerprinting, premium API-key management. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log, /webpivot, /rank-relations, /cert-pivot, /pivot-suggest, /crypto-balance, /email-hygiene, /sensitive-paths, /apikeys."
+description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain/subdomain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, case investigation, due diligence, image forensics, face search, blockchain/crypto tracing, flight/maritime/vehicle tracking, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, infostealer/stealer log triage, admin panel & sensitive endpoint discovery, M365/Azure recon, web-infra pivoting, favicon/tracker-ID reverse lookup, campaign clustering, phishing-kit fingerprinting, premium API-key management. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log, /webpivot, /rank-relations, /cert-pivot, /pivot-suggest, /crypto-balance, /email-hygiene, /sensitive-paths, /appliance-scan, /saas-map, /apikeys."
 version: "2.5"
 author: "Hieu Ngo - chongluadao.vn"
 ---
@@ -88,6 +88,8 @@ Commands grouped by AEAD phase.
 | `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
 | `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | `/msftrecon example.com` |
+| `/appliance-scan [domain\|ip]` | Fingerprint internet-facing edge/VPN appliances (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed services → CISA KEV/CVE mapping. Passive-first (Shodan InternetDB/Censys); feeds `/vuln-check` + `/threat-model`. See `techniques/fx-edge-appliance-recon.md` | `/appliance-scan vpn.example.com` |
+| `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` | `/saas-map example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
 <!-- dork-integration:phase-05 start -->
 | `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Zero-auth dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier fallback cascade | `/dork-sweep example.com --filetype` |
@@ -342,6 +344,8 @@ Reference directory: `techniques/`
 | `scam-check.md` | Phishing/scam domain verification and detection |
 | `cloud-audit.md` | Cloud infrastructure security (AWS/GCP/Azure): IAM, network, storage, compute, logging, secrets |
 | `microsoft-tenant-recon.md` | M365/Azure tenant enumeration — federation, tenant ID, Azure AD config, MDI detection |
+| `fx-edge-appliance-recon.md` | Edge/VPN appliance fingerprint → CISA KEV/CVE catalog (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed-service port-risk matrix (Shodan InternetDB, passive-first) |
+| `fx-saas-identity-recon.md` | SaaS tenancy + identity-fabric mapping — DNS-TXT tenancy tokens, IdP fingerprinting (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS/Entra), unauthenticated API/GraphQL/OpenAPI-spec discovery |
 | `dependency-audit.md` | Supply chain security: CVE audit, framework-specific vulns, typosquatting, CI/CD security |
 | `disk-forensics.md` | Digital evidence analysis: image integrity, Sleuth Kit, file carving, artifact recovery, timeline |
 | `incident-triage.md` | Security incident response: NIST 800-61 methodology, containment, evidence preservation, IOC extraction |
@@ -707,6 +711,8 @@ cti-expert/
 │   ├── scam-check.md           Phishing/scam domain verification
 │   ├── cloud-audit.md          Cloud infrastructure security audit
 │   ├── microsoft-tenant-recon.md M365/Azure tenant enumeration
+│   ├── fx-edge-appliance-recon.md Edge/VPN appliance fingerprint → KEV/CVE catalog + port-risk matrix
+│   ├── fx-saas-identity-recon.md SaaS tenancy + IdP fingerprint + API/GraphQL/spec discovery
 │   ├── dependency-audit.md     Supply chain security audit
 │   ├── disk-forensics.md       Digital evidence analysis
 │   ├── incident-triage.md      Security incident response
