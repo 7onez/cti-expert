@@ -18,6 +18,23 @@ Email OSINT maps an email address to platform registrations, breach exposure, pr
 
 ## 2. Tool Inventory
 
+### Automated — `email_hygiene.py` (domain grading, keyless)
+
+Before enumerating accounts, grade the address's domain — a deterministic 0–100 + A–F score
+from disposable/no-MX/free/role signals. A throwaway or MX-less sender domain used on a
+"professional" platform is itself a compartmentalization finding (see CBR-02 in
+[`analysis/auto-branch-rules.md`](../analysis/auto-branch-rules.md)).
+
+```bash
+WP="$SKILL_DIR/scripts/webpivot"
+uv run "$WP/email_hygiene.py" admin@site.top ceo@site.top --pretty
+printf 'a@x.com\nb@y.org\n' | uv run "$WP/email_hygiene.py" --stdin
+```
+
+Penalties: disposable −60, no-MX −30, free −15, role local-part (`info@`,`admin@`…) −10; MX
+checked keyless via DNS-over-HTTPS. Grades A≥85 / B≥70 / C≥55 / D≥40 / F<40. Optional burner
+API key enhances disposable detection; the built-in list works with no key.
+
 ### Primary — Holehe (120+ sites)
 ```bash
 pip3 install holehe

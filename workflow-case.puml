@@ -1,0 +1,60 @@
+@startuml
+title cti-expert — /case full pipeline (AEAD) and where /webpivot + API keys fit
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowColor #34495E
+skinparam activity {
+  BackgroundColor #EAF2FB
+  BorderColor #2C6FBB
+  DiamondBackgroundColor #FFF3D6
+  DiamondBorderColor #C8901F
+  StartColor #2C6FBB
+  EndColor #2C6FBB
+}
+
+start
+:**/case TARGET**;
+:detect target type;
+
+partition "**ACQUIRE**  (collect raw data)" {
+  if (target is a domain / URL?) then (yes)
+    :/sweep · /query · /subdomain;
+    :**/webpivot**  — web-infra pivoting\n(+ /cert-pivot · /sensitive-paths · /email-hygiene);
+    note right
+      Runs **keyless by default**
+      (crt.sh · passive DNS · anonymous urlscan).
+      **Auto-upgrades** when premium keys are set
+      via /apikeys (Shodan · Censys · FOFA · DNSLytics ·
+      SecurityTrails · urlscan-PRO · WhoisXML · Blockchair).
+      For hostile infra it prefers passive capture.
+    end note
+  else (username / email / phone / person)
+    :/username · /email-deep · /phone · /breach-deep;
+    note right: **/webpivot is NOT run**\nfor non-web targets
+  endif
+}
+
+partition "**ENRICH**  (expand leads)" {
+  :/branch · /crossref · /rank-relations · /pivot-suggest\n· /crypto-balance · /link-subjects · /signatures;
+}
+
+partition "**ASSESS**  (score + verify)" {
+  :/exposure · /threat-model · /validate · /coverage;
+}
+
+partition "**DELIVER**  (package output)" {
+  :/report · /brief · /render;
+  :auto-save   .md + .html + .json + .csv + IOC bundle;
+}
+stop
+
+legend right
+  **Keyless / free by default**
+  ====
+  Every phase works with no API keys.
+  Premium keys (/apikeys) only *upgrade*
+  the Acquire + Enrich steps — they never
+  gate the pipeline.
+endlegend
+@enduml
