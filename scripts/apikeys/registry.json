@@ -1,0 +1,100 @@
+{
+  "_note": "Canonical premium/pro service catalog for cti-expert. Managed by apikeys.py (/apikeys). Keys resolve env-var first, then the skill-root .env. Keyless/free mode always works without any of these; premium keys are strictly additive. Never commit .env.",
+  "services": [
+    {
+      "id": "shodan", "name": "Shodan", "env": "SHODAN_API_KEY", "category": "infra",
+      "tier": "freemium", "url": "https://account.shodan.io",
+      "unlocks": "/webpivot: reverse favicon mmh3 hash -> hosts; /cert-pivot: reverse TLS cert fingerprint -> hosts; host/service intelligence",
+      "test": {"url": "https://api.shodan.io/api-info?key={key}", "expect_json": "query_credits"}
+    },
+    {
+      "id": "censys", "name": "Censys", "env": "CENSYS_API_KEY", "extra": ["CENSYS_ORG_ID", "CENSYS_API_ID"],
+      "aliases": ["CENSYS_API_SECRET"], "category": "infra", "tier": "freemium",
+      "url": "https://accounts.censys.io/settings/personal-access-tokens",
+      "unlocks": "/webpivot: reverse favicon MD5 -> hosts; /cert-pivot: cert fingerprint_sha256 -> hosts; certificate + host search",
+      "test": {"url": "https://search.censys.io/api/v1/account", "bearer": true, "expect_status": 200}
+    },
+    {
+      "id": "fofa", "name": "FOFA", "env": "FOFA_KEY", "aliases": ["FOFA_API_KEY"],
+      "extra": ["FOFA_EMAIL"], "category": "infra", "tier": "freemium", "url": "https://fofa.info",
+      "unlocks": "/webpivot: reverse favicon icon_hash + tracker body -> hosts; IP reverse",
+      "test": {"url": "https://fofa.info/api/v1/info/my?key={key}", "expect_json": "email"}
+    },
+    {
+      "id": "securitytrails", "name": "SecurityTrails", "env": "SECURITYTRAILS_API_KEY",
+      "extra": ["SECURITYTRAILS_API_KEY_FALLBACK"], "category": "dns", "tier": "freemium",
+      "url": "https://securitytrails.com/app/account/credentials",
+      "unlocks": "/webpivot + /dns-history: passive DNS, subdomains, WHOIS + DNS history",
+      "test": {"url": "https://api.securitytrails.com/v1/ping", "header": {"APIKEY": "{key}"}, "expect_json": "success"}
+    },
+    {
+      "id": "urlscan", "name": "urlscan.io PRO", "env": "URLSCAN_API_KEY", "category": "infra",
+      "tier": "freemium", "url": "https://urlscan.io/user/apikey/",
+      "unlocks": "/webpivot + /scam-check: authenticated DOM content search, related domains/IPs, submit scans",
+      "test": {"url": "https://urlscan.io/user/quotas/", "header": {"API-Key": "{key}"}, "expect_status": 200}
+    },
+    {
+      "id": "dnslytics", "name": "DNSLytics", "env": "DNSLYTICS_API_KEY", "category": "analytics",
+      "tier": "freemium", "url": "https://dnslytics.com/api",
+      "unlocks": "/webpivot: reverse AdSense (ca-pub-) / legacy GA (UA-) ID -> sibling domains"
+    },
+    {
+      "id": "whoisxml", "name": "WhoisXML", "env": "WHOISXML_API_KEY", "category": "dns",
+      "tier": "freemium", "url": "https://whoisxmlapi.com",
+      "unlocks": "/webpivot --whois + /whois: current + historic WHOIS, reverse-WHOIS by email/name",
+      "test": {"url": "https://user.whoisxmlapi.com/service/account-balance?apiKey={key}&output_format=json", "expect_status": 200}
+    },
+    {
+      "id": "certspotter", "name": "SSLMate CertSpotter", "env": "CERTSPOTTER_API_KEY",
+      "category": "dns", "tier": "free-tier", "url": "https://sslmate.com/certspotter/",
+      "unlocks": "/cert-history + /webpivot: higher-rate CT lookups (optional; crt.sh is free/keyless)"
+    },
+    {
+      "id": "zonecruncher", "name": "ZoneCruncher / zetalytics", "env": "ZONECRUNCHER_API_KEY",
+      "category": "dns", "tier": "freemium", "url": "https://zonecruncher.com",
+      "unlocks": "/webpivot + /dns-history: liveDNS, reverse-email -> domains registered by an email"
+    },
+    {
+      "id": "hudsonrock", "name": "Hudson Rock", "env": "HUDSONROCK_API_KEY", "category": "breach",
+      "tier": "freemium", "url": "https://www.hudsonrock.com",
+      "unlocks": "/breach-deep + /stealer-log: infostealer-breach feed lookups"
+    },
+    {
+      "id": "chongluadao", "name": "ChongLuaDao", "env": "CHONGLUADAO_API_KEY", "aliases": ["BURNER_API_KEY"], "category": "breach",
+      "tier": "free-tier", "url": "https://chongluadao.vn",
+      "unlocks": "/scam-check + /breach-deep: Vietnamese phishing/scam + breach feed; /email-hygiene: disposable/burner email detection"
+    },
+    {
+      "id": "intelx", "name": "Intelligence X (IntelX)", "env": "INTELX_API_KEY", "category": "breach",
+      "tier": "freemium", "url": "https://intelx.io/account?tab=developer",
+      "unlocks": "/breach-deep + darknet search: dark-web, paste, and leak selectors"
+    },
+    {
+      "id": "github", "name": "GitHub token", "env": "GITHUB_TOKEN", "category": "code",
+      "tier": "free", "url": "https://github.com/settings/tokens",
+      "unlocks": "/github-osint + /secrets: higher API limits, repo/code discovery",
+      "test": {"url": "https://api.github.com/user", "header": {"Authorization": "token {key}"}, "expect_status": 200}
+    },
+    {
+      "id": "serpapi", "name": "SerpAPI", "env": "SERPAPI_KEY", "category": "dork",
+      "tier": "freemium", "url": "https://serpapi.com/manage-api-key",
+      "unlocks": "/dork-sweep + /query: automated Google dork queries",
+      "test": {"url": "https://serpapi.com/account?api_key={key}", "expect_status": 200}
+    },
+    {
+      "id": "brightdata", "name": "Bright Data SERP", "env": "BRIGHTDATA_SERP_KEY", "category": "dork",
+      "tier": "paid", "url": "https://brightdata.com/products/serp-api",
+      "unlocks": "/dork-sweep: SerpAPI alternative for dork automation + residential SERP"
+    },
+    {
+      "id": "blockchair", "name": "Blockchair", "env": "BLOCKCHAIR_API_KEY", "category": "crypto",
+      "tier": "freemium", "url": "https://blockchair.com/api/docs",
+      "unlocks": "/crypto-balance + /webpivot --wallets: full balance + lifetime received/sent across BTC/ETH/LTC/BCH/DOGE/DASH/ZEC"
+    },
+    {
+      "id": "subscan", "name": "Subscan", "env": "SUBSCAN_API_KEY", "category": "crypto",
+      "tier": "free-tier", "url": "https://support.subscan.io/",
+      "unlocks": "/crypto-balance: higher-rate Polkadot (DOT) balance lookups"
+    }
+  ]
+}

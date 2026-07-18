@@ -1,0 +1,52 @@
+@startuml
+title cti-expert — /webpivot + correlation + premium API-key workflow
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontName "Segoe UI"
+skinparam ArrowColor #34495E
+skinparam activity {
+  BackgroundColor #EAF2FB
+  BorderColor #2C6FBB
+  DiamondBackgroundColor #FFF3D6
+  DiamondBorderColor #C8901F
+  StartColor #2C6FBB
+  EndColor #2C6FBB
+}
+
+start
+:**/webpivot URL**   or   **/case DOMAIN**;
+:**pivot_extract.py**\nfetch page (or saved DOM) + extract artifacts\n(favicon mmh3/md5, GA / GTM / AdSense,\nwallets, SaaS operator tokens, emails);
+:**enrich_live()**;
+
+fork
+  :**KEYLESS baseline — ALWAYS runs**\ncrt.sh (CT) · HackerTarget passive DNS\n· anonymous urlscan;
+fork again
+  if (premium API key present?\nresolve order: ENV var -> skill .env) then (key set)
+    :**PREMIUM enrichers**  (only the keys you set)\nShodan (favicon mmh3 + cert SHA-256)\nCensys (favicon MD5 + cert SHA-256) · FOFA\nDNSLytics (GA/AdSense -> sibling domains)\nSecurityTrails · urlscan-PRO · WhoisXML\nBlockchair / Subscan (wallet balance + flow);
+  else (no key)
+    :skip premium\nkeyless leads only (identical to before);
+  endif
+end fork
+
+:**ranked pivots + live_results**  (high -> low confidence);
+:**correlate — keyless**\nrank_relations.py: score same-operator siblings + drop noise\ncert_pivot.py: cert fingerprint + SAN siblings\npivot_suggest.py: ranked next-pivots\ncrypto_balance · email_hygiene · sensitive_paths;
+:save to case workspace   raw/<host>.json;
+:**graph_build.py**\ncluster hosts into one network graph\n(shared favicon / GA / wallet hubs + ranked sibling edges);
+stop
+
+legend right
+  **Key store — managed by /apikeys**
+  ====
+  .env at ~/.claude/skills/cti-expert/.env
+  chmod 600 · gitignored · ENV var overrides it
+  ----
+  Add a key:   /apikeys set censys <KEY>
+  Check:       /apikeys status | test | unlocks
+  ----
+  Keyless correlation tools:
+  /rank-relations · /cert-pivot · /pivot-suggest
+  /crypto-balance · /email-hygiene · /sensitive-paths
+  ----
+  No keys set  ->  everything runs keyless / free
+endlegend
+@enduml
