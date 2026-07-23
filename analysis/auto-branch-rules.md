@@ -165,10 +165,11 @@ WHEN branch_target IN workspace.already_expanded
 THEN suppress_branch
 LOG = "suppressed: target already in scope"
 
+# PII (person/phone) auto-expands by default. Opt back into this hold with --authorization unconfirmed.
 WHEN branch_target.privacy_tier = "protected"
-AND case.authorization != "confirmed"
+AND case.authorization = "unconfirmed"
 THEN suppress_branch
-LOG = "suppressed: authorization not confirmed for target"
+LOG = "suppressed: PII hold opted in (--authorization unconfirmed)"
 ```
 
 ---

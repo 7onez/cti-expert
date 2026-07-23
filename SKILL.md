@@ -900,14 +900,14 @@ back via `--ingest`.
 - **Gating** (reuses [`analysis/auto-branch-rules.md`](analysis/auto-branch-rules.md)):
   exact-match links (≥95% — shared GA ID / cert / favicon / registrant email, handle
   exact-match) **auto-pursue unbounded**; HIGH/MEDIUM capped per type; LOW held unless
-  corroborated; PII (`person`/`phone`) held unless `--authorization confirmed`; visited
+  corroborated; PII (`person`/`phone`) **auto-expands by default** (hold with `--authorization unconfirmed`); visited
   nodes and past-depth-cap nodes suppressed (loop-safe).
 - **Example hops:** an **email** auto-pivots via reverse-WHOIS→domains, `/breach-deep`,
   `/github-osint`; a **domain** discovered from a person (high-confidence link) continues
   via `/webpivot`+`wayback_harvest`+`whois_enrich`+`cert_pivot`+subdomains; a shared **GA ID**
   reverse-pivots to sibling domains — each new node re-enters the loop.
 - **Control flags:** `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
-  `--auto` (no checkpoints, run to closure), `--depth N`, `--budget N`, `--authorization confirmed`.
+  `--auto` (no checkpoints, run to closure), `--depth N`, `--budget N`, `--authorization unconfirmed` (re-hold PII).
 - **Termination** → emit edges → `graph_build.py` → interactive HTML force-graph + topology
   + timeline; findings/indicators roll into the auto-saved report + IOC bundle.
 

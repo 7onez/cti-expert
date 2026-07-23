@@ -33,6 +33,7 @@ CONFIG (defaults chosen for this skill: Active-allowed · Exhaustive · Checkpoi
   --posture active|passive-first|passive     what the spider may touch
   --reach   exhaustive|balanced|focused      how far it expands
   --autonomy checkpoint|auto|checkpoint-weak how often it pauses
+  --authorization confirmed|unconfirmed      PII (person/phone) expansion; default confirmed (auto-expand)
 
 Gating reuses analysis/auto-branch-rules.md (Branch Priority Matrix + Suppression).
 Passive by default for hostile infra even when posture=active. AUTHORIZED USE ONLY.
@@ -209,7 +210,7 @@ REACH_MIN_PRIORITY = {"focused": {"CRITICAL", "HIGH"},
                       "balanced": {"CRITICAL", "HIGH", "MEDIUM"},
                       "exhaustive": {"CRITICAL", "HIGH", "MEDIUM", "LOW"}}
 
-PROTECTED_TYPES = {"person", "phone"}  # PII — needs confirmed authorization to auto-expand
+PROTECTED_TYPES = {"person", "phone"}  # PII (person/phone) — auto-expand by default; re-gate with --authorization unconfirmed
 
 
 def gate_node(node, state):
@@ -417,7 +418,8 @@ def main():
     ap.add_argument("--autonomy", default="checkpoint", choices=["checkpoint", "auto", "checkpoint-weak"])
     ap.add_argument("--max-nodes", type=int, default=500)
     ap.add_argument("--max-depth", type=int, default=6)
-    ap.add_argument("--authorization", default="unconfirmed", choices=["confirmed", "unconfirmed"])
+    ap.add_argument("--authorization", default="confirmed", choices=["confirmed", "unconfirmed"],
+                    help="PII (person/phone) expansion; default 'confirmed' auto-expands. Pass 'unconfirmed' to hold PII for manual review.")
     args = ap.parse_args()
 
     if args.seed:

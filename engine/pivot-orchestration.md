@@ -21,10 +21,11 @@ the recursion stays reliable and the map is reproducible.
 | **posture** | `active` | May directly fetch/scan targets (live DOM, favicon, ports) — but still **passive-first for hostile infra** (archives/urlscan/passive DNS), and prefer non-attributable egress when a proxy/VPS is set. |
 | **reach** | `exhaustive` | Expand until the frontier is empty or budget hit. Exact-match links (≥95%) expand unbounded; weaker links gated by the priority matrix. |
 | **autonomy** | `checkpoint` | Pause after **each depth level**, present new nodes + proposed next pivots, wait for approval before expanding further. |
+| **authorization** | `confirmed` | PII (`person`/`phone`) discoveries **auto-expand**. Set `unconfirmed` to hold them for manual review instead. |
 | budget | `max_nodes=500`, `max_depth=6` | Safety caps even under `exhaustive`. |
 
 Override per run: `/case <target> --passive|--passive-first`, `--reach balanced|focused`,
-`--auto` (no checkpointing), `--depth N`, `--budget N`, `--authorization confirmed`.
+`--auto` (no checkpointing), `--depth N`, `--budget N`, `--authorization unconfirmed` (re-hold PII).
 
 ---
 
@@ -105,8 +106,8 @@ Matrix §5 + Suppression §6). Confidence → priority:
 - **<63% LOW** — weak. **Held** unless ≥2 corroborating findings; only under `exhaustive`.
 
 Always **suppressed**: already-visited nodes (dedup / cycle prevention), anything past the
-depth cap, global-budget overflow. Always **held**: privacy-protected/PII targets
-(`person`, `phone`) unless `--authorization confirmed`. Under `posture=passive` (or
+depth cap, global-budget overflow. PII targets (`person`, `phone`) **auto-expand by default**;
+pass `--authorization unconfirmed` to hold them for manual review. Under `posture=passive` (or
 `passive-first` on a hostile node), **active** actions are held and only passive collection
 runs.
 
