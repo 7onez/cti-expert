@@ -309,18 +309,24 @@ def _secret(*names):
 
 
 def fofa_search(query: str, size: int = 100,
-                fields: str = "host,ip,domain,title", timeout: int = 30):
+                fields: str = "host,ip,domain,title", timeout: int = 30,
+                full: bool = True):
     """Query the FOFA API for a raw query string (e.g. 'icon_hash="123"').
 
     Returns {'query','total','results':[{host,ip,domain,title}]} or {'error':...},
     or None if no FOFA key is configured. Needs FOFA_KEY (classic API also FOFA_EMAIL).
+
+    full=True (default) searches FOFA's ENTIRE history ("all time range"); False limits to
+    the last year. All-time is the skill default so pivots recover long-dead infra — note
+    FOFA restricts full historical search to privileged accounts and may error otherwise.
     """
     key = _secret("FOFA_KEY", "FOFA_API_KEY")
     if not key:
         return None
     params = {"key": key,
               "qbase64": base64.b64encode(query.encode()).decode(),
-              "size": str(size), "fields": fields}
+              "size": str(size), "fields": fields,
+              "full": "true" if full else "false"}
     email = _secret("FOFA_EMAIL")
     if email:
         params["email"] = email

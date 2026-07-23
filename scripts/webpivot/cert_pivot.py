@@ -201,7 +201,7 @@ def passive_links(domain, sha1, sha256, crtsh_id="", serial=""):
                               "services.tls.certificates.leaf_data.fingerprint_sha256%3D" + sha256)})
         fofa_b64 = base64.b64encode(f'cert="{sha256}"'.encode()).decode()
         links.append({"engine": "fofa_web", "label": "FOFA cert fingerprint (SHA-256)",
-                      "url": f"https://en.fofa.info/result?qbase64={fofa_b64}"})
+                      "url": f"https://en.fofa.info/result?qbase64={fofa_b64}&full=true"})
     if sha1:
         links.append({"engine": "shodan_web", "label": "Shodan cert fingerprint (SHA-1 alt)",
                       "url": f"https://www.shodan.io/search?query=ssl.cert.fingerprint%3A{sha1}"})
