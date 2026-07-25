@@ -231,6 +231,31 @@ CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json      # Structured data (input to DOCX gen
 
 **Every `/report`, `/brief`, and `/case` command must auto-save the default export set** — `.md` + `.html` + `.json` + `.csv` + the IOC bundle (`.stix.json` / `.txt` / `.csv`) — to disk. No user action required; files appear in CWD or `./osint-reports/` if it exists. Confirm all paths to the user after saving. DOCX is generated only on request (`/report docx`) or for `/report legal`. In `--yolo`, save the default set with no prompt; in interactive mode, offer DOCX/PDF at the end.
 
+### Redacted variant (`/redact`) — opt-in, never automatic
+
+The default export set is **unredacted** — it is the analyst's working record. A redacted copy
+is a deliberately *weaker* artifact, so it is only produced when asked for: `/redact`, or
+`/case … --redact`. That way no one silently works from a degraded report, and no one hands
+over PII by accident either.
+
+```bash
+S="$SKILL_DIR/scripts"
+uv run "$S/redact.py" REPORT.md   -o REPORT.redacted.md   --map REPORT.map.json
+uv run "$S/redact.py" REPORT.json -o REPORT.redacted.json --map REPORT.map.json   # same map
+uv run "$S/redact.py" REPORT.csv  -o REPORT.redacted.csv  --map REPORT.map.json
+# reverse it later
+uv run "$S/redact.py" --restore REPORT.redacted.md --map REPORT.map.json -o REPORT.restored.md
+```
+
+- Pass the **same `--map`** across all files of one case so a given selector carries the same
+  placeholder everywhere (`[EMAIL_1]` means one address across the .md, .json and .csv).
+- Infrastructure (`URL`/`DOMAIN`/`IPV4`/`IPV6`) is **not** redacted by default — in a CTI
+  report the actor's infrastructure is the subject of the analysis, not incidental PII. Add
+  `--all-types` when the recipient must not see it either.
+- **Never ship the map with the redacted report.** The map is the key; it carries the same
+  classification as the original.
+- Omitting `--map` makes the redaction irreversible — the tool warns loudly when you do.
+
 ---
 
 ---

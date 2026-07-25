@@ -95,7 +95,10 @@ Report formats for case output. Select by audience and purpose.
 - Chain-of-custody notation for screenshots
 - Analyst name + license/credential on cover
 - No speculation — findings only, confidence stated explicitly
-- Redaction log for any PII not relevant to matter
+- Redaction log for any PII not relevant to matter — produced by
+  [`scripts/redact.py`](../../scripts/redact.py) (`/redact`). The exported map **is** the
+  redaction log: it lists every placeholder, its entity type and the withheld value, and
+  restores the original exactly. Handle the map at the classification of the unredacted report.
 
 ---
 
@@ -104,7 +107,8 @@ Report formats for case output. Select by audience and purpose.
 **When:** Journalist publishing case findings publicly.
 
 **Requirements:**
-- Subjects anonymized unless public figures
+- Subjects anonymized unless public figures — run `/redact` and keep the map out of the
+  handed-over bundle
 - No unpublished PII
 - All claims sourced to public record only
 - Tone: neutral, factual, no editorializing
