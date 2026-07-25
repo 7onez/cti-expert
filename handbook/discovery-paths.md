@@ -36,6 +36,24 @@ Use this ordered fallback cascade. Move to the next method only if the previous 
 - Pivot on: Registrant email (often reveals other domains), registrant name
 - **Important:** If WHOIS privacy is enabled (common), note this as a finding and pivot to other ownership indicators (SSL cert org, about pages, GitHub repos).
 
+**ICP filing (runs on every domain — `/icp`):**
+- Read the page footer (live or archived) for `…ICP备…号` / `…公安备…号`; confirm against
+  `beian.miit.gov.cn` where reachable
+- Look for: registered entity name, licence serial, approval date, `-N` sibling-site suffixes
+- **Pivot on the licence *serial*, never the province prefix** — one serial = one registrant, so
+  reverse-searching it (PublicWWW / FOFA / Quake `body="ICP备<serial>"`) yields sibling domains
+  at HIGH confidence. The registrant name feeds `/cn-corp`.
+- A **missing** filing on CN-hosted infrastructure is itself a finding — note it, don't skip
+- Full tradecraft: [`techniques/china-recon.md`](../techniques/china-recon.md)
+
+**Payment rails (when a payment page or account detail exists — `/iban`):**
+- Extract account numbers / IBANs / BIC / QR payloads from the DOM and Wayback captures
+- Validate with `iban_analyze.py` — a checksum-**invalid** "bank account" is a behavioural
+  finding, not an indicator
+- Pivot on: the account string across other properties (same account = same operator, HIGH);
+  the bank code → issuing institution → abuse/legal channel
+- Full tradecraft: [`techniques/fiat-payment-osint.md`](../techniques/fiat-payment-osint.md)
+
 **DNS & Infrastructure (use CLI when available):**
 
 Use this ordered fallback cascade:
@@ -344,6 +362,17 @@ CLI-first cascade:
 - Search: `"OrgName" site:opencorporates.com OR site:dnb.com`
 - Search: `"OrgName" incorporation OR registered OR founded`
 - Look for: Registration date, jurisdiction, officers, registered agent
+
+**PRC entities (`/cn-corp`) — anchor on the 中文 legal name or USCC, never an English trade name:**
+- **GSXT** (`gsxt.gov.cn`) for ground truth: registration no., legal rep, capital, status
+- Then aggregators (TianYanCha / QCC / Aiqicha) for shareholders, branches, related firms —
+  these are **IP-blocked outside mainland China**, so log a collection gap rather than a blocker
+- **信用中国** for administrative penalties and 失信 (dishonest-entity) listings
+- Read carefully: 法定代表人 (legal rep) is often a nominee — follow 股东 (shareholders) up the
+  holding chain; subscribed capital ≠ paid-in; 吊销/注销 status with a live website is a strong
+  fraud indicator
+- Pivot on: USCC, officers/shareholders (→ Person Recon), ICP filings and domains via `enscan`
+- Full tradecraft: [`techniques/china-recon.md`](../techniques/china-recon.md) §2
 
 **Leadership & Personnel:**
 - Search: `"OrgName" CEO OR founder OR director`

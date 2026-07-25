@@ -6,10 +6,12 @@
 
 ### 什么是 CTI Expert？
 
-一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **69+ 个命令**、**38 种技术**进行结构化情报收集——核心功能无需 API 密钥。若想充分发挥技能的全部能力，你可以将自己的**免费*或*付费** API 密钥添加到 `.env` 文件——每个密钥都会被**自动检测**并解锁更高级别的访问（如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
+一个 Claude Code 技能，将 Claude 转变为训练有素的网络威胁情报和开源情报分析师。使用 **74+ 个命令**、**40 种技术**进行结构化情报收集——核心功能无需 API 密钥。若想充分发挥技能的全部能力，你可以将自己的**免费*或*付费** API 密钥添加到 `.env` 文件——每个密钥都会被**自动检测**并解锁更高级别的访问（如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
 > [!TIP]
 > **默认免费——有了你的密钥更强大。** 所有功能零密钥即可运行。若要解锁全部能力，将任意**免费或付费** API 密钥放入 `.env`（或运行 `/apikeys set <服务> <KEY>`）；它们会被**自动检测**，并立即为 `/webpivot` 及其他技术升级：反向 favicon→主机、被动 DNS、证书搜索、同源兄弟域名枢轴。缺失/错误的密钥只会降级为提示。完整列表与设置：[handbook/api-keys.md](handbook/api-keys.md)。
+
+**v2.6 新功能：** **中国／华语圈侦察**（`/icp` + `/cn-corp`）——西方注册机构触及不到的归因层：**ICP 备案（工信部备案）**将域名映射到**在华注册主体**，而**备案序列号**可反向枢轴到同一备案下的所有兄弟站点——同一运营者的强度可比共用 GA ID。随后是注册链：**GSXT**（权威源数据）→ 天眼查／企查查／爱企查 → **信用中国**失信名单 → 最终受益人（UBO），并含统一社会信用代码（USCC）校验与吊销／注销状态标记。新增 **Quake（360）**与 **ZoomEye** 作为独立的网络空间测绘索引、为 `/dork-sweep` 增加 **Baidu 层**（第 1–4 层几乎不收录中国境内托管内容），以及 **CJK 变体生成**——拼音、简↔繁、公司名词干——作为 `/pivot-suggest` 的新维度。**法币支付通道**（`/iban`）——多数受害者从不接触加密货币，而是银行转账：[`iban_analyze.py`](scripts/iban_analyze.py) 执行 **ISO 7064 mod-97** 校验（可在*不联系任何人*的前提下证明支付页上的"银行账号"是伪造的）、将 BBAN 拆解为银行／分行／账号，并标记**受益地区不一致**这一典型钱骡模式；同时覆盖越南／东南亚的非 IBAN 通道（VietQR／NAPAS BIN、卡 BIN、电子钱包、BIC）。**分析规范**——所有判断均附带**带概率区间的可能性表述**（*几乎不可能* → *几乎确定*），与证据置信度并列呈现；`/coverage` 增加 **5W1H 复核**（技术矩阵只衡量投入——案件可以拿到 96% 却仍未回答**为什么**与**如何做到**）；`/threat-model` 要求为归因提供 **ACH 矩阵**：按*不一致项*为竞争假设打分、点名次优假设、并写明哪些证据会改变排序。**哈希定型**（`/hash-id`）——32 位十六进制既可能是 MD5 **也可能是 NTLM**，前者是文件哈希、后者是凭据材料；查询前先路由到正确服务。**`/case` 无人值守运行**——枢轴循环默认 `autonomy=auto`，扩展至前沿耗尽且**不请求批准**（真正约束扩展范围的是置信度门控，而非人工提示）；`/icp`、`/cn-corp`、`/iban`、`/hash-id` **无需任何参数**即自动运行，其产出像其他节点一样回流进循环。**可逆 PII 脱敏**（`/redact`）——稳定编号占位符（`[EMAIL_1]`）+ 可逆 JSON 映射，往返逐字节一致；通过 `--redact` **按需启用**，默认导出集保持未脱敏。
 
 **v2.5 新功能：** **递归枢轴——`/case` 化身"蛛网地图"**：`/case` 现在运行递归 BFS 枢轴引擎（[`pivot_orchestrator.py`](scripts/pivot_orchestrator.py) + [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md)）——每个发现的标识符（邮箱/域名/IP/用户名/钱包…）都成为新种子，关系图逐跳扩展**直到前沿耗尽**；带置信度门控（精确匹配链接自动追踪，弱/PII 链接暂挂）、防环安全（去重 + 深度上限），并**按深度设检查点**（默认：active · exhaustive · checkpoint-per-depth）。**归档 IOC 收割**（`/webpivot --harvest`，[`wayback_harvest.py`](scripts/webpivot/wayback_harvest.py)）——在域名的**整个 Wayback 历史**上运行完整提取器，合并**邮箱、电话、加密钱包、追踪/验证 ID、SaaS 运营者 ID 与社交账号**并附首见/末见时间——找回后来被清除的选择子；直接输出 case-schema `indicators[]` 进入 IOC 包，在 `/case` 中自动运行。`/webpivot` 现在也提取**电话号码**（`tel:` + 格式化）作为排序枢轴线索。**归档访问**（[`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py)）——Claude Code 的 WebFetch 被 `web.archive.org` 阻止（robots.txt）；该工具绕过之：CDX 查询 → 解析最近快照 → 拉取原始 `id_`，带重试/退避。原生 `asn` 命令——Windows 上无需 API 密钥的 IP/ASN/域名查询（ipwho.is + RDAP）；Linux/macOS/WSL 自动安装完整版 nitefood/asn。Windows 上自动安装 `whois` + `dig` + `asn`（winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`，此前需手动）；**Windows PowerShell 5.1** 安装加固（修复 native-stderr 导致脚本中止、`OSArchitecture` 探测崩溃、maigret 改用 `uv tool --force`）；自动将 `~/.local/bin`（uv 工具 + `asn`）加入 PATH——当前会话**及**永久生效。**Web 基础设施枢轴**（`/cti-expert /webpivot`）——**默认免费/无需密钥**（crt.sh + 被动 DNS + 匿名 urlscan 始终运行），并**自动检测高级 API 密钥**（Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML）自动升级、无需参数——从页面 DOM 提取 favicon/追踪码/钱包/SaaS 运营者标识 &rarr; 排序后的枢轴查询，并配套**同一运营者**关联套件：`/cti-expert /rank-relations`（加权评分 + 噪声黑名单）、`/cti-expert /cert-pivot`（TLS 证书指纹枢轴）、`/cti-expert /pivot-suggest`、`/cti-expert /crypto-balance`、`/cti-expert /email-hygiene`、`/cti-expert /sensitive-paths`；**证据门控**分析——每条论断都必须引用一个真实存在的发现，采集到的不可信数据会被标记且绝不执行。**边界设备扫描**（`/cti-expert /appliance-scan`）——以被动优先方式（Shodan InternetDB/Censys）指纹识别面向互联网的边界/VPN 设备（Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange）&rarr; 映射到 **CISA KEV 已知被利用 CVE** 列表，为 `/vuln-check` + `/threat-model` 提供数据。**SaaS 与身份测绘**（`/cti-expert /saas-map`）——DNS-TXT 租户验证令牌（Google/Atlassian/Zscaler/Salesforce/Workday…）、非微软 IdP 指纹（Okta/Auth0/OneLogin/Ping/Keycloak/ADFS），以及无需认证的 API/GraphQL/OpenAPI 规范发现。**只读凭据存活验证**——通过身份类端点（AWS STS、GitHub 权限范围、Slack `auth.test`、`…/v1/models`）确认已发现的密钥是否有效，绝不调用写入/删除端点——并附带账户/权限证据升级为 CRITICAL。
 
@@ -200,6 +202,11 @@ claude   # 打开 Claude Code CLI
 /cti-expert /webpivot https://scam-site.top     # Web 基础设施枢轴 → 排序枢轴查询
 /cti-expert /rank-relations                      # 同一运营者关系排序（过滤噪声）
 /cti-expert /cert-pivot scam-site.top           # TLS 证书指纹枢轴 + SAN 兄弟域名
+/cti-expert /icp scam-site.top                  # ICP 备案 → 在华主体 + 兄弟域名
+/cti-expert /cn-corp 深圳市某某科技有限公司        # 中国企业注册链（GSXT → UBO）
+/cti-expert /iban GB29NWBK60161331926819        # 校验并拆解银行账号
+/cti-expert /hash-id <hash>                     # 查询前先定型哈希
+/cti-expert /redact REPORT.md                   # 可分享的脱敏报告（按需）
 /cti-expert /exposure domain.com                # 综合风险评分（0-100）
 /cti-expert /report                             # 技术 INTSUM 报告
 /cti-expert /workspace save                     # 保存案例工作区状态（稍后恢复）
@@ -212,12 +219,14 @@ claude   # 打开 Claude Code CLI
 | 领域 | 能力 |
 |------|------|
 | **身份与人员** | 人员查询（50+ 数据点）、电话调查、深度邮件分析、用户名枚举（3000+ 平台）、GitHub 开发者足迹 |
-| **域名与基础设施** | 子域枚举、技术指纹、DNS 取证、流量分析 |
-| **分析与验证** | 图像验证、元数据取证、网页取证、泄露数据库 |
+| **域名与基础设施** | 子域枚举、技术指纹、DNS 取证、流量分析、ICP 备案 &rarr; 在华主体 |
+| **中国与企业 KYC** | ICP 备案 + 序列号枢轴、GSXT／信用中国／天眼查／企查查／爱企查注册链、USCC 校验、Quake／ZoomEye／FOFA、Baidu dork、拼音与繁体变体 |
+| **资金流** | 链上钱包余额；IBAN mod-97 校验 + BBAN 拆解、BIC、VietQR／NAPAS BIN、卡 BIN、账号复用枢轴 |
+| **分析与验证** | 图像验证、元数据取证、网页取证、泄露数据库、哈希定型、带概率区间的可能性表述 + 5W1H 复核 + ACH 矩阵 |
 | **WiFi 与地理定位** | 通过 Wigle.net WiFi 定位、高级地理定位（W3W、Plus Codes、MGRS） |
 | **安全审计** | 云审计（AWS/GCP/Azure）、OWASP 审计、依赖审计、提示注入审计 |
 | **基础设施枢轴与关联** | Web 基础设施枢轴（favicon/追踪码/钱包 &rarr; 枢轴查询）、同一运营者关系排序（噪声过滤、聚类）、TLS 证书指纹枢轴、枢轴建议、链上钱包余额、邮箱域名评分、敏感路径分类 |
-| **报告与导出** | 交互式 HTML 报告（2D 实体图、图表、时间线）、Markdown、JSON/CSV、IOC 包（STIX 2.1）、按需 DOCX |
+| **报告与导出** | 交互式 HTML 报告（2D 实体图、图表、时间线）、Markdown、JSON/CSV、IOC 包（STIX 2.1）、按需 DOCX、可逆 PII 脱敏以便分享（按需启用） |
 
 ---
 
@@ -262,6 +271,9 @@ CTI Expert 站在开源社区和免费公益数据提供方的肩膀上。在此
 | **地理定位与 WiFi** | [OpenStreetMap](https://www.openstreetmap.org) · [what3words](https://what3words.com) · [Overpass Turbo](https://overpass-turbo.eu) · [WiGLE](https://wigle.net) |
 | **图像取证** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) |
 | **区块链** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) |
+| **中国／华语圈侦察** | [ENScan_GO](https://github.com/wgpsec/ENScan_GO) · [Kunyu](https://github.com/knownsec/Kunyu) · [fofax](https://github.com/xiecat/fofax) · [PyDork](https://github.com/blacknon/pydork) · [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) · [pypinyin](https://github.com/mozillazg/python-pinyin) · [OpenCC](https://github.com/BYVoid/OpenCC) · [jieba](https://github.com/fxsjy/jieba) · [FOFA](https://fofa.info) · [Quake（360）](https://quake.360.net) · [ZoomEye](https://www.zoomeye.ai) · [GSXT](https://www.gsxt.gov.cn) · [信用中国](https://www.creditchina.gov.cn) · [巨潮资讯](http://www.cninfo.com.cn) |
+| **支付通道与哈希** | [ISO 13616 / ISO 7064](https://www.iso.org)（IBAN 与 mod-97 标准） · [NAPAS / VietQR](https://vietqr.vn) · [name-that-hash](https://github.com/HashPals/Name-That-Hash) |
+| **技艺与方法论** | [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong)（中国层工具调研与访问现实矩阵） · [Exploratores](https://github.com/SOsintOps/Exploratores)（可逆脱敏与 IBAN 分析*技术*——依其公开文档独立重新实现；该项目为 AGPL-3.0，**未复制任何源码**） |
 | **交通追踪** | [ADS-B Exchange](https://www.adsbexchange.com) · [Flightradar24](https://www.flightradar24.com) · [MarineTraffic](https://www.marinetraffic.com) · [VesselFinder](https://www.vesselfinder.com) |
 | **暗网** | [Ahmia](https://ahmia.fi) · [OnionSearch](https://github.com/megadose/OnionSearch) · [ransomwatch](https://github.com/joshhighet/ransomwatch) |
 | **云与文档** | [MSFTRecon](https://github.com/Arcanum-Sec/msftrecon) · [Xeuledoc](https://github.com/Malfrats/xeuledoc) · [oletools](https://github.com/decalage2/oletools) · [poppler](https://poppler.freedesktop.org) · [qpdf](https://github.com/qpdf/qpdf) · [mat2](https://0xacab.org/jvoisin/mat2) · [The Sleuth Kit](https://www.sleuthkit.org) |
@@ -273,4 +285,4 @@ CTI Expert 站在开源社区和免费公益数据提供方的肩膀上。在此
 
 ---
 
-**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.5 &bull; **许可证：** MIT
+**作者：** [Hieu Ngo](https://chongluadao.vn) &bull; [hieu.ngo@chongluadao.vn](mailto:hieu.ngo@chongluadao.vn) &bull; **版本：** 2.6 &bull; **许可证：** MIT

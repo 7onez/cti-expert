@@ -1,7 +1,7 @@
 ---
 name: cti-expert
-description: "CTI Expert — cyber threat intelligence and OSINT analysis toolkit. Activates on: OSINT, CTI, threat intelligence, digital footprint, social media investigation, username enumeration, email tracing, domain/subdomain recon, OPSEC, metadata analysis, people search, geolocation, breach checking, phone lookup, case investigation, due diligence, image forensics, face search, blockchain/crypto tracing, flight/maritime/vehicle tracking, darknet search, WiFi SSID geolocation, vulnerability lookup, ransomware check, infostealer/stealer log triage, admin panel & sensitive endpoint discovery, M365/Azure recon, web-infra pivoting, favicon/tracker-ID reverse lookup, campaign clustering, phishing-kit fingerprinting, premium API-key management. Commands: /case, /sweep, /query, /subject, /timeline, /report, /brief, /exposure, /username, /phone, /breach-deep, /vuln-check, /wifi, /flow, /threat-model, /msftrecon, /stealer-log, /webpivot, /rank-relations, /cert-pivot, /pivot-suggest, /crypto-balance, /email-hygiene, /sensitive-paths, /appliance-scan, /saas-map, /apikeys."
-version: "2.5"
+description: "Cyber threat intelligence and OSINT analysis toolkit. Runs structured investigations and delivers analyst-grade intelligence products with sourced, trust-scored findings. Use for OSINT and CTI cases, digital-footprint and exposure review, domain/subdomain/DNS/certificate recon, web-infrastructure pivoting (favicon hashes, tracker IDs, TLS certs, phishing-kit fingerprinting, campaign clustering), username/email/phone enumeration, breach and infostealer-log triage, image forensics, geolocation, crypto-wallet and IBAN/bank-account tracing, darknet search, M365/Azure and SaaS tenant recon, China/Sinophone recon (ICP filings, PRC corporate registries, Baidu/FOFA/Quake/ZoomEye), vulnerability and ransomware lookup, threat modeling, PII redaction, and structured reporting. Commands include /case, /sweep, /query, /webpivot, /username, /phone, /email-deep, /breach-deep, /icp, /cn-corp, /iban, /stealer-log, /exposure, /threat-model, /report, /brief, /redact, /apikeys."
+version: "2.6"
 author: "Hieu Ngo - chongluadao.vn"
 ---
 
@@ -38,9 +38,9 @@ Every investigation follows four phases:
 
 | Phase | What Happens |
 |-------|-------------|
-| **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` (domain/URL targets) |
-| **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) until the frontier is exhausted; checkpoints per depth. Acquire↔Enrich iterate, not run once. |
-| **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding` |
+| **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` + `/icp` (domain/URL targets), `/cn-corp` · `/iban` · `/hash-id` on discovery |
+| **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) **automatically until the frontier is exhausted**, no approval prompts (`autonomy=auto`). Acquire↔Enrich iterate, not run once. |
+| **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)) |
 | **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle** |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
@@ -61,6 +61,15 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > merge into the case and flow into the **auto-saved IOC bundle** at Deliver. This is the step that
 > recovers selectors a network later scrubbed — across the whole snapshot corpus, not just the live page.
 > Passive by construction — only web.archive.org (+ urlscan.io if keyed), never the target.
+>
+> **The five v2.6 commands are in the pipeline too — no flags.** `/icp` runs for every
+> domain/URL/org target (and an IP's resolved hostname); `/cn-corp`, `/iban` and `/hash-id`
+> fire the moment a company name/USCC, payment detail, or hash appears — and all three feed
+> their yields **back into the recursive pivot loop** as new seeds, so an ICP licence serial or
+> a reused bank account expands the graph like any other node. `/redact` is the exception: it
+> is **opt-in** (`--redact`), because a redacted report is a weaker artifact and that should
+> always be a deliberate choice. Full trigger table: §Technique Activation Matrix.
+> Narrow with `--no-cn`.
 
 ---
 
@@ -97,6 +106,10 @@ Commands grouped by AEAD phase.
 | `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
 | `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | `/msftrecon example.com` |
+| `/icp [domain\|serial]` | ICP filing (工信部备案) → registered PRC entity + licence number; reverse the **licence serial** to sibling domains under the same filing (same-operator, HIGH). See `techniques/china-recon.md` | `/icp scam-site.top` |
+| `/cn-corp [name\|USCC]` | PRC corporate registry chain — GSXT (ground truth) → TianYanCha/QCC/Aiqicha → 信用中国 blacklist → UBO; officers, shareholders, subsidiaries, revoked-status flags | `/cn-corp 深圳市某某科技有限公司` |
+| `/iban [value]` | Validate + decompose a bank account as a selector — mod-97 checksum, country, BBAN split, bank code, jurisdiction-mismatch signals. See `techniques/fiat-payment-osint.md` | `/iban GB29NWBK60161331926819` |
+| `/hash-id [hash]` | Identify a hash's algorithm **before** lookup — separates file hashes from credential material (32 hex = MD5 *or* NTLM) so it routes to the right service | `/hash-id 5f4dcc3b5aa765d61d8327deb882cf99` |
 | `/appliance-scan [domain\|ip]` | Fingerprint internet-facing edge/VPN appliances (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed services → CISA KEV/CVE mapping. Passive-first (Shodan InternetDB/Censys); feeds `/vuln-check` + `/threat-model`. See `techniques/fx-edge-appliance-recon.md` | `/appliance-scan vpn.example.com` |
 | `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` | `/saas-map example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
@@ -139,10 +152,10 @@ Commands grouped by AEAD phase.
 | Command | What It Does | Example |
 |---------|-------------|---------|
 | `/exposure [target]` | Composite exposure score (0–100) | `/exposure domain.com` |
-| `/threat-model` | Build threat model from findings | `/threat-model` |
+| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3 | `/threat-model` |
 | `/signatures` | Surface recurring behavioral patterns | `/signatures` |
 | `/validate` | Quality audit — score 0–100 | `/validate` |
-| `/coverage` | Coverage matrix with identified gaps | `/coverage` |
+| `/coverage` | Coverage matrix with identified gaps — technique matrix **plus** the 5W1H substantive pass (`Why`/`How` unanswered blocks Deliver-ready) | `/coverage` |
 | `/verify-finding [id]` | Re-check a specific finding's sources | `/verify-finding 12` |
 | `/subject [name]` | View or create subject record | `/subject JohnDoe` |
 | `/lookup [name]` | Retrieve a registered subject | `/lookup JohnDoe` |
@@ -180,6 +193,7 @@ Commands grouped by AEAD phase.
 | `/render threat-path` | ASCII attack path flow diagram | `/render threat-path` |
 | `/render attack-surface` | ASCII attack surface exposure map | `/render attack-surface` |
 | `/report ioc` | Export IOCs as STIX 2.1 or flat list | `/report ioc --format stix` |
+| `/redact [file]` | Shareable variant of a report — stable numbered placeholders (`[EMAIL_1]`) + reversible JSON map; `.md`/`.json`/`.csv`. **Opt-in** — the default export set stays unredacted; request with `/redact` or `--redact` | `/redact REPORT.md` |
 
 ### UX & Navigation
 
@@ -224,6 +238,8 @@ Reference: `engine/case-schema.json`, `engine/subject-registry.md`
 | Device | 🖥️ | IoT device, server, workstation |
 | Image | 🖼️ | Photograph, screenshot |
 | Crypto Address | 💰 | Bitcoin, Ethereum wallet |
+| Bank Account | 🏦 | IBAN, local account no., BIC |
+| ICP Filing | 📋 | PRC licence serial (one registrant, many sites) |
 | Custom | 🏷️ | User-defined entity type |
 
 ### Connection Types
@@ -270,6 +286,31 @@ Complements numeric trust scores with source-level grading. Trust score rates fi
 | WEAK | Circumstantial or inferred | |
 | TENTATIVE | Analyst deduction only | |
 | CHALLENGED | Contradicted by other findings | |
+
+### Likelihood Language (judgments, not findings)
+
+The three scales above grade **evidence**. An analytic **judgment** built on that evidence —
+an attribution, a motive, a forecast — carries a probability-anchored likelihood term instead.
+Without an anchor, "MODERATE" routinely means a 30-point-different thing to writer and reader.
+
+| Term | Band | | Term | Band |
+|------|------|---|------|------|
+| Almost no chance | 1–5% | | Likely / probable | 55–80% |
+| Very unlikely | 5–20% | | Very likely | 80–95% |
+| Unlikely | 20–45% | | Almost certain | 95–99% |
+| Roughly even chance | 45–55% | | | |
+
+**Likelihood and confidence are orthogonal — report both:**
+> The operator is **very likely** based in Guangdong (**moderate confidence** — single
+> registry record, unverified).
+
+Never 0% or 100%. One term per judgment. Never attach a likelihood term to a directly
+observed fact. `findings[].confidence` in the report JSON stays an integer describing
+**evidence quality** — likelihood lives in the narrative.
+
+**Attribution claims additionally require an ACH matrix** (competing hypotheses, scored by
+inconsistency, runner-up named). Full rules — likelihood, the 5W1H coverage overlay, and ACH:
+[`handbook/analytic-standards.md`](handbook/analytic-standards.md).
 
 ### Map Rendering (ASCII Mandatory)
 
@@ -353,6 +394,8 @@ Reference directory: `techniques/`
 | `scam-check.md` | Phishing/scam domain verification and detection |
 | `cloud-audit.md` | Cloud infrastructure security (AWS/GCP/Azure): IAM, network, storage, compute, logging, secrets |
 | `microsoft-tenant-recon.md` | M365/Azure tenant enumeration — federation, tenant ID, Azure AD config, MDI detection |
+| `china-recon.md` | China/Sinophone layer — ICP filing → PRC entity + licence-serial sibling pivot, GSXT/信用中国/TianYanCha/QCC/Aiqicha registry chain, USCC validation, Quake/ZoomEye/FOFA cyberspace engines, Baidu dorking, CJK pinyin + Traditional variant generation, CN social platforms, access-reality gaps |
+| `fiat-payment-osint.md` | Bank accounts as selectors — IBAN mod-97 validation + BBAN decomposition, BIC, VN/SEA non-IBAN rails (VietQR/NAPAS BIN), account-reuse pivot, mule-pattern signals |
 | `fx-edge-appliance-recon.md` | Edge/VPN appliance fingerprint → CISA KEV/CVE catalog (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed-service port-risk matrix (Shodan InternetDB, passive-first) |
 | `fx-saas-identity-recon.md` | SaaS tenancy + identity-fabric mapping — DNS-TXT tenancy tokens, IdP fingerprinting (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS/Entra), unauthenticated API/GraphQL/OpenAPI-spec discovery |
 | `dependency-audit.md` | Supply chain security: CVE audit, framework-specific vulns, typosquatting, CI/CD security |
@@ -395,8 +438,21 @@ Reference: `output/reports/`, `connectors/`
 | 3 | **JSON** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json` | Structured case data (the report JSON below); feeds the generators and downstream tooling |
 | 4 | **CSV** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv` | Findings (and indicators, via the IOC export) for spreadsheets / SIEM lookups |
 | 5 | **IOC / selector bundle** | `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv}` | Comprehensive indicators & selectors — STIX 2.1 + flat + CSV |
-
 **Save location:** Current working directory, or `./osint-reports/` subdirectory if it exists.
+
+**The default set is unredacted** — it is the analyst's working record. A shareable variant is
+**opt-in**, never automatic, so nothing is ever quietly weakened. Request it with
+`/redact` or `/case … --redact`:
+```bash
+S="$SKILL_DIR/scripts"; R="CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]"
+for f in md json csv; do
+  uv run "$S/redact.py" "$R.$f" -o "$R.redacted.$f" --map "$R.map.json"
+done
+```
+One `--map` across all three files keeps a selector's placeholder identical everywhere.
+Infrastructure (URL/domain/IP) stays visible even then — in a CTI report the actor's
+infrastructure is the analysis, not incidental PII; add `--all-types` to cover it too.
+**Never ship the `.map.json`** — it reverses the redaction.
 
 - **`--yolo`:** save the five-format default set with no prompt.
 - **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
@@ -721,6 +777,8 @@ cti-expert/
 │   ├── scam-check.md           Phishing/scam domain verification
 │   ├── cloud-audit.md          Cloud infrastructure security audit
 │   ├── microsoft-tenant-recon.md M365/Azure tenant enumeration
+│   ├── china-recon.md          ICP filings, PRC registries, CN cyberspace engines, CJK variants
+│   ├── fiat-payment-osint.md   IBAN/BIC/bank accounts as selectors, VN-SEA rails
 │   ├── fx-edge-appliance-recon.md Edge/VPN appliance fingerprint → KEV/CVE catalog + port-risk matrix
 │   ├── fx-saas-identity-recon.md SaaS tenancy + IdP fingerprint + API/GraphQL/spec discovery
 │   ├── dependency-audit.md     Supply chain security audit
@@ -771,6 +829,8 @@ cti-expert/
 │   ├── install.ps1                  Windows installer (uv-first: uv venv/pip/tool; winget + pip/pipx fallback)
 │   ├── install.sh                   macOS/Linux/Git-Bash/WSL installer (uv-first; brew/apt + pip/pipx fallback)
 │   ├── stealer_log_parse.py         Infostealer-log analyzer — attribution, profiling, IOCs (PEP 723 / `uv run`, zero-dep)
+│   ├── iban_analyze.py              IBAN validate + decompose (ISO 13616/7064) → bank code, risk signals (PEP 723, zero-dep)
+│   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
 │   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
 │   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
 │   ├── generate-cti-iocs.py         Comprehensive IOC/selector exporter → STIX 2.1 / flat / CSV (network IOCs + contacts + identities + social/messaging + wallets + attribution; PEP 723 / `uv run`, zero-dep)
@@ -796,6 +856,7 @@ cti-expert/
 │   ├── discovery-paths.md      Per-target-type search paths
 │   ├── report-template.md      INTSUM format specification
 │   ├── admin-endpoint-indicators.md  Admin-panel / sensitive-endpoint detection vocab & rules
+│   ├── analytic-standards.md    Likelihood bands, 5W1H coverage overlay, ACH (competing hypotheses)
 │   └── tool-cascade-reference.md Tool priority and fallback chains
 │
 ├── guides/                     Worked case walkthroughs
@@ -855,6 +916,10 @@ Which techniques activate per target type in a `/case` run:
 | Visitor intelligence | — | ✅ | ✅ | — | — | ✅ |
 | Cloud audit | — | ✅ | ✅ | — | — | ✅ |
 | MSFTRecon (M365/Azure tenant) | — | ✅ | ✅ | — | — | — |
+| `/icp` (ICP filing → PRC entity) | — | ✅ | ✅ | — | — | ✅ |
+| `/cn-corp` (PRC registry chain) | ✅* | ✅ | ✅ | — | — | — |
+| `/iban` (payment-rail selector) | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `/hash-id` (hash typing) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Dependency audit | — | ✅ | ✅ | — | — | — |
 | Disk forensics | — | — | — | — | — | — |
 | Incident triage | — | ✅ | ✅ | — | — | ✅ |
@@ -881,7 +946,28 @@ Which techniques activate per target type in a `/case` run:
 | DMARC/SPF/DKIM check (DNS) | — | ✅ | ✅ | — | ✅ | — |
 
 `✅*` — runs for discovered key personnel within the organization
-`MalwareBazaar` — activates only via `/hash [value]` when a file hash is discovered during investigation
+`MalwareBazaar` — reached via `/hash [value]`, but only **after** `/hash-id` has typed the value
+
+### The five v2.6 commands in `/case`
+
+Four fire automatically as part of the standard pipeline — no flag needed. `/redact` is
+opt-in.
+
+| Command | Fires | Phase |
+|---|---|---|
+| **`/icp`** | **Unconditionally** for every domain/URL/org target, and on an IP target's resolved hostname. One cheap passive lookup — and a *missing* filing on CN-hosted infrastructure is itself a finding, so there is no CN-nexus precondition. A discovered **licence serial** re-enters the pivot loop as its own node and reverse-searches to sibling domains (same operator, HIGH). | Acquire |
+| **`/cn-corp`** | Automatically on any company name or USCC the case surfaces — from the ICP filing, WHOIS registrant org, page footer, or personnel discovery. Runs the GSXT → aggregator → 信用中国 chain; officers/shareholders/subsidiaries re-enter the loop as new nodes. | Acquire → Enrich |
+| **`/iban`** | Automatically on any payment detail that surfaces — page DOM, Wayback harvest, victim statement, invoice, stealer log. Validation is arithmetic on a string, so it is free and touches nothing. Valid accounts become `financial/iban` IOCs; a checksum-**invalid** account on a payment page is logged as a behavioural finding instead. | Acquire → Enrich |
+| **`/hash-id`** | Automatically on **every** discovered hash, and always **before** `/hash`. Decides file hash (→ MalwareBazaar/VT) vs credential material (→ `/breach-deep`, never a public service). 64-hex is queued for both the cert-fingerprint and file-hash readings, since it is genuinely ambiguous. | Acquire → Enrich |
+| **`/redact`** | **Opt-in, not automatic** — pass `--redact` (or run `/redact` later). Emits `REPORT.redacted.{md,json,csv}` + `REPORT.map.json` alongside the unredacted set. A redacted report is a *weaker* artifact, so producing one stays a deliberate choice. | Deliver |
+
+Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **collection gaps**,
+never blockers ([`techniques/china-recon.md`](techniques/china-recon.md) §7). Non-IBAN rails
+(VN transfer, VietQR/NAPAS BIN, card BIN, e-wallet) follow
+[`techniques/fiat-payment-osint.md`](techniques/fiat-payment-osint.md) §4.
+
+**Flags:** `--no-cn` skips `/icp`+`/cn-corp` (both run by default). `--redact` *adds* the
+redacted variant (off by default).
 
 **Recursive pivot orchestration (the spider-map).** `/case` is not a one-pass collector —
 it runs a **recursive BFS pivot engine**: every discovered identifier becomes a new seed,
@@ -894,9 +980,10 @@ spec is [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md). The or
 back via `--ingest`.
 
 - **Defaults:** `posture=active` (may fetch/scan targets; still passive-first for hostile
-  infra), `reach=exhaustive` (pivot till the frontier empties), `autonomy=checkpoint`
-  (**pause after each depth level**, present new nodes + proposed pivots, await approval).
-  Safety caps: `max_nodes=500`, `max_depth=6`.
+  infra), `reach=exhaustive` (pivot till the frontier empties), **`autonomy=auto`** — the loop
+  **runs to closure unattended**, no per-depth approval prompts. Depth summaries are still
+  printed as they happen, so the expansion stays auditable. Safety caps: `max_nodes=500`,
+  `max_depth=6`.
 - **Gating** (reuses [`analysis/auto-branch-rules.md`](analysis/auto-branch-rules.md)):
   exact-match links (≥95% — shared GA ID / cert / favicon / registrant email, handle
   exact-match) **auto-pursue unbounded**; HIGH/MEDIUM capped per type; LOW held unless
@@ -906,8 +993,10 @@ back via `--ingest`.
   `/github-osint`; a **domain** discovered from a person (high-confidence link) continues
   via `/webpivot`+`wayback_harvest`+`whois_enrich`+`cert_pivot`+subdomains; a shared **GA ID**
   reverse-pivots to sibling domains — each new node re-enters the loop.
-- **Control flags:** `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
-  `--auto` (no checkpoints, run to closure), `--depth N`, `--budget N`, `--authorization unconfirmed` (re-hold PII).
+- **Control flags** (all *narrowing* — the defaults are already maximal):
+  `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
+  **`--checkpoint`** (pause for approval after each depth level), `--depth N`, `--budget N`,
+  `--authorization unconfirmed` (re-hold PII), `--no-cn`; `--redact` opts *in* to the redacted variant.
 - **Termination** → emit edges → `graph_build.py` → interactive HTML force-graph + topology
   + timeline; findings/indicators roll into the auto-saved report + IOC bundle.
 

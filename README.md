@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 69+ commands, 38 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 74+ commands, 40 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -16,10 +16,10 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.5-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.5"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.6-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.6"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
-  <a href="#command-reference"><img src="https://img.shields.io/badge/commands-67+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="67+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-38-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="38 Techniques"></a>&nbsp;
+  <a href="#command-reference"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-40-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="40 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **69+ commands** across **38 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **40 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [handbook/api-keys.md](handbook/api-keys.md).
@@ -118,6 +118,20 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 <br>
 
+## What's New in v2.6
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **`/case` runs unattended** | Pivot loop defaults to **`autonomy=auto`**; the new recon commands auto-fire | The spider-map now **expands to closure without approval prompts** — the confidence gate, not a human prompt, is what keeps expansion tight (exact-match links auto-pursue, weak links held, dedup + depth caps unchanged). Depth summaries still print, so the run stays auditable. And the v2.6 recon commands are in the pipeline with **no flags**: `/icp` on every domain/URL/org target, `/cn-corp` on any company name or USCC found, `/iban` on any payment detail, `/hash-id` on every hash (before `/hash`) — and all three discovery-driven ones feed their yields **back into the loop as new seeds**. `/redact` stays **opt-in** (`--redact`): a redacted report is a weaker artifact, so producing one should be a deliberate call. Narrow with `--checkpoint`, `--no-cn`, `--reach balanced\|focused`, `--depth N` |
+| **China / Sinophone recon** | `/icp` + `/cn-corp` — the attribution layer Western registries can't reach | **ICP filing (工信部备案)** maps a domain to its registered PRC entity, and the **licence serial** reverse-pivots to every sibling site under the same filing — a same-operator link as strong as a shared GA ID. Then the registry chain: **GSXT** (ground truth) → TianYanCha/QCC/Aiqicha → **信用中国** blacklist → UBO, with USCC validation and revoked-status flags. Adds **Quake (360)** and **ZoomEye** as independent cyberspace indexes, a **Baidu tier** for `/dork-sweep` (tiers 1–4 index almost no CN content), and **CJK variant generation** — pinyin, Simplified↔Traditional and company-name stems — as a new `/pivot-suggest` axis. See [`techniques/china-recon.md`](techniques/china-recon.md) |
+| **Fiat payment rails** | `/iban` — bank accounts become selectors, like wallets already were | Most victims never touch crypto — they make a bank transfer. [`iban_analyze.py`](scripts/iban_analyze.py) runs **ISO 7064 mod-97** validation (proving a "bank account" on a payment page is fabricated *without contacting anyone*), decomposes the BBAN into bank/branch/account, and flags **jurisdiction mismatch** — the classic beneficiary-abroad mule pattern. Validated accounts export as `financial/iban` IOCs; invalid ones are recorded as behavioural findings. Covers **VN/SEA non-IBAN rails** too: VietQR/NAPAS BIN, card BIN, e-wallets, BIC. See [`techniques/fiat-payment-osint.md`](techniques/fiat-payment-osint.md) |
+| **Shareable reports** | `/redact` — reversible PII redaction | [`redact.py`](scripts/redact.py) replaces PII with **stable numbered placeholders** (`[EMAIL_1]` means one address across the whole case) and writes a **reversible JSON map**, so a report can leave the organisation and still be reconstituted for evidence. Handles `.md`/`.json`/`.csv`; round-trip is byte-exact. Infrastructure is *not* redacted by default — in a CTI report the actor's domains are the analysis, not incidental PII |
+| **Analytic rigor** | Probability-anchored likelihood + 5W1H + ACH | Judgments now carry **likelihood terms with probability bands** (*almost no chance* → *almost certain*) reported alongside evidence confidence, because "MODERATE" alone means a 30-point-different thing to writer and reader. `/coverage` gains a **5W1H pass** — a technique matrix measures effort, so a case could score 96% while answering no **Why** or **How**. `/threat-model` now requires an **ACH matrix** for attribution: rival hypotheses scored by *inconsistency*, runner-up named, and the evidence that would change the ranking stated. See [`handbook/analytic-standards.md`](handbook/analytic-standards.md) |
+| **Hash typing** | `/hash-id` — before any hash lookup | 32 hex is MD5 **or NTLM** — one is a file hash, the other is credential material, and querying the wrong service returns a confident "unknown sample" that reads as exculpatory. Routes file hashes to MalwareBazaar/VT and credential hashes to `/breach-deep`, never a public cracking service |
+
+<details>
+<summary><b>What's New in v2.5</b></summary>
+
 ## What's New in v2.5
 
 | Category | What's New | Details |
@@ -136,6 +150,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **System tools** | `whois` + `dig` + `asn` auto-install on Windows | winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`; previously manual steps |
 | **Reliability** | Windows PowerShell 5.1 hardening | Fixes native-stderr script aborts, the `OSArchitecture` probe crash, and maigret via `uv tool --force`; installs clean on WinPS 5.1 |
 | **Packaging** | Auto-PATH for CLI tools | `~/.local/bin` (uv tools + `asn`) added to PATH automatically — current session **and** persistent |
+
+</details>
 
 <details>
 <summary><b>What's New in v2.4</b></summary>
@@ -426,7 +442,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 /cti-expert /case example.com
 ```
 
-> Runs every applicable technique for the target type. Auto-generates the default export set: `.md` + interactive `.html` + `.json` + `.csv` + IOC bundle.
+> Runs every applicable technique for the target type, then expands the pivot graph **to closure with no approval prompts**. Auto-generates the default export set: `.md` + interactive `.html` + `.json` + `.csv` + IOC bundle. Add `--redact` for a shareable PII-placeholdered copy.
 
 ### 2 &mdash; Guided Flows
 
@@ -497,6 +513,8 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 - CMS, CDN, analytics fingerprinting
 - DNS forensics & WHOIS deep/reverse
 - Traffic analysis & audience demographics
+- ICP filing &rarr; PRC entity + sibling-domain pivot
+- IBAN/bank-account validation & attribution
 
 </td>
 <td width="33%" valign="top">
@@ -509,6 +527,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 - Document/email metadata forensics
 - Google Docs identity extraction
 - 100+ paste sites & breach DBs
+- Likelihood-banded judgments, 5W1H coverage, ACH
 
 </td>
 </tr>
@@ -542,6 +561,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 - DOCX with charts, diagrams, timelines
 - Save/load case workspaces
 - Legal, journalist, HR, threat analyst formats
+- Reversible PII redaction for external sharing
 
 </td>
 </tr>
@@ -681,10 +701,37 @@ Every investigation follows four automated phases:
 | `/cti-expert /webpivot [url]` | Extract favicon/tracker/wallet/SaaS-operator artifacts &rarr; ranked pivot queries (Shodan/FOFA/urlscan). Flags: `--rank`, `--cert`, `--graph`, `--history`, `--whois` |
 | `/cti-expert /rank-relations` | Score + rank same-operator relations across pages (weighted signals, noise-filtered, clustered) |
 | `/cti-expert /cert-pivot [domain]` | Find other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) |
-| `/cti-expert /pivot-suggest` | Rank "what to pivot next" from findings (leet/variant/temporal/domain clusters) |
+| `/cti-expert /pivot-suggest` | Rank "what to pivot next" from findings (leet/variant/temporal/domain clusters, **CJK pinyin + Traditional + company-stem**) |
 | `/cti-expert /crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot |
+| `/cti-expert /iban [value]` | Validate + decompose a bank account (mod-97, BBAN split, bank code, mule signals) |
 | `/cti-expert /email-hygiene [email]` | Grade an email domain 0-100 + A-F (disposable/MX/free/role) |
 | `/cti-expert /sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) |
+
+</details>
+
+<details>
+<summary><b>China / Sinophone Recon</b> — ICP filings, PRC registries, CN indexes</summary>
+<br>
+
+| Command | Purpose |
+|---------|---------|
+| `/cti-expert /icp [domain\|serial]` | ICP filing &rarr; registered PRC entity + licence no.; reverse the **licence serial** to sibling domains under one filing |
+| `/cti-expert /cn-corp [name\|USCC]` | GSXT &rarr; TianYanCha/QCC/Aiqicha &rarr; 信用中国 chain: officers, shareholders, subsidiaries, UBO, revoked-status flags |
+| `/cti-expert /dork-sweep [t] --baidu` | Baidu tier — tiers 1&ndash;4 (Google/Bing/DDG) index almost no CN-hosted content |
+| `/cti-expert /pivot-suggest --cjk` | Pinyin, Simplified&harr;Traditional and company-name-stem variants |
+
+Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **collection gaps**, never blockers.
+
+</details>
+
+<details>
+<summary><b>Reporting Hygiene</b></summary>
+<br>
+
+| Command | Purpose |
+|---------|---------|
+| `/cti-expert /redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the default export set stays unredacted |
+| `/cti-expert /hash-id [hash]` | Identify a hash's algorithm before lookup — file hash vs credential material |
 
 </details>
 
@@ -736,7 +783,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>38 techniques</b> — click to expand full catalog</summary>
+<summary><b>40 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -758,6 +805,8 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 | `social-media-platforms.md` | Twitter/X, Discord, Strava, BlueSky, ShareTrace, Reddit, Instagram, TikTok, Telegram | Partial (Discord needs token) |
 | `image-forensics-and-face-search.md` | FaceCheck.id, TinEye, FotoForensics, Forensically, picarta.ai, GeoSpy, Pic2Map | No |
 | `blockchain-investigation.md` | Blockchair, Etherscan, WalletExplorer, OXT.me, Chainabuse, Breadcrumbs | Optional (Etherscan API for bulk) |
+| `fiat-payment-osint.md` | IBAN mod-97 + BBAN decomposition, BIC, VietQR/NAPAS BIN, card BIN, account-reuse pivot | No |
+| `china-recon.md` | ICP filings, GSXT/信用中国/TianYanCha/QCC/Aiqicha, USCC, Quake/ZoomEye/FOFA, Baidu dorking, CJK variants | Partial (CN indexes need free keys; aggregators need CN egress) |
 | `transport-tracking.md` | ADS-B Exchange, Flightradar24, Marine Traffic, VesselFinder, VIN decode | No |
 | `darknet-investigation.md` | Ahmia.fi, onionsearch, DarknetLive, ransomwatch | No |
 | `advanced-geolocation-techniques.md` | W3W, Plus Codes, MGRS, Overpass Turbo | No |
@@ -790,7 +839,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 
 ## Report Formats
 
-Every `/report`, `/brief`, and `/case` auto-saves the **default export set** — Markdown, an interactive HTML report, JSON, CSV, and a comprehensive IOC/selector bundle:
+Every `/report`, `/brief`, and `/case` auto-saves the **default export set** — Markdown, an interactive HTML report, JSON, CSV, and a comprehensive IOC/selector bundle. `/redact` adds an opt-in shareable variant with PII placeholdered:
 
 <table>
 <tr>
@@ -1017,6 +1066,9 @@ CTI Expert stands on the shoulders of the open-source community and free, public
 | **Geolocation & WiFi** | [OpenStreetMap](https://www.openstreetmap.org) · [what3words](https://what3words.com) · [Overpass Turbo](https://overpass-turbo.eu) · [WiGLE](https://wigle.net) |
 | **Image forensics** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) |
 | **Blockchain** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) |
+| **China / Sinophone recon** | [ENScan_GO](https://github.com/wgpsec/ENScan_GO) · [Kunyu](https://github.com/knownsec/Kunyu) · [fofax](https://github.com/xiecat/fofax) · [PyDork](https://github.com/blacknon/pydork) · [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) · [pypinyin](https://github.com/mozillazg/python-pinyin) · [OpenCC](https://github.com/BYVoid/OpenCC) · [jieba](https://github.com/fxsjy/jieba) · [FOFA](https://fofa.info) · [Quake (360)](https://quake.360.net) · [ZoomEye](https://www.zoomeye.ai) · [GSXT](https://www.gsxt.gov.cn) · [信用中国](https://www.creditchina.gov.cn) · [Cninfo](http://www.cninfo.com.cn) |
+| **Payment rails & hashes** | [ISO 13616 / ISO 7064](https://www.iso.org) (IBAN + mod-97 standards) · [NAPAS / VietQR](https://vietqr.vn) · [name-that-hash](https://github.com/HashPals/Name-That-Hash) |
+| **Tradecraft & methodology** | [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong) (China-layer tool survey & access-reality matrix) · [Exploratores](https://github.com/SOsintOps/Exploratores) (reversible-redaction and IBAN-analysis *techniques* — independently reimplemented from its published documentation; that project is AGPL-3.0 and **no code was copied**) |
 | **Transport tracking** | [ADS-B Exchange](https://www.adsbexchange.com) · [Flightradar24](https://www.flightradar24.com) · [MarineTraffic](https://www.marinetraffic.com) · [VesselFinder](https://www.vesselfinder.com) |
 | **Darknet** | [Ahmia](https://ahmia.fi) · [OnionSearch](https://github.com/megadose/OnionSearch) · [ransomwatch](https://github.com/joshhighet/ransomwatch) |
 | **Cloud & documents** | [MSFTRecon](https://github.com/Arcanum-Sec/msftrecon) · [Xeuledoc](https://github.com/Malfrats/xeuledoc) · [oletools](https://github.com/decalage2/oletools) · [poppler](https://poppler.freedesktop.org) · [qpdf](https://github.com/qpdf/qpdf) · [mat2](https://0xacab.org/jvoisin/mat2) · [The Sleuth Kit](https://www.sleuthkit.org) |
