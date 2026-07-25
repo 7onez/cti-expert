@@ -188,6 +188,8 @@
             "DEVICE",
             "IMAGE",
             "CRYPTO_ADDRESS",
+            "BANK_ACCOUNT",
+            "ICP_FILING",
             "CUSTOM",
             "OTHER"
           ]

@@ -127,6 +127,19 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 
 ---
 
+### Hash Typing (before any hash lookup)
+
+Establishes whether a hash is a **file** hash or **credential** material — they route to
+different services entirely. See [`techniques/threat-intel.md`](../techniques/threat-intel.md).
+
+| Priority | Tool | Method | Notes |
+|----------|------|--------|-------|
+| 1 (Primary) | name-that-hash | `nth --text "<hash>"` · `nth -f hashes.txt --no-banner` | `uv tool install name-that-hash`; ranked candidates |
+| 2 (Fallback) | shape table | length + `$prefix$` classification | zero-install; state the ambiguity in the finding |
+| 3 (Route) | MalwareBazaar / VirusTotal | file hashes only | never submit credential hashes to third parties |
+
+---
+
 ### Archive URL Mining
 
 | Priority | Tool | Sources | Notes |
