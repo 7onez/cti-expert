@@ -92,6 +92,32 @@ Track which discovery paths have been attempted and their yield for each subject
 | 81–95% | Thorough | Few gaps — acceptable for most reports |
 | 96–100% | Comprehensive | All paths attempted — highest confidence |
 
+**The percentage above measures effort, not answers.** It counts discovery paths attempted, so
+a case can score 96% and still explain nothing. Run the 5W1H pass below before treating any
+score as Deliver-ready.
+
+---
+
+## Substantive Coverage — the 5W1H pass
+
+Second, mandatory pass at Assess. Full rules:
+[`handbook/analytic-standards.md`](../handbook/analytic-standards.md) §2.
+
+| Dimension | Status | Evidence / gap |
+|---|---|---|
+| **Who** — actors, network nodes, backers | ☐ ANSWERED / PARTIAL / UNANSWERED / N/A | |
+| **What** — activity, capability, TTPs | ☐ | |
+| **When** — sequence, timing patterns | ☐ | |
+| **Where** — physical + digital + **jurisdiction** | ☐ | |
+| **Why** — motive, why this target/timing | ☐ | |
+| **How** — execution, tooling, evasion | ☐ | |
+
+**Gate:** **Why** or **How** left `UNANSWERED` blocks Deliver-ready status regardless of the
+technique percentage. Either answer it or record it verbatim in `intelligence_gaps[]` — an
+unstated gap reads to the customer as a considered conclusion.
+
+`N/A` requires a written justification. "Not collected" is `UNANSWERED`, not `N/A`.
+
 ---
 
 ## Null Result Policy
