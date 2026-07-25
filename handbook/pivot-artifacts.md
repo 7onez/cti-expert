@@ -15,6 +15,8 @@ Confidence = how strongly a shared value implies **same operator**.
 | **GA4 measurement ID `G-`** | inline gtag/GTM JS | **High** | PublicWWW, urlscan, DNSlytics reverse-analytics, NerdyData | `trackers.google_analytics_ga4` |
 | **GTM container `GTM-`** | GTM snippet | **High** | PublicWWW, urlscan | `trackers.google_tag_manager` |
 | **AdSense `pub-` / `ca-pub-`** | AdSense JS | **High** | DNSlytics reverse-adsense, AnalyzeID, osint.sh/adsense, PublicWWW | `trackers.google_adsense` |
+| **ICP licence `苏ICP备…号`** | page footer, `<meta>` | **High** (serial) | PublicWWW / NerdyData `"ICP备…"`, FOFA `body=`, Quake/ZoomEye body search, ENScan_GO; `-N` suffixes = sibling sites under one filing | `cn.icp_license` |
+| **MPS public-security filing `…公安备…号`** | page footer | Medium-High | source search; corroborates the ICP registrant | `cn.mps_filing` |
 | **Facebook Pixel ID** | `fbq('init','…')` | Medium-High | PublicWWW, urlscan (no dedicated reverse svc) | `trackers.facebook_pixel` |
 | **GA `UA-` (legacy)** | old analytics.js | Medium | Historical only (UA shut down 2023) — SpyOnWeb, DNSlytics history | `trackers.google_analytics_ua` |
 | **Yandex / Hotjar / Matomo / Mixpanel / Sentry DSN / Clarity / Intercom / Crisp / Segment** | vendor JS | Medium-High | PublicWWW / NerdyData source search; Sentry DSN reveals internal host | `trackers.*` |
@@ -41,5 +43,9 @@ Confidence = how strongly a shared value implies **same operator**.
    (e.g. urlscan `page.url:* AND "G-XXXX"`; Shodan `http.favicon.hash:123 http.html:"pub-456"`).
 4. **Passive before active.** Resolve via urlscan/Wayback/crt.sh before touching the live host,
    especially for adversarial infrastructure.
-5. **Right hash per engine.** Shodan/FOFA/ZoomEye use **mmh3**, Censys uses **MD5**, Netlas uses
-   **SHA-256** — the harness emits all three from one favicon.
+5. **Right hash per engine.** Shodan/FOFA/ZoomEye/Quake use **mmh3**, Censys uses **MD5**, Netlas
+   uses **SHA-256** — the harness emits all three from one favicon.
+6. **ICP: pivot on the serial, never the province.** `苏ICP备12345678号-3` → cluster on
+   `12345678` (one registrant, HIGH). The `苏` prefix is a whole province; the `-3` is one site
+   within the filing — enumerate siblings by walking the suffix. See
+   [`techniques/china-recon.md`](../techniques/china-recon.md) §1.2.

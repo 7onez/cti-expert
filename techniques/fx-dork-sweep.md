@@ -114,6 +114,29 @@ Invoke tiers sequentially. Escalate only on failure signal. Add 2s delay between
 
 **Rate-limit discipline:** 2s between T1 queries, 5s between T2 queries. Rotate UA every 3 T2 queries. T4 single-shot only.
 
+**Tier B — Baidu (parallel tier, not a fallback):**
+
+Tiers 1–4 are all Western indexes and therefore miss CN-hosted and ICP-filed content
+entirely. For any target with CJK terms, a Chinese-language operator, or CN infrastructure,
+run Baidu **in addition** to the Western cascade — it is a different corpus, not a backup.
+
+```
+# Tool: pydork (uv tool install pydork)
+pydork search -t baidu -- '"关键词" site:example.com'
+# Browser fallback: agent-browser -> https://www.baidu.com/s?wd={URLENC}
+# WeChat 公众号 articles: only reachable via https://weixin.sogou.com/weixin?type=2&query={URLENC}
+```
+
+| Operator | Baidu | Note |
+|---|---|---|
+| `site:` `inurl:` `intitle:` `filetype:` `-term` | supported | `filetype:` corpus narrower than Google |
+| `""` phrase | weak | Baidu loosens phrase binding — verify hits manually |
+| `OR` chain | unreliable | issue separate queries instead of chaining |
+
+Trigger conditions: target name/company contains Han characters · domain carries an ICP
+filing · WHOIS/registry places the registrant in CN/HK/TW · `/webpivot` found CN-hosted
+assets. Full tradecraft: [`china-recon.md`](china-recon.md) §4.
+
 ## False Positive Triage
 - Cached/translated pages (`webcache.googleusercontent.com`, `translate.google.com`) — re-check via direct URL.
 - CDN mirrors re-hosting indexed content — verify canonical source.
@@ -148,6 +171,8 @@ Evidence: subject-registry logged (case=C-2026-0419-a)
 - Indexing lag: hours to weeks between upload and discoverability.
 - Ephemeral pastes deleted before indexing are invisible.
 - Bing `inurl:` unsupported since 2007 → cascade routes to T1/T3/T4.
+- Tiers 1–4 index almost no CN-hosted content; without Tier B a Chinese-operated target looks
+  far smaller than it is. Baidu itself under-indexes non-CN content — the two are complementary.
 
 ## Related Techniques
 - [fx-document-leak-hunt.md](fx-document-leak-hunt.md) — severity classifier for doc-host hits.

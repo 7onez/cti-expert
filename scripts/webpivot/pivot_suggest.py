@@ -10,15 +10,23 @@ Deterministic rules (all offline):
   * email<->name        — email local parts that match NO known person entity (alias lead)
   * temporal sync       — accounts/events across >=2 platforms inside one time window
   * domain clusters     — shared TLD, or shared base stem (foo-shop.top ~ fooshop.xyz)
+  * CJK identity        — company-name stem (dep-free), pinyin romanization forms and
+                          Simplified->Traditional; see techniques/china-recon.md §5
 
 Fuzzy matching uses Levenshtein for short strings and trigram Jaccard for long ones,
 exactly as the source engine does.
+
+The CJK axis uses pypinyin and an OpenCC binding when importable and degrades gracefully
+without them (the stem sub-axis is pure string work and always runs), so the script keeps
+zero required dependencies. To enable the full axis:
+  uv run --with pypinyin --with opencc-python-reimplemented pivot_suggest.py --cjk "张伟"
 
 Usage:
   uv run pivot_suggest.py <case>/findings.json --pretty
   echo '{"social":[...],"emails":[...],"domains":[...]}' | uv run pivot_suggest.py -
   uv run pivot_suggest.py --usernames "d4rkc4t,darkcat,dark_cat" --pretty
   uv run pivot_suggest.py --domains "a-shop.top,ashop.xyz,a-shop.info"
+  uv run pivot_suggest.py --cjk "张伟,深圳市某某科技有限公司" --pretty
   uv run pivot_suggest.py --xref "john.doe" "johndoe"      # similarity 0-100 between two values
 """
 # /// script
@@ -199,6 +207,128 @@ def detect_domain_patterns(domains):
     return out
 
 
+# ------------------------------------------------------------------- CJK / pinyin axis
+# A Chinese name has several valid Latin forms plus two orthographies, so enumerating one
+# form finds one slice of the graph. See techniques/china-recon.md §5.
+
+_HAN = re.compile(r'[㐀-䶿一-鿿豈-﫿]')
+# Compound surnames must be tested before the single-char default.
+_COMPOUND_SURNAMES = ('欧阳', '司马', '上官', '诸葛', '夏侯', '皇甫', '尉迟', '长孙',
+                      '宇文', '慕容', '令狐', '南宫', '西门', '独孤')
+# Boilerplate around the distinctive stem of a PRC company name.
+_CN_CORP_SUFFIX = ('股份有限公司', '有限责任公司', '集团有限公司', '有限公司', '集团公司',
+                   '集团', '公司', '企业', '工作室', '事务所', '中心', '厂', '店')
+_CN_INDUSTRY_FILLER = ('信息技术', '网络科技', '电子商务', '供应链', '科技', '网络', '信息',
+                       '技术', '贸易', '商贸', '实业', '投资', '咨询', '服务', '文化',
+                       '传媒', '电子', '数码', '智能', '软件', '教育', '医疗', '金融',
+                       '国际', '发展', '建设', '物流', '数据', '互联网')
+_CN_LOCALITY = re.compile(r'^[一-鿿]{2,4}(省|市|区|县|自治区|自治州|新区)')
+
+
+def has_han(s):
+    return bool(_HAN.search(s or ''))
+
+
+def cn_company_stem(name):
+    """Strip locality prefix, corporate form and industry filler -> distinctive stem.
+
+    深圳市某某科技有限公司 -> 某某 . The stem is what is worth searching; the filler
+    matches tens of thousands of unrelated firms.
+    """
+    s = (name or '').strip()
+    s = _CN_LOCALITY.sub('', s)
+    for suf in _CN_CORP_SUFFIX:            # longest-first via tuple order
+        if s.endswith(suf):
+            s = s[:-len(suf)]
+            break
+    for filler in _CN_INDUSTRY_FILLER:
+        s = s.replace(filler, '')
+    return s.strip()
+
+
+def _split_surname(name):
+    for cs in _COMPOUND_SURNAMES:
+        if name.startswith(cs):
+            return cs, name[len(cs):]
+    return name[:1], name[1:]
+
+
+def _romanize(text):
+    """Toneless pinyin syllables. Returns [] when pypinyin is absent (axis degrades)."""
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return []
+    try:
+        return [s for s in lazy_pinyin(text) if s]
+    except Exception:
+        return []
+
+
+def _to_traditional(text):
+    """Simplified -> Traditional, or None when no converter is installed."""
+    for mod, ctor in (('opencc', lambda m: m.OpenCC('s2t')),
+                      ('opencc_python_reimplemented', lambda m: m.OpenCC('s2t'))):
+        try:
+            m = __import__(mod)
+            conv = ctor(m).convert(text)
+            return conv if conv and conv != text else None
+        except Exception:
+            continue
+    return None
+
+
+def detect_cjk_variants(cn_names):
+    """Romanization / orthography / stem variants for CJK names and company names."""
+    out = []
+    for raw in cn_names:
+        name = (raw or '').strip()
+        if not name or not has_han(name):
+            continue
+
+        stem = cn_company_stem(name)
+        is_company = stem and stem != name
+        if is_company:
+            out.append(_suggestion(
+                'cn_company_stem', stem, 'high', 0.82,
+                f'distinctive stem of "{name}" after stripping locality/form/industry filler '
+                f'— search this, not the full name', name))
+
+        subject = stem if is_company else name
+        syllables = _romanize(subject)
+        if syllables:
+            joined = ''.join(syllables)
+            forms = {joined, ' '.join(syllables), '-'.join(syllables), '_'.join(syllables)}
+            if not is_company and len(syllables) >= 2:
+                surname, given = _split_surname(subject)
+                sy_s, sy_g = _romanize(surname), _romanize(given)
+                if sy_s and sy_g:
+                    # given-name-first order, the usual Western rendering
+                    forms.add(''.join(sy_g + sy_s))
+                    forms.add(' '.join(sy_g) + ' ' + ''.join(sy_s))
+                    forms.add(''.join(sy_g)[:1] + '.' + ''.join(sy_s))
+                    forms.add(''.join(s[0] for s in syllables))          # initials
+            for f in sorted(x for x in forms if x and x != subject):
+                out.append(_suggestion(
+                    'cn_romanization', f,
+                    'medium' if is_company else 'high',
+                    0.70 if is_company else 0.78,
+                    f'pinyin form of "{subject}" — enumerate as handle/email local-part', name))
+        else:
+            out.append(_suggestion(
+                'cn_romanization_unavailable', subject, 'medium', 0.60,
+                'pypinyin not installed — romanization axis skipped. '
+                'Install: uv tool install pypinyin (or uv run --with pypinyin)', name))
+
+        trad = _to_traditional(subject)
+        if trad:
+            out.append(_suggestion(
+                'cn_traditional', trad, 'medium', 0.72,
+                f'Traditional orthography of "{subject}" — HK/TW/overseas properties often '
+                f'register under this form', name))
+    return out
+
+
 # ------------------------------------------------------------------- findings load
 def _val(item, *keys):
     if isinstance(item, dict):
@@ -210,7 +340,7 @@ def _val(item, *keys):
 
 
 def load_findings(findings):
-    usernames, emails, names, domains, events = [], [], [], [], []
+    usernames, emails, names, domains, events, cn_names = [], [], [], [], [], []
     for it in findings.get('social', []) or []:
         u = _val(it, 'username', 'value', 'handle')
         if u:
@@ -231,21 +361,32 @@ def load_findings(findings):
         for it in findings.get(key, []) or []:
             n = _val(it, 'value', 'name', 'full_name')
             if n:
-                names.append(n.lower())
+                # CJK names have no Latin word structure — route them to the pinyin axis
+                # instead of lower-casing them into the email/name comparison.
+                if has_han(n):
+                    cn_names.append(n.strip())
+                else:
+                    names.append(n.lower())
+    for key in ('cn_names', 'organizations', 'orgs'):
+        for it in findings.get(key, []) or []:
+            n = _val(it, 'value', 'name', 'full_name')
+            if n and has_han(n):
+                cn_names.append(n.strip())
     for it in findings.get('domains', []) or []:
         d = _val(it, 'value', 'domain', 'host')
         if d:
             domains.append(d.lower())
-    return usernames, emails, names, domains, events
+    return usernames, emails, names, domains, events, sorted(set(cn_names))
 
 
 def suggest_all(findings):
-    usernames, emails, names, domains, events = load_findings(findings)
+    usernames, emails, names, domains, events, cn_names = load_findings(findings)
     raw = []
     raw += detect_username_variants(usernames)
     raw += detect_email_name_mismatch(emails, names)
     raw += detect_temporal_sync(events)
     raw += detect_domain_patterns(domains)
+    raw += detect_cjk_variants(cn_names)
 
     # dedup on (pivot_type, target); keep highest confidence
     seen = {}
@@ -265,7 +406,7 @@ def suggest_all(findings):
             "summary": {"count": len(suggestions), "by_type": by_type, "by_priority": by_prio,
                         "inputs": {"usernames": len(usernames), "emails": len(emails),
                                    "names": len(names), "domains": len(domains),
-                                   "timestamped": len(events)}}}
+                                   "timestamped": len(events), "cn_names": len(cn_names)}}}
 
 
 def _csv(s):
@@ -279,6 +420,8 @@ def main():
     ap.add_argument("--emails", help="comma-separated emails (ad-hoc)")
     ap.add_argument("--names", help="comma-separated known person names (ad-hoc)")
     ap.add_argument("--domains", help="comma-separated domains (ad-hoc)")
+    ap.add_argument("--cjk", help="comma-separated CJK person/company names (ad-hoc) — "
+                                  "pinyin, Traditional and company-stem variants")
     ap.add_argument("--xref", nargs=2, metavar=("A", "B"),
                     help="print string similarity 0-100 between two values and exit")
     ap.add_argument("--pretty", action="store_true")
@@ -304,6 +447,8 @@ def main():
         findings.setdefault("persons", []).extend({"value": n} for n in _csv(args.names))
     if args.domains:
         findings.setdefault("domains", []).extend({"value": d} for d in _csv(args.domains))
+    if args.cjk:
+        findings.setdefault("cn_names", []).extend({"value": n} for n in _csv(args.cjk))
 
     result = suggest_all(findings)
     s = result["summary"]
