@@ -40,7 +40,7 @@ Every extracted indicator carries a **category**, a **type**, a **value**, a **r
 | `identity` | `name`, `org-name`, `username`, `alias` | Profiles the actor / victim |
 | `social` | platform handle (LinkedIn, X, Facebook, Instagram, GitHub, TikTok, Reddit, YouTube, Medium, Bluesky, VK, Threads…) | Web presence; pivot & attribution |
 | `messaging` | Telegram, WhatsApp, Discord, Signal, Skype | Direct outreach channels |
-| `financial` | `btc-wallet`, `eth-wallet`, payment handles | Money flow, monetization |
+| `financial` | `btc-wallet`, `eth-wallet`, `iban`, `bank-account`, `bic`, payment handles | Money flow, monetization. **IBANs are mod-97 verified before export** — a checksum-invalid account on a payment page is a *behavioural* finding, not an indicator. See [`fiat-payment-osint.md`](fiat-payment-osint.md) |
 | `geo` | `location` | Physical nexus |
 | *attribution* | relationship edges between subjects | **Who is linked to / can reach whom** (actor ↔ victim ↔ associate) |
 
@@ -97,6 +97,9 @@ confidence and the most specific role.
 | `person`, `individual` | identity / name |
 | `organization`, `org` | identity / org-name |
 | `wallet`, `crypto_address` | financial / wallet |
+| `iban` | financial / iban |
+| `bank_account` | financial / bank-account |
+| `bic`, `swift` | financial / bic |
 | `location` | geo / location |
 
 ---

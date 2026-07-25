@@ -13,7 +13,7 @@ classic network IOCs:
   * Identity selectors  real names, usernames, aliases (profile the actor / victim)
   * Social / web ...... LinkedIn, X, Facebook, Instagram, GitHub, TikTok, ... profiles
   * Messaging ......... Telegram, WhatsApp, Discord, Signal, Skype handles
-  * Financial ......... BTC / ETH wallets and payment handles
+  * Financial ......... BTC / ETH wallets, IBANs (mod-97 verified), BIC, bank accounts
   * Attribution ....... who is linked to / can reach whom (case connections)
 
 Sources scanned: subjects (typed + aliases + attached selectors + notes),
@@ -57,7 +57,22 @@ RX = {
     "sha256": re.compile(r"\b[a-f0-9]{64}\b", re.I),
     "btc": re.compile(r"\b(?:bc1[a-z0-9]{25,90}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})\b"),
     "eth": re.compile(r"\b0x[a-fA-F0-9]{40}\b"),
+    # IBANs appear both unspaced and in groups of four; the mod-97 gate below removes the
+    # false positives this loose shape necessarily produces.
+    "iban": re.compile(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]){11,30}\b"),
 }
+
+
+def iban_ok(value):
+    """ISO 7064 MOD 97-10. Canonical implementation: scripts/iban_analyze.py."""
+    v = re.sub(r"\s", "", value or "").upper()
+    if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{9,30}", v):
+        return None
+    rem = 0
+    for ch in (v[4:] + v[:4]):
+        for d in (str(int(ch, 36)) if ch.isalpha() else ch):
+            rem = (rem * 10 + int(d)) % 97
+    return v if rem == 1 else None
 SOCIAL = [
     (re.compile(r"(?:linkedin\.com)/(?:in|company|pub)/([^/?#\s]+)", re.I), "LinkedIn"),
     (re.compile(r"(?:twitter\.com|x\.com)/([^/?#\s]+)", re.I), "X/Twitter"),
@@ -91,6 +106,8 @@ SUBJECT_MAP = {
     "person": ("identity", "name"), "individual": ("identity", "name"),
     "organization": ("identity", "org-name"), "org": ("identity", "org-name"),
     "wallet": ("financial", "wallet"), "crypto_address": ("financial", "wallet"),
+    "iban": ("financial", "iban"), "bank_account": ("financial", "bank-account"),
+    "bic": ("financial", "bic"), "swift": ("financial", "bic"),
     "location": ("geo", "location"),
 }
 INFRA_TYPES = {"ip", "domain", "url", "network_addr", "device", "asn"}
@@ -193,6 +210,10 @@ def extract(data):
             add("financial", "eth-wallet", v, role, conf, None, source, sid)
         for v in RX["btc"].findall(text):
             add("financial", "btc-wallet", v, role, conf, None, source, sid)
+        for v in RX["iban"].findall(text):
+            ok = iban_ok(v)          # only checksum-valid accounts become indicators
+            if ok:
+                add("financial", "iban", ok, role, conf, None, source, sid)
         dl = RX["email"].sub(" ", RX["url"].sub(" ", text))
         for v in RX["domain"].findall(dl):
             v = v.lower().rstrip(".")
@@ -224,7 +245,9 @@ def extract(data):
                 add("messaging", mo["platform"], mo["handle"], role, conf, mo["platform"], mo["url"], s.get("id"))
                 continue
             cat = {"email": "contact", "phone": "contact", "username": "identity",
-                   "wallet": "financial"}.get(str(sel.get("type", "")).lower(), "identity")
+                   "wallet": "financial", "iban": "financial", "bank_account": "financial",
+                   "bic": "financial", "swift": "financial",
+                   }.get(str(sel.get("type", "")).lower(), "identity")
             add(cat, sel.get("type", "selector"), sel.get("value"), role, conf,
                 sel.get("platform"), sel.get("url"), s.get("id"))
         scan(s.get("notes"), role, conf, None, s.get("id"))
