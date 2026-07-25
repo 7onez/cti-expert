@@ -24,15 +24,18 @@ LOOP (BFS)
   2) agent runs the plan's actions for the current frontier
   3) --ingest <discoveries>    add discovered identifiers as depth+1 nodes (deduped,
                                gated), record edges, build the next frontier
-  4) --checkpoint              show the depth summary (new nodes/edges/next plan) →
-                               approve (checkpoint-per-depth autonomy)
+  4) --checkpoint              show the depth summary (new nodes/edges/next plan);
+                               informational under autonomy=auto, an approval gate
+                               under autonomy=checkpoint
   5) --plan                    print the next frontier's gated actions → back to (2)
   Repeat until --plan is empty (frontier exhausted) or budget hit.
 
-CONFIG (defaults chosen for this skill: Active-allowed · Exhaustive · Checkpoint-per-depth)
+CONFIG (defaults chosen for this skill: Active-allowed · Exhaustive · Auto)
   --posture active|passive-first|passive     what the spider may touch
   --reach   exhaustive|balanced|focused      how far it expands
-  --autonomy checkpoint|auto|checkpoint-weak how often it pauses
+  --autonomy auto|checkpoint|checkpoint-weak how often it pauses; DEFAULT auto — the loop
+                               runs to closure unattended. Pass `--autonomy checkpoint`
+                               to pause for approval after each depth level.
   --authorization confirmed|unconfirmed      PII (person/phone) expansion; default confirmed (auto-expand)
 
 Gating reuses analysis/auto-branch-rules.md (Branch Priority Matrix + Suppression).
@@ -65,7 +68,11 @@ _RX = {
     "eth":       re.compile(r"^0x[a-fA-F0-9]{40}$"),
     "btc":       re.compile(r"^(bc1[a-z0-9]{20,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$"),
     "asn":       re.compile(r"^AS\d{2,6}$", re.I),
+    # 64 hex is ambiguous — a TLS cert fingerprint OR a file SHA-256. Both pivots are
+    # queued for it and /hash-id disambiguates; see techniques/threat-intel.md.
     "cert_sha256": re.compile(r"^[a-fA-F0-9]{64}$"),
+    "md5":       re.compile(r"^[a-fA-F0-9]{32}$"),
+    "sha1":      re.compile(r"^[a-fA-F0-9]{40}$"),
     "favicon_mmh3": re.compile(r"^-?\d{6,12}$"),
     "ga_id":     re.compile(r"^(UA-\d{4,}-\d+|G-[A-Z0-9]{6,}|GTM-[A-Z0-9]{4,})$"),
     "adsense_id": re.compile(r"^(ca-)?pub-\d{10,}$"),
@@ -73,6 +80,15 @@ _RX = {
     "url":       re.compile(r"^https?://", re.I),
     "domain":    re.compile(r"^(?=.{4,253}$)([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"),
     "social_handle": re.compile(r"^@[A-Za-z0-9._]{2,}$"),
+    # IBAN: ISO 13616 shape only; mod-97 is verified by scripts/iban_analyze.py.
+    "iban":      re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$"),
+    # ICP filing, e.g. 苏ICP备12345678号-3 — the pivot key is the serial (see china-recon.md §1.2).
+    "icp":       re.compile(r"^\S{0,3}ICP[备证]\d{5,10}号(-\d{1,3})?$"),
+    # USCC 统一社会信用代码 — 18 chars, GB/T 32100 alphabet (no I/O/S/V/Z).
+    "uscc":      re.compile(r"^[0-9A-HJ-NPQRTUWXY]{18}$"),
+    "vin":       re.compile(r"^[A-HJ-NPR-Z0-9]{17}$"),
+    "youtube_channel": re.compile(r"^UC[A-Za-z0-9_\-]{22}$"),
+    "coordinates": re.compile(r"^-?\d{1,3}(?:\.\d+)?,\s*-?\d{1,3}(?:\.\d+)?$"),
 }
 
 
@@ -80,8 +96,16 @@ def classify(value):
     v = value.strip()
     # order matters: most specific first. favicon_mmh3 (bare int) is intentionally
     # NOT auto-detected — it collides with phones/ids; callers pass its type explicitly.
+    #
+    # Ambiguity notes for the fixed-width alphanumeric types:
+    #   iban before uscc  — IBAN needs 2 letters + 2 digits up front; a USCC's 2nd char is
+    #                       always a digit, so it cannot satisfy that prefix.
+    #   uscc before phone — a USCC is 18 chars; E.164 caps at 15 digits, so an 18-char match
+    #                       is a company code, not a number worth reverse-lookup.
+    #   vin/youtube_channel before username — both would otherwise fall through to username.
     for t in ("email", "url", "ipv4", "ipv6", "eth", "btc", "asn", "ga_id",
-              "adsense_id", "cert_sha256", "social_handle"):
+              "adsense_id", "cert_sha256", "sha1", "md5", "social_handle", "icp",
+              "coordinates", "iban", "uscc", "youtube_channel", "vin"):
         if _RX[t].match(v):
             return t
     if _RX["domain"].match(v):
@@ -92,7 +116,20 @@ def classify(value):
         return "person"
     if re.match(r"^[A-Za-z0-9._\-]{2,40}$", v):
         return "username"
+    # CJK company / person name: no Latin-word structure to match, but a strong org lead.
+    if re.search(r"[一-鿿]", v):
+        return "cn_name"
     return "unknown"
+
+
+def icp_serial(value):
+    """Serial digits of an ICP licence — the same-operator pivot key.
+
+    The province prefix covers a whole province and the -N suffix is one site inside the
+    filing, so both are dropped: 苏ICP备12345678号-3 -> '12345678'.
+    """
+    m = re.search(r"ICP[备证](\d{5,10})", value)
+    return m.group(1) if m else None
 
 
 def normalize(value, t):
@@ -105,6 +142,13 @@ def normalize(value, t):
         v = ("+" if v.strip().startswith("+") else "") + re.sub(r"\D", "", v)
     if t == "social_handle":
         v = v.lower()
+    if t == "iban":
+        v = re.sub(r"\s", "", v).upper()   # IBANs are printed in groups of four
+    if t == "uscc":
+        v = v.upper()
+    if t == "icp":
+        # dedupe on the serial so 苏ICP备12345678号-1 and -3 collapse to one operator node
+        v = icp_serial(v) or v
     return v
 
 
@@ -134,6 +178,10 @@ EDGE_MATRIX = {
         {"method": "tracker-reuse", "tool": "wayback_ga.py <domain> --timeline", "yields": ["ga_id", "adsense_id"], "rel": "LINKED_TO", "confidence": 80, "active": False},
         {"method": "msft-tenant(if M365)", "tool": "/msftrecon <domain>", "yields": ["domain", "org"], "rel": "AUTHENTICATES", "confidence": 88, "active": True},
         {"method": "saas-identity", "tool": "/saas-map <domain>", "yields": ["domain", "org"], "rel": "AUTHENTICATES", "confidence": 75, "active": True},
+        # Unconditional: an ICP check is one cheap passive lookup, and a *missing* filing on
+        # CN-hosted infrastructure is itself a finding. No CN-nexus precondition.
+        {"method": "icp-filing", "tool": "/icp <domain>", "yields": ["icp", "cn_name", "org"], "rel": "REGISTERED", "confidence": 85, "active": False},
+        {"method": "payment-rail-extract", "tool": "/iban <accounts found on page>", "yields": ["iban", "org"], "rel": "REACHES", "confidence": 85, "active": False},
     ],
     "url": [
         {"method": "webpivot-dom", "tool": "pivot_extract.py <url> --leads", "yields": ["domain", "email", "phone", "btc", "eth", "ga_id", "social_handle"], "rel": "CONTROLS", "confidence": 80, "active": True},
@@ -175,8 +223,22 @@ EDGE_MATRIX = {
     "adsense_id": [
         {"method": "reverse-analytics", "tool": "PublicWWW/urlscan \"<id>\"", "yields": ["domain"], "rel": "LINKED_TO", "confidence": 90, "active": False},
     ],
+    # 64 hex: run both readings. /hash-id decides which one the value actually is, so the
+    # loop never silently treats a malware sample as a cert fingerprint (or vice versa).
     "cert_sha256": [
+        {"method": "hash-typing", "tool": "/hash-id <hash>", "yields": [], "rel": "OTHER", "confidence": 95, "active": False},
         {"method": "cert-fingerprint-pivot", "tool": "cert_pivot.py --hash <sha256>", "yields": ["domain", "ipv4"], "rel": "LINKED_TO", "confidence": 85, "active": False},
+        {"method": "file-hash-lookup", "tool": "/hash <sha256>", "yields": ["domain", "ipv4", "url"], "rel": "LINKED_TO", "confidence": 80, "active": False},
+    ],
+    "sha1": [
+        {"method": "hash-typing", "tool": "/hash-id <hash>", "yields": [], "rel": "OTHER", "confidence": 95, "active": False},
+        {"method": "file-hash-lookup", "tool": "/hash <sha1>", "yields": ["domain", "ipv4", "url"], "rel": "LINKED_TO", "confidence": 80, "active": False},
+    ],
+    "md5": [
+        # 32 hex is MD5 *or* NTLM — one is a sample, the other is credential material.
+        # /hash-id runs first so the value is never sent to the wrong service.
+        {"method": "hash-typing", "tool": "/hash-id <hash>", "yields": [], "rel": "OTHER", "confidence": 95, "active": False},
+        {"method": "file-hash-lookup", "tool": "/hash <md5>", "yields": ["domain", "ipv4", "url"], "rel": "LINKED_TO", "confidence": 78, "active": False},
     ],
     "favicon_mmh3": [
         {"method": "favicon-reverse", "tool": "Shodan/FOFA http.favicon.hash:<mmh3>", "yields": ["domain", "ipv4"], "rel": "LINKED_TO", "confidence": 75, "active": False},
@@ -186,6 +248,26 @@ EDGE_MATRIX = {
     ],
     "social_handle": [
         {"method": "profile->identity", "tool": "/username <handle>", "yields": ["person", "domain", "username"], "rel": "ALSO_KNOWN_AS", "confidence": 78, "active": True},
+    ],
+    # --- China layer (techniques/china-recon.md) ---------------------------------
+    # An ICP licence serial is one registrant, so sibling-site reuse is as strong a
+    # same-operator signal as a shared GA ID.
+    "icp": [
+        {"method": "icp-serial-reverse", "tool": "PublicWWW/FOFA/Quake \"ICP备<serial>\"", "yields": ["domain"], "rel": "LINKED_TO", "confidence": 85, "active": False},
+        {"method": "filing->registrant", "tool": "/icp <serial> --entity", "yields": ["cn_name", "org", "uscc"], "rel": "REGISTERED", "confidence": 85, "active": False},
+    ],
+    "uscc": [
+        {"method": "gsxt-registry", "tool": "/cn-corp <uscc>", "yields": ["cn_name", "org", "person", "domain"], "rel": "ENCOMPASSES", "confidence": 88, "active": False},
+    ],
+    "cn_name": [
+        {"method": "registry-chain", "tool": "/cn-corp <name>", "yields": ["uscc", "person", "org", "domain"], "rel": "ENCOMPASSES", "confidence": 80, "active": False},
+        {"method": "icp+asset-enum", "tool": "enscan -n <name>", "yields": ["domain", "icp"], "rel": "CONTROLS", "confidence": 78, "active": False},
+        {"method": "cjk-variants", "tool": "pivot_suggest.py --cjk <name>", "yields": ["username", "person"], "rel": "ALSO_KNOWN_AS", "confidence": 65, "active": False},
+    ],
+    # --- Fiat payment rails (techniques/fiat-payment-osint.md) -------------------
+    "iban": [
+        {"method": "validate+bank-resolve", "tool": "iban_analyze.py <iban>", "yields": ["org"], "rel": "REACHES", "confidence": 90, "active": False},
+        {"method": "account-reuse-search", "tool": "/dork-sweep \"<iban>\"", "yields": ["domain", "email", "person"], "rel": "LINKED_TO", "confidence": 72, "active": False},
     ],
 }
 
@@ -358,7 +440,11 @@ def render_checkpoint(state):
     by_type = {}
     for n in new:
         by_type.setdefault(n["type"], []).append(n["value"])
-    lines = [f"# ⛓ Depth-{depth} checkpoint — {state['config']['autonomy']}",
+    autonomy = state["config"]["autonomy"]
+    # Under auto this is a progress report, not a gate — the heading must not read as a
+    # prompt, or the agent stops and asks for approval it was never supposed to need.
+    heading = "summary" if autonomy == "auto" else "checkpoint"
+    lines = [f"# ⛓ Depth-{depth} {heading} — {autonomy}",
              f"nodes total: {len(state['nodes'])} · edges: {len(state['edges'])} · "
              f"frontier: {len(state['frontier'])} · budget: "
              f"{len(state['nodes'])}/{state['config']['budget']['max_nodes']} nodes",
@@ -373,9 +459,14 @@ def render_checkpoint(state):
             lines.append(f"- {n['type']} `{n['value']}` — {n.get('gate_reason','')}")
     if supp:
         lines.append(f"\n## ✕ Suppressed ({len(supp)}) — dedup/depth/threshold")
-    lines.append(f"\n**Next:** approve to expand depth {depth+1} "
-                 f"(`--plan` shows the {len(state['frontier'])} queued pivots), "
-                 f"or stop and render the map.")
+    if autonomy == "auto":
+        lines.append(f"\n**Next:** continuing to depth {depth+1} automatically — "
+                     f"run `--plan` for the {len(state['frontier'])} queued pivots. "
+                     f"No approval required.")
+    else:
+        lines.append(f"\n**Next:** approve to expand depth {depth+1} "
+                     f"(`--plan` shows the {len(state['frontier'])} queued pivots), "
+                     f"or stop and render the map.")
     return "\n".join(lines)
 
 
@@ -415,7 +506,9 @@ def main():
     ap.add_argument("--edges", action="store_true", help="emit connection edges (JSON)")
     ap.add_argument("--posture", default="active", choices=["active", "passive-first", "passive"])
     ap.add_argument("--reach", default="exhaustive", choices=["exhaustive", "balanced", "focused"])
-    ap.add_argument("--autonomy", default="checkpoint", choices=["checkpoint", "auto", "checkpoint-weak"])
+    # auto is the default: /case runs the spider-map to closure unattended.
+    # `--autonomy checkpoint` is the narrowing flag that restores per-depth approval.
+    ap.add_argument("--autonomy", default="auto", choices=["auto", "checkpoint", "checkpoint-weak"])
     ap.add_argument("--max-nodes", type=int, default=500)
     ap.add_argument("--max-depth", type=int, default=6)
     ap.add_argument("--authorization", default="confirmed", choices=["confirmed", "unconfirmed"],

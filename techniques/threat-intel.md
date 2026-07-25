@@ -100,6 +100,38 @@ curl -s -d "query=get_info&hash=<sha256>" "https://mb-api.abuse.ch/api/v1/" | \
 # Returns: file metadata, AV detections, malware family tags
 ```
 
+**Hash typing first — `/hash-id`.** Before looking a hash up, establish *what it is*. Length
+alone is ambiguous: 32 hex is MD5 **or** NTLM (and NTLM is a credential, not a file hash — a
+very different finding), 40 hex is SHA-1 **or** MySQL4.1+, 64 hex is SHA-256 **or** SHA3-256
+**or** Keccak. Querying a file-hash service with a password hash wastes quota and, worse,
+produces a confident "unknown sample" that reads as exculpatory.
+
+```bash
+uv tool install name-that-hash        # then:
+nth --text "<hash>"                   # ranked candidate algorithms
+nth -f hashes.txt --no-banner         # batch, e.g. from a stealer-log or dump triage
+```
+
+Zero-install fallback — classify by shape, then state the ambiguity in the finding:
+
+| Pattern | Candidates | Note |
+|---|---|---|
+| 32 hex | MD5, NTLM, MD4, LM (halves) | NTLM/LM ⇒ **credential material**, not a sample |
+| 40 hex | SHA-1, MySQL4.1+, RIPEMD-160 | |
+| 56 hex | SHA-224, SHA3-224 | |
+| 64 hex | SHA-256, SHA3-256, Keccak-256, BLAKE2s | |
+| 96 / 128 hex | SHA-384 / SHA-512, SHA3 variants | |
+| `$2[aby]$…` (60 ch) | bcrypt | cost factor is in the prefix |
+| `$argon2i(d)$…` | Argon2 | |
+| `$6$…` / `$5$…` / `$1$…` | sha512crypt / sha256crypt / md5crypt | Unix shadow |
+| `*` + 40 hex | MySQL5 | |
+| `{SSHA}` + base64 | LDAP SSHA | |
+
+**Route by type, not by length:** file hashes → MalwareBazaar / VirusTotal / ThreatFox;
+credential hashes → `/breach-deep` and `/stealer-log` correlation, **never** a public
+cracking service (submitting a victim credential hash to a third party is an exposure event
+in itself).
+
 **Domain — HudsonRock (stealer log exposure):**
 ```bash
 curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain?domain=<domain>"

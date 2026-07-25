@@ -20,12 +20,15 @@ the recursion stays reliable and the map is reproducible.
 |------|---------|---------|
 | **posture** | `active` | May directly fetch/scan targets (live DOM, favicon, ports) — but still **passive-first for hostile infra** (archives/urlscan/passive DNS), and prefer non-attributable egress when a proxy/VPS is set. |
 | **reach** | `exhaustive` | Expand until the frontier is empty or budget hit. Exact-match links (≥95%) expand unbounded; weaker links gated by the priority matrix. |
-| **autonomy** | `checkpoint` | Pause after **each depth level**, present new nodes + proposed next pivots, wait for approval before expanding further. |
+| **autonomy** | `auto` | **Run to closure unattended** — no approval prompts. Depth summaries still print as each level completes, so the expansion stays auditable after the fact. Pass `--autonomy checkpoint` to pause for approval at each depth instead. |
 | **authorization** | `confirmed` | PII (`person`/`phone`) discoveries **auto-expand**. Set `unconfirmed` to hold them for manual review instead. |
 | budget | `max_nodes=500`, `max_depth=6` | Safety caps even under `exhaustive`. |
 
-Override per run: `/case <target> --passive|--passive-first`, `--reach balanced|focused`,
-`--auto` (no checkpointing), `--depth N`, `--budget N`, `--authorization unconfirmed` (re-hold PII).
+Override per run — every flag **narrows**, since the defaults are already maximal:
+`/case <target> --passive|--passive-first`, `--reach balanced|focused`,
+`--checkpoint` (pause for approval each depth), `--depth N`, `--budget N`,
+`--authorization unconfirmed` (re-hold PII), `--no-cn`. (`--redact` is the one *widening*
+flag — it adds the redacted export variant, which is off by default.)
 
 ---
 
@@ -36,9 +39,10 @@ seed ─▶ [orchestrator --seed]  → depth-0 plan
   └─▶ agent runs the plan's actions for the current frontier (the technique commands)
         └─▶ collect discovered identifiers  ─▶ [orchestrator --ingest]
                → adds them as depth+1 nodes: deduped, cycle-checked, gated
-               → prints the DEPTH CHECKPOINT (new nodes / edges / held / suppressed)
-        ┌── autonomy=checkpoint → PAUSE: show checkpoint, await approval ──┐
-        └─▶ approved → [orchestrator --plan] → next frontier's gated actions ┘
+               → prints the DEPTH SUMMARY (new nodes / edges / held / suppressed)
+        ┌── autonomy=auto (DEFAULT) → continue straight through ───────────┐
+        │   autonomy=checkpoint     → PAUSE: show summary, await approval  │
+        └─▶ [orchestrator --plan] → next frontier's gated actions ─────────┘
 repeat until  --plan is empty (frontier exhausted)  OR  budget hit
 final ─▶ emit edges → graph_build.py → interactive HTML map + /report
 ```
@@ -48,18 +52,21 @@ Concretely, per depth:
 ```bash
 ORCH="$SKILL_DIR/scripts/pivot_orchestrator.py"; ST="<case>/pivot-state.json"
 
-# 1. seed (once)
-uv run "$ORCH" --state "$ST" --seed <target> --posture active --reach exhaustive --autonomy checkpoint
+# 1. seed (once) — the defaults are already active/exhaustive/auto, so no flags needed
+uv run "$ORCH" --state "$ST" --seed <target>
 
-# 2. run the printed actions (the agent executes /webpivot, whois_enrich, /breach-deep, …)
+# 2. run the printed actions (the agent executes /webpivot, /icp, whois_enrich, /breach-deep, …)
 # 3. feed results back — discoveries.json = [{from, value, type?, method?, confidence?, rel?}]
-uv run "$ORCH" --state "$ST" --ingest discoveries.json         # prints the depth checkpoint
+uv run "$ORCH" --state "$ST" --ingest discoveries.json         # prints the depth summary
 
-# 4. CHECKPOINT: present the summary to the analyst; on approval:
+# 4. under autonomy=auto, go straight on (no approval step):
 uv run "$ORCH" --state "$ST" --plan                            # next frontier's gated pivots
 # → back to step 2 for the next depth. When --plan is empty:
 uv run "$ORCH" --state "$ST" --edges                           # → connections for the graph/report
 ```
+
+Loop this until `--plan` prints nothing. Under `--autonomy checkpoint` the same sequence runs,
+but step 4 becomes an approval gate: present the summary and wait before calling `--plan`.
 
 `discoveries.json` is assembled from technique output. Many collectors already emit the
 right shape — e.g. `wayback_harvest.py --indicators` and `pivot_extract.py` JSON — map each
@@ -87,6 +94,12 @@ commands; **bold** yields feed back as the next hop's seeds:
 | **favicon mmh3** | Shodan/FOFA `http.favicon.hash`→**hosts/domains** |
 | **ASN** | member IPs/domains→**IP/domain** |
 | **social handle** | profile→**person/domain/username** |
+| **ICP licence** | serial reverse-search (PublicWWW/FOFA/Quake)→**sibling domains** (same registrant — as strong as a shared GA ID); filing→**registrant company/USCC** |
+| **USCC / CN company name** | `/cn-corp` registry chain (GSXT→aggregators)→**officers/shareholders/subsidiaries/domains**; `enscan`→**domains/ICP filings**; `pivot_suggest --cjk`→**pinyin & Traditional handle variants** |
+| **IBAN** | `iban_analyze.py`→**issuing bank/org**; account-string reuse search→**domains/emails/persons** |
+
+Typing note: ICP nodes dedupe on the **licence serial**, so `苏ICP备12345678号-1` and `-3`
+collapse to one operator node. IBANs normalize to unspaced uppercase.
 
 Edges are recorded with the case-schema connection type (`CONTROLS`, `REGISTERED`,
 `HOSTS`, `LINKED_TO`, `ALSO_KNOWN_AS`, `REACHES`, `WORKS_AT`, `ENCOMPASSES`,
@@ -111,8 +124,10 @@ pass `--authorization unconfirmed` to hold them for manual review. Under `postur
 `passive-first` on a hostile node), **active** actions are held and only passive collection
 runs.
 
-This is the answer to "only pivot on things 100% related": exact-match links auto-expand;
-everything softer is gated, and under `checkpoint` autonomy you approve each depth.
+This is the answer to "only pivot on things 100% related": exact-match links auto-expand and
+everything softer is gated by confidence — **the gate, not a human prompt, is what keeps the
+expansion tight**. That is why `autonomy=auto` is safe as a default; add
+`--autonomy checkpoint` when you want to approve each depth as well.
 
 ---
 
@@ -121,7 +136,8 @@ everything softer is gated, and under `checkpoint` autonomy you approve each dep
 1. **Frontier exhausted** — no new gated nodes (`--plan` empty). The natural "till the end."
 2. **Budget hit** — `max_nodes` or `max_depth` reached (safety cap even under exhaustive).
 3. **Diminishing returns** — a depth level yields little/no new non-duplicate nodes.
-4. **Analyst stop** — at any checkpoint, choose to render the map instead of expanding.
+4. **Analyst stop** — interrupt at any depth summary and render the map instead of expanding
+   (the explicit gate under `--autonomy checkpoint`).
 
 On stop: `--edges` → `graph_build.py` → the interactive HTML force-graph + topology +
 timeline, and the findings/indicators roll into the auto-saved report + IOC bundle.
