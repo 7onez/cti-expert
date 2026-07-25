@@ -79,6 +79,9 @@ uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
 uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
 # DOCX — on request / `/report legal` only:
 uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx   # narrative + charts
+# Shareable redacted copy — OPT-IN, not part of the default set. One --map across all
+# files so a selector keeps the same placeholder everywhere. Never ship the .map.json.
+uv run "$S/redact.py" REPORT.md -o REPORT.redacted.md --map REPORT.map.json
 # No-uv fallback: python3 (Unix) / py (Windows) "$S/<script>" ...
 ```
 

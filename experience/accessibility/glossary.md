@@ -62,6 +62,38 @@ Data that can identify a specific individual: full name, address, date of birth,
 **Alias**
 An alternate name or username used by a subject across platforms.
 
+**ICP Filing (备案)**
+A licence every website legally served from mainland China must hold. It ties the domain to a
+registered company, so it is one of the few hard domain-to-owner links available. One filing
+usually covers many sites — which is why the licence *serial* is a strong "same operator" clue.
+
+**USCC (Unified Social Credit Code)**
+The 18-character national ID of a Chinese company — the reliable way to look one up, since
+trade names are often unregistered marketing.
+
+**IBAN**
+The international bank-account format. It carries a built-in checksum, so you can prove an
+account number is fake by arithmetic alone, without contacting the bank.
+
+**Money mule**
+Someone whose bank account is used to receive and pass on criminal proceeds. Often a victim
+themselves — coerced, tricked, or trafficked — which is why account holders are treated
+carefully rather than named as suspects.
+
+**Likelihood term**
+Standard wording for how probable a judgment is (*almost no chance* → *almost certain*), each
+tied to a percentage band. Separate from confidence: likelihood is how likely the claim is,
+confidence is how good the evidence behind it is.
+
+**ACH (Analysis of Competing Hypotheses)**
+A method for choosing between rival explanations by listing them all up front, then scoring
+which evidence *contradicts* each. The surviving answer is the one with the fewest
+contradictions — not the one that felt right first.
+
+**Redaction map**
+The file that records what each placeholder (`[EMAIL_1]`) stands for. It lets a redacted report
+be restored later, and it must be handled as carefully as the original — it is the key.
+
 ---
 
 ## Domain & Network Terms
@@ -221,6 +253,10 @@ A service that routes traffic through an intermediary server, masking the user's
 | FTP | File Transfer Protocol |
 | HSTS | HTTP Strict Transport Security |
 | HTTP/S | HyperText Transfer Protocol (Secure) |
+| ACH | Analysis of Competing Hypotheses |
+| BIC | Bank Identifier Code (SWIFT code) |
+| IBAN | International Bank Account Number |
+| ICP | Internet Content Provider (PRC website filing) |
 | IOC | Indicator of Compromise |
 | IP | Internet Protocol |
 | JSON | JavaScript Object Notation |
@@ -230,6 +266,7 @@ A service that routes traffic through an intermediary server, masking the user's
 | TLS | Transport Layer Security |
 | TTP | Tactics, Techniques, and Procedures |
 | URL | Uniform Resource Locator |
+| USCC | Unified Social Credit Code (PRC company ID) |
 | VPN | Virtual Private Network |
 | XSS | Cross-Site Scripting |
 
