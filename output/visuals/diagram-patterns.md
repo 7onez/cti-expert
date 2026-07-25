@@ -63,7 +63,7 @@ stateDiagram-v2
 
 ## Infra cluster from a pivot run
 
-`graph_build.py` ([`techniques/web-pivot.md`](../techniques/web-pivot.md)) emits a clustered
+`graph_build.py` ([`techniques/web-pivot.md`](../../techniques/web-pivot.md)) emits a clustered
 node/edge graph — domains plus shared **favicon / GA / wallet / SaaS-token** hub nodes, with
 Louvain communities and betweenness centrality. Render it as the **interactive HTML network**
 ([`render-engine.md`](render-engine.md)), or summarize the top cluster as a Mermaid `flowchart`
