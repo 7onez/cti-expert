@@ -220,6 +220,24 @@ def strength_to_confidence(strength):
     return "CHALLENGED"
 ```
 
+### Findings vs. judgments
+
+Everything above grades **evidence**. A *judgment* built on that evidence — an attribution, a
+motive, a forecast — carries a **likelihood term** instead
+([`handbook/analytic-standards.md`](../handbook/analytic-standards.md) §1: *almost no chance* →
+*almost certain*, each with a probability band).
+
+The two are orthogonal and both belong in the report:
+
+> The operator is **very likely** based in Guangdong (**moderate confidence** — single
+> registry record, unverified).
+
+Never put a likelihood term on a directly observed fact, and never let a strong confidence
+level imply a strong judgment: good evidence for a narrow observation supports only a narrow
+claim. Attribution judgments additionally require an **ACH matrix** (§3 of the same file) —
+`/threat-model` must name the runner-up hypothesis and the evidence that would change the
+ranking.
+
 ---
 
 ## Trail Reasoning
