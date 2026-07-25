@@ -17,7 +17,8 @@ echo "▶ uv (primary toolchain)"
 if command -v uv >/dev/null 2>&1; then ok "uv present: $(uv --version 2>&1)"; else bad "uv not on PATH (bootstrap failed)"; fi
 
 echo "▶ skill scripts execute from scratch via 'uv run' (deps auto-resolved)"
-for s in stealer_log_parse.py generate-cti-docx.py generate-cti-docx-hybrid.py; do
+for s in stealer_log_parse.py generate-cti-docx.py generate-cti-docx-hybrid.py \
+         iban_analyze.py redact.py; do
   out="$(uv run "$S/$s" 2>&1)"
   # The script ran iff uv launched it and deps resolved — i.e. no uv-spawn or import error.
   if echo "$out" | grep -qiE "Failed to spawn|No such file|can't open file|ModuleNotFoundError|error: Failed"; then
@@ -33,6 +34,27 @@ if uv run "$S/generate-cti-docx.py" "$S/sample-cti-report-data.json" "$TMP/r.doc
   ok "DOCX generated ($(wc -c <"$TMP/r.docx" | tr -d ' ') bytes)"
 else
   bad "DOCX generation"
+fi
+rm -rf "$TMP"
+
+echo "▶ IBAN validator: accepts a known-good account, rejects a mutated checksum"
+if uv run "$S/iban_analyze.py" GB29NWBK60161331926819 2>/dev/null | grep -q "VALID" \
+   && uv run "$S/iban_analyze.py" GB29NWBK60161331926818 2>/dev/null | grep -q "INVALID"; then
+  ok "iban_analyze mod-97 verdicts"
+else
+  bad "iban_analyze mod-97 verdicts"
+fi
+
+echo "▶ redactor: round-trip restores the original byte-for-byte"
+TMP="$(mktemp -d)"
+printf 'Contact a@b.com and +84901234567 about GB29NWBK60161331926819.\n' > "$TMP/in.md"
+if uv run "$S/redact.py" "$TMP/in.md" -o "$TMP/red.md" --map "$TMP/m.json" >/dev/null 2>&1 \
+   && grep -q "EMAIL_1" "$TMP/red.md" \
+   && uv run "$S/redact.py" --restore "$TMP/red.md" --map "$TMP/m.json" -o "$TMP/back.md" >/dev/null 2>&1 \
+   && cmp -s "$TMP/in.md" "$TMP/back.md"; then
+  ok "redact -> restore is lossless"
+else
+  bad "redact -> restore round-trip"
 fi
 rm -rf "$TMP"
 
