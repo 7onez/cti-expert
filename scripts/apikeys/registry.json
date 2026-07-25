@@ -34,6 +34,18 @@
       "test": {"url": "https://urlscan.io/user/quotas/", "header": {"API-Key": "{key}"}, "expect_status": 200}
     },
     {
+      "id": "quake", "name": "Quake (360)", "env": "QUAKE_API_KEY", "category": "infra",
+      "tier": "freemium", "url": "https://quake.360.net/quake/#/help?id=5eba54d8fda2a52f7bde6bb0&title=API",
+      "unlocks": "/webpivot + /icp: independent CN cyberspace index — favicon mmh3, body/ICP-string search -> hosts Shodan and FOFA miss",
+      "test": {"url": "https://quake.360.net/api/v3/user/info", "header": {"X-QuakeToken": "{key}"}, "expect_status": 200}
+    },
+    {
+      "id": "zoomeye", "name": "ZoomEye", "env": "ZOOMEYE_API_KEY", "category": "infra",
+      "tier": "freemium", "url": "https://www.zoomeye.ai/profile",
+      "unlocks": "/webpivot + /cert-pivot: reverse favicon iconhash (mmh3) -> hosts; CN-weighted asset search (also drives the kunyu console)",
+      "test": {"url": "https://api.zoomeye.ai/resources-info", "header": {"API-KEY": "{key}"}, "expect_status": 200}
+    },
+    {
       "id": "dnslytics", "name": "DNSLytics", "env": "DNSLYTICS_API_KEY", "category": "analytics",
       "tier": "freemium", "url": "https://dnslytics.com/api",
       "unlocks": "/webpivot: reverse AdSense (ca-pub-) / legacy GA (UA-) ID -> sibling domains"

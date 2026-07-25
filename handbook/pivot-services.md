@@ -12,6 +12,7 @@ requirements. ⚠️ marks services that recently changed — verify before rely
 | **Shodan** | `http.favicon.hash:<int>` | **mmh3** | Paid (favicon filter needs membership) | REST + py lib, key |
 | **FOFA** | `icon_hash="<int>"` | **mmh3** | Freemium (heavy paid gating) | REST, key |
 | **ZoomEye** (zoomeye.ai) | `iconhash:"<mmh3>"` | **mmh3** | Freemium credits | REST, key |
+| **Quake** (360, quake.360.net) | `favicon:"<mmh3>"` | **mmh3** | Freemium credits | REST, key — independent CN index |
 | **Censys** (Platform API) | `services.http.response.favicons.md5_hash` | **MD5** | Freemium | REST, key ⚠️ classic Search API retired |
 | **Netlas** | `http.favicon.hash_sha256` | **SHA-256** | Freemium + 14-day trial | REST, key |
 | **Validin** | favicon in host-response graph | body hashes | Free community + free API | REST, free key |
@@ -101,9 +102,29 @@ searches server-side.
 | **Chainalysis / TRM / Elliptic** — pro clustering, sanctions | Enterprise | gated |
 | **OFAC SDN crypto list** — sanctioned-address match | Free | data download |
 
+## 8. China: ICP filings, PRC registries, CN cyberspace indexes
+
+Full tradecraft in [`techniques/china-recon.md`](../techniques/china-recon.md). Reverse-pivot the
+**licence serial** (not the province prefix) to find sibling sites under one filing.
+
+| Service | Input → output | Cost | API |
+|---|---|---|---|
+| **beian.miit.gov.cn** | domain → filing entity, licence, approval date | Free | none — CAPTCHA, Chinese-only ⚠️ authoritative |
+| **ICP_Query** / beian mirrors (chinaz, aizhan) | domain → cached filing | Free | scriptable; mirrors go stale → trust 2 until MIIT-confirmed |
+| **PublicWWW / NerdyData** | `"ICP备<serial>号"` → sibling domains | Freemium | REST, key |
+| **FOFA / Quake / ZoomEye** | `body="ICP备<serial>"` → hosts | Freemium | REST, key |
+| **ENScan_GO** | company 中文全名 → ICP filings, domains, apps, mini-programs | Free tool | CLI; needs aggregator cookies |
+| **GSXT** (gsxt.gov.cn) | USCC / 中文全名 → registration, legal rep, capital, status | Free | none — slider CAPTCHA ⚠️ ground truth |
+| **信用中国** (creditchina.gov.cn) | company → penalties, 失信 blacklist | Free | limited |
+| **TianYanCha / QCC / Aiqicha** | company → shareholders, officers, branches, related firms | Freemium | ⚠️ **IP-blocked outside mainland**; needs CN egress + +86 account |
+| **Cninfo** (cninfo.com.cn) | listed company → official filings | Free | listed companies only |
+| **Sayari / Datenna** | company → cross-border UBO, sanctions | Enterprise | REST, key |
+
 ## Scriptable-API cheat sheet
-- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web).
-- **Free-tier key:** Shodan, FOFA, ZoomEye, Censys, Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web), Cninfo, 信用中国.
+- **Free-tier key:** Shodan, FOFA, **Quake**, ZoomEye, Censys, Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **Free but not scriptable (CAPTCHA / manual):** beian.miit.gov.cn, GSXT.
+- **Geo-gated:** TianYanCha, QCC, Aiqicha — CN egress required; log a collection gap otherwise.
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.
 - **No official API (scrape/manual):** AnalyzeID, osint.sh, SpyOnWeb.
 
