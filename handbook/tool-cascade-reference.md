@@ -14,8 +14,8 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | PhoneInfoga | `go install github.com/sundowndev/phoneinfoga/v2/cmd/phoneinfoga@latest` | Go | Phone |
 | Holehe | `pip3 install holehe` | Python | Email |
 | h8mail | `pip3 install h8mail` | Python | Email breaches |
-| theHarvester | `pip3 install theHarvester` | Python | Email/domain harvest |
-| TruffleHog | `pip3 install trufflehog` | Python | Secrets |
+| theHarvester | `uv tool install "git+https://github.com/laramies/theHarvester.git"` | Python | Email/domain harvest |
+| TruffleHog | `brew install trufflehog` or release binary from [GitHub](https://github.com/trufflesecurity/trufflehog/releases) (`install.sh --go`) | Go | Secrets |
 | Gitleaks | `go install github.com/gitleaks/gitleaks@latest` | Go | Secrets |
 | Subfinder | `go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` | Go | Subdomains |
 | Amass | `go install github.com/owasp-amass/amass/v4/...@master` | Go | Subdomains |

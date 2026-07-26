@@ -21,7 +21,7 @@ Scans public repositories and web sources for accidentally committed secrets: AP
 
 | Priority | Tool | Purpose | Install |
 |----------|------|---------|---------|
-| Primary | TruffleHog | 800+ detectors, auto-verification | `pip3 install trufflehog` or `docker pull trufflesecurity/trufflehog` |
+| Primary | TruffleHog | 800+ detectors, auto-verification | `brew install trufflehog`, GitHub release binary, or `docker pull trufflesecurity/trufflehog` |
 | Secondary | Gitleaks | Regex + entropy scanning | `brew install gitleaks` / download from GitHub releases |
 | Tertiary | GitDorker | GitHub dork API queries | `git clone https://github.com/obheda12/GitDorker` |
 | Manual | Google Dorks | Web-based public repo search | No install — browser-based |

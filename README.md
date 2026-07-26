@@ -336,9 +336,9 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 | Flag | What it installs | Size |
 |------|-----------------|------|
-| *(none)* | Python packages, whois, dig, asn, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
+| *(none)* | Python packages, whois, dig, asn, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, waymore, xeuledoc, agentflow | ~50 MB |
 | `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
-| `--go` | subfinder, amass, gau, gitleaks, httpx, phoneinfoga | +150 MB |
+| `--go` | subfinder, amass, gau, gitleaks, httpx, trufflehog, phoneinfoga | +150 MB |
 | `--all` | Everything | ~400 MB |
 
 ---

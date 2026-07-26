@@ -1102,11 +1102,11 @@ If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv`
 
 | Python tool(s) | Install (any OS, uv) | No-uv fallback |
 |----------------|----------------------|----------------|
-| CLIs — maigret, sherlock-project, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc | `uv tool install <pkg>` | `pipx install <pkg>` |
+| CLIs — maigret, sherlock-project, holehe, h8mail, waymore, xeuledoc | `uv tool install <pkg>` | `pipx install <pkg>` |
 | Libraries — cloudscraper, oletools, whoisdomain, scrapling | `uv pip install --python <venv> <pkg>` | `<$PY> -m pip install <pkg>` |
 | Scrapling headless | `uv tool install "scrapling[fetchers]"` then `scrapling install` | `<$PY> -m pip install "scrapling[fetchers]"` then `scrapling install` |
 | AgentFlow | `uv pip install --python <venv> --no-deps agentflow` | `<$PY> -m pip install --no-deps agentflow` |
-| Git-only — msftrecon, blackbird, sharetrace | `uv pip install "git+https://…/msftrecon.git"` · clone + `uv pip install -r requirements.txt` | clone + `<$PY> -m pip install -r requirements.txt` |
+| Git-only — theHarvester, msftrecon, blackbird, sharetrace | `uv tool install "git+https://…/theHarvester.git"` · `uv pip install "git+https://…/msftrecon.git"` · clone + `uv pip install -r requirements.txt` | `pipx install "git+https://…"` · clone + `<$PY> -m pip install -r requirements.txt` |
 | **Run a generator script** | `uv run <script.py> ARGS` (deps auto via inline metadata) | `<$PY> <script.py> ARGS` |
 
 `<$PY>` = `py` (Windows) / `python3` (macOS/Linux), or the venv python. On PEP-668 Linux add `--break-system-packages` to the pip fallback.
@@ -1120,7 +1120,7 @@ If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv`
 | mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
 | **agent-browser** (interactive browser) | `npm i -g agent-browser` or `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` (or `cargo install`) → `agent-browser install` |
 
-**Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga → GitHub release binary per OS/arch. **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
+**Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga and TruffleHog → GitHub release binary per OS/arch (`go install` rejects TruffleHog's module for its `replace` directives; the PyPI `trufflehog` is the abandoned v2 Python tool and does not accept v3 syntax). **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
 
 The exact winget IDs, brew formulae, apt packages, uv commands, import names, and Go module paths for **every** tool are tabulated in [`scripts/platform-setup.md`](scripts/platform-setup.md) §5. To provision a fresh machine in one shot, run the bundled installer for the detected OS:
 
