@@ -6,8 +6,10 @@
 #   --all       Install everything including headless + Go tools
 #
 # Package engine: uv-first (Astral's uv handles the venv, `uv pip`, and `uv tool`);
-# bootstraps uv automatically, and falls back to python3 -m venv + pip/pipx if uv
-# cannot be installed. Supported platforms: Linux (apt), macOS (brew), Windows (Git Bash / WSL).
+# bootstraps uv automatically, and falls back to python3 -m venv + pip/pipx when uv
+# cannot be installed *or* when a PATH wrapper intercepts `uv pip`. Every tool is
+# probed for the subcommand it is actually asked to run, never just `command -v`.
+# Supported platforms: Linux (apt), macOS (brew), Windows (Git Bash / WSL).
 
 set -euo pipefail
 
@@ -62,6 +64,53 @@ section()  { echo -e "\n${BOLD}${CYAN}▶ $1${NC}"; }
 has()    { command -v "$1" &>/dev/null; }
 has_py() { "$VENV_PYTHON" -c "import $1" &>/dev/null 2>&1; }
 
+# Every capability probe below is time-capped. A wrapper script that shadows a
+# real tool on PATH can hang indefinitely — two wrappers that each re-scan PATH
+# for "the real binary" while skipping only their own directory will exec each
+# other forever — and an installer must never inherit that hang.
+if has timeout; then
+  probe() { timeout 20 "$@"; }
+else
+  probe() { "$@"; }
+fi
+
+# ── Real-binary resolution ────────────────────────────────────
+# `command -v` only proves *a* file with that name is on PATH. It does not prove
+# the file performs the work: PATH commonly fronts wrapper scripts that reject
+# the exact subcommands this installer needs (Claude Code's modern-python plugin
+# shims `uv`, `python3`, `pip3` and `pipx` this way, refusing `uv pip` and
+# `python3 -m` outright). So probe every PATH candidate and keep the first that
+# actually works, falling back to the next when one refuses.
+
+# Echo the first PATH candidate for command $1 that satisfies check function $2.
+resolve_bin() {
+  local name="$1" check="$2" cand
+  while IFS= read -r cand; do
+    [[ -x "$cand" ]] || continue
+    if "$check" "$cand"; then printf '%s\n' "$cand"; return 0; fi
+  done < <(type -aP "$name" 2>/dev/null)
+  return 1
+}
+
+_check_uv()     { probe "$1" --version 2>/dev/null | grep -q '^uv '; }
+_check_uv_pip() { _check_uv "$1" && probe "$1" pip list --help &>/dev/null; }
+_check_python() { probe "$1" -c 'pass' &>/dev/null; }
+_check_pip()    { probe "$1" --version &>/dev/null; }
+_check_pipx()   { probe "$1" --version &>/dev/null; }
+
+# Re-run after any bootstrap step that may have installed one of these.
+detect_bins() {
+  UV_BIN="$(resolve_bin uv _check_uv || true)"
+  UV_PIP_BIN="$(resolve_bin uv _check_uv_pip || true)"  # empty when `uv pip` is intercepted
+  [[ -n "$UV_PIP_BIN" ]] && UV_BIN="$UV_PIP_BIN"        # prefer a fully working uv
+  PY3_BIN="$(resolve_bin python3 _check_python || true)"
+  PIP3_BIN="$(resolve_bin pip3 _check_pip || true)"
+  PIPX_BIN="$(resolve_bin pipx _check_pipx || true)"
+  return 0
+}
+UV_BIN=""; UV_PIP_BIN=""; PY3_BIN=""; PIP3_BIN=""; PIPX_BIN=""
+detect_bins
+
 # Root/sudo handling — VPSes & containers frequently run as root with no `sudo`
 # binary installed, so never hard-assume `sudo` exists.
 if [[ "$(id -u 2>/dev/null)" == "0" ]]; then
@@ -72,34 +121,63 @@ else
   SUDO=""   # non-root without sudo: system-package installs may fail, but uv/pip --user still work
 fi
 
-# Install Python packages into the skill venv. uv-first (a uv-created venv has no
-# pip, so we must target it with `uv pip --python`); fall back to the venv's pip.
-vpip() { if has uv; then uv pip install --python "$VENV_PYTHON" "$@"; else "$VENV_PYTHON" -m pip install "$@"; fi; }
+# A uv-created venv ships no pip, so the pip fallback has to bootstrap one.
+ensure_venv_pip() {
+  "$VENV_PYTHON" -m pip --version &>/dev/null && return 0
+  "$VENV_PYTHON" -m ensurepip --upgrade &>/dev/null 2>&1 || true
+  "$VENV_PYTHON" -m pip --version &>/dev/null
+}
+
+# Install Python packages into the skill venv. uv-first (targeted with
+# `--python` so it installs into the venv rather than a uv project), then the
+# venv's own pip — reached both when uv is absent and when `uv pip` is refused
+# or fails on a given package.
+vpip() {
+  if [[ -n "$UV_PIP_BIN" ]] && "$UV_PIP_BIN" pip install --python "$VENV_PYTHON" "$@"; then
+    return 0
+  fi
+  ensure_venv_pip && "$VENV_PYTHON" -m pip install "$@"
+}
 
 # Bootstrap uv itself — the one dependency the uv-first path needs.
+uv_pip_note() {
+  [[ -n "$UV_BIN" && -z "$UV_PIP_BIN" ]] || return 0
+  echo -e "  ${YELLOW}!${NC} \`uv pip\` is intercepted by a PATH wrapper ($UV_BIN) — using the venv's pip for package installs"
+}
+
 ensure_uv() {
-  has uv && { log_ok "uv $(uv --version 2>/dev/null | awk '{print $2}') (present)"; return 0; }
+  if [[ -n "$UV_BIN" ]]; then
+    log_ok "uv $(probe "$UV_BIN" --version 2>/dev/null | awk '{print $2}') (present)"
+    uv_pip_note
+    return 0
+  fi
   # On a fresh Linux box (esp. minimal VPS/containers) install the prerequisites the
-  # uv installer + venv fallback need, before anything else.
+  # uv installer + venv fallback need, before anything else. python3-pip matters
+  # because the pip fallback is what runs whenever uv is unusable.
   if [[ "$OS" == "linux" ]] && has apt-get; then
     $SUDO apt-get update -y &>/dev/null 2>&1 || true
-    $SUDO apt-get install -y curl ca-certificates git python3 python3-venv &>/dev/null 2>&1 || true
+    $SUDO apt-get install -y curl ca-certificates git python3 python3-venv python3-pip &>/dev/null 2>&1 || true
   fi
   if [[ "$OS" == "macos" ]] && has brew; then brew install uv &>/dev/null 2>&1 || true; fi
-  if ! has uv && has curl; then
+  detect_bins
+  if [[ -z "$UV_BIN" ]] && has curl; then
     curl -LsSf https://astral.sh/uv/install.sh | sh &>/dev/null 2>&1 || true
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    detect_bins
   fi
-  if ! has uv && has wget; then
+  if [[ -z "$UV_BIN" ]] && has wget; then
     wget -qO- https://astral.sh/uv/install.sh | sh &>/dev/null 2>&1 || true
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+    detect_bins
   fi
-  if ! has uv && has pip3; then
-    pip3 install --user uv &>/dev/null 2>&1 || true
+  if [[ -z "$UV_BIN" && -n "$PIP3_BIN" ]]; then
+    "$PIP3_BIN" install --user uv &>/dev/null 2>&1 || true
     export PATH="$HOME/.local/bin:$PATH"
+    detect_bins
   fi
-  if has uv; then
-    log_ok "uv $(uv --version 2>/dev/null | awk '{print $2}') installed"
+  if [[ -n "$UV_BIN" ]]; then
+    log_ok "uv $(probe "$UV_BIN" --version 2>/dev/null | awk '{print $2}') installed"
+    uv_pip_note
   else
     log_skip "uv (could not install — using pip/venv fallback; see https://astral.sh/uv)"
   fi
@@ -125,6 +203,16 @@ ensure_agent_browser() {
 
 apt_install() {
   local pkg="$1" cmd="${2:-$1}"
+  # Linux is not only Debian/Ubuntu. Without apt-get there is nothing to run, so
+  # report the state honestly instead of failing on "apt-get: command not found".
+  if [[ "$OS" == "linux" ]] && ! has apt-get; then
+    if has "$cmd"; then
+      log_skip "$pkg (present; no apt-get to upgrade it)"
+    else
+      log_fail "$pkg" "no apt-get on this Linux — install '$pkg' with your package manager (dnf/pacman/apk/zypper)"
+    fi
+    return
+  fi
   if has "$cmd"; then
     if [[ "$OS" == "linux" ]]; then
       if $SUDO apt-get install --only-upgrade -y "$pkg" &>/dev/null 2>&1; then
@@ -200,7 +288,7 @@ blackbird_install() {
       -e 's/propcache==.*/propcache>=0.2/' \
       "$blackbird_dir/requirements.txt" 2>/dev/null || true
   fi
-  if [[ -f "$blackbird_dir/requirements.txt" ]] && { { has uv && uv pip install --python "$VENV_PYTHON" --quiet --upgrade -r "$blackbird_dir/requirements.txt"; } || "$VENV_PYTHON" -m pip install --quiet --upgrade --prefer-binary -r "$blackbird_dir/requirements.txt"; } 2>/dev/null; then
+  if [[ -f "$blackbird_dir/requirements.txt" ]] && { { [[ -n "$UV_PIP_BIN" ]] && "$UV_PIP_BIN" pip install --python "$VENV_PYTHON" --quiet --upgrade -r "$blackbird_dir/requirements.txt"; } || { ensure_venv_pip && "$VENV_PYTHON" -m pip install --quiet --upgrade --prefer-binary -r "$blackbird_dir/requirements.txt"; }; } 2>/dev/null; then
     SITE_PKG="$("$VENV_PYTHON" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)"
     if [[ -n "$SITE_PKG" ]]; then
       echo "$blackbird_dir" > "$SITE_PKG/blackbird.pth"
@@ -231,41 +319,39 @@ agentflow_install() {
   fi
 }
 
-# Install an isolated CLI tool. uv-first (`uv tool`, the pipx replacement); fall back to pipx.
+# Install an isolated CLI tool onto PATH. uv-first (`uv tool`, the pipx replacement);
+# fall back to pipx. $1 may be a PyPI name or any spec uv/pipx accepts (e.g. a
+# `git+https://…` URL), so $4 supplies a readable name for the log line.
 pipx_install() {
-  local tool="$1" cmd="${2:-$1}" pre_pkg="${3:-}"
+  local tool="$1" cmd="${2:-$1}" pre_pkg="${3:-}" label="${4:-$1}"
   local already=false
   has "$cmd" && already=true
-  if [[ -n "$pre_pkg" ]] && [[ "$OS" == "linux" ]]; then
+  if [[ -n "$pre_pkg" ]] && [[ "$OS" == "linux" ]] && has apt-get; then
     $SUDO apt-get install -y "$pre_pkg" &>/dev/null 2>&1 || true
   fi
-  if has uv; then
-    if [[ "$already" == true ]] && uv tool upgrade "$tool" &>/dev/null 2>&1; then
-      log_ok "$tool updated (uv tool)"; return
-    elif uv tool install --force "$tool" &>/dev/null 2>&1; then   # --force overwrites a stale shim from a prior pip/pipx install
-      [[ "$already" == true ]] && log_ok "$tool updated (uv tool)" || log_ok "$tool (uv tool)"
+  if [[ -n "$UV_BIN" ]]; then
+    if [[ "$already" == true ]] && "$UV_BIN" tool upgrade "$tool" &>/dev/null 2>&1; then
+      log_ok "$label updated (uv tool)"; return
+    elif "$UV_BIN" tool install --force "$tool" &>/dev/null 2>&1; then   # --force overwrites a stale shim from a prior pip/pipx install
+      [[ "$already" == true ]] && log_ok "$label updated (uv tool)" || log_ok "$label (uv tool)"
       return
     fi
     # uv tool failed (e.g. package exposes no CLI entry point) — fall through to pipx
   fi
-  if has pipx; then
+  if [[ -n "$PIPX_BIN" ]]; then
     if [[ "$already" == true ]]; then
-      if pipx upgrade "$tool" &>/dev/null 2>&1; then
-        log_ok "$tool updated"
+      if "$PIPX_BIN" upgrade "$tool" &>/dev/null 2>&1; then
+        log_ok "$label updated"
       else
-        log_skip "$tool ($cmd)"
+        log_skip "$label ($cmd)"
       fi
-    elif pipx install "$tool" &>/dev/null 2>&1; then
-      if [[ "$already" == true ]]; then
-        log_ok "$tool updated"
-      else
-        log_ok "$tool"
-      fi
+    elif "$PIPX_BIN" install "$tool" &>/dev/null 2>&1; then
+      log_ok "$label"
     else
-      log_fail "$tool" "pipx install $tool failed"
+      log_fail "$label" "pipx install $tool failed"
     fi
   else
-    log_fail "$tool" "no uv or pipx — install uv (https://astral.sh/uv) or run: pip3 install pipx"
+    log_fail "$label" "no uv or pipx — install uv (https://astral.sh/uv) or run: pip3 install pipx"
   fi
 }
 
@@ -284,27 +370,69 @@ go_install() {
   fi
 }
 
-# Download pre-built binary from GitHub releases
+# First dotted version number in a tool's version output ("trufflehog 3.96.0"
+# -> 3.96.0), or a release tag ("v3.96.0" -> 3.96.0). Must never return non-zero:
+# a no-match grep inside `v=$(version_of ...)` is a failing simple command, which
+# under `set -e` takes down the whole installer.
+version_of() { grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' <<<"${1:-}" | head -1 || true; }
+
+# An older copy of the same tool earlier on PATH silently wins over the one just
+# installed, so the upgrade has no visible effect. Say so rather than reporting a
+# success the shell will not honour.
+gh_binary_shadow_warn() {
+  local cmd="$1" install_dir="$2" ver_args="${3:---version}" active shadow_ver
+  active="$(command -v "$cmd" 2>/dev/null || true)"
+  [[ -n "$active" && "$active" != "$install_dir/$cmd" ]] || return 0
+  shadow_ver="$(version_of "$(probe "$active" $ver_args 2>&1 | head -1 || true)")"
+  echo -e "  ${YELLOW}!${NC} PATH resolves $cmd to $active${shadow_ver:+ ($shadow_ver)} — shadows $install_dir/$cmd"
+}
+
+# Download pre-built binary from GitHub releases, upgrading in place when the
+# release is newer than what is installed.
 gh_binary_install() {
-  local tool="$1" cmd="$2" repo="$3" asset_pattern="$4" install_dir="${5:-/usr/local/bin}"
+  local tool="$1" cmd="$2" repo="$3" asset_pattern="$4" install_dir="${5:-/usr/local/bin}" ver_args="${6:---version}"
   local already=false
   has "$cmd" && already=true
-  if $already; then
-    log_ok "$tool (already installed)"
-    return
+
+  local api_path="repos/$repo/releases/latest"
+  local api_url="https://api.github.com/$api_path"
+
+  # Compare installed vs latest before downloading ~35MB. Skipping purely because
+  # the command exists (the old behaviour) pins the box to whatever stale copy
+  # happens to be on PATH and makes the tool un-upgradable.
+  local cur_ver="" latest_ver="" latest_tag=""
+  if [[ "$already" == true ]]; then
+    # $ver_args is intentionally unquoted — tools differ ("--version" vs "version").
+    cur_ver="$(version_of "$(probe "$cmd" $ver_args 2>&1 | head -1 || true)")"
+    if has gh; then
+      latest_tag=$(gh api "$api_path" --jq .tag_name 2>/dev/null) || true
+    elif has curl && has jq; then
+      latest_tag=$(curl -sL "$api_url" | jq -r .tag_name 2>/dev/null) || true
+    fi
+    latest_ver="$(version_of "$latest_tag")"
+    if [[ -n "$cur_ver" && -n "$latest_ver" && "$cur_ver" == "$latest_ver" ]]; then
+      log_ok "$tool $cur_ver (latest)"
+      gh_binary_shadow_warn "$cmd" "$install_dir" "$ver_args"
+      return
+    fi
   fi
   # Resolve the release asset URL. Prefer gh; fall back to curl/wget + jq (both
   # ensured earlier) so PhoneInfoga installs on boxes without the GitHub CLI.
-  local api_path="repos/$repo/releases/latest"
-  local api_url="https://api.github.com/$api_path"
-  local jq_filter=".assets[] | select(.name | test(\"$asset_pattern\")) | .browser_download_url"
+  # $asset_pattern is a regex being embedded in a jq *string literal*, so each of
+  # its backslashes must survive JSON unescaping. Passing `\.` through verbatim
+  # makes both jq and gh's gojq abort with "invalid escape sequence".
+  local jq_pattern="${asset_pattern//\\/\\\\}"
+  local jq_filter=".assets[] | select(.name | test(\"$jq_pattern\")) | .browser_download_url"
   local url=""
+  # Each lookup is `|| true`: under `set -e` a bare `url=$(failing cmd)` is a
+  # simple command, so a failed API call would kill the whole installer instead
+  # of falling through to the log_fail below.
   if has gh; then
-    url=$(gh api "$api_path" --jq "$jq_filter" 2>/dev/null | head -1)
+    url=$(gh api "$api_path" --jq "$jq_filter" 2>/dev/null | head -1) || true
   elif has jq && has curl; then
-    url=$(curl -sL "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1)
+    url=$(curl -sL "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1) || true
   elif has jq && has wget; then
-    url=$(wget -qO- "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1)
+    url=$(wget -qO- "$api_url" | jq -r "$jq_filter" 2>/dev/null | head -1) || true
   else
     log_fail "$tool" "need gh, or curl/wget + jq, to query GitHub releases"
     return
@@ -317,8 +445,15 @@ gh_binary_install() {
   if curl -sL "$url" | tar -xz -C "$tmp" 2>/dev/null; then
     local bin; bin=$(find "$tmp" -name "$cmd" -type f | head -1)
     if [[ -n "$bin" ]]; then
+      chmod +x "$bin" 2>/dev/null || true
+      mkdir -p "$install_dir" "$HOME/.local/bin" 2>/dev/null || true
       $SUDO mv "$bin" "$install_dir/$cmd" 2>/dev/null || mv "$bin" "$HOME/.local/bin/$cmd" 2>/dev/null
-      log_ok "$tool"
+      if [[ "$already" == true && -n "$cur_ver" ]]; then
+        log_ok "$tool ${cur_ver} -> ${latest_ver:-latest}"
+      else
+        log_ok "$tool ${latest_ver:-}"
+      fi
+      gh_binary_shadow_warn "$cmd" "$install_dir" "$ver_args"
     else
       log_fail "$tool" "binary '$cmd' not found in archive"
     fi
@@ -344,33 +479,35 @@ ensure_uv
 # too. Put it on PATH for this run and persist it (uv's own shell hook) for new shells.
 UV_TOOL_BIN="$HOME/.local/bin"
 [[ ":$PATH:" != *":$UV_TOOL_BIN:"* ]] && export PATH="$UV_TOOL_BIN:$PATH"
-if has uv; then
-  uv tool update-shell &>/dev/null 2>&1 && log_ok "~/.local/bin on PATH (uv tool update-shell — open a new shell)" || true
+if [[ -n "$UV_BIN" ]]; then
+  "$UV_BIN" tool update-shell &>/dev/null 2>&1 && log_ok "~/.local/bin on PATH (uv tool update-shell — open a new shell)" || true
 fi
 
 # ── Venv check / create ─────────────────────────────────────
 section "Python environment"
 if [[ ! -f "$VENV_PYTHON" ]]; then
-  if has uv; then
-    if uv venv "$VENV_DIR" &>/dev/null 2>&1; then log_ok "created venv via uv: $VENV_DIR"; else log_fail "venv" "uv venv failed"; fi
-  elif has python3; then
-    if python3 -m venv "$VENV_DIR" &>/dev/null 2>&1; then log_ok "created venv: $VENV_DIR"; else log_fail "venv" "python3 -m venv failed"; fi
-  else
-    echo -e "  ${RED}✘${NC} No uv or python3 available to create a venv at $VENV_DIR"
+  if [[ -n "$UV_BIN" ]] && "$UV_BIN" venv "$VENV_DIR" &>/dev/null 2>&1; then
+    log_ok "created venv via uv: $VENV_DIR"
+  elif [[ -n "$PY3_BIN" ]] && "$PY3_BIN" -m venv "$VENV_DIR" &>/dev/null 2>&1; then
+    log_ok "created venv: $VENV_DIR"
+  elif [[ -z "$UV_BIN" && -z "$PY3_BIN" ]]; then
+    echo -e "  ${RED}✘${NC} No working uv or python3 available to create a venv at $VENV_DIR"
     echo "  Install uv (https://astral.sh/uv) or Python 3, then re-run."
     exit 1
+  else
+    log_fail "venv" "uv venv and python3 -m venv both failed"
   fi
 fi
 if [[ ! -f "$VENV_PYTHON" ]]; then
   echo -e "  ${RED}✘${NC} Venv python missing at $VENV_PYTHON after creation attempt"; exit 1
 fi
 echo -e "  ${GREEN}✔${NC} $("$VENV_PYTHON" --version 2>&1)"
-if has uv; then
+if [[ -n "$UV_PIP_BIN" ]]; then
   log_ok "uv manages package installs (pip bootstrap not needed)"
-elif "$VENV_PYTHON" -m pip install --quiet --upgrade pip 2>/dev/null; then
-  log_ok "pip upgraded"
+elif ensure_venv_pip && "$VENV_PYTHON" -m pip install --quiet --upgrade pip 2>/dev/null; then
+  log_ok "pip upgraded (venv pip is the install path — uv pip unavailable)"
 else
-  log_fail "pip upgrade" "python -m pip install --upgrade pip failed"
+  log_fail "pip upgrade" "no usable uv pip, and venv pip could not be bootstrapped/upgraded"
 fi
 
 # ── System tools ─────────────────────────────────────────────
@@ -403,22 +540,29 @@ fi
 
 # ── Python: OSINT tools ───────────────────────────────────────
 section "Python: OSINT tools"
-pipx_install maigret maigret libcairo2-dev   # needs cairo; pipx isolates its env
-pip_install  sherlock-project sherlock
+# CLI-only tools go in via `uv tool`, not into the shared venv: the venv's bin/ is
+# never added to PATH, so a venv-installed console script is invisible to the shell
+# and to every `command -v` check the skill makes. Isolated envs also keep their
+# dependency pins from colliding with each other inside the CTI venv.
+pipx_install maigret maigret libcairo2-dev   # needs cairo; isolated env
+pipx_install sherlock-project sherlock
 blackbird_install                         # PyPI build needs setuptools/pkg_resources in the CTI venv
-pip_install  holehe holehe
-pip_install  h8mail h8mail
-pip_install  theHarvester theHarvester
-pip_install  trufflehog trufflehog
-pip_install  waymore waymore
-pip_install  cloudscraper cloudscraper
-pip_install  xeuledoc xeuledoc
+pipx_install holehe holehe
+pipx_install h8mail h8mail
+# theHarvester is NOT usable from PyPI: the only release there is an abandoned
+# 0.0.1 placeholder that ships no theHarvester module and no CLI, and squats the
+# top-level names `discovery` and `lib` in whatever environment it lands in.
+# Upstream ships 4.x from git only.
+pipx_install "git+https://github.com/laramies/theHarvester.git" theHarvester "" theHarvester
+pipx_install waymore waymore
+pip_install  cloudscraper cloudscraper   # library, imported not executed — belongs in the venv
+pipx_install xeuledoc xeuledoc
 agentflow_install                       # no-deps avoids urllib3 conflict with msftrecon
 
 # msftrecon — not on PyPI, install via git
 MSFTRECON_ALREADY=false
 "$VENV_PYTHON" -c "import msftrecon" &>/dev/null 2>&1 && MSFTRECON_ALREADY=true
-if { { has uv && uv pip install --python "$VENV_PYTHON" --quiet --reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; } || "$VENV_PYTHON" -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; } 2>/dev/null; then
+if { { [[ -n "$UV_PIP_BIN" ]] && "$UV_PIP_BIN" pip install --python "$VENV_PYTHON" --quiet --reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; } || { ensure_venv_pip && "$VENV_PYTHON" -m pip install --quiet --upgrade --force-reinstall "git+https://github.com/Arcanum-Sec/msftrecon.git"; }; } 2>/dev/null; then
   if [[ "$MSFTRECON_ALREADY" == true ]]; then
     log_ok "msftrecon updated"
   else
@@ -515,7 +659,17 @@ if [[ "$OPT_GO" == true ]]; then
     gh_binary_install "PhoneInfoga" "phoneinfoga" \
       "sundowndev/phoneinfoga" \
       "${local_os}_${ARCH}\\.tar\\.gz" \
-      "$GOBIN"
+      "$GOBIN" "version"
+
+    # TruffleHog: `go install` refuses this module ("go.mod contains replace
+    # directives"), so take the release binary. Its assets use lowercase GOOS and
+    # GOARCH (trufflehog_<ver>_linux_amd64.tar.gz), unlike PhoneInfoga's above.
+    go_os="linux"; [[ "$OS" == "macos" ]] && go_os="darwin"; [[ "$OS" == "windows" ]] && go_os="windows"
+    go_arch="amd64"; [[ "$ARCH" == "arm64" ]] && go_arch="arm64"
+    gh_binary_install "TruffleHog" "trufflehog" \
+      "trufflesecurity/trufflehog" \
+      "_${go_os}_${go_arch}\\.tar\\.gz$" \
+      "$GOBIN" "--version"
 
     go_install "Subfinder"  subfinder  "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
     go_install "Amass"      amass      "github.com/owasp-amass/amass/v4/...@master"

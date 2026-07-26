@@ -274,13 +274,16 @@ function Install-AgentFlow {
 function Install-PipxPackage {
     param(
         [string]$Package,
-        [string]$Command
+        [string]$Command,
+        # $Package may be any spec uv/pipx accepts, including a `git+https://...`
+        # URL, so $Label supplies a readable name for the log line.
+        [string]$Label = $Package
     )
 
     # uv-first: `uv tool` is the pipx replacement.
     if (Test-Command "uv") {
         $already = Test-Command $Command
-        Invoke-Step $Package {
+        Invoke-Step $Label {
             $ok = $false
             if ($already) { uv tool upgrade $Package *> $null; if ($LASTEXITCODE -eq 0) { $ok = $true } }
             if (-not $ok) {
@@ -289,7 +292,7 @@ function Install-PipxPackage {
                 uv tool install --force $Package *> $null
                 if ($LASTEXITCODE -ne 0) { throw "uv tool install failed" }
             }
-            if ($already) { Log-Ok "$Package updated (uv tool)" } else { Log-Ok "$Package (uv tool)" }
+            if ($already) { Log-Ok "$Label updated (uv tool)" } else { Log-Ok "$Label (uv tool)" }
         } | Out-Null
         return
     }
@@ -304,24 +307,24 @@ function Install-PipxPackage {
 
     $pipxList = pipx list --short 2>$null
     $packageInstalled = $LASTEXITCODE -eq 0 -and ($pipxList | Where-Object { $_ -match "^$([regex]::Escape($Package))(?:\s|$)" })
-    Invoke-Step $Package {
+    Invoke-Step $Label {
         if ($packageInstalled) {
             pipx upgrade $Package | Out-Host
             if ($LASTEXITCODE -eq 0) {
-                Log-Ok "$Package updated"
+                Log-Ok "$Label updated"
             }
             else {
-                Write-Host "  --  $Package checked for updates; no pipx update applied" -ForegroundColor Yellow
+                Write-Host "  --  $Label checked for updates; no pipx update applied" -ForegroundColor Yellow
                 $script:Skipped++
             }
         }
         else {
             if (Test-Command $Command) {
-                Write-Host "  !!  Found stale '$Command' shim without pipx venv; reinstalling $Package" -ForegroundColor Yellow
+                Write-Host "  !!  Found stale '$Command' shim without pipx venv; reinstalling $Label" -ForegroundColor Yellow
             }
             pipx install --force $Package | Out-Host
             if ($LASTEXITCODE -ne 0) { throw "pipx install failed" }
-            Log-Ok $Package
+            Log-Ok $Label
         }
     } | Out-Null
 }
@@ -341,19 +344,50 @@ function Install-GoTool {
     } | Out-Null
 }
 
+# An older copy of the same tool earlier on PATH silently wins over the one just
+# installed, so the upgrade has no visible effect. Say so rather than reporting a
+# success the shell will not honour.
+function Write-ShadowWarning {
+    param([string]$Command, [string]$InstallDir)
+
+    $active = (Get-Command $Command -ErrorAction SilentlyContinue).Source
+    if (!$active) { return }
+    $expected = Join-Path $InstallDir $Command
+    if ($active -ieq $expected -or $active -ieq "$expected.exe") { return }
+    Write-Host "  !!  PATH resolves $Command to $active - shadows $expected" -ForegroundColor Yellow
+}
+
 function Install-GitHubReleaseBinary {
     param(
         [string]$Name,
         [string]$Command,
         [string]$Repo,
         [string]$AssetPattern,
-        [string]$InstallDir
+        [string]$InstallDir,
+        # Tools differ: TruffleHog answers `--version`, PhoneInfoga `version`.
+        [string]$VersionArgs = "--version"
     )
 
     $alreadyInstalled = Test-Command $Command
     Invoke-Step $Name {
         New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
         $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "cti-expert-installer" }
+
+        # Compare installed vs latest before downloading tens of MB. Skipping purely
+        # because the command exists would pin the box to whatever stale copy is on
+        # PATH and make the tool un-upgradable.
+        $latestVersion = ([regex]::Match([string]$release.tag_name, '\d+\.\d+(\.\d+)?')).Value
+        $currentVersion = ""
+        if ($alreadyInstalled) {
+            $currentRaw = (& $Command $VersionArgs 2>&1 | Select-Object -First 1)
+            $currentVersion = ([regex]::Match([string]$currentRaw, '\d+\.\d+(\.\d+)?')).Value
+            if ($currentVersion -and $latestVersion -and $currentVersion -eq $latestVersion) {
+                Log-Ok "$Name $currentVersion (latest)"
+                Write-ShadowWarning $Command $InstallDir
+                return
+            }
+        }
+
         $asset = $release.assets | Where-Object { $_.name -match $AssetPattern } | Select-Object -First 1
         if (!$asset) { throw "no matching release asset for pattern: $AssetPattern" }
 
@@ -378,7 +412,10 @@ function Install-GitHubReleaseBinary {
             $target = Join-Path $InstallDir $binaryName
             Copy-Item -Path $binary.FullName -Destination $target -Force -ErrorAction Stop
             if ($env:PATH -notlike "*$InstallDir*") { $env:PATH = "$env:PATH;$InstallDir" }
-            if ($alreadyInstalled) { Log-Ok "$Name updated" } else { Log-Ok $Name }
+            if ($alreadyInstalled -and $currentVersion) { Log-Ok "$Name $currentVersion -> $latestVersion" }
+            elseif ($alreadyInstalled) { Log-Ok "$Name updated" }
+            else { Log-Ok "$Name $latestVersion".Trim() }
+            Write-ShadowWarning $Command $InstallDir
         }
         finally {
             if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir }
@@ -476,16 +513,23 @@ else {
 }
 
 Write-Section "Python: OSINT tools"
+# CLI-only tools go in via `uv tool`, not into the shared venv: the venv's Scripts
+# dir is never added to PATH, so a venv-installed console script is invisible to
+# the shell and to every Test-Command check the skill makes. Isolated envs also
+# keep their dependency pins from colliding with each other inside the CTI venv.
 Install-PipxPackage "maigret" "maigret"
-Install-PipPackage "sherlock-project" "sherlock"
+Install-PipxPackage "sherlock-project" "sherlock"
 Install-Blackbird
-Install-PipPackage "holehe" "holehe"
-Install-PipPackage "h8mail" "h8mail"
-Install-PipPackage "theHarvester" "theHarvester"
-Install-PipPackage "trufflehog" "trufflehog"
-Install-PipPackage "waymore" "waymore"
-Install-PipPackage "cloudscraper" "cloudscraper"
-Install-PipPackage "xeuledoc" "xeuledoc"
+Install-PipxPackage "holehe" "holehe"
+Install-PipxPackage "h8mail" "h8mail"
+# theHarvester is NOT usable from PyPI: the only release there is an abandoned
+# 0.0.1 placeholder that ships no theHarvester module and no CLI, and squats the
+# top-level names `discovery` and `lib` in whatever environment it lands in.
+# Upstream ships 4.x from git only.
+Install-PipxPackage "git+https://github.com/laramies/theHarvester.git" "theHarvester" "theHarvester"
+Install-PipxPackage "waymore" "waymore"
+Install-PipPackage "cloudscraper" "cloudscraper"   # library, imported not executed
+Install-PipxPackage "xeuledoc" "xeuledoc"
 Install-AgentFlow
 
 $msftreconAlreadyInstalled = Test-PythonImport "msftrecon"
@@ -584,12 +628,20 @@ if ($Go) {
 
         $arch = Get-OSArchitecture
         $phoneInfogaArch = if ($arch -eq "Arm64") { "arm64" } else { "x86_64|amd64" }
-        Install-GitHubReleaseBinary "PhoneInfoga" "phoneinfoga" "sundowndev/phoneinfoga" "Windows.*($phoneInfogaArch).*(zip|tar\.gz)$" $goBin
+        Install-GitHubReleaseBinary "PhoneInfoga" "phoneinfoga" "sundowndev/phoneinfoga" "Windows.*($phoneInfogaArch).*(zip|tar\.gz)$" $goBin "version"
         Install-GoTool "Subfinder" "subfinder" "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
         Install-GoTool "Amass" "amass" "github.com/owasp-amass/amass/v4/...@master"
         Install-GoTool "GAU" "gau" "github.com/lc/gau/v2/cmd/gau@latest"
         Install-GoTool "Gitleaks" "gitleaks" "github.com/zricethezav/gitleaks/v8@latest"
         Install-GoTool "httpx" "httpx" "github.com/projectdiscovery/httpx/cmd/httpx@latest"
+
+        # TruffleHog is Go (v3) — the PyPI `trufflehog` is the abandoned v2 Python
+        # tool and does not understand the v3 syntax this skill documents
+        # (`trufflehog github --repo=... --only-verified`). `go install` also refuses
+        # this module ("go.mod contains replace directives"), so take the release
+        # binary. Assets use lowercase GOARCH: trufflehog_<ver>_windows_amd64.tar.gz.
+        $truffleArch = if ($arch -eq "Arm64") { "arm64" } else { "amd64" }
+        Install-GitHubReleaseBinary "TruffleHog" "trufflehog" "trufflesecurity/trufflehog" "_windows_$truffleArch\.tar\.gz$" $goBin
     }
 }
 else {
