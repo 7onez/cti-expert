@@ -126,9 +126,9 @@ bash scripts/install.sh --all         # + 以上所有内容
 
 | 标志 | 安装内容 | 大小 |
 |------|---------|------|
-| *(无)* | Python 包、whois、dig、jq、exiftool、maigret、sherlock、holehe、h8mail、theHarvester、trufflehog、waymore、xeuledoc、agentflow | ~50 MB |
+| *(无)* | Python 包、whois、dig、jq、exiftool、maigret、sherlock、holehe、h8mail、theHarvester、waymore、xeuledoc、agentflow | ~50 MB |
 | `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
-| `--go` | subfinder、amass、gau、gitleaks、httpx、phoneinfoga | +150 MB |
+| `--go` | subfinder、amass、gau、gitleaks、httpx、trufflehog、phoneinfoga | +150 MB |
 | `--all` | 全部内容 | ~400 MB |
 
 ---

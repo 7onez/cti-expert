@@ -126,9 +126,9 @@ bash scripts/install.sh --all         # + Tất cả
 
 | Flag | Cài gì | Kích thước |
 |------|--------|-----------|
-| *(không có)* | Python packages, whois, dig, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, trufflehog, waymore, xeuledoc, agentflow | ~50 MB |
+| *(không có)* | Python packages, whois, dig, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, waymore, xeuledoc, agentflow | ~50 MB |
 | `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
-| `--go` | subfinder, amass, gau, gitleaks, httpx, phoneinfoga | +150 MB |
+| `--go` | subfinder, amass, gau, gitleaks, httpx, trufflehog, phoneinfoga | +150 MB |
 | `--all` | Tất cả | ~400 MB |
 
 ---

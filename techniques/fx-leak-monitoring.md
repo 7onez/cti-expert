@@ -37,7 +37,7 @@ Establish ongoing visibility into new credential exposures, config leaks, and da
 ## Tools & Fallbacks
 | Priority | Tool | Install | Notes |
 |----------|------|---------|-------|
-| 1 | TruffleHog | `pip3 install trufflehog` | Best for repo scanning; validates secrets as live |
+| 1 | TruffleHog | `brew install trufflehog` or GitHub release binary | Best for repo scanning; validates secrets as live |
 | 2 | Gitleaks | `brew install gitleaks` | Fast; CI-friendly |
 | 3 | HaveIBeenPwned API | haveibeenpwned.com/API | Programmatic breach lookup |
 | 4 | Google Alerts | alerts.google.com | No install; covers indexed paste sites |

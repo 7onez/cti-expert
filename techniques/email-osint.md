@@ -53,7 +53,9 @@ ghunt login   # OAuth setup required (one-time)
 
 ### Domain-wide — theHarvester
 ```bash
-pip3 install theHarvester
+# Install from git — the PyPI `theHarvester` is an abandoned 0.0.1 placeholder
+# that ships no CLI and squats the top-level `discovery` and `lib` module names.
+uv tool install "git+https://github.com/laramies/theHarvester.git"
 # or: already included in Kali Linux
 ```
 
