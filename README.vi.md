@@ -16,15 +16,15 @@ Một kỹ năng của Claude Code biến Claude thành một nhà phân tích t
 
 **Mới trong v2.6:** **Trinh sát Trung Quốc / Sinophone** (`/icp` + `/cn-corp`) — lớp quy thuộc mà các cơ quan đăng ký phương Tây không chạm tới được: **giấy phép ICP (工信部备案)** ánh xạ tên miền sang **pháp nhân đăng ký tại Trung Quốc**, và **số sê-ri giấy phép** pivot đảo ngược sang mọi website anh em thuộc cùng một hồ sơ — liên kết cùng-nhà-vận-hành mạnh tương đương một GA ID dùng chung. Sau đó là chuỗi đăng ký: **GSXT** (dữ liệu gốc) → TianYanCha/QCC/Aiqicha → danh sách đen **信用中国** → chủ sở hữu thụ hưởng (UBO), kèm xác thực USCC và cờ trạng thái bị thu hồi. Bổ sung **Quake (360)** và **ZoomEye** làm các chỉ mục không gian mạng độc lập, **tầng Baidu** cho `/dork-sweep` (tầng 1–4 gần như không index nội dung hosted tại Trung Quốc), và **sinh biến thể CJK** — pinyin, Giản thể↔Phồn thể, thân từ tên công ty — thành một trục mới của `/pivot-suggest`. **Đường thanh toán fiat** (`/iban`) — phần lớn nạn nhân không dùng crypto mà chuyển khoản ngân hàng: [`iban_analyze.py`](scripts/iban_analyze.py) kiểm tra **ISO 7064 mod-97** (chứng minh một "số tài khoản" trên trang thanh toán là giả *mà không cần liên hệ ai*), phân tách BBAN thành mã ngân hàng/chi nhánh/số tài khoản, và cảnh báo **lệch quốc gia thụ hưởng** — mẫu mule kinh điển; bao gồm cả các đường thanh toán ngoài IBAN của VN/ĐNÁ (VietQR/NAPAS BIN, BIN thẻ, ví điện tử, BIC). **Chuẩn phân tích** — mọi phán định mang **thuật ngữ khả năng có dải xác suất** (*gần như không thể* → *gần như chắc chắn*) báo cáo song song với độ tin cậy bằng chứng; `/coverage` thêm **lượt kiểm 5W1H** (ma trận kỹ thuật chỉ đo nỗ lực — một case có thể đạt 96% mà vẫn không trả lời được **Vì sao** hay **Bằng cách nào**); `/threat-model` yêu cầu **ma trận ACH** cho quy thuộc: các giả thuyết đối thủ được chấm theo *mức bất nhất*, nêu tên giả thuyết á quân và bằng chứng có thể đảo thứ hạng. **Định kiểu hash** (`/hash-id`) — 32 hex là MD5 **hoặc NTLM**, một cái là file hash, cái kia là dữ liệu đăng nhập; định tuyến đúng dịch vụ trước khi tra cứu. **`/case` chạy không cần giám sát** — vòng lặp pivot mặc định `autonomy=auto`, mở rộng đến khi cạn frontier **không hỏi phê duyệt** (cổng độ tin cậy, không phải lời nhắc con người, mới là thứ giữ cho việc mở rộng gọn gàng); `/icp`, `/cn-corp`, `/iban`, `/hash-id` tự chạy **không cần cờ** và nạp kết quả trở lại vòng lặp như mọi node khác. **Che PII có thể đảo ngược** (`/redact`) — placeholder có số thứ tự ổn định (`[EMAIL_1]`) + bản đồ JSON đảo ngược được, round-trip chính xác từng byte; **opt-in** qua `--redact`, bộ xuất mặc định vẫn không bị che.
 
-**Mới trong v2.5:** **Pivot đệ quy — `/case` là "bản đồ mạng nhện"**: giờ đây `/case` chạy một cỗ máy pivot BFS đệ quy ([`pivot_orchestrator.py`](scripts/pivot_orchestrator.py) + [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md)) — mọi định danh phát hiện được (email/tên miền/IP/username/ví…) trở thành một seed mới và đồ thị quan hệ mở rộng theo từng bước **cho đến khi cạn kiệt frontier**; có kiểm soát độ tin cậy (liên kết khớp-chính-xác tự động theo đuổi, liên kết yếu/PII được giữ lại), an toàn vòng lặp (khử trùng lặp + giới hạn độ sâu), và **checkpoint theo từng độ sâu** (mặc định: active · exhaustive · checkpoint-per-depth). **Thu hoạch IOC từ archive** (`/webpivot --harvest`, [`wayback_harvest.py`](scripts/webpivot/wayback_harvest.py)) — chạy bộ trích xuất đầy đủ trên **toàn bộ lịch sử Wayback** của tên miền, gộp **email, số điện thoại, ví crypto, ID tracking/verification, ID nhà vận hành SaaS và mạng xã hội** kèm first-seen/last-seen — khôi phục cả những selector bị xóa về sau; xuất `indicators[]` thẳng vào bộ IOC, tự chạy trong `/case`. `/webpivot` giờ cũng trích xuất **số điện thoại** (`tel:` + định dạng) làm lead pivot. **Truy cập archive** ([`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py)) — WebFetch của Claude Code bị chặn khỏi `web.archive.org` (robots.txt); công cụ này đi vòng: CDX → chọn snapshot gần nhất → tải raw `id_`, có retry/backoff. Lệnh `asn` bản địa — tra cứu IP/ASN/tên miền không cần API key (ipwho.is + RDAP) trên Windows; nitefood/asn đầy đủ được tự động cài trên Linux/macOS/WSL. Tự động cài `whois` + `dig` + `asn` trên Windows (winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`, trước đây phải cài thủ công); gia cố trình cài đặt cho **Windows PowerShell 5.1** (sửa lỗi native-stderr làm dừng script, lỗi dò `OSArchitecture`, và maigret qua `uv tool --force`); tự động thêm `~/.local/bin` (công cụ uv + `asn`) vào PATH — phiên hiện tại **và** vĩnh viễn. **Pivot hạ tầng web** (`/cti-expert /webpivot`) — **miễn phí/keyless theo mặc định** (crt.sh + passive DNS + urlscan ẩn danh luôn chạy) và **tự động phát hiện API key premium** (Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML) để tự nâng cấp mà không cần cờ — trích xuất artifact (favicon/tracker/ví/token nhà vận hành) &rarr; truy vấn pivot xếp hạng, kèm bộ tương quan **cùng nhà vận hành**: `/cti-expert /rank-relations` (chấm điểm có trọng số + danh sách chặn nhiễu), `/cti-expert /cert-pivot` (pivot vân tay chứng chỉ TLS), `/cti-expert /pivot-suggest`, `/cti-expert /crypto-balance`, `/cti-expert /email-hygiene`, `/cti-expert /sensitive-paths`; phân tích **có kiểm soát bằng chứng** — mọi khẳng định phải trích dẫn một phát hiện tồn tại, dữ liệu thu thập không đáng tin được gắn thẻ và không bao giờ được thực thi. **Quét thiết bị biên** (`/cti-expert /appliance-scan`) — fingerprint thiết bị edge/VPN hướng Internet (Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange) theo cách bị động trước (Shodan InternetDB/Censys) &rarr; ánh xạ sang **CVE trong danh mục CISA KEV**, cấp dữ liệu cho `/vuln-check` + `/threat-model`. **Bản đồ SaaS & danh tính** (`/cti-expert /saas-map`) — token xác thực tenancy qua DNS-TXT (Google/Atlassian/Zscaler/Salesforce/Workday…), fingerprint IdP ngoài Microsoft (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), và phát hiện API/GraphQL/OpenAPI-spec không cần xác thực. **Xác thực credential chỉ-đọc** — key phát hiện được kiểm tra còn sống qua endpoint định danh (AWS STS, phạm vi GitHub, Slack `auth.test`, `…/v1/models`), không bao giờ gọi endpoint ghi/xóa — nâng lên CRITICAL kèm bằng chứng tài khoản/phạm vi.
+**Mới trong v2.5:** **Pivot đệ quy — `/case` là "bản đồ mạng nhện"**: giờ đây `/case` chạy một cỗ máy pivot BFS đệ quy ([`pivot_orchestrator.py`](scripts/pivot_orchestrator.py) + [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md)) — mọi định danh phát hiện được (email/tên miền/IP/username/ví…) trở thành một seed mới và đồ thị quan hệ mở rộng theo từng bước **cho đến khi cạn kiệt frontier**; có kiểm soát độ tin cậy (liên kết khớp-chính-xác tự động theo đuổi, liên kết yếu/PII được giữ lại), an toàn vòng lặp (khử trùng lặp + giới hạn độ sâu), và **checkpoint theo từng độ sâu** (mặc định: active · exhaustive · checkpoint-per-depth). **Thu hoạch IOC từ archive** (`/webpivot --harvest`, [`wayback_harvest.py`](scripts/webpivot/wayback_harvest.py)) — chạy bộ trích xuất đầy đủ trên **toàn bộ lịch sử Wayback** của tên miền, gộp **email, số điện thoại, ví crypto, ID tracking/verification, ID nhà vận hành SaaS và mạng xã hội** kèm first-seen/last-seen — khôi phục cả những selector bị xóa về sau; xuất `indicators[]` thẳng vào bộ IOC, tự chạy trong `/case`. `/webpivot` giờ cũng trích xuất **số điện thoại** (`tel:` + định dạng) làm lead pivot. **Truy cập archive** ([`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py)) — WebFetch của Claude Code bị chặn khỏi `web.archive.org` (robots.txt); công cụ này đi vòng: CDX → chọn snapshot gần nhất → tải raw `id_`, có retry/backoff. Lệnh `asn` bản địa — tra cứu IP/ASN/tên miền không cần API key (ipwho.is + RDAP) trên Windows; nitefood/asn đầy đủ được tự động cài trên Linux/macOS/WSL. Tự động cài `whois` + `dig` + `asn` trên Windows (winget `Microsoft.Sysinternals.Whois` + `ISC.Bind`, trước đây phải cài thủ công); gia cố trình cài đặt cho **Windows PowerShell 5.1** (sửa lỗi native-stderr làm dừng script, lỗi dò `OSArchitecture`, và maigret qua `uv tool --force`); tự động thêm `~/.local/bin` (công cụ uv + `asn`) vào PATH — phiên hiện tại **và** vĩnh viễn. **Pivot hạ tầng web** (`/webpivot`) — **miễn phí/keyless theo mặc định** (crt.sh + passive DNS + urlscan ẩn danh luôn chạy) và **tự động phát hiện API key premium** (Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML) để tự nâng cấp mà không cần cờ — trích xuất artifact (favicon/tracker/ví/token nhà vận hành) &rarr; truy vấn pivot xếp hạng, kèm bộ tương quan **cùng nhà vận hành**: `/rank-relations` (chấm điểm có trọng số + danh sách chặn nhiễu), `/cert-pivot` (pivot vân tay chứng chỉ TLS), `/pivot-suggest`, `/crypto-balance`, `/email-hygiene`, `/sensitive-paths`; phân tích **có kiểm soát bằng chứng** — mọi khẳng định phải trích dẫn một phát hiện tồn tại, dữ liệu thu thập không đáng tin được gắn thẻ và không bao giờ được thực thi. **Quét thiết bị biên** (`/appliance-scan`) — fingerprint thiết bị edge/VPN hướng Internet (Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange) theo cách bị động trước (Shodan InternetDB/Censys) &rarr; ánh xạ sang **CVE trong danh mục CISA KEV**, cấp dữ liệu cho `/vuln-check` + `/threat-model`. **Bản đồ SaaS & danh tính** (`/saas-map`) — token xác thực tenancy qua DNS-TXT (Google/Atlassian/Zscaler/Salesforce/Workday…), fingerprint IdP ngoài Microsoft (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), và phát hiện API/GraphQL/OpenAPI-spec không cần xác thực. **Xác thực credential chỉ-đọc** — key phát hiện được kiểm tra còn sống qua endpoint định danh (AWS STS, phạm vi GitHub, Slack `auth.test`, `…/v1/models`), không bao giờ gọi endpoint ghi/xóa — nâng lên CRITICAL kèm bằng chứng tài khoản/phạm vi.
 
-**Mới trong v2.4:** Phát hiện hệ điều hành đa nền tảng (Windows/macOS/Linux) với tự động cài đặt theo OS và tạo DOCX tự khắc phục (UTF-8 + pandoc); bộ công cụ ưu tiên **uv** (uv venv/pip/tool, script `uv run` PEP 723 không cần thiết lập); hỗ trợ **đa tác nhân** — chạy trên Claude Code **và** OpenAI Codex qua `AGENTS.md`; trình phân tích nhật ký stealer (`/cti-expert /stealer-log`) — định danh họ mã độc, phân tích nạn nhân-vs-kẻ vận hành, tương quan đa nhật ký, trích xuất IOC + dữ liệu thô; phát hiện trang quản trị & điểm cuối nhạy cảm (admin/adm/kef/ador/panel…); tích hợp **agent-browser** (vercel-labs) làm trình thu thập trình duyệt tương tác chính; gia cố cài đặt trên máy/VPS sạch + CI.
+**Mới trong v2.4:** Phát hiện hệ điều hành đa nền tảng (Windows/macOS/Linux) với tự động cài đặt theo OS và tạo DOCX tự khắc phục (UTF-8 + pandoc); bộ công cụ ưu tiên **uv** (uv venv/pip/tool, script `uv run` PEP 723 không cần thiết lập); hỗ trợ **đa tác nhân** — chạy trên Claude Code **và** OpenAI Codex qua `AGENTS.md`; trình phân tích nhật ký stealer (`/stealer-log`) — định danh họ mã độc, phân tích nạn nhân-vs-kẻ vận hành, tương quan đa nhật ký, trích xuất IOC + dữ liệu thô; phát hiện trang quản trị & điểm cuối nhạy cảm (admin/adm/kef/ador/panel…); tích hợp **agent-browser** (vercel-labs) làm trình thu thập trình duyệt tương tác chính; gia cố cài đặt trên máy/VPS sạch + CI.
 
 **Mới trong v2.3:** WHOIS toàn cầu cho mọi TLD (whoisdomain + CLI + Whoxy API; .vn, .th, .sg, .kr…), WHOIS đảo ngược & lịch sử; thu thập web Scrapling thích ứng (tĩnh → chống bot → kết xuất JS); trình duyệt headless tự động mở; làm giàu song song AgentFlow (DAG); phân tích HTML ~2ms; yêu cầu tối thiểu Python 3.10+.
 
 **Mới trong v2.2:** Pháp y hình ảnh & tìm kiếm khuôn mặt (FaceCheck.id, TinEye, FotoForensics, picarta.ai AI geolocation), điều tra blockchain (Blockchair, Etherscan, WalletExplorer, Chainabuse), theo dõi vận tải (ADS-B Exchange theo dõi máy bay, Marine Traffic theo dõi tàu, VIN decoder), điều tra darknet (Ahmia.fi tìm kiếm Tor, ransomwatch), mạng xã hội mở rộng (Reddit, Instagram, TikTok, Telegram), tra cứu người (TruePeopleSearch, IDCrawl), 11 mẫu Google mega-dork bao phủ 73 domain.
 
-**Mới trong v2.1:** Trực quan hóa đường tấn công (`/cti-expert /render threat-path`), bề mặt tấn công (`/cti-expert /render attack-surface`), xuất IOC STIX 2.1 (`/cti-expert /report ioc`), theo dõi rủi ro theo thời gian (`/cti-expert /drift`), ảnh chụp Wayback (`/cti-expert /snapshots`, `/cti-expert /diff`), hướng dẫn người mới (`/cti-expert /onboard`), giải thích phát hiện (`/cti-expert /clarify`), phân tích khoảng trống (`/cti-expert /blind-spots`), kiểm tra nguồn (`/cti-expert /source-check`), so sánh phiên (`/cti-expert /workspace diff`), điểm chất lượng (`/cti-expert /quality`), thang độ tin cậy nguồn A-F, 4 loại thực thể mới.
+**Mới trong v2.1:** Trực quan hóa đường tấn công (`/render threat-path`), bề mặt tấn công (`/render attack-surface`), xuất IOC STIX 2.1 (`/report ioc`), theo dõi rủi ro theo thời gian (`/drift`), ảnh chụp Wayback (`/snapshots`, `/diff`), hướng dẫn người mới (`/onboard`), giải thích phát hiện (`/clarify`), phân tích khoảng trống (`/blind-spots`), kiểm tra nguồn (`/source-check`), so sánh phiên (`/workspace diff`), điểm chất lượng (`/quality`), thang độ tin cậy nguồn A-F, 4 loại thực thể mới.
 
 **Khả năng cốt lõi:** Trinh sát đa vector trên mọi loại mục tiêu (cá nhân, tên miền, tổ chức, tên người dùng, email, IP, WiFi) với xác thực phát hiện tự động, chấm điểm rủi ro phơi bày, và báo cáo tình báo có cấu trúc ở nhiều định dạng.
 
@@ -39,7 +39,7 @@ Một kỹ năng của Claude Code biến Claude thành một nhà phân tích t
 #### Tại sao nên dùng Claude Code CLI?
 
 Toàn bộ workflow CTI Expert được tối ưu cho Claude Code CLI:
-- **Phiên làm việc liên tục** — điều tra được lưu qua `/cti-expert /workspace save`
+- **Phiên làm việc liên tục** — điều tra được lưu qua `/workspace save`
 - **Truy cập đầy đủ công cụ** — ghi file, chạy Python, tạo DOCX, tất cả chạy tự nhiên
 - **Gọi skill trực tiếp** — gõ `/cti-expert` ngay trong terminal
 - **Agent song song** — AgentFlow hoạt động tốt nhất với CLI
@@ -193,35 +193,59 @@ claude   # mở Claude Code CLI
 
 ### Bắt đầu nhanh
 
+> **Cách chạy lệnh — đọc phần này trước.** Chỉ cần nhớ **một lệnh: `/cti <mục-tiêu>`.** Nó tự nhận diện mục tiêu (tên miền, IP, email, username, số điện thoại, ví, hash, APK) và chạy đúng chuỗi kỹ thuật. Bên dưới là **8 lệnh đã đăng ký** với Claude Code, dùng được ngay từ prompt lạnh ở bất kỳ dự án nào:
+>
+> | Lệnh | Chức năng |
+> |------|-----------|
+> | **`/cti <mục-tiêu>`** | **Điểm vào** — định tuyến theo loại mục tiêu, chạy toàn bộ chuỗi |
+> | `/cti-recall <seed>` | *"Đã thấy chưa?"* — đối chiếu mọi case trước. **Chạy đầu tiên.** |
+> | `/cti-case <ID> <seeds>` | Pipeline tất định: thu thập → phân cụm → đánh giá |
+> | `/cti-pivot <url\|ip>` | Thu thập artifact pivot từ một mục tiêu |
+> | `/cti-cluster <domain>` | Mở rộng & tương quan một case sẵn có |
+> | `/cti-check <chỉ-báo>` | Kiểm soát dương-tính-giả — liên kết thật hay nhiễu dùng chung? |
+> | `/cti-report <ID>` | Kết xuất đồ thị quan hệ + PDF/DOCX |
+> | `/cti-status` | Kiểm tra sức khỏe — backend, MCP, tín dụng API |
+>
+> Mọi lệnh **khác** trên trang này (`/case`, `/webpivot`, `/report`…) là **lệnh quy ước**: cú pháp rút gọn, dùng được sau khi skill đã nạp (qua `/cti`, hoặc gõ `/cti-expert` để mở skill). Ở prompt lạnh, hãy dùng một lệnh đã đăng ký ở trên, hoặc chỉ cần mô tả mục tiêu bằng lời — kết quả như nhau.
+
 ```bash
-/cti-expert /case example.com                   # Chạy case tự động hoàn toàn
-/cti-expert /flow person                        # Quy trình điều tra cá nhân
-/cti-expert /flow domain                        # Quy trình trinh sát tên miền
-/cti-expert /sweep @username                    # Trinh sát đa vector trên handle
-/cti-expert /query example.com                  # 12-15 truy vấn tìm kiếm nâng cao
-/cti-expert /username johndoe                   # Liệt kê nền tảng (3000+)
-/cti-expert /email-deep user@domain.com         # Điều tra email chuyên sâu
-/cti-expert /github-osint github.com/org/repo   # Hồ sơ GitHub, repo, code, commit, fork
-/cti-expert /webpivot https://scam-site.top     # Pivot hạ tầng web → truy vấn pivot xếp hạng
-/cti-expert /rank-relations                      # Xếp hạng quan hệ cùng nhà vận hành (lọc nhiễu)
-/cti-expert /cert-pivot scam-site.top           # Pivot vân tay chứng chỉ TLS + tên miền SAN
-/cti-expert /icp scam-site.top                  # Giấy phép ICP → pháp nhân TQ + tên miền anh em
-/cti-expert /cn-corp 深圳市某某科技有限公司        # Chuỗi đăng ký doanh nghiệp TQ (GSXT → UBO)
-/cti-expert /iban GB29NWBK60161331926819        # Xác thực + phân tách số tài khoản ngân hàng
-/cti-expert /hash-id <hash>                     # Định kiểu hash trước khi tra cứu
-/cti-expert /redact REPORT.md                   # Bản báo cáo che PII để chia sẻ (opt-in)
-/cti-expert /backend                            # Phát hiện backend tùy chọn + báo tier (cần intel_engine)
-/cti-expert /kb --entity example.com            # Tra cứu cơ sở tri thức chia sẻ (thực thể/cụm/chỉ báo chung)
-/cti-expert /recall scam-site.top               # "Tôi đã thấy chưa?" — đối chiếu seed với mọi case trước
-/cti-expert /risk CASE-0001                      # Chấm điểm NRD / hosting chống đạn / đường tiền
-/cti-expert /cert-overlap a.com b.com           # Phán định cùng-nhà-vận-hành qua chứng chỉ TLS/SAN
-/cti-expert /reference check favicon:123        # Sổ kiểm soát dương-tính-giả (BENIGN vs SIGNAL)
-/cti-expert /harness status CASE-0001           # Điều phối toàn case — bền vững, có phiên bản, hội tụ
-/cti-expert /report pdf assessment.md out       # Kết xuất PDF/DOCX chuẩn báo cáo (IntelReport)
-/cti-expert /binary ./trader.apk                # Trích IOC từ APK/exe lừa đảo → gộp với hạ tầng web
-/cti-expert /exposure domain.com                # Điểm rủi ro tổng hợp (0-100)
-/cti-expert /report                             # Báo cáo kỹ thuật INTSUM
-/cti-expert /workspace save                     # Lưu trạng thái workspace để tiếp tục sau
+/cti example.com                    # Điều tra bất kỳ mục tiêu nào (tự định tuyến)
+/cti-recall example.com             # Luôn chạy đầu: đã thấy seed này chưa?
+/cti-case CASE-0001 example.com     # Pipeline đầy đủ trên một hoặc nhiều seed
+/cti-report CASE-0001 --pdf         # Kết xuất: đồ thị quan hệ + PDF/DOCX
+```
+
+**Lệnh quy ước** (dùng sau khi skill đã nạp):
+
+```bash
+/case example.com                   # Chạy case tự động hoàn toàn
+/flow person                        # Quy trình điều tra cá nhân
+/flow domain                        # Quy trình trinh sát tên miền
+/sweep @username                    # Trinh sát đa vector trên handle
+/query example.com                  # 12-15 truy vấn tìm kiếm nâng cao
+/username johndoe                   # Liệt kê nền tảng (3000+)
+/email-deep user@domain.com         # Điều tra email chuyên sâu
+/github-osint github.com/org/repo   # Hồ sơ GitHub, repo, code, commit, fork
+/webpivot https://scam-site.top     # Pivot hạ tầng web → truy vấn pivot xếp hạng
+/rank-relations                      # Xếp hạng quan hệ cùng nhà vận hành (lọc nhiễu)
+/cert-pivot scam-site.top           # Pivot vân tay chứng chỉ TLS + tên miền SAN
+/icp scam-site.top                  # Giấy phép ICP → pháp nhân TQ + tên miền anh em
+/cn-corp 深圳市某某科技有限公司        # Chuỗi đăng ký doanh nghiệp TQ (GSXT → UBO)
+/iban GB29NWBK60161331926819        # Xác thực + phân tách số tài khoản ngân hàng
+/hash-id <hash>                     # Định kiểu hash trước khi tra cứu
+/redact REPORT.md                   # Bản báo cáo che PII để chia sẻ (opt-in)
+/backend                            # Phát hiện backend tùy chọn + báo tier (cần intel_engine)
+/kb --entity example.com            # Tra cứu cơ sở tri thức chia sẻ (thực thể/cụm/chỉ báo chung)
+/recall scam-site.top               # "Tôi đã thấy chưa?" — đối chiếu seed với mọi case trước
+/risk CASE-0001                      # Chấm điểm NRD / hosting chống đạn / đường tiền
+/cert-overlap a.com b.com           # Phán định cùng-nhà-vận-hành qua chứng chỉ TLS/SAN
+/reference check favicon:123        # Sổ kiểm soát dương-tính-giả (BENIGN vs SIGNAL)
+/harness status CASE-0001           # Điều phối toàn case — bền vững, có phiên bản, hội tụ
+/report pdf assessment.md out       # Kết xuất PDF/DOCX chuẩn báo cáo (IntelReport)
+/binary ./trader.apk                # Trích IOC từ APK/exe lừa đảo → gộp với hạ tầng web
+/exposure domain.com                # Điểm rủi ro tổng hợp (0-100)
+/report                             # Báo cáo kỹ thuật INTSUM
+/workspace save                     # Lưu trạng thái workspace để tiếp tục sau
 ```
 
 ---

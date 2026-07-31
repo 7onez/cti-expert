@@ -57,10 +57,10 @@
 A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **40 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
-> **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [handbook/api-keys.md](handbook/api-keys.md).
+> **Keyless by default, more powerful with your keys.** Every core technique runs with zero API keys. Add any free or paid keys to `.env` (or run `/apikeys set <service> <KEY>`) and the skill auto-detects them, unlocking higher-tier pivots: reverse favicon→host, passive DNS, certificate search, sibling-domain discovery. A missing or bad key never breaks a run — it just degrades to a note. Setup guide: [handbook/api-keys.md](handbook/api-keys.md).
 
 > [!TIP]
-> **Two layers, one skill — broad collector + built-in deep pipeline.** cti-expert is the **broad collector** (the wide net: `/webpivot`, `/sweep`, `/subdomain`, `/icp`, `/username`, `/email-deep`, `/breach-deep`…). It now **vendors the vendored OSINT engine in-repo** as the **pipeline + deeper pivoting logic**: a persistent knowledge base (`knowledge/`), versioned cases (`cases/`), cross-case correlation, calibrated assessment, and rendering. The chain: broad collection → `/pipeline` (or `/harness`) ingests it, then applies the deep logic — *"seen this operator before?"* (`/recall`), whole-KB clustering (`/kb --cluster`, `/cert-overlap`), false-positive control (`/reference`), risk (`/risk`), and a versioned `Assessment`. `/backend` resolves to **SELF** (no external setup); deps via `uv venv && uv pip install -r requirements.txt`. Full architecture: [connectors/intel-backend.md](connectors/intel-backend.md).
+> **One skill, two layers.** cti-expert is the *broad collector* — the wide net (`/sweep`, `/webpivot`, `/subdomain`, `/username`, `/email-deep`…). Built into the repo is a *deep pipeline* (`intel_engine/`) that turns raw collection into a real case: a persistent knowledge base, versioned cases, cross-case correlation, and calibrated assessment. The flow reads like a sentence — **collect broadly → "seen this operator before?" → cluster → filter false positives → assess.** No external setup: the backend resolves to `SELF`; install the deep-layer deps once with `uv venv && uv pip install -r requirements.txt`. Architecture: [connectors/intel-backend.md](connectors/intel-backend.md).
 
 <table>
 <tr>
@@ -207,12 +207,12 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 | Category | New Commands | What It Does |
 |----------|-------------|--------------|
-| **Intelligence** | `/cti-expert /render threat-path`, `/cti-expert /render attack-surface` | Attack path flow + infrastructure exposure visualization |
-| **Intelligence** | `/cti-expert /snapshots`, `/cti-expert /diff` | Wayback Machine snapshots and version diffing |
-| **Intelligence** | `/cti-expert /drift`, `/cti-expert /report ioc` | Temporal risk tracking + IOC export (STIX 2.1) |
-| **UX** | `/cti-expert /onboard`, `/cti-expert /clarify`, `/cti-expert /quality` | First-time tutorial, finding explanation, quality scoring |
-| **UX** | `/cti-expert /blind-spots`, `/cti-expert /source-check` | Gap analysis + batch URL verification |
-| **UX** | `/cti-expert /workspace diff` | Compare two saved investigation sessions |
+| **Intelligence** | `/render threat-path`, `/render attack-surface` | Attack path flow + infrastructure exposure visualization |
+| **Intelligence** | `/snapshots`, `/diff` | Wayback Machine snapshots and version diffing |
+| **Intelligence** | `/drift`, `/report ioc` | Temporal risk tracking + IOC export (STIX 2.1) |
+| **UX** | `/onboard`, `/clarify`, `/quality` | First-time tutorial, finding explanation, quality scoring |
+| **UX** | `/blind-spots`, `/source-check` | Gap analysis + batch URL verification |
+| **UX** | `/workspace diff` | Compare two saved investigation sessions |
 | **Data Model** | Source Reliability A-F | Complements trust scores with source-level grading |
 | **Data Model** | 4 new entity types | Device, Image, Crypto Address, Custom |
 | **Data Model** | HIGH conflict severity | 4-level severity: CRITICAL/HIGH/NOTABLE/MINOR |
@@ -238,7 +238,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 ### Why Claude Code CLI?
 
 The entire CTI Expert workflow is optimized for Claude Code CLI. The CLI gives you:
-- **Persistent sessions** — investigations survive terminal restarts via `/cti-expert /workspace save`
+- **Persistent sessions** — investigations survive terminal restarts via `/workspace save`
 - **Full tool access** — file writes, Python scripts, DOCX generation, all run natively
 - **Skill invocation** — type `/cti-expert` directly in the terminal, no browser required
 - **Background agents** — parallel enrichment via AgentFlow works best with the CLI
@@ -354,7 +354,7 @@ claude   # opens Claude Code CLI
 /cti-expert
 ```
 
-> If the skill loads, you'll see the CTI Expert command menu. Type `/cti-expert /help` for the full command list.
+> If the skill loads, you'll see the CTI Expert command menu. Type `/cti` and describe your goal, or open `SKILL.md` for the full command list.
 
 ---
 
@@ -435,56 +435,86 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
 ## Quick Start
 
-> **How to run commands:** All commands below use the `/cti-expert` prefix. Type `/cti-expert` followed by the command in Claude Code.
->
-> Example: `/cti-expert /case example.com` — not just `/case example.com`
+### How commands work — read this first
 
-### 1 &mdash; Full Autonomous Case
+There is **one command to remember: `/cti <target>`.** It looks at what you gave it — a domain, IP, email, username, phone, wallet, hash, or APK — and runs the right chain automatically. That's usually all you need.
+
+Under it sit **8 registered commands** that Claude Code recognizes from a cold prompt in any project (no need to load the skill first):
+
+| Command | What it does |
+|---------|--------------|
+| **`/cti <target>`** | **Entry point** — routes by target type and runs the whole chain |
+| `/cti-recall <seed>` | *"Have I seen this before?"* — check against every prior case. **Run this first.** |
+| `/cti-case <ID> <seeds>` | Full deterministic pipeline: collect → ingest → cluster → assess |
+| `/cti-pivot <url\|ip>` | Collect pivot artifacts from one target |
+| `/cti-cluster <domain>` | Expand & correlate an existing case |
+| `/cti-check <indicator>` | False-positive control — real operator link, or shared noise? |
+| `/cti-report <ID>` | Render the relationship graph + a polished PDF/DOCX |
+| `/cti-status` | Health check — backend, MCP tools, API-credit balances |
+
+Every *other* command on this page (`/case`, `/webpivot`, `/report`, `/sweep`…) is a **convention command**: shorthand that works once the skill is loaded — via `/cti`, or by typing `/cti-expert` to open the skill directly. At a cold prompt, reach for a registered command above, or just describe your goal in plain English — it works identically.
+
+### 1 &mdash; Investigate anything
 
 ```bash
-/cti-expert /case example.com
+/cti example.com          # domain  → full pipeline
+/cti user@domain.com      # email   → breach + infrastructure + cross-platform
+/cti @username            # handle  → 3000+ platform enumeration, then pivot
+/cti 185.1.1.1            # IP      → ASN, co-tenancy, open ports, passive DNS
+/cti ./trader.apk         # file    → static IOCs, clustered with the web infra
 ```
 
-> Runs every applicable technique for the target type, then expands the pivot graph **to closure with no approval prompts**. Auto-generates the default export set: `.md` + interactive `.html` + `.json` + `.csv` + IOC bundle. Add `--redact` for a shareable PII-placeholdered copy.
+> `/cti` picks the right techniques for the target, then expands the pivot graph **to closure — no approval prompts.** Add `--deep` for parallel sub-agent fan-out, `--quick` for a single pass, or `--passive` for hostile targets (no live contact). Default output: Markdown + interactive HTML + JSON + CSV + IOC bundle.
 
-### 2 &mdash; Guided Flows
+### 2 &mdash; Run a case end-to-end
 
 ```bash
-/cti-expert /flow person           # Person investigation workflow
-/cti-expert /flow domain           # Domain reconnaissance workflow
-/cti-expert /flow image            # Image verification workflow
+/cti-recall example.com               # always first — have we seen this seed before?
+/cti-case CASE-0001 example.com       # full pipeline on one or more seeds
+/cti-cluster CASE-0001                # expand: peers, shared indicators, TLS overlap
+/cti-report CASE-0001 --pdf           # deliver: relationship graph + PDF/DOCX
 ```
 
-### 3 &mdash; Targeted Reconnaissance
+### 3 &mdash; Guided Flows
+
+> The commands below are **convention commands** — type them once the skill is loaded.
 
 ```bash
-/cti-expert /sweep @username                    # Multi-vector recon on handle
-/cti-expert /query example.com                  # 12-15 advanced search queries
-/cti-expert /username johndoe                   # Platform enumeration (3000+)
-/cti-expert /email-deep user@domain.com         # Deep email investigation
-/cti-expert /subdomain example.com              # Certificate transparency + brute-force
-/cti-expert /github-osint github.com/org/repo   # GitHub profiles, repos, code, commits, forks
-/cti-expert /threat-check 185.1.1.1             # IP/domain/URL threat intelligence
-/cti-expert /scam-check suspicious-site.xyz     # Phishing/scam domain check
-/cti-expert /breach-deep user@domain.com        # Multi-source breach lookup
+/flow person           # Person investigation workflow
+/flow domain           # Domain reconnaissance workflow
+/flow image            # Image verification workflow
 ```
 
-### 4 &mdash; Analysis & Assessment
+### 4 &mdash; Targeted Reconnaissance
 
 ```bash
-/cti-expert /exposure domain.com                # Composite risk score (0-100)
-/cti-expert /threat-model                       # Build threat model from findings
-/cti-expert /validate                           # Verify all findings
-/cti-expert /coverage                           # Check investigation completeness
+/sweep @username                    # Multi-vector recon on handle
+/query example.com                  # 12-15 advanced search queries
+/username johndoe                   # Platform enumeration (3000+)
+/email-deep user@domain.com         # Deep email investigation
+/subdomain example.com              # Certificate transparency + brute-force
+/github-osint github.com/org/repo   # GitHub profiles, repos, code, commits, forks
+/threat-check 185.1.1.1             # IP/domain/URL threat intelligence
+/scam-check suspicious-site.xyz     # Phishing/scam domain check
+/breach-deep user@domain.com        # Multi-source breach lookup
 ```
 
-### 5 &mdash; Reporting
+### 5 &mdash; Analysis & Assessment
 
 ```bash
-/cti-expert /report                             # Technical INTSUM report
-/cti-expert /report brief                       # Executive summary
-/cti-expert /brief                              # Plain-language summary
-/cti-expert /workspace save                     # Save case workspace state (resume later)
+/exposure domain.com                # Composite risk score (0-100)
+/threat-model                       # Build threat model from findings
+/validate                           # Verify all findings
+/coverage                           # Check investigation completeness
+```
+
+### 6 &mdash; Reporting
+
+```bash
+/report                             # Technical INTSUM report
+/report brief                       # Executive summary
+/brief                              # Plain-language summary
+/workspace save                     # Save case workspace state (resume later)
 ```
 
 <br>
@@ -634,7 +664,7 @@ Every investigation follows four automated phases:
 
 ## Command Reference
 
-> Full command list: See **SKILL.md** for comprehensive reference.
+> The tables below are **convention commands** — the full technique vocabulary, available once the skill is loaded (via `/cti` or `/cti-expert`). The 8 registered entry commands (`/cti`, `/cti-recall`, `/cti-case`…) are in [Quick Start](#quick-start) above. For the authoritative reference, see **[SKILL.md](SKILL.md)**.
 
 <details>
 <summary><b>Acquire</b> — Data collection commands</summary>
@@ -642,16 +672,16 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /case [target]` | Full pipeline — every applicable technique |
-| `/cti-expert /sweep [target]` | Multi-vector recon (person/domain/org/username/email/IP) |
-| `/cti-expert /query [subject]` | 12-15 advanced search operator queries |
-| `/cti-expert /username [handle]` | 3000+ platform enumeration |
-| `/cti-expert /phone [number]` | Carrier lookup, reputation, associations |
-| `/cti-expert /email-deep [email]` | Accounts, breaches, infrastructure |
-| `/cti-expert /subdomain [domain]` | CT logs + passive enumeration |
-| `/cti-expert /github-osint [target]` | GitHub user/org/repo profiles, code, commits, forks |
-| `/cti-expert /threat-check [target]` | IP/domain/URL/hash threat intelligence |
-| `/cti-expert /breach-deep [email]` | Multi-source breach lookup |
+| `/case [target]` | Full pipeline — every applicable technique |
+| `/sweep [target]` | Multi-vector recon (person/domain/org/username/email/IP) |
+| `/query [subject]` | 12-15 advanced search operator queries |
+| `/username [handle]` | 3000+ platform enumeration |
+| `/phone [number]` | Carrier lookup, reputation, associations |
+| `/email-deep [email]` | Accounts, breaches, infrastructure |
+| `/subdomain [domain]` | CT logs + passive enumeration |
+| `/github-osint [target]` | GitHub user/org/repo profiles, code, commits, forks |
+| `/threat-check [target]` | IP/domain/URL/hash threat intelligence |
+| `/breach-deep [email]` | Multi-source breach lookup |
 
 </details>
 
@@ -661,11 +691,11 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /branch [data]` | Lateral expansion (email&rarr;username, username&rarr;email, etc.) |
-| `/cti-expert /crossref` | Shared identifier detection across subjects |
-| `/cti-expert /link-subjects [A] [B]` | Define connection between subjects |
-| `/cti-expert /show-connections` | Display logged connections |
-| `/cti-expert /graph` | Full ASCII subject relationship map |
+| `/branch [data]` | Lateral expansion (email&rarr;username, username&rarr;email, etc.) |
+| `/crossref` | Shared identifier detection across subjects |
+| `/link-subjects [A] [B]` | Define connection between subjects |
+| `/show-connections` | Display logged connections |
+| `/graph` | Full ASCII subject relationship map |
 
 </details>
 
@@ -675,10 +705,10 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /exposure [target]` | Composite risk score (0-100) |
-| `/cti-expert /threat-model` | Build threat model from findings |
-| `/cti-expert /validate` | Verify finding evidence chains |
-| `/cti-expert /coverage` | Check investigation completeness |
+| `/exposure [target]` | Composite risk score (0-100) |
+| `/threat-model` | Build threat model from findings |
+| `/validate` | Verify finding evidence chains |
+| `/coverage` | Check investigation completeness |
 
 </details>
 
@@ -688,10 +718,10 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /report` | Technical INTSUM report |
-| `/cti-expert /report brief` | Executive summary |
-| `/cti-expert /brief` | Plain-language summary |
-| `/cti-expert /workspace save` | Persist case workspace state (resume later) |
+| `/report` | Technical INTSUM report |
+| `/report brief` | Executive summary |
+| `/brief` | Plain-language summary |
+| `/workspace save` | Persist case workspace state (resume later) |
 
 </details>
 
@@ -701,14 +731,14 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /webpivot [url]` | Extract favicon/tracker/wallet/SaaS-operator artifacts &rarr; ranked pivot queries (Shodan/FOFA/urlscan). Flags: `--rank`, `--cert`, `--graph`, `--history`, `--whois` |
-| `/cti-expert /rank-relations` | Score + rank same-operator relations across pages (weighted signals, noise-filtered, clustered) |
-| `/cti-expert /cert-pivot [domain]` | Find other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) |
-| `/cti-expert /pivot-suggest` | Rank "what to pivot next" from findings (leet/variant/temporal/domain clusters, **CJK pinyin + Traditional + company-stem**) |
-| `/cti-expert /crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot |
-| `/cti-expert /iban [value]` | Validate + decompose a bank account (mod-97, BBAN split, bank code, mule signals) |
-| `/cti-expert /email-hygiene [email]` | Grade an email domain 0-100 + A-F (disposable/MX/free/role) |
-| `/cti-expert /sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) |
+| `/webpivot [url]` | Extract favicon/tracker/wallet/SaaS-operator artifacts &rarr; ranked pivot queries (Shodan/FOFA/urlscan). Flags: `--rank`, `--cert`, `--graph`, `--history`, `--whois` |
+| `/rank-relations` | Score + rank same-operator relations across pages (weighted signals, noise-filtered, clustered) |
+| `/cert-pivot [domain]` | Find other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) |
+| `/pivot-suggest` | Rank "what to pivot next" from findings (leet/variant/temporal/domain clusters, **CJK pinyin + Traditional + company-stem**) |
+| `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot |
+| `/iban [value]` | Validate + decompose a bank account (mod-97, BBAN split, bank code, mule signals) |
+| `/email-hygiene [email]` | Grade an email domain 0-100 + A-F (disposable/MX/free/role) |
+| `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) |
 
 </details>
 
@@ -718,10 +748,10 @@ Every investigation follows four automated phases:
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /icp [domain\|serial]` | ICP filing &rarr; registered PRC entity + licence no.; reverse the **licence serial** to sibling domains under one filing |
-| `/cti-expert /cn-corp [name\|USCC]` | GSXT &rarr; TianYanCha/QCC/Aiqicha &rarr; 信用中国 chain: officers, shareholders, subsidiaries, UBO, revoked-status flags |
-| `/cti-expert /dork-sweep [t] --baidu` | Baidu tier — tiers 1&ndash;4 (Google/Bing/DDG) index almost no CN-hosted content |
-| `/cti-expert /pivot-suggest --cjk` | Pinyin, Simplified&harr;Traditional and company-name-stem variants |
+| `/icp [domain\|serial]` | ICP filing &rarr; registered PRC entity + licence no.; reverse the **licence serial** to sibling domains under one filing |
+| `/cn-corp [name\|USCC]` | GSXT &rarr; TianYanCha/QCC/Aiqicha &rarr; 信用中国 chain: officers, shareholders, subsidiaries, UBO, revoked-status flags |
+| `/dork-sweep [t] --baidu` | Baidu tier — tiers 1&ndash;4 (Google/Bing/DDG) index almost no CN-hosted content |
+| `/pivot-suggest --cjk` | Pinyin, Simplified&harr;Traditional and company-name-stem variants |
 
 Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **collection gaps**, never blockers.
 
@@ -733,8 +763,8 @@ Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **coll
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the default export set stays unredacted |
-| `/cti-expert /hash-id [hash]` | Identify a hash's algorithm before lookup — file hash vs credential material |
+| `/redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the default export set stays unredacted |
+| `/hash-id [hash]` | Identify a hash's algorithm before lookup — file hash vs credential material |
 
 </details>
 
@@ -746,17 +776,17 @@ Built into the skill under `intel_engine/` (`intel_engine/harness/`, `tools/`, `
 
 | Command | Purpose |
 |---------|---------|
-| `/cti-expert /backend` | Detect the backend and report the tier — Tier 1 (typed MCP) → Tier 2 (CLI) → Tier 3 (stateless). `/backend check` shows the full resolution trail |
-| `/cti-expert /kb [query]` | Query the shared knowledge base — stats, entity/cluster/shared-indicator lookup, confirmed-operator ledger |
-| `/cti-expert /recall [seed]` | *"Have I seen this before?"* — check a seed against every prior case before collecting |
-| `/cti-expert /risk [case]` | Score a case's hosts for NRD / bulletproof-hosting / money-trail red flags |
-| `/cti-expert /reverse-whois [email\|name]` | Reverse-WHOIS a registrant → high-value pivots only (privacy/bulk filtered) |
-| `/cti-expert /cert-overlap [d1 d2 …]` | KB-aware TLS/SAN same-operator verdict across domains |
-| `/cti-expert /reference [check\|add\|list]` | False-positive control ledger — BENIGN vs SIGNAL fingerprints |
-| `/cti-expert /harness [open\|continue\|status]` | Whole-case orchestration — persistent, versioned, cross-case to convergence |
-| `/cti-expert /graph --render` | IntelGraph publication-quality case-graph render → PNG/SVG |
-| `/cti-expert /report pdf` | IntelReport pandoc render of an assessment → polished PDF/DOCX |
-| `/cti-expert /binary [file\|url]` | Static IOC extraction from a scam APK/exe (signing cert, package, C2 hosts, wallets) → clusters with web infra |
+| `/backend` | Detect the backend and report the tier — Tier 1 (typed MCP) → Tier 2 (CLI) → Tier 3 (stateless). `/backend check` shows the full resolution trail |
+| `/kb [query]` | Query the shared knowledge base — stats, entity/cluster/shared-indicator lookup, confirmed-operator ledger |
+| `/recall [seed]` | *"Have I seen this before?"* — check a seed against every prior case before collecting |
+| `/risk [case]` | Score a case's hosts for NRD / bulletproof-hosting / money-trail red flags |
+| `/reverse-whois [email\|name]` | Reverse-WHOIS a registrant → high-value pivots only (privacy/bulk filtered) |
+| `/cert-overlap [d1 d2 …]` | KB-aware TLS/SAN same-operator verdict across domains |
+| `/reference [check\|add\|list]` | False-positive control ledger — BENIGN vs SIGNAL fingerprints |
+| `/harness [open\|continue\|status]` | Whole-case orchestration — persistent, versioned, cross-case to convergence |
+| `/graph --render` | IntelGraph publication-quality case-graph render → PNG/SVG |
+| `/report pdf` | IntelReport pandoc render of an assessment → polished PDF/DOCX |
+| `/binary [file\|url]` | Static IOC extraction from a scam APK/exe (signing cert, package, C2 hosts, wallets) → clusters with web infra |
 
 All backend commands dispatch through `scripts/backend/intel.py` at Tier 2 (or the typed MCP tool at Tier 1); absent → they degrade to a note.
 
@@ -781,21 +811,21 @@ All backend commands dispatch through `scripts/backend/intel.py` at Tier 2 (or t
 
 Low-jargon mode, step-by-step guidance, pre-built templates for due diligence, background checks, security reviews.
 
-**Entry:** `/cti-expert /flow person`, `/cti-expert /flow domain`, `/cti-expert /template list`
+**Entry:** `/flow person`, `/flow domain`, `/template list`
 
 </td>
 <td valign="top">
 
 Advanced search operators, manual pivot expansion, custom threat modeling, guided flows with explanation.
 
-**Entry:** `/cti-expert /query [target]`, `/cti-expert /branch [data]`, `/cti-expert /crossref`, `/cti-expert /threat-model`
+**Entry:** `/query [target]`, `/branch [data]`, `/crossref`, `/threat-model`
 
 </td>
 <td valign="top">
 
 Raw technique access, custom evidence weighting, CONTESTED finding resolution, direct database queries.
 
-**Entry:** `/cti-expert /username [handle]`, `/cti-expert /email-deep [email]`, `/cti-expert /secrets [target]`, `/cti-expert /threat-check [target]`
+**Entry:** `/username [handle]`, `/email-deep [email]`, `/secrets [target]`, `/threat-check [target]`
 
 </td>
 </tr>
@@ -866,37 +896,40 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 
 ## Report Formats
 
-Every `/report`, `/brief`, and `/case` auto-saves the **default export set** — Markdown, an interactive HTML report, JSON, CSV, and a comprehensive IOC/selector bundle. `/redact` adds an opt-in shareable variant with PII placeholdered:
+You never have to ask for output. Every `/report`, `/brief`, and `/case` writes the full set automatically — one interactive web page to explore the case, plus machine-readable files for tooling and evidence. Need to share a report outside your team? Add `--redact` and PII is swapped for stable placeholders (and can be reversed later).
 
 <table>
 <tr>
 <td width="50%" valign="top">
 
-### 🌐 Interactive HTML report — *primary*
+### 🌐 Interactive HTML report — *the one you'll actually read*
 
-- **Self-contained & offline** — one file, no CDN, opens in any browser
-- KPI dashboard, exposure gauge, pie / bar / donut charts
-- **2D force-directed entity graph** (drag · zoom · click-to-inspect)
-- Infrastructure topology + interactive event timeline
-- **Indicators & Selectors** panel — network IOCs, contacts, social / messaging handles, wallets + **actor↔victim attribution**
-- Global search, category menus, dark / light, print-to-PDF
+A single self-contained file — no internet, no server, opens in any browser.
+
+- **Dashboard** — KPIs, an exposure gauge, and pie / bar / donut charts
+- **Entity graph** — drag, zoom, and click any node to inspect it
+- **Infrastructure & timeline** — topology map plus an interactive event history
+- **Indicators & Selectors** — every IOC, contact, handle, and wallet, with actor ↔ victim attribution
+- **Navigation** — global search, category menus, dark / light theme, print-to-PDF
 
 </td>
 <td width="50%" valign="top">
 
-### 📄 Markdown · JSON · CSV · IOC bundle
+### 📄 Markdown · JSON · CSV · IOC bundle — *for tooling & evidence*
 
-- **Markdown** — INTSUM, executive brief, plain-language, legal formats
-- **JSON** — structured case data for tooling/pipelines
-- **CSV** — findings + indicators for spreadsheets / SIEM
-- **IOC bundle** — STIX 2.1 + flat + CSV (every actor/victim selector)
-- **Word (.docx)** — on request / `/report legal` (cover page, TOC, charts, diagrams)
+The same case, in formats other tools can read.
+
+- **Markdown** — the written report: INTSUM, executive brief, plain-language, or legal
+- **JSON** — structured case data to feed pipelines and other tools
+- **CSV** — findings and indicators, ready for a spreadsheet or SIEM
+- **IOC bundle** — STIX 2.1, flat list, and CSV of every selector
+- **Word (.docx)** — on request, or `/report legal` (cover page, table of contents, charts)
 
 </td>
 </tr>
 </table>
 
-<sub>HTML via <code>scripts/generate-cti-html.py</code> · IOCs via <code>scripts/generate-cti-iocs.py</code> · DOCX via <code>scripts/generate-cti-docx-hybrid.py</code></sub>
+<sub>Generated by <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOCs) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX)</sub>
 
 <br>
 
@@ -984,7 +1017,7 @@ cti-expert/
 | **Cyber Threat Intelligence** | Security analysts, IR teams | `workflows/wf-threat-analyst.md` |
 | **Private Investigator** | Licensed PIs, legal teams | `workflows/wf-private-investigator.md` |
 
-> Activate with `/cti-expert /flow [type]` for interactive guided prompts.
+> Activate with `/flow [type]` for interactive guided prompts.
 
 <br>
 
