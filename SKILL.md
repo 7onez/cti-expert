@@ -94,7 +94,94 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 
 ---
 
+## 2.5. Pivot Priority & False-Positive Control (CRITICAL)
+
+Two failure modes ruin a cluster: asserting a link that isn't there, and missing one that is.
+This section governs both. Apply it in Enrich, before anything reaches a report.
+
+### Pivot priority ladder
+
+Work **down** this ladder. Never assert same-operator on a lower rung when a higher rung is
+available or contradicts it. Tag every asserted link in the report with the rung it rests on.
+
+| Rung | Indicator | Strength |
+|---|---|---|
+| 1 | Registrant email / phone / org — **including historic WHOIS** | decisive |
+| 2 | One domain carrying **two identities across its own WHOIS history** | decisive — proves an alias |
+| 3 | Site-verification token (Google Search Console, etc.) | decisive — proves account control |
+| 4 | Shared TLS certificate / SAN cross-cover | strong |
+| 5 | Nameserver delegation to a host the operator **runs themselves** | strong — proves zone control |
+| 6 | APK signing certificate | strong |
+| 7 | Distinctive favicon / analytics / tracker / backend tenant ID | moderate — verify below |
+| 8 | Co-tenancy on a **dedicated** host (few tenants) | moderate |
+| 9 | Site template / framework / kit | **weak — kit-level, never operator-level** |
+| 10 | Co-tenancy on **shared/reseller** hosting; managed-provider nameservers | information, not a link |
+
+**Reverse-WHOIS is the highest-yield pivot here.** Always `mode=preview` first — the count is
+free. A term returning hundreds is shared boilerplate; do not purchase it.
+
+### Mandatory false-positive control
+
+Before any indicator becomes a cluster edge, run `/reference check <value>`. If it returns
+UNKNOWN, **decide and record it** with `/reference add` so the next case inherits the judgement.
+
+Six traps, all of which have produced real false clusters:
+
+| Trap | Why it fools you | Test |
+|---|---|---|
+| **Commodity site kit** | A template sold to hundreds of unrelated fraud operators | Search the template path in urlscan/FOFA — a large population means kit-level |
+| **Privacy-proxy contacts** | The registrar's boilerplate phone/email, shared by every customer of that service | Reverse-WHOIS it; a spread of unrelated domains means noise |
+| **Shared/reseller hosting IP** | A 20+-tenant cPanel box links nothing | Count tenants before clustering |
+| **Managed-provider nameservers** | Cloudflare/GoDaddy/Gandi/Wix NS are shared by millions | Self-hosted NS is rung 5; provider NS is rung 10 |
+| **Org-name collision** | A registrant org string that also matches a real, unrelated company | Reverse-WHOIS the org; inspect what comes back before attributing |
+| **Shared analytics / tag container** | Often one web developer reusing a container across unrelated clients | **Check domain creation dates** — a decade-old business sharing a tag with a new fraud domain is a third party |
+
+> **Never put an unvalidated indicator into a report that recommends abuse reporting.** Naming an
+> uninvolved business is the most damaging error this skill can produce. When a cluster rests on a
+> single rung-7-or-below indicator, label it *candidate, single-indicator* — not a cluster member.
+
+### Dead seed? Do not stop
+
+Zero pivots, a parked page, or NXDOMAIN is not an answer. Run **`/fallback <domain>`** — crt.sh,
+the full Wayback timeline, archive.today, and the local KB. A parked apex frequently has live
+subdomains: enumerate CT and the Wayback CDX host histogram before writing a seed off. Report an
+empty result as empty; a collector that returned nothing is a finding, not something to omit.
+
+---
+
 ## 3. Command Reference
+
+### 3.0 Entry point & registered commands
+
+**`/cti <target>` is the single entry to this skill.** It routes any target type — domain, IP,
+email, username, phone, wallet, hash, APK — through recall → collect → cluster → assess. Plain
+English works identically ("analyze example.com and pivot the infrastructure"); the command form
+just removes ambiguity.
+
+Eight commands are **registered with Claude Code** by `bash scripts/register.sh` and work from a
+cold prompt in any project:
+
+| Command | Does | Equivalent T2 op | Equivalent T1 tool |
+|---|---|---|---|
+| **`/cti <target>`** | **entry point — routes by target type** | *(whole chain)* | *(whole chain)* |
+| `/cti-recall <seed>` | seen before? **run first, always** | `recall` | `domain_verdict`, `which_cases` |
+| `/cti-case <ID> <seeds>` | full deterministic pipeline | `pipeline open` | *(none — CLI only)* |
+| `/cti-pivot <url\|ip>` | collect one target | `pivot-extract` | `pivot_extract` |
+| `/cti-cluster <domain>` | correlate & expand | `kb`, `cert-overlap` | `kb_cluster`, `cert_overlap` |
+| `/cti-check <indicator>` | false-positive control | `reference check` | `reference_check`, `reference_add` |
+| `/cti-report <ID>` | render graph + PDF/DOCX | `graph`, `report` | `render_diagram`, `render_report` |
+| `/cti-status` | backend / MCP / credits health | `backend.py status` | `api_usage` |
+
+> **Every other `/command` in §3 is a convention read from this file, not a registered command.**
+> Once the skill is loaded they are unambiguous instructions; typed at a cold prompt they do
+> nothing. When in doubt use `/cti` and describe the goal.
+
+**Three layers, one operation.** The same capability is reachable three ways and the names differ
+by layer — T0 uses `kebab-case` after a slash, T2 uses `kebab-case` ops, T1 uses `snake_case`
+tools. The table above is the canonical mapping; when you add a capability, add a row here in the
+same commit or the layers drift apart again.
+
+---
 
 Commands grouped by AEAD phase.
 

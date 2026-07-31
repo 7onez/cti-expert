@@ -42,6 +42,17 @@ MANAGED_DNS_SUFFIXES = (
     "dan.com", "afternic.com", "uniregistrymarket.link",          # domain marketplaces
     "hichina.com", "alidns.com",    # Alibaba
     "cloudns.net",
+    "gandi.net",                    # Gandi (ns-1-a/ns-107-c.gandi.net) — used across whole
+                                    # unrelated registrar populations; NOT an operator link
+    "wixdns.net", "wix.com",        # Wix
+    "shopify.com",
+    "dnsimple.com", "digitalocean.com", "linode.com", "vultr.com",
+    "hostgator.com", "bluehost.com", "siteground.net", "inmotionhosting.com",
+    "namebrightdns.com", "rzone.de", "hetzner.com", "ovh.net", "ovh.ca",
+    "mysecurecloudhost.com",        # reseller DNS seen in CASE-0001 (tradeinforeign.com)
+    "he.net", "freedns.afraid.org",
+    "ui-dns.com", "ui-dns.de", "ui-dns.org", "ui-dns.biz",   # IONOS
+    "1and1.com", "ionos.com",
 )
 
 # Favicon mmh3 (Shodan/FOFA) hashes of parking / for-sale / marketplace pages. Sharing one
