@@ -9,21 +9,6 @@ description: Static IOC extraction from binaries pulled off fraud/scam sites —
 > `cases/` / `knowledge/` / `MEMORY/`. In examples use placeholders (`example.com`,
 > `G-XXXXXXXXXX`, `CASE-0001`). See the repo-root `CLAUDE.md` for the full rule.
 
-## 🚨 MANDATORY: Voice Notification (REQUIRED BEFORE ANY ACTION)
-
-Send this BEFORE anything else when this skill is invoked:
-
-```bash
-curl -s -X POST http://localhost:8888/notify \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Running the BinaryPivot skill to statically extract IOCs from a scam-site artifact"}' \
-  > /dev/null 2>&1 &
-```
-
-Then output: `Running the **BinaryPivot** skill to ACTION...`
-
----
-
 # BinaryPivot Skill
 
 The sibling of **WebPivot**. WebPivot pivots on the *website*; BinaryPivot pivots on the *file the

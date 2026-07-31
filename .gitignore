@@ -35,7 +35,20 @@ scripts/**/.env
 
 # Vendored intel-engine runtime DATA (fresh, local-only — never commit)
 /intel_engine/cases/
+# Defensive: the ONE case store is /intel_engine/cases/ (INTEL_HOME/cases). A repo-root
+# cases/ is always a mistake — someone running a collector with `-o cases/...` from the
+# repo root instead of letting the pipeline choose the path. Ignore it so case data can
+# never be committed by accident.
+/cases/
+/intel_engine/MEMORY/
 /intel_engine/knowledge/entities/
 /intel_engine/knowledge/evidence/
 /intel_engine/knowledge/relationships/edges.jsonl
 /intel_engine/knowledge/*.jsonl
+# The IntelAnalysis output contract writes assessments to knowledge/reports/<case>/ — that path
+# holds finished case data (domains, IPs, registrants, wallets) and was NOT ignored, so a run
+# following the skill's own instructions left a committable RULE 1 leak. Ignore it too. Note the
+# ONE case store is still /intel_engine/cases/; prefer writing assessments there.
+/intel_engine/knowledge/reports/
+# Repo-root MEMORY/ — Algorithm PRDs belong in ~/.claude/MEMORY/, never in the repo.
+/MEMORY/

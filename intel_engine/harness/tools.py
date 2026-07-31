@@ -107,6 +107,58 @@ def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
 
 
+_FLAGS_CACHE: dict[str, frozenset[str]] = {}
+_FLAGS_LOCK = threading.Lock()
+
+
+def _supported_flags(script: str) -> frozenset[str]:
+    """The option strings a collector script actually accepts, read from its own --help.
+
+    The engine and cti-expert each ship a pivot_extract; the canonical one resolved via the
+    WebPivot shim does NOT accept every flag the engine's richer collector once did (see
+    STRUCTURE.md's anti-drift note). Passing an unknown flag makes argparse exit 2 and the whole
+    collection fails. Probing --help once per script keeps the wrapper working across either
+    layer instead of hard-coding one collector's vocabulary."""
+    with _FLAGS_LOCK:
+        hit = _FLAGS_CACHE.get(script)
+    if hit is not None:
+        return hit
+    flags: set[str] = set()
+    try:
+        r = _run([PY, script, "--help"], timeout=30)
+        for tok in (r.stdout or "").replace(",", " ").split():
+            if tok.startswith("-") and len(tok) > 1:
+                flags.add(tok.split("=", 1)[0].rstrip("[]"))
+    except Exception:  # noqa: BLE001
+        flags = set()   # probe failed → treat every flag as supported, same as the old behaviour
+    out = frozenset(flags)
+    with _FLAGS_LOCK:
+        _FLAGS_CACHE[script] = out
+    return out
+
+
+def _filter_args(script: str, args: list[str]) -> tuple[list[str], list[str]]:
+    """Drop (flag, value) pairs the collector does not support. Returns (kept, dropped_flags)."""
+    supported = _supported_flags(script)
+    if not supported:
+        return args, []
+    kept: list[str] = []
+    dropped: list[str] = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("-") and a not in supported:
+            dropped.append(a)
+            i += 1
+            # also swallow this flag's value, if it has one
+            while i < len(args) and not args[i].startswith("-"):
+                i += 1
+            continue
+        kept.append(a)
+        i += 1
+    return kept, dropped
+
+
 def _load_json(path: str):
     try:
         return json.load(open(path, encoding="utf-8"))
@@ -203,19 +255,25 @@ def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = F
         return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,
                 "note": "", "error": (f"BLOCKED by egress policy: {host} is hostile. Re-call with "
                                       "passive=true or proxy='<cidr>'.")}
-    base = [os.path.join("WebPivot", "tools", "pivot_extract.py"), url, "--pretty", "-o", out, "--save-dom", dom]
+    script = os.path.join("WebPivot", "tools", "pivot_extract.py")
+    args = [url, "--pretty", "-o", out, "--save-dom", dom]
     if proxy:
-        base += ["--proxy-range", proxy]
+        args += ["--proxy-range", proxy]
     if SMOKE:
-        base += ["--no-enrich", "--no-whois"]                # cheap smoke only
+        args += ["--no-enrich", "--no-whois"]                # cheap smoke only
     elif not NO_ARCHIVE:
         # EVIDENCE CAPTURE (default on): Wayback SPN snapshot + master evidence ledger, case-tagged.
-        base += ["--archive-missing", "--master", "--case", case]
+        # --submit is the canonical collector's equivalent (Wayback SPN + urlscan); the engine's
+        # richer collector uses the --archive-missing/--master/--case trio. Emit both and let
+        # _filter_args keep whichever the resolved collector understands.
+        args += ["--submit", "--archive-missing", "--master", "--case", case]
     screenshot_py = PY
     if SHOT and not SMOKE and not (hostile and not proxy):    # screenshot needs a browser
         os.makedirs(shot_dir, exist_ok=True)                 # pivot_extract writes the PNG here
-        base += ["--render", "--screenshot", shot]
+        args += ["--render", "--screenshot", shot]
         screenshot_py = RENDER_PY
+    args, dropped = _filter_args(os.path.join(ROOT, script), args)
+    base = [script, *args]
     r = _run([screenshot_py, *base], timeout=300 if SHOT else 240)
     data = _load_json(out)
     if data is None:
@@ -224,19 +282,28 @@ def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = F
     cf = (data.get("meta") or {}).get("cloudflare")            # Cloudflare interstitial? retry via browser/FS
     used = "direct"
     if cf and not SMOKE:
-        if FLARESOLVERR:
-            _run([PY, *base, "--solve-cf", "--flaresolverr", FLARESOLVERR], timeout=300)
+        retry, cf_dropped = _filter_args(
+            os.path.join(ROOT, script),
+            ["--solve-cf", "--flaresolverr", FLARESOLVERR] if FLARESOLVERR else ["--render"])
+        if FLARESOLVERR and not cf_dropped:
+            _run([PY, *base, *retry], timeout=300)
             used = "flaresolverr"
-        else:
-            _run([RENDER_PY, *base, "--render"], timeout=300)
+        elif retry:
+            _run([RENDER_PY, *base, *retry], timeout=300)
             used = "render(browser)"
+        else:
+            used = "no CF bypass available (collector lacks --solve-cf/--render)"
         data = _load_json(out) or data
     _append_manifest(case, host, data, reused=False, dom_path=dom, shot_path=shot)
     walled = (data.get("meta") or {}).get("cloudflare")
     cfnote = f"  · CF {cf} → {used} ({'STILL WALLED' if walled else 'bypassed'})" if cf else ""
     archnote = "" if (SMOKE or NO_ARCHIVE) else "  · archived + logged"
+    # Never silently drop a requested capability — an unsupported flag means the collector in use
+    # cannot do that step, and the analyst has to know the evidence was not captured.
+    dropnote = f"  · unsupported by collector, skipped: {' '.join(dropped)}" if dropped else ""
     return {"host": host, "ok": True, "reused": False, "error": None, "dom": dom,
-            "n_pivots": len(data.get("pivots", [])), "note": cfnote + archnote, "data": data}
+            "n_pivots": len(data.get("pivots", [])), "note": cfnote + archnote + dropnote,
+            "data": data}
 
 
 def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
