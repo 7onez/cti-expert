@@ -1113,7 +1113,10 @@ back via `--ingest`.
 - **Example hops:** an **email** auto-pivots via reverse-WHOIS→domains, `/breach-deep`,
   `/github-osint`; a **domain** discovered from a person (high-confidence link) continues
   via `/webpivot`+`wayback_harvest`+`whois_enrich`+`cert_pivot`+subdomains; a shared **GA ID**
-  reverse-pivots to sibling domains — each new node re-enters the loop.
+  reverse-pivots to sibling domains; a discovered **document** (`.pdf`/office) or **image**
+  (`.jpg`/`.png`) is itself a node — metadata/authorship→person/email/org and EXIF GPS +
+  reverse-image/face→person/domain (face matches held pending corroboration) — each new node
+  re-enters the loop.
 - **Control flags** (all *narrowing* — the defaults are already maximal):
   `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
   **`--checkpoint`** (pause for approval after each depth level), `--depth N`, `--budget N`,
