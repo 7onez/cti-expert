@@ -1,0 +1,134 @@
+{
+  "_meta": {
+    "purpose": "Known hosting/CDN ASNs -> GENERIC provider facts, used by wp_ippivot to decide whether an IP is same-operator signal or shared noise, and to route abuse/takedown contact.",
+    "opsec": "Provider-level metadata ONLY (ASN, org name, abuse contact, noise flag, kind). NEVER a target IP, domain, or case id (repo CLAUDE.md RULE 1). wp_ippivot.asn_registry_upsert enforces this.",
+    "fields": "asns[ASxxxx] = {asn, name, abuse_contacts[], noise(bool), kind: cdn|cloud|hosting|transit|unknown}",
+    "noise": "noise=true means a reverse-IP on this ASN returns many unrelated tenants -> mark the IP as INFORMATION, do not cluster on it."
+  },
+  "asns": {
+    "AS13335": {
+      "asn": "AS13335",
+      "name": "Cloudflare, Inc.",
+      "abuse_contacts": [
+        "abuse@cloudflare.com"
+      ],
+      "noise": true,
+      "kind": "origin_candidate"
+    },
+    "AS15169": {
+      "asn": "AS15169",
+      "name": "Google LLC",
+      "abuse_contacts": [
+        "network-abuse@google.com"
+      ],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS16509": {
+      "asn": "AS16509",
+      "name": "Amazon.com, Inc.",
+      "abuse_contacts": [
+        "abuse@amazonaws.com"
+      ],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS14618": {
+      "asn": "AS14618",
+      "name": "Amazon.com, Inc.",
+      "abuse_contacts": [
+        "abuse@amazonaws.com"
+      ],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS8075": {
+      "asn": "AS8075",
+      "name": "Microsoft Corporation",
+      "abuse_contacts": [
+        "abuse@microsoft.com"
+      ],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS54113": {
+      "asn": "AS54113",
+      "name": "Fastly, Inc.",
+      "abuse_contacts": [
+        "abuse@fastly.com"
+      ],
+      "noise": true,
+      "kind": "cdn"
+    },
+    "AS20940": {
+      "asn": "AS20940",
+      "name": "Akamai International B.V.",
+      "abuse_contacts": [
+        "abuse@akamai.com"
+      ],
+      "noise": true,
+      "kind": "cdn"
+    },
+    "AS13414": {
+      "asn": "AS13414",
+      "name": "Twitter Inc.",
+      "abuse_contacts": [],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS396982": {
+      "asn": "AS396982",
+      "name": "Google LLC (GCP)",
+      "abuse_contacts": [
+        "network-abuse@google.com"
+      ],
+      "noise": true,
+      "kind": "cloud"
+    },
+    "AS14061": {
+      "asn": "AS14061",
+      "name": "DigitalOcean, LLC",
+      "abuse_contacts": [
+        "abuse@digitalocean.com"
+      ],
+      "noise": true,
+      "kind": "hosting"
+    },
+    "AS16276": {
+      "asn": "AS16276",
+      "name": "OVH SAS",
+      "abuse_contacts": [
+        "abuse@ovh.net"
+      ],
+      "noise": true,
+      "kind": "hosting"
+    },
+    "AS24940": {
+      "asn": "AS24940",
+      "name": "Hetzner Online GmbH",
+      "abuse_contacts": [
+        "abuse@hetzner.com"
+      ],
+      "noise": true,
+      "kind": "hosting"
+    },
+    "AS63949": {
+      "asn": "AS63949",
+      "name": "Akamai (Linode)",
+      "abuse_contacts": [
+        "abuse@linode.com"
+      ],
+      "noise": true,
+      "kind": "hosting"
+    },
+    "AS20473": {
+      "asn": "AS20473",
+      "name": "The Constant Company (Vultr)",
+      "abuse_contacts": [
+        "abuse@vultr.com"
+      ],
+      "noise": true,
+      "kind": "hosting"
+    }
+  }
+}

@@ -59,6 +59,9 @@ A **Claude Code skill** that transforms Claude into a trained cyber threat intel
 > [!TIP]
 > **Keyless by default — more powerful with your keys.** Everything runs with zero keys. To unlock the skill's full power, drop any **free or paid** API keys into `.env` (or run `/apikeys set <service> <KEY>`); they're **auto-detected** and immediately upgrade `/webpivot` and other techniques with reverse favicon→host, passive DNS, cert search, and sibling-domain pivots. Missing or bad keys just degrade to a note. Full list & setup: [handbook/api-keys.md](handbook/api-keys.md).
 
+> [!TIP]
+> **Two layers, one skill — broad collector + built-in deep pipeline.** cti-expert is the **broad collector** (the wide net: `/webpivot`, `/sweep`, `/subdomain`, `/icp`, `/username`, `/email-deep`, `/breach-deep`…). It now **vendors the vendored OSINT engine in-repo** as the **pipeline + deeper pivoting logic**: a persistent knowledge base (`knowledge/`), versioned cases (`cases/`), cross-case correlation, calibrated assessment, and rendering. The chain: broad collection → `/pipeline` (or `/harness`) ingests it, then applies the deep logic — *"seen this operator before?"* (`/recall`), whole-KB clustering (`/kb --cluster`, `/cert-overlap`), false-positive control (`/reference`), risk (`/risk`), and a versioned `Assessment`. `/backend` resolves to **SELF** (no external setup); deps via `uv venv && uv pip install -r requirements.txt`. Full architecture: [connectors/intel-backend.md](connectors/intel-backend.md).
+
 <table>
 <tr>
 <td width="50%">
@@ -732,6 +735,30 @@ Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **coll
 |---------|---------|
 | `/cti-expert /redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the default export set stays unredacted |
 | `/cti-expert /hash-id [hash]` | Identify a hash's algorithm before lookup — file hash vs credential material |
+
+</details>
+
+<details>
+<summary><b>Deep Pipeline &amp; Knowledge Base</b> — built-in (vendored <code>intel_engine</code>)</summary>
+<br>
+
+Built into the skill under `intel_engine/` (`intel_engine/harness/`, `tools/`, `knowledge/`, `cases/`). `/backend` resolves to SELF — no setup. Install the deep-layer deps once: `uv venv && uv pip install -r requirements.txt`. See [connectors/intel-backend.md](connectors/intel-backend.md).
+
+| Command | Purpose |
+|---------|---------|
+| `/cti-expert /backend` | Detect the backend and report the tier — Tier 1 (typed MCP) → Tier 2 (CLI) → Tier 3 (stateless). `/backend check` shows the full resolution trail |
+| `/cti-expert /kb [query]` | Query the shared knowledge base — stats, entity/cluster/shared-indicator lookup, confirmed-operator ledger |
+| `/cti-expert /recall [seed]` | *"Have I seen this before?"* — check a seed against every prior case before collecting |
+| `/cti-expert /risk [case]` | Score a case's hosts for NRD / bulletproof-hosting / money-trail red flags |
+| `/cti-expert /reverse-whois [email\|name]` | Reverse-WHOIS a registrant → high-value pivots only (privacy/bulk filtered) |
+| `/cti-expert /cert-overlap [d1 d2 …]` | KB-aware TLS/SAN same-operator verdict across domains |
+| `/cti-expert /reference [check\|add\|list]` | False-positive control ledger — BENIGN vs SIGNAL fingerprints |
+| `/cti-expert /harness [open\|continue\|status]` | Whole-case orchestration — persistent, versioned, cross-case to convergence |
+| `/cti-expert /graph --render` | IntelGraph publication-quality case-graph render → PNG/SVG |
+| `/cti-expert /report pdf` | IntelReport pandoc render of an assessment → polished PDF/DOCX |
+| `/cti-expert /binary [file\|url]` | Static IOC extraction from a scam APK/exe (signing cert, package, C2 hosts, wallets) → clusters with web infra |
+
+All backend commands dispatch through `scripts/backend/intel.py` at Tier 2 (or the typed MCP tool at Tier 1); absent → they degrade to a note.
 
 </details>
 

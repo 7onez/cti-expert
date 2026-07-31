@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Launch shim for the harness MCP server. Referenced by the repo-root .mcp.json so Claude Code
+# (or any MCP client) can start it. tools.py imports claude_agent_sdk, so it must run under a
+# Python that has the SDK — the WebPivot venv. Resolves paths from its own location, so it works
+# regardless of the caller's cwd. If your SDK venv lives elsewhere, change PY below (one line).
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# tools.py imports claude_agent_sdk, so run under a Python that has it. Prefer the cti-expert
+# skill venv (repo-root/.venv, created by `uv pip install -r requirements.txt`); fall back to the
+# engine's own WebPivot venv, then system python3. Override by exporting INTEL_PY.
+PY="${INTEL_PY:-}"
+if [ -z "$PY" ]; then
+  for cand in "$here/../../.venv/bin/python3" "$here/../../.venv/bin/python" \
+              "$here/../WebPivot/.venv/bin/python3" "$(command -v python3)"; do
+    [ -x "$cand" ] && PY="$cand" && break
+  done
+fi
+exec "$PY" "$here/mcp_server.py" "$@"

@@ -1,0 +1,22 @@
+{
+  "description": "QR-funnel: wallet / Telegram / affiliate-URL / WhatsApp hidden in QR images must all decode + classify",
+  "input": "input.html",
+  "expect_pivots": [
+    {"kind": "qr:crypto:btc", "value": "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"},
+    {"kind": "qr:telegram", "value_contains": "t.me/joinScamVIP"},
+    {"kind": "qr:whatsapp", "value_contains": "wa.me/14155551234"},
+    {"kind": "qr:url", "value_contains": "bit.ly/promo123"},
+    {"kind": "qr:undecoded_image", "value_contains": "deposit-qrcode.png"},
+    {"kind": "email", "value": "support@vip-signals.example"}
+  ],
+  "expect_artifacts": {
+    "trackers.qr_wallet_btc": ["bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"],
+    "trackers.qr_telegram": ["https://t.me/joinScamVIP"]
+  },
+  "forbid_pivots": [
+    {"kind": "qr:crypto:btc", "value": "0.5"}
+  ],
+  "forbid_artifacts": {
+    "trackers.google_analytics_ga4": ["g-recaptcha"]
+  }
+}

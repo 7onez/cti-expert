@@ -1,0 +1,2 @@
+# raw evidence payloads can be large / hold PII — commit metadata, not dumps, by default
+evidence/

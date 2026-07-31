@@ -1,0 +1,14 @@
+{
+  "description": "SaaS/resource reverse prerequisite: a distinctive external SaaS script (SalesSmartly project_*) must be captured in script_srcs — that URL is what the urlscan filename: reverse clusters on. Also confirms generic CDN scripts are still captured (the distinctiveness filter, unit-tested separately, is what discriminates them at reverse time).",
+  "input": "input.html",
+  "expect_artifacts": {
+    "script_srcs": [
+      "https://plugin-code.salesmartly.com/js/project_100000000_200000000_300000000.js",
+      "https://www.googletagmanager.com/gtm.js?id=GTM-TEST"
+    ]
+  },
+  "expect_pivots": [
+    {"kind": "tracker:google_tag_manager", "value": "GTM-TEST"},
+    {"kind": "email", "value": "support@example.com"}
+  ]
+}
