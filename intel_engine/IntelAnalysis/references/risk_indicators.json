@@ -1,0 +1,47 @@
+{
+  "_comment": "Tunable scam/fraud red-flag reference for risk_signals.py. This is GENERIC public knowledge (no case data) — safe to commit. Edit freely as you learn; it is a STARTER set, not exhaustive or authoritative. Always verify before asserting BPH in a client-facing product.",
+
+  "nrd": {
+    "_comment": "Newly-registered-domain age tiers, in days since WHOIS creation. Scam infra is overwhelmingly young; age is a strong prior, never proof alone.",
+    "critical_days": 30,
+    "high_days": 90,
+    "watch_days": 180
+  },
+
+  "bph": {
+    "_comment": "Bulletproof / abuse-tolerant hosting indicators. Match is a LEAD, not attribution. ASN classification needs an ASN lookup (not yet wired) — provider/registrar/NS substring matching works on data we already capture. TUNE: verify each entry is still BPH before relying on it.",
+    "provider_substrings": [
+      "bulletproof", "offshore", "flokinet", "flokinerd", "ccihosting",
+      "stark-industries", "starkindustries", "medialand", "media-land",
+      "railnet", "pq hosting", "pqhosting", "aeza", "virtualine",
+      "green floid", "greenfloid", "hostinger-abuse", "shinjiru",
+      "koddos", "ddos-guard", "ddosguard", "prospero", "inferno"
+    ],
+    "asns": [
+      "AS200593", "AS44477", "AS204957", "AS216071", "AS210644"
+    ],
+    "abuse_tolerant_registrars": [
+      "_comment: registrars over-represented in bulk scam registration. Presence != BPH, but combined with NRD + money-ask it raises the score.",
+      "gname", "nicenic", "webnic", "namesilo", "openprovider",
+      "hosting concepts", "key-systems", "regru", "reg.ru", "internet.bs",
+      "porkbun", "dynadot", "todaynic", "west263", "xin net", "eranet"
+    ],
+    "offshore_privacy_ns": [
+      "njalla", "1984.hosting", "orangewebsite"
+    ]
+  },
+
+  "money_trail": {
+    "_comment": "Money-trail indicators — how the operator gets PAID or CONTACTED to close the fraud. Per the analyst: the single most crucial category for victim-loss cases and takedown/LE referral. Any crypto-payment-ask on a young unbranded site is a strong scam signal.",
+    "wallet_kinds": ["btc", "eth", "usdt", "tron", "trc20", "erc20", "ltc", "xrp", "bnb", "sol", "doge"],
+    "payment_contact_socials": ["telegram", "whatsapp", "zalo", "messenger", "line", "wechat", "signal"],
+    "high_signal_combo": "young domain (NRD) + crypto wallet present + off-platform contact handle (telegram/whatsapp) = classic payment-funnel; escalate.",
+    "trace_priority": [
+      "reused crypto wallet across sites (attribution-grade — same payee)",
+      "registrant/contact phone (reverse-lookup + messenger-app pivot)",
+      "registrant/contact email (reverse-WHOIS + breach/paste pivot)",
+      "payment processor / merchant IDs (Stripe, PayPal, local gateways)",
+      "IBAN / SWIFT / bank handles in forms or chat"
+    ]
+  }
+}

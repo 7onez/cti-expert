@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+query.py — read the knowledge base (no web I/O). The cheap, cited substrate the
+IntelAnalysis skill and the reporter read from instead of re-querying the world.
+
+  python3 query.py --kb knowledge --stats
+  python3 query.py --kb knowledge --shared --min 2      # cluster seeds
+  python3 query.py --kb knowledge --entity example.com
+  python3 query.py --kb knowledge --cluster example.com
+  python3 query.py --kb knowledge --type person
+"""
+import os
+import sys
+import argparse
+from collections import Counter
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from knowledge_base import KB  # noqa: E402
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Query the OSINT knowledge base.")
+    ap.add_argument("--kb", required=True)
+    ap.add_argument("--stats", action="store_true")
+    ap.add_argument("--shared", action="store_true", help="indicators shared by >= --min domains")
+    ap.add_argument("--min", type=int, default=2)
+    ap.add_argument("--entity", help="dump one entity's facts + edges")
+    ap.add_argument("--cluster", help="domains sharing an indicator with this domain")
+    ap.add_argument("--strong", action="store_true",
+                    help="with --cluster: exclude boilerplate edges (shared CSS/comment/DOM "
+                         "template) AND indicators shared by > --max-prevalence domains (generic "
+                         "kit favicons, registrar emails) so only owner-set indicators cluster — "
+                         "avoids WP-Rocket-style and generic-favicon false same-operator links")
+    ap.add_argument("--max-prevalence", type=int, default=8,
+                    help="with --strong: an indicator shared by more than this many domains is "
+                         "treated as generic/noise and ignored (default 8)")
+    ap.add_argument("--components", action="store_true",
+                    help="partition domains into same-operator connected components over STRONG "
+                         "shared indicators (boilerplate/benign/over-prevalent edges excluded)")
+    ap.add_argument("--domains", default="",
+                    help="with --components: comma-separated domain set to restrict clustering to "
+                         "(e.g. one case's domains); default = the whole KB")
+    ap.add_argument("--type", help="list entities of a type")
+    args = ap.parse_args()
+    kb = KB(args.kb)
+
+    if args.stats:
+        ents = list(kb.all_entities())
+        print(f"entities: {len(ents)}   facts: {sum(len(e['facts']) for e in ents)}   edges: {len(kb.edges())}")
+        print("by type:", dict(Counter(e["type"] for e in ents)))
+        print("edges by rel:", dict(Counter(e["rel"] for e in kb.edges())))
+        print("facts by source:", dict(Counter(f["source"] for e in ents for f in e["facts"])))
+
+    if args.shared:
+        print(f"\n# Shared indicators (>= {args.min} domains) — cluster seeds\n")
+        for s in kb.shared_indicators(args.min):
+            print(f"[{s['domain_count']}] {s['indicator_type']}:{s['indicator']}  ({', '.join(s['rels'])})")
+            print(f"     {', '.join(s['domains'])}")
+
+    if args.type:
+        print(f"\n# entities of type '{args.type}'")
+        for e in sorted(kb.all_entities(), key=lambda x: x["value"]):
+            if e["type"] == args.type:
+                print(f"  {e['value']}   ({len(e['facts'])} facts)")
+
+    if args.entity:
+        # find it across types
+        found = [e for e in kb.all_entities() if e["value"] == args.entity]
+        for e in found:
+            print(f"\n# {e['type']}: {e['value']}   (first {e.get('first_seen')} … last {e.get('last_seen')})")
+            for f in e["facts"]:
+                print(f"  · {f['attribute']} = {f['value']}   [{f['source']}/{f['collector']} conf {f['confidence']}]")
+            nb = kb.neighbors(e["type"], e["value"])
+            if nb:
+                print("  edges:")
+                for dt, dv, rel, conf in nb:
+                    print(f"    -{rel}-> {dt}:{dv}   (conf {conf})")
+
+    if args.cluster:
+        # 1-hop through shared indicators: domains that share any indicator with target
+        target = args.cluster
+        # Boilerplate relations — shared page-template/cache-plugin artifacts (WP Rocket CSS,
+        # HTML comments, DOM skeleton) that many UNRELATED operators emit. They create false
+        # same-operator edges; --strong drops them so only owner-set indicators remain.
+        NOISE_RELS = {"same_inline_css", "same_comment", "same_template"}
+        inds = {(dt, dv) for dt, dv, rel, c in kb.neighbors("domain", target)
+                if dt in ("indicator", "email", "person", "org")}
+        # Guided-pivot prevalence: an indicator shared by too many domains (generic kit favicons,
+        # registrar/privacy emails, g-recaptcha) is noise, not an owner link. Count how many
+        # domains carry each indicator once, then --strong drops the over-common ones.
+        prevalence: dict = {}
+        benign: set = set()
+        if args.strong:
+            for e in kb.edges():
+                if e["src_type"] == "domain":
+                    prevalence.setdefault((e["dst_type"], e["dst"]), set()).add(e["src"])
+            try:
+                from reference import benign_values          # curated globally-benign fingerprints
+                benign = benign_values(args.kb)
+            except Exception:  # noqa: BLE001
+                benign = set()
+        peers = {}
+        for e in kb.edges():
+            if e["src_type"] == "domain" and (e["dst_type"], e["dst"]) in inds and e["src"] != target:
+                if args.strong and (e["rel"] in NOISE_RELS or e["dst"] in benign or
+                        len(prevalence.get((e["dst_type"], e["dst"]), ())) > args.max_prevalence):
+                    continue
+                peers.setdefault(e["src"], set()).add(f"{e['rel']}:{e['dst']}")
+        peers = {d: v for d, v in peers.items() if v}     # drop peers left with no (strong) link
+        tag = " (strong links only — boilerplate excluded)" if args.strong else ""
+        print(f"\n# Domains sharing an indicator with {target}{tag}\n")
+        for dom, via in sorted(peers.items(), key=lambda x: -len(x[1])):
+            print(f"  {dom}   via {len(via)} shared: {', '.join(sorted(via)[:4])}{' …' if len(via) > 4 else ''}")
+
+    if args.components:
+        restrict = {d.strip().lower() for d in args.domains.split(",") if d.strip()} or None
+        comps = _components(kb, args.kb, args.max_prevalence, restrict)
+        print(f"# Connected components (strong) — {len(comps)} component(s)\n")
+        for i, doms in enumerate(comps, 1):
+            print(f"COMPONENT {i}\t{', '.join(sorted(doms))}")
+
+
+def _components(kb, kb_dir, max_prevalence, restrict):
+    """Union-find over domains that share a STRONG indicator (drop boilerplate rels, reference-
+    benign values, and indicators shared by > max_prevalence domains). `restrict` limits clustering
+    to a domain set (a case); domains in it with no strong edge come back as singletons."""
+    NOISE_RELS = {"same_inline_css", "same_comment", "same_template"}
+    prevalence: dict = {}
+    for e in kb.edges():
+        if e["src_type"] == "domain":
+            prevalence.setdefault((e["dst_type"], e["dst"]), set()).add(e["src"])
+    try:
+        from reference import benign_values
+        benign = benign_values(kb_dir)
+    except Exception:  # noqa: BLE001
+        benign = set()
+    ind_domains: dict = {}
+    for e in kb.edges():
+        if e["src_type"] != "domain" or e["rel"] in NOISE_RELS or e["dst"] in benign:
+            continue
+        if len(prevalence.get((e["dst_type"], e["dst"]), ())) > max_prevalence:
+            continue
+        if restrict is not None and e["src"] not in restrict:
+            continue
+        ind_domains.setdefault((e["dst_type"], e["dst"]), set()).add(e["src"])
+    parent: dict = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    seen = set()
+    for doms in ind_domains.values():
+        dl = sorted(doms)
+        for d in dl:
+            seen.add(d)
+            find(d)
+        for d in dl[1:]:
+            parent[find(dl[0])] = find(d)
+    for d in (restrict or set()):
+        seen.add(d)
+        find(d)
+    comps: dict = {}
+    for d in seen:
+        comps.setdefault(find(d), set()).add(d)
+    return sorted(comps.values(), key=lambda s: (-len(s), sorted(s)[0]))
+
+
+if __name__ == "__main__":
+    main()
