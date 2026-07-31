@@ -38,11 +38,47 @@ except Exception:
 
 DEFAULT_UA = "WebPivot-whois/1.0"
 _CUSTOMIZATION_ENV = os.path.expanduser(
-    "~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/WebPivot/.env")
+    "~/.config/cti-expert/WebPivot/.env")
 
 WHOIS_CURRENT_URL = "https://www.whoisxmlapi.com/whoisserver/WhoisService"
 WHOIS_HISTORY_URL = "https://whois-history.whoisxmlapi.com/api/v1"
 REVERSE_WHOIS_URL = "https://reverse-whois.whoisxmlapi.com/api/v2"
+BALANCE_URL = "https://user.whoisxmlapi.com/service/account-balance"
+
+# Whois History and Reverse WHOIS are NOT part of the plain "WHOIS API" product — both bill to
+# the separate "Domain Research Suite" (DRS) balance. A key with WHOIS API credits but zero DRS
+# credits returns 200 for current WHOIS and 403 for both of these, which reads like a bad key.
+# It is not: it is an unfunded product. _explain_403 turns that into an actionable message.
+_DRS_ENDPOINTS = {WHOIS_HISTORY_URL: "Whois History API", REVERSE_WHOIS_URL: "Reverse WHOIS API"}
+
+
+def _explain_403(url, raw=""):
+    """Turn a bare WhoisXML 403 into the actual cause, checking the account balance to confirm."""
+    product = _DRS_ENDPOINTS.get(url)
+    if not product:
+        return f"HTTP 403 from WhoisXML: {raw or 'access restricted'}"
+    drs = None
+    try:
+        key = _key()
+        req = urllib.request.Request(
+            f"{BALANCE_URL}?{urlencode({'apiKey': key, 'output_format': 'JSON'})}",
+            headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            for row in (json.load(r).get("data") or []):
+                if (row.get("product") or {}).get("name") == "Domain Research Suite":
+                    drs = row.get("credits")
+    except Exception:  # noqa: BLE001
+        pass
+    if drs == 0:
+        return (f"{product} unavailable: Domain Research Suite credits = 0. The API key is VALID "
+                f"(plain WHOIS API still works) — this product is simply unfunded. Top up DRS at "
+                f"https://user.whoisxmlapi.com/products to re-enable history/reverse-WHOIS.")
+    if drs is None:
+        return (f"{product} returned 403 and the account balance could not be read. Check the key "
+                f"and the API IP allow-list: https://user.whoisxmlapi.com/settings/api-ip-allow-list")
+    return (f"{product} returned 403 despite {drs} Domain Research Suite credits — most likely the "
+            f"caller IP is not on the API IP allow-list: "
+            f"https://user.whoisxmlapi.com/settings/api-ip-allow-list")
 
 
 def _load_customization_env(path=_CUSTOMIZATION_ENV):
@@ -223,6 +259,15 @@ def whois_history(domain, mode="purchase", timeout=40, keep_raw=True):
         data = _get_json(WHOIS_HISTORY_URL,
                          {"apiKey": key, "domainName": domain,
                           "mode": mode, "outputFormat": "JSON"}, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            body = ""
+            try:
+                body = (json.load(e) or {}).get("messages") or ""
+            except Exception:  # noqa: BLE001
+                pass
+            return {"error": _explain_403(WHOIS_HISTORY_URL, body), "domain": domain, "http": 403}
+        return {"error": f"HTTP {e.code} from Whois History API: {e.reason}", "domain": domain}
     except Exception as e:
         return {"error": str(e), "domain": domain}
     recs = data.get("records") or []
@@ -285,11 +330,14 @@ def reverse_whois(term, kind="email", search_type="current", mode="purchase", ti
     try:
         data = _post_json(REVERSE_WHOIS_URL, payload, timeout=timeout)
     except urllib.error.HTTPError as e:
+        body = ""
         try:
-            body = json.load(e)
-            return {"error": body.get("messages") or str(e), "term": term}
-        except Exception:
-            return {"error": str(e), "term": term}
+            body = (json.load(e) or {}).get("messages") or ""
+        except Exception:  # noqa: BLE001
+            pass
+        if e.code == 403:
+            return {"error": _explain_403(REVERSE_WHOIS_URL, body), "term": term, "http": 403}
+        return {"error": body or str(e), "term": term}
     except Exception as e:
         return {"error": str(e), "term": term}
     domains = [d.get("domainName") if isinstance(d, dict) else d

@@ -6,7 +6,7 @@ the standalone WHOIS client. **No keys → keyless mode, everything below is sim
 ## Customization
 
 **Before executing, check for user customizations at:**
-`~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/WebPivot/`
+`~/.config/cti-expert/WebPivot/`
 
 If this directory exists, load and apply any PREFERENCES.md, API keys, or resources found there.
 These override default behavior. If the directory does not exist, proceed with skill defaults.
@@ -60,7 +60,7 @@ Basic auth against `PDNS_URL` (default CIRCL `https://www.circl.lu/pdns/query`);
 at any COF-compatible instance. No creds → the lookup is simply skipped (keyless mode unchanged).
 
 **No keys → keyless mode, unchanged.** Prefer macOS Keychain over a plaintext `.env`;
-see `SKILLCUSTOMIZATIONS/WebPivot/PREFERENCES.md` for setup.
+see `~/.config/cti-expert/WebPivot/PREFERENCES.md` for setup.
 
 ## WHOIS tool — `tools/whois_enrich.py`
 

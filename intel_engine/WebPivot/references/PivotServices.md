@@ -120,4 +120,4 @@ enrichment and takedown routing. A bare IP into `pivot_extract.py` runs this pas
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.
 - **No official API (scrape/manual):** AnalyzeID, osint.sh, SpyOnWeb.
 
-Store your keys in `~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/WebPivot/keys.env` (never commit).
+Store your keys in `~/.config/cti-expert/WebPivot/keys.env` (never commit).
