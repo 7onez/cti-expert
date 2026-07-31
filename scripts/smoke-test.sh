@@ -58,6 +58,25 @@ else
 fi
 rm -rf "$TMP"
 
+echo "▶ intel-backend resolver: reports a tier (Tier 3 stateless is a valid PASS)"
+bk="$(uv run "$S/backend/backend.py" status 2>&1)"
+if echo "$bk" | grep -q "Intel backend: Tier"; then
+  ok "backend.py resolves ($(echo "$bk" | head -1 | sed 's/^Intel backend: //'))"
+else
+  bad "backend.py did not report a tier: $(echo "$bk" | head -1)"
+fi
+
+echo "▶ intel dispatcher: full op map is intact (works at any tier)"
+di="$(uv run "$S/backend/intel.py" list 2>&1)"
+# Spot-check ops from each phase group + the meta ops (mcp/list).
+if echo "$di" | grep -q "harness" && echo "$di" | grep -q "reference" \
+   && echo "$di" | grep -q "cdn-ranges" && echo "$di" | grep -q "pipeline" \
+   && echo "$di" | grep -q "mcp "; then
+  ok "intel.py dispatcher lists engine ops ($(echo "$di" | grep -cE '^  [a-z]' ) ops)"
+else
+  bad "intel.py list did not enumerate the full op set: $(echo "$di" | head -1)"
+fi
+
 echo "▶ stealer-log analyzer runs on a synthetic log"
 TMP="$(mktemp -d)"; mkdir -p "$TMP/logs/host1"
 printf 'stealc stealer\nTelegram: t.me/test\nIP: 1.2.3.4\nCountry: XX\n' > "$TMP/logs/host1/system_info.txt"

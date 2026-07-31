@@ -1,0 +1,1 @@
+Produce the final assessment as JSON matching the schema: BLUF with an estimative word; the cluster and the artifacts binding it; the attribution level and the evidence for it; gaps / competing explanation; prioritised next pivots.

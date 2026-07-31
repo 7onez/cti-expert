@@ -68,6 +68,13 @@ uv run "$ORCH" --state "$ST" --edges                           # → connections
 Loop this until `--plan` prints nothing. Under `--autonomy checkpoint` the same sequence runs,
 but step 4 becomes an approval gate: present the summary and wait before calling `--plan`.
 
+> **Backend-aware seeding (optional).** When the persistent intelligence backend is reachable
+> (`/backend` resolves `$INTEL_HOME`), check each new seed against prior cases *before* expanding
+> it — `which_cases` / `domain_verdict` (Tier-1 MCP) or `python3 $INTEL_HOME/tools/kb/query.py
+> --kb knowledge --entity <seed>` (Tier-2). A hit means the operator is already known: fold in the
+> historical edges and prioritise the frontier accordingly instead of re-walking it cold. Backend
+> absent → skip this check, expand as normal. See [`../connectors/intel-backend.md`](../connectors/intel-backend.md).
+
 `discoveries.json` is assembled from technique output. Many collectors already emit the
 right shape — e.g. `wayback_harvest.py --indicators` and `pivot_extract.py` JSON — map each
 artifact to `{from: "<parent node key>", value, type, method, confidence}`.

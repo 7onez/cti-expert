@@ -1,0 +1,12 @@
+# BinaryPivot has ZERO required dependencies — the core runs on the Python 3 stdlib
+# (zipfile, hashlib, struct, re) plus these OPTIONAL accelerators, used only if present:
+#
+#   requests   - streaming download (falls back to urllib)
+#   keytool    - APK signing-cert SHA-256 (ships with any JDK; best pivot)
+#   openssl    - signing-cert fallback (reads META-INF/*.RSA PKCS7)
+#   file       - file-type identification
+#   strings    - faster string sweep (pure-Python fallback otherwise)
+#
+# For deeper/dynamic analysis (out of scope here — use a sandbox):
+#   MobSF, jadx, apktool, Triage/Any.Run
+requests

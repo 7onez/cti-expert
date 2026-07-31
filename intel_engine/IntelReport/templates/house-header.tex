@@ -1,0 +1,92 @@
+% IntelReport — house LaTeX style (xelatex). Muted editorial palette, matches
+% IntelGraph/scripts/theme.py. Included via pandoc --include-in-header AFTER the
+% generated defs.tex (which defines \CLSLINE and \CASEID).
+\usepackage{fontspec}
+\usepackage[a4paper,margin=2.4cm,headheight=16pt,headsep=14pt,footskip=26pt]{geometry}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{parskip}
+\usepackage{etoolbox}
+\usepackage{fvextra}  % line-wrapping for code / verbatim (no page overflow)
+
+% palette — from IntelGraph theme.py (slate / steel / ochre / brick)
+\definecolor{ink}{HTML}{1F1D1A}
+\definecolor{muted}{HTML}{6F6A61}
+\definecolor{steel}{HTML}{3B5566}
+\definecolor{slate}{HTML}{22333F}
+\definecolor{ochre}{HTML}{B0790F}
+\definecolor{brick}{HTML}{8C2D2D}
+\definecolor{grid}{HTML}{D9D3C7}
+
+% Fonts (\setmainfont / \setsansfont / \headingfont) are chosen at render time
+% by render_report.py — it detects an installed Vietnamese-capable family and
+% writes the \setmainfont etc. into the generated defs.tex included before this.
+
+% headings in slate/steel sans-serif, understated
+\titleformat{\section}{\headingfont\Large\bfseries\color{slate}}{\thesection}{0.6em}{}[{\color{grid}\titlerule[0.8pt]}]
+\titleformat{\subsection}{\headingfont\large\bfseries\color{steel}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\headingfont\normalsize\bfseries\color{steel}}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.5em}{0.6em}
+\titlespacing*{\subsection}{0pt}{1.1em}{0.4em}
+% Each top-level section starts on a fresh page (cleaner, one topic per page).
+\newcommand{\sectionbreak}{\clearpage}
+
+% header / footer — classification banner + case id + page numbers
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\renewcommand{\headrule}{\color{grid}\hrule height 0.4pt}
+\renewcommand{\footrule}{\color{grid}\hrule height 0.4pt}
+\fancyhead[L]{\footnotesize\headingfont\color{muted}\CLSLINE}
+\fancyhead[R]{\footnotesize\headingfont\color{muted}\CASEID}
+\fancyfoot[L]{\footnotesize\headingfont\color{muted}\CLSLINE}
+\fancyfoot[R]{\footnotesize\headingfont\color{muted}\thepage}
+
+% links
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=steel,urlcolor=steel,citecolor=steel,
+  pdfborder={0 0 0}}
+
+% figure captions
+\captionsetup{font=small,labelfont={sf,bf,color=slate},textfont={color=muted},skip=6pt}
+
+% tables + lists breathe a little
+\renewcommand{\arraystretch}{1.12}
+\setlist{itemsep=2pt,topsep=3pt,parsep=0pt}
+
+% keep wide images from overflowing the text block
+\setkeys{Gin}{width=\linewidth,keepaspectratio}
+
+% --- house rules (see SKILL.md "Report structure") -----------------------------
+% Roman numerals for top-level sections (I, II, ...); sub-sections number as
+% arabic <section>.<sub> (1.1, 2.1) — NOT I.1 — per house style.
+\renewcommand{\thesection}{\Roman{section}}
+\renewcommand{\thesubsection}{\arabic{section}.\arabic{subsection}}
+\renewcommand{\thesubsubsection}{\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}
+% Appendices switch to letters (Appendix A, B, ...). Pandoc has no \appendix hook,
+% so a report emits a raw-LaTeX \appendix before its first appendix heading.
+\gappto\appendix{\renewcommand{\thesection}{\Alph{section}}%
+  \titleformat{\section}{\headingfont\Large\bfseries\color{slate}}{Appendix~\thesection}{0.6em}{}[{\color{grid}\titlerule[0.8pt]}]}
+
+% Text-heavy tables must stay compact — shrink the font + padding inside every
+% table environment (pandoc pipe/grid tables become longtable or tabular).
+\AtBeginEnvironment{longtable}{\footnotesize}
+\AtBeginEnvironment{tabular}{\small}
+\setlength{\tabcolsep}{4pt}
+
+% Code / verbatim blocks wrap instead of running off the page.
+\fvset{breaklines=true,breakanywhere=true,fontsize=\small}
+
+% Long INLINE code / URLs (domains, hashes, endpoints) must break inside narrow
+% table cells instead of overflowing into the next column.
+\usepackage{seqsplit}
+\let\oldtexttt\texttt
+\renewcommand{\texttt}[1]{\oldtexttt{\seqsplit{#1}}}

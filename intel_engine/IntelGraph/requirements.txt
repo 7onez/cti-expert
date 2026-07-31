@@ -1,0 +1,13 @@
+# IntelGraph renderers — install what you need per engine.
+
+matplotlib        # data charts + gantt.py/timeline (theme.py house style)
+graphviz          # entity/infra link graphs (also needs the `dot` binary: brew install graphviz)
+
+# Mermaid (flows, kill-chains, quick relationship graphs) uses the mermaid-cli
+# binary `mmdc`, NOT a pip package:
+#   npm i -g @mermaid-js/mermaid-cli
+#   npx puppeteer browsers install chrome-headless-shell   # one-time, if Chrome missing
+
+# Interactive clustered link-analysis graphs (scripts/render_network.py) need
+# NOTHING to install — the JS libraries (Cytoscape.js + fcose, MIT) are vendored
+# in vendor/ and inlined into a single self-contained HTML. Zero-dependency.

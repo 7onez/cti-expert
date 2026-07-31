@@ -28,3 +28,14 @@ vendor/
 # API keys (managed by /apikeys) — NEVER commit
 .env
 scripts/**/.env
+
+# Local intel-backend MCP registration (absolute path, machine-specific).
+# Written by `scripts/backend/intel.py mcp --write` to enable Tier 1 — never commit.
+.mcp.json
+
+# Vendored intel-engine runtime DATA (fresh, local-only — never commit)
+/intel_engine/cases/
+/intel_engine/knowledge/entities/
+/intel_engine/knowledge/evidence/
+/intel_engine/knowledge/relationships/edges.jsonl
+/intel_engine/knowledge/*.jsonl
