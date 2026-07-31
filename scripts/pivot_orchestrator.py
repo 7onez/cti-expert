@@ -77,6 +77,11 @@ _RX = {
     "ga_id":     re.compile(r"^(UA-\d{4,}-\d+|G-[A-Z0-9]{6,}|GTM-[A-Z0-9]{4,})$"),
     "adsense_id": re.compile(r"^(ca-)?pub-\d{10,}$"),
     "phone":     re.compile(r"^\+?\d[\d\s().\-]{7,16}\d$"),
+    # document / image: typed by file extension so a discovered .pdf / .jpg (a URL *or* a
+    # bare filename) routes to metadata/EXIF/face forensics instead of the generic web-DOM
+    # pivot. Must be classified BEFORE `url` (see the order tuple in classify()).
+    "document":  re.compile(r"^\S+\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)(?:[?#]\S*)?$", re.I),
+    "image":     re.compile(r"^\S+\.(?:jpe?g|png|gif|bmp|tiff?|webp|heic|svg)(?:[?#]\S*)?$", re.I),
     "url":       re.compile(r"^https?://", re.I),
     "domain":    re.compile(r"^(?=.{4,253}$)([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"),
     "social_handle": re.compile(r"^@[A-Za-z0-9._]{2,}$"),
@@ -103,8 +108,9 @@ def classify(value):
     #   uscc before phone — a USCC is 18 chars; E.164 caps at 15 digits, so an 18-char match
     #                       is a company code, not a number worth reverse-lookup.
     #   vin/youtube_channel before username — both would otherwise fall through to username.
-    for t in ("email", "url", "ipv4", "ipv6", "eth", "btc", "asn", "ga_id",
-              "adsense_id", "cert_sha256", "sha1", "md5", "social_handle", "icp",
+    #   document/image before url — a .pdf/.jpg link is a forensics pivot, not a web page.
+    for t in ("email", "document", "image", "url", "ipv4", "ipv6", "eth", "btc", "asn",
+              "ga_id", "adsense_id", "cert_sha256", "sha1", "md5", "social_handle", "icp",
               "coordinates", "iban", "uscc", "youtube_channel", "vin"):
         if _RX[t].match(v):
             return t
@@ -192,6 +198,11 @@ EDGE_MATRIX = {
         {"method": "shodan-internetdb", "tool": "/appliance-scan <ip>", "yields": ["domain", "asn"], "rel": "HOSTS", "confidence": 82, "active": False},
         {"method": "asn->netblock", "tool": "asn.ps1 <ip>", "yields": ["asn", "ipv4"], "rel": "ENCOMPASSES", "confidence": 70, "active": False},
     ],
+    "ipv6": [
+        {"method": "reverse-dns", "tool": "/sweep <ip>", "yields": ["domain"], "rel": "HOSTS", "confidence": 85, "active": True},
+        {"method": "passive-dns-cohosted", "tool": "/threat-check <ip>", "yields": ["domain"], "rel": "HOSTS", "confidence": 78, "active": False},
+        {"method": "asn->netblock", "tool": "asn.ps1 <ip>", "yields": ["asn", "ipv6"], "rel": "ENCOMPASSES", "confidence": 70, "active": False},
+    ],
     "username": [
         {"method": "platform-enum", "tool": "/username <handle>", "yields": ["social_handle", "domain", "email", "person"], "rel": "ALSO_KNOWN_AS", "confidence": 88, "active": True},
         {"method": "variant-suggest", "tool": "pivot_suggest.py --usernames <handle>", "yields": ["username"], "rel": "ALSO_KNOWN_AS", "confidence": 75, "active": False},
@@ -268,6 +279,36 @@ EDGE_MATRIX = {
     "iban": [
         {"method": "validate+bank-resolve", "tool": "iban_analyze.py <iban>", "yields": ["org"], "rel": "REACHES", "confidence": 90, "active": False},
         {"method": "account-reuse-search", "tool": "/dork-sweep \"<iban>\"", "yields": ["domain", "email", "person"], "rel": "LINKED_TO", "confidence": 72, "active": False},
+    ],
+    # --- Document & image forensics -------------------------------------------------
+    # techniques/fx-metadata-parsing.md, techniques/fx-document-forensics.md,
+    # techniques/image-forensics-and-face-search.md. A document or image discovered on a
+    # page is itself a pivot: its embedded metadata names the author/toolchain, and its
+    # EXIF GPS + reverse-image/face hits reach the operator. Typed by file extension (see
+    # _RX) so a .pdf/.jpg URL routes here, not to the generic web-DOM pivot.
+    "document": [
+        {"method": "metadata-authorship", "tool": "exiftool + oletools <document> — techniques/fx-metadata-parsing.md", "yields": ["person", "email", "org", "coordinates"], "rel": "REGISTERED", "confidence": 70, "active": True},
+    ],
+    "image": [
+        {"method": "exif-gps", "tool": "exiftool <image> — techniques/fx-metadata-parsing.md", "yields": ["coordinates"], "rel": "OTHER", "confidence": 80, "active": True},
+        # Face / reverse-image matches are inherently uncertain — kept LOW so they surface
+        # as leads and are HELD pending corroboration, never an auto-merge (contributor RULE 5).
+        {"method": "reverse-image+face", "tool": "reverse-image + face search <image> — techniques/image-forensics-and-face-search.md", "yields": ["person", "domain", "username", "social_handle"], "rel": "ALSO_KNOWN_AS", "confidence": 60, "active": True},
+    ],
+    # --- Terminal-enrichment identifiers --------------------------------------------
+    # Recognized and actioned, but they do NOT spawn operator-clustering seeds (yields []).
+    # Wiring them stops the loop silently dead-ending a typed value; keeping yields empty
+    # avoids inventing a false attribution from a location or a vehicle.
+    "coordinates": [
+        {"method": "reverse-geocode", "tool": "Nominatim / Overpass <lat,lon> — techniques/advanced-geolocation-techniques.md", "yields": [], "rel": "OTHER", "confidence": 60, "active": False},
+    ],
+    "vin": [
+        {"method": "vin-decode", "tool": "NHTSA vPIC + NICB VINCheck <vin> — techniques/transport-tracking.md", "yields": [], "rel": "OTHER", "confidence": 90, "active": False},
+    ],
+    # A YouTube channel's about/links panel is a genuine identity pivot to the operator's
+    # own domain, socials and contact email.
+    "youtube_channel": [
+        {"method": "channel-about+links", "tool": "channel about/links panel <UC…> — techniques/social-media-platforms.md", "yields": ["domain", "social_handle", "email"], "rel": "ALSO_KNOWN_AS", "confidence": 72, "active": True},
     ],
 }
 

@@ -104,9 +104,18 @@ commands; **bold** yields feed back as the next hop's seeds:
 | **ICP licence** | serial reverse-search (PublicWWW/FOFA/Quake)→**sibling domains** (same registrant — as strong as a shared GA ID); filing→**registrant company/USCC** |
 | **USCC / CN company name** | `/cn-corp` registry chain (GSXT→aggregators)→**officers/shareholders/subsidiaries/domains**; `enscan`→**domains/ICP filings**; `pivot_suggest --cjk`→**pinyin & Traditional handle variants** |
 | **IBAN** | `iban_analyze.py`→**issuing bank/org**; account-string reuse search→**domains/emails/persons** |
+| **document** (pdf/office) | `exiftool`+`oletools` metadata/authorship→**person/email/org/coordinates** |
+| **image** (jpg/png/…) | EXIF GPS→**coordinates**; reverse-image + face search→**person/domain/username/social** (LOW — held pending corroboration; face matches never auto-merge) |
+| **coordinates** | reverse-geocode (Nominatim/Overpass) → location finding *(enrichment; no new seed)* |
+| **VIN** | NHTSA vPIC + NICB decode → vehicle attributes *(enrichment; no new seed)* |
+| **youtube channel** | about/links panel→**domain/social handle/email** |
 
 Typing note: ICP nodes dedupe on the **licence serial**, so `苏ICP备12345678号-1` and `-3`
-collapse to one operator node. IBANs normalize to unspaced uppercase.
+collapse to one operator node. IBANs normalize to unspaced uppercase. **document/image** are
+typed by file extension and classified *before* `url`, so a discovered `.pdf`/`.jpg` link routes
+to metadata/EXIF/face forensics rather than the generic web-DOM pivot. **coordinates / VIN** are
+recognized and actioned (reverse-geocode, VIN decode) but yield no new clustering seed — wiring
+them stops the loop silently dead-ending a typed value without inventing a false attribution.
 
 Edges are recorded with the case-schema connection type (`CONTROLS`, `REGISTERED`,
 `HOSTS`, `LINKED_TO`, `ALSO_KNOWN_AS`, `REACHES`, `WORKS_AT`, `ENCOMPASSES`,
