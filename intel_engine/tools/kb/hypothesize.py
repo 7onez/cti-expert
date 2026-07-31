@@ -39,7 +39,24 @@ _IDENTITY_RELS = {"registered_by", "uses_wallet"}
 _SERVICE_RELS = {"uses_verification", "uses_analytics", "uses_saas", "uses_pixel"}
 CORROBORATING = {"uses_contact", "same_template", "same_inline_css", "same_comment",
                  "uses_theme", "uses_favicon", "uses_tracker", "shows_email"}
-NOISE = {"uses_nameserver"}
+# `uses_nameserver` is CONDITIONAL, which is why it is not in any set above. Delegation to a
+# managed provider (Cloudflare, GoDaddy, Route 53 …) is shared by millions of unrelated domains
+# and must never cluster — but delegation to a nameserver the operator RUNS THEMSELVES is one of
+# the strongest links available: you cannot point a domain at ns1.<their-host>.com without
+# controlling that zone. noise_filters.MANAGED_DNS_SUFFIXES is the list that tells them apart;
+# _ns_tier() below applies it. (Previously a blanket NOISE = {"uses_nameserver"} constant sat
+# here unused, so self-hosted NS silently fell through to "noise" and never merged a cluster.)
+try:
+    from noise_filters import MANAGED_DNS_SUFFIXES
+except Exception:  # noqa: BLE001 — keep hypothesize usable standalone
+    MANAGED_DNS_SUFFIXES = ("ns.cloudflare.com", "cloudflare.com", "domaincontrol.com",
+                            "registrar-servers.com", "awsdns", "azure-dns.com")
+
+
+def is_managed_ns(indicator):
+    """True if this nameserver belongs to a public managed-DNS/registrar provider."""
+    host = str(indicator or "").split(":", 1)[-1].strip().lower().rstrip(".")
+    return any(host == s or host.endswith("." + s) or s in host for s in MANAGED_DNS_SUFFIXES)
 
 # privacy-proxy / registrar-role / protected-whois emails — shared by thousands of UNRELATED
 # domains, so they must never drive clustering (they'd chain the whole KB into one blob).
@@ -87,7 +104,10 @@ class _UF:
         self.p[self.find(a)] = self.find(b)
 
 
-def _tier(rel):
+def _tier(rel, indicator=None):
+    if rel == "uses_nameserver":
+        # self-hosted NS = zone control = attribution; managed provider = noise. See is_managed_ns.
+        return "noise" if (indicator is None or is_managed_ns(indicator)) else "attribution"
     if rel in ATTRIBUTION:
         return "attribution"
     if rel in CORROBORATING:
@@ -118,7 +138,7 @@ def build_clusters(kb, min_domains, max_fanout=40, service_fanout=15):
                 s = dict(s, _agency_suspect=True)
             dropped.append(s)
             continue
-        is_attr = any(_tier(r) == "attribution" for r in s["rels"])
+        is_attr = any(_tier(r, s["indicator"]) == "attribution" for r in s["rels"])
         if is_attr:
             union_bindings.append(s)      # ONLY identity/owner artifacts merge operators
         else:

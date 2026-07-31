@@ -28,6 +28,7 @@ import datetime
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,12 +73,38 @@ def read_markdown(md_path):
     return meta, body_title, body_lines
 
 
+# Report headings are auto-numbered by pandoc (--number-sections), so a manual section
+# number baked into the heading TEXT ("## 4.1 Overview") renders doubled ("5.1 4.1 Overview").
+# Strip a leading manual number — dotted (4.1 / 4.1.2, optional trailing . or )) or a single
+# integer with a trailing separator (4. / 4)) — but NOT a bare integer ("## 2024 in review"
+# stays). Requires real title text after the number (lookahead), so a number-only heading is
+# left alone.
+_HEADING_NUM = re.compile(r"^(#{1,6}[ \t]+)(?:\d+(?:\.\d+)+[.)]?|\d+[.)])[ \t]+(?=\S)")
+
+
+def _strip_manual_heading_numbers(lines):
+    """Drop manual section numbers from ATX headings so pandoc's --number-sections is the
+    single source of numbering. Fenced code blocks (``` / ~~~) are left verbatim, so shell
+    comments like '# 4. do X' inside a code block survive untouched."""
+    out, in_fence = [], False
+    for ln in lines:
+        s = ln.lstrip()
+        if s.startswith("```") or s.startswith("~~~"):
+            in_fence = not in_fence
+            out.append(ln)
+        elif not in_fence and ln.startswith("#"):
+            out.append(_HEADING_NUM.sub(r"\1", ln, count=1))
+        else:
+            out.append(ln)
+    return out
+
+
 def write_body(body_lines, tmpdir):
     """Write the frontmatter-stripped body to a temp .md (images still resolve
     via --resource-path pointed at the original file's directory)."""
     out = os.path.join(tmpdir, "body.md")
     with open(out, "w", encoding="utf-8") as fh:
-        fh.writelines(body_lines)
+        fh.writelines(_strip_manual_heading_numbers(body_lines))
     return out
 
 

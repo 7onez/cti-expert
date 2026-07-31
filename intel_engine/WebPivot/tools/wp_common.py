@@ -206,7 +206,7 @@ def parse_proxies(spec: str):
 # previous keyless behavior — nothing breaks.
 
 _CUSTOMIZATION_ENV = os.path.expanduser(
-    "~/.claude/PAI/USER/SKILLCUSTOMIZATIONS/WebPivot/.env")
+    "~/.config/cti-expert/WebPivot/.env")
 
 # Candidate .env locations, highest-priority first. A real env var always wins over any
 # file; among files, an earlier file wins over a later one (never overridden). Order:
@@ -214,7 +214,7 @@ _CUSTOMIZATION_ENV = os.path.expanduser(
 #                             harness runs from) → this is where operators actually keep keys
 #   2. <repo>/.env          — repo root relative to this script (tools/ -> WebPivot -> repo)
 #   3. <skill>/.env         — a skill-local .env next to WebPivot/
-#   4. customization .env   — the PAI per-skill customization dir (legacy location)
+#   4. customization .env   — an optional per-user override dir, outside the repo
 
 _SD = os.path.dirname(os.path.abspath(__file__))
 
@@ -244,7 +244,7 @@ def _load_env_file(path: str) -> None:
 
 def _load_customization_env() -> None:
     """Load every candidate .env (dedup'd) so keys kept at the repo root are picked up, not
-    just the PAI customization dir. Env wins; earlier file wins over later."""
+    just the per-user override dir. Env wins; earlier file wins over later."""
     seen = set()
     for p in _ENV_CANDIDATES:
         rp = os.path.realpath(p)
