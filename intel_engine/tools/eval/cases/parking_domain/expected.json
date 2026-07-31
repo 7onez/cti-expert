@@ -1,0 +1,15 @@
+{
+  "description": "Negative control: a Sedo/NameSilo parking page must yield NO operator pivots (guards against extractors that false-fire on parking boilerplate)",
+  "input": "input.html",
+  "expect_artifacts": {
+    "title": "parked-example"
+  },
+  "forbid_pivots": [
+    {"kind_prefix": "crypto:"},
+    {"kind_prefix": "qr:"},
+    {"kind": "favicon_hash"},
+    {"kind_prefix": "tracker:"},
+    {"kind_prefix": "saas:"},
+    {"kind_prefix": "app:"}
+  ]
+}

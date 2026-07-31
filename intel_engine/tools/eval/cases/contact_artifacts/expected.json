@@ -1,0 +1,20 @@
+{
+  "description": "Contact artifacts: tel: phone, Telegram channel + group-invite, Google Form, and footer postal address must all extract — while a t.me/share widget and an order-id/price must NOT become pivots",
+  "input": "input.html",
+  "expect_pivots": [
+    {"kind": "phone", "value": "+18005550100"},
+    {"kind": "telegram", "value": "+PlaceholderInvite123"},
+    {"kind": "telegram", "value": "site_a_support"},
+    {"kind": "saas:google_form", "value_contains": "1FAIpQLSplaceholderFORMid"},
+    {"kind": "footer:address", "value_contains": "12 Example Street"}
+  ],
+  "expect_artifacts": {
+    "description": "A synthetic fixture page for the contact-artifact extractors: phone, telegram, google form, footer address.",
+    "footer.copyright": "Placeholder Holdings Ltd"
+  },
+  "forbid_pivots": [
+    {"kind": "telegram", "value": "share"},
+    {"kind": "phone", "value": "100200300"},
+    {"kind": "phone", "value": "1234.56"}
+  ]
+}

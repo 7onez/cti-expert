@@ -1,0 +1,6 @@
+# IntelReport has NO Python package dependencies — render_report.py is stdlib-only.
+# It requires two SYSTEM tools already used by this repo:
+#   pandoc     (brew install pandoc            / apt install pandoc)
+#   xelatex    (brew install --cask mactex-no-gui  / apt install texlive-xetex texlive-fonts-recommended)
+# A Vietnamese-capable font is auto-selected from what fontconfig reports (fc-list :lang=vi);
+# on a bare Linux box install e.g. fonts-noto (apt install fonts-noto-core).

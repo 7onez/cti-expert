@@ -355,6 +355,14 @@ def cmd_example(services):
             out.append(f"{s['env']}=")
             for extra in s.get("extra", []):
                 out.append(f"{extra}=")
+    # --- Non-key config (not a premium service; survives regeneration) ----------
+    out.append("")
+    out.append("# --- Optional: persistent intelligence backend " + "-" * 15)
+    out.append("# Path to the intel_engine engine (persistent KB + cross-case correlation).")
+    out.append("# Optional — leave blank to run stateless. When set, unlocks /backend /kb /recall /binary.")
+    out.append("# Auto-resolved if blank: .mcp.json > sibling intel_engine/ dir > ~/.claude symlink.")
+    out.append("# See connectors/intel-backend.md")
+    out.append("INTEL_HOME=")
     print("\n".join(out))
     return 0
 

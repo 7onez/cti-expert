@@ -71,6 +71,27 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > always be a deliberate choice. Full trigger table: §Technique Activation Matrix.
 > Narrow with `--no-cn`.
 
+> **Two layers, one skill: broad collector → deep pipeline.** cti-expert is the **broad
+> collector** — the wide net of Acquire/Enrich commands (`/webpivot`, `/sweep`, `/subdomain`,
+> `/icp`, `/username`, `/email-deep`, `/breach-deep`, …) that pull artifacts from anywhere. The
+> **`intel_engine` engine is now vendored in-repo under `intel_engine/`** (`intel_engine/harness/`,
+> `intel_engine/tools/`, `intel_engine/WebPivot/`, `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis/`)
+> and supplies the **pipeline chains + deeper pivoting logic**: a persistent knowledge base (`intel_engine/knowledge/`), versioned cases
+> (`cases/`), cross-case correlation, calibrated assessment, and rendering.
+>
+> **The chain:** broad collection (cti-expert) → the pipeline (`/pipeline`, `/harness`) ingests it,
+> then applies the deep logic — *"seen this operator before?"* (`/recall`), whole-KB clustering
+> (`/kb --cluster`, `/cert-overlap`), false-positive control (`/reference`), risk scoring
+> (`/risk`), hypothesis generation, confidence calibration, and a versioned `Assessment`. The
+> pipeline drives cti-expert's own `scripts/webpivot/pivot_extract.py` collector, so the broad and
+> deep layers share one artifact shape end-to-end.
+>
+> **Self-contained & self-resolving.** `/backend` resolves to **SELF** (in-repo) — no external
+> setup. Deps: `uv venv && uv pip install -r requirements.txt` (harness SDK/MCP + IntelGraph
+> renderers; the collector + KB + deterministic pipeline are stdlib and need none). An explicit
+> `$INTEL_HOME` still overrides for a shared external KB. Full architecture, the op map, and the
+> evidence-envelope schema: [`connectors/intel-backend.md`](connectors/intel-backend.md).
+
 ---
 
 ## 3. Command Reference
@@ -113,6 +134,7 @@ Commands grouped by AEAD phase.
 | `/appliance-scan [domain\|ip]` | Fingerprint internet-facing edge/VPN appliances (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed services → CISA KEV/CVE mapping. Passive-first (Shodan InternetDB/Censys); feeds `/vuln-check` + `/threat-model`. See `techniques/fx-edge-appliance-recon.md` | `/appliance-scan vpn.example.com` |
 | `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` | `/saas-map example.com` |
 | `/sharelink [url]` | Extract sharer identity from share link | `/sharelink https://vm.tiktok.com/ABC` |
+| `/binary [file\|url]` | **Built-in.** Static IOC extraction from a scam/fraud binary (sideloaded APK, desktop trading `.exe`/`.dmg`, bundled `.jar`) via the in-repo `BinaryPivot/` — signing-cert SHA-256, package name/permissions, embedded C2/backend hosts, Firebase/S3 tenants, wallets, Telegram/WhatsApp handles. Output is WebPivot-shaped → clusters the app with web infra in the shared KB. See `connectors/intel-backend.md` §7 | `/binary ./trader.apk` |
 <!-- dork-integration:phase-05 start -->
 | `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Zero-auth dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier fallback cascade | `/dork-sweep example.com --filetype` |
 | `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW) | `/docleak "Acme Corp"` |
@@ -152,7 +174,7 @@ Commands grouped by AEAD phase.
 | Command | What It Does | Example |
 |---------|-------------|---------|
 | `/exposure [target]` | Composite exposure score (0–100) | `/exposure domain.com` |
-| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3 | `/threat-model` |
+| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3. **Backend hook (Assess):** if `/backend` is up, calibrate confidence on your own priors first — `intel.py operators list` + `intel.py risk --case <id>` + read `knowledge/{calibration.jsonl,analyst_profile.md}` — instead of scoring from scratch. See `connectors/intel-backend.md` §6 | `/threat-model` |
 | `/signatures` | Surface recurring behavioral patterns | `/signatures` |
 | `/validate` | Quality audit — score 0–100 | `/validate` |
 | `/coverage` | Coverage matrix with identified gaps — technique matrix **plus** the 5W1H substantive pass (`Why`/`How` unanswered blocks Deliver-ready) | `/coverage` |
@@ -214,6 +236,17 @@ Commands grouped by AEAD phase.
 | Command | What It Does | Example |
 |---------|-------------|---------|
 | `/apikeys` | Manage premium/pro API keys (Shodan, Censys, FOFA, SecurityTrails, DNSLytics, urlscan-PRO, WhoisXML, Hudson Rock, IntelX, GitHub, SerpAPI…) — `status`/`set`/`unset`/`test`/`unlocks`. Keys **upgrade existing techniques** (especially `/webpivot`); keyless/free stays the default. Stored chmod-600 in `$SKILL_DIR/.env` (gitignored), env-var override. See `handbook/api-keys.md` | `/apikeys set shodan <KEY>` |
+| `/backend` | Detect/report the optional persistent-intelligence backend and pick the tier — **Tier 1** typed MCP (`intel-harness`) → **Tier 2** CLI → **Tier 3** stateless. Runs `scripts/backend/backend.py` to resolve `$INTEL_HOME` (env → `.mcp.json` → sibling dir → symlink) and print the tier line. All the backend commands below dispatch through `scripts/backend/intel.py <op>` at Tier 2 (or the typed MCP tool at Tier 1). `intel.py list` maps **all ~39 engine ops** (full CLI parity — CDN ranges, graph-build, hypothesize, calibration, evidence-report, case-store, cost, deterministic `pipeline`, …); `intel.py mcp` prints/writes the `.mcp.json` that enables Tier 1 ("the server"). See `connectors/intel-backend.md` | `/backend` · `/backend check` |
+| `/kb [query]` | **Built-in.** Query the shared knowledge base. **T2:** `intel.py kb --stats`/`--entity <v>`/`--cluster <domain>`/`--shared --min N`; `intel.py operators list`. **T1:** `kb_entity`/`kb_cluster`/`kb_query_shared` | `/kb --entity example.com` |
+| `/recall [seed]` | **Built-in.** "Have I seen this before?" — check a seed against every prior case before collecting. **T1:** `which_cases`/`domain_verdict` (typed MCP). **T2:** `intel.py recall <seed>` (query.py `--entity`; which_cases/domain_verdict are MCP-only). Surfaces known operators up front | `/recall scam-site.top` |
+| `/risk [case]` | **Built-in.** Score a case's hosts for **NRD / bulletproof-hosting / money-trail** red flags. **T2:** `intel.py risk --case <id>` (or `--file <pivot.json>`). **T1:** `risk_signals` | `/risk CASE-0001` |
+| `/reverse-whois [email\|name]` | **Built-in.** Reverse-WHOIS a registrant identity → only high-value pivots; refuses privacy/registrar terms, flags bulk resellers as noise. **T2:** `intel.py reverse-whois --reverse-email <e> --search-type historic --json`. **T1:** `reverse_whois` | `/reverse-whois owner@x.com` |
+| `/cert-overlap [d1 d2 …]` | **Built-in.** KB-aware TLS/SAN same-operator **verdict** (SHARED-CERT / SIBLING-OVERLAP / NO-CT-OVERLAP) across 2+ domains — corroborates a cluster at the TLS layer. Complements the keyless `/cert-pivot`. **T2:** `intel.py cert-overlap a.com b.com`. **T1:** `cert_overlap` | `/cert-overlap a.com b.com` |
+| `/reference [check\|add\|list]` | **Built-in.** Curated **false-positive control** ledger — is a fingerprint BENIGN (common logo/CDN → don't cluster), SIGNAL (distinctive, prior-case → pivot), or UNKNOWN. **T2:** `intel.py reference check <value>`. **T1:** `reference_check`/`reference_add` | `/reference check favicon:123` |
+| `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — the bread-and-butter handoff: broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **T2:** `intel.py pipeline open <case> seeds.txt [--no-graph]` | `/pipeline open case1 seeds.txt` |
+| `/harness [open\|continue\|status]` | **Built-in.** The **LLM-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence (needs the venv deps + an LLM key for `continue`). **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
+| `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **T2:** `intel.py graph <case_graph.json> <out-stem> --legend`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
+| `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF/DOCX** (editorial house style, cover/TOC/figures, VN-safe). Complements `/report docx`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
 
 ---
 
@@ -639,6 +672,7 @@ The **interactive HTML report** (default deliverable) renders all of these as li
 | Maltego | `connectors/maltego-export.md` | GraphML entity graph |
 | Obsidian | `connectors/obsidian-setup.md` | Linked markdown notes |
 | Notion | `connectors/notion-schema.md` | Structured database |
+| Intel backend | `connectors/intel-backend.md` | **Optional** persistent KB + cross-case correlation via the `intel_engine` engine (MCP/CLI). Absent → stateless as normal. Enables `/backend`, `/kb`, `/recall`, `/binary` |
 
 ---
 

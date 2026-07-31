@@ -404,7 +404,8 @@ def cap(seq, n=300):
 def build_report(root, logs):
     L = []
     today = datetime.date.today().isoformat()
-    L.append(f"# Stealer-Log CTI Analysis — `{os.path.basename(root.rstrip('/\\'))}`")
+    _case_name = os.path.basename(root.rstrip("/\\"))  # hoisted: no backslash inside the f-string (py<3.12)
+    L.append(f"# Stealer-Log CTI Analysis — `{_case_name}`")
     L.append(f"\n_Generated {today} · {len(logs)} logs · "
              f"{sum(l['file_count'] for l in logs)} files._\n")
     L.append("> Contains third-party PII recovered from infostealer logs. Use only for "

@@ -730,11 +730,27 @@ def render_dom(url: str, timeout: int = 30, ua: str = DEFAULT_UA, proxy: str = N
 
 
 # ---------------------------------------------------------- passive fallback
+def _to_raw_wayback(replay_url: str) -> str:
+    """Normalize any Wayback replay URL to the raw `id_` form.
+
+    The availability API hands back a *replay* URL (`.../web/<ts>/<orig>`) that
+    injects the archive.org toolbar + rewrites every asset path — so DOM extraction
+    sees Wayback chrome (its scripts/stylesheets/forms/dom_skeleton), not the target.
+    The `id_` modifier (`.../web/<ts>id_/<orig>`) serves the ORIGINAL bytes with no
+    toolbar. Idempotent; also normalizes other modifiers (im_/if_/js_/cs_) to id_.
+    """
+    if not replay_url:
+        return replay_url
+    return re.sub(r"(/web/\d{4,14})(?:[a-z]{2}_)?/", r"\1id_/", replay_url, count=1)
+
+
 def wayback_closest(url: str, ua: str = DEFAULT_UA):
     """Nearest available Wayback snapshot for a URL, or (None, None).
 
     Tries the availability API, then the CDX API as a backup. Prints a distinct
     notice on HTTP 429 so callers don't misread throttling as 'not archived'.
+    Both paths return the raw `id_` capture (see _to_raw_wayback) so the extractor
+    never ingests the Wayback toolbar as if it were the target's own DOM.
     """
     import urllib.parse
     q = urllib.parse.quote(url, safe="")
@@ -745,7 +761,7 @@ def wayback_closest(url: str, ua: str = DEFAULT_UA):
         with urllib.request.urlopen(req, timeout=25) as r:
             snap = json.load(r).get("archived_snapshots", {}).get("closest", {})
         if snap.get("available") and snap.get("url"):
-            return snap["url"], snap.get("timestamp")
+            return _to_raw_wayback(snap["url"]), snap.get("timestamp")
     except urllib.error.HTTPError as e:
         if e.code == 429:
             print("[!] archive.org rate-limited (429) — retry later or use a saved snapshot",
@@ -762,7 +778,7 @@ def wayback_closest(url: str, ua: str = DEFAULT_UA):
             rows = json.load(r)
         if rows and len(rows) > 1:
             ts, orig = rows[-1][1], rows[-1][2]
-            return f"https://web.archive.org/web/{ts}id_/{orig}", ts
+            return _to_raw_wayback(f"https://web.archive.org/web/{ts}/{orig}"), ts
     except Exception:
         pass
     return None, None
@@ -833,6 +849,55 @@ def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
             return {"snapshot": snap, "status": resp.status}
     except Exception as e:
         return {"error": str(e)}
+
+
+# cPanel service-subdomains a shared host exposes for EVERY tenant — a hosting fingerprint.
+_CPANEL_SUBS = ("cpanel.", "whm.", "webdisk.", "webmail.", "cpcalendars.",
+                "cpcontacts.", "autodiscover.", "autoconfig.", "mta-sts.")
+
+
+def reverse_ip(ip: str, ua: str = DEFAULT_UA, timeout: int = 20, limit: int = 80):
+    """Keyless reverse-IP (HackerTarget) → hostnames sharing the IP. [] on error/none."""
+    try:
+        api = "https://api.hackertarget.com/reverseiplookup/?q=" + ip
+        req = urllib.request.Request(api, headers={"User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "ignore")
+    except Exception:
+        return []
+    low = body.lower()
+    if not body or "no dns a records" in low or "error" in low or "api count exceeded" in low:
+        return []
+    return [h.strip().lower() for h in body.splitlines() if h.strip() and "." in h][:limit]
+
+
+def classify_hosting(hosts, shared_domains: int = 6):
+    """Decide whether an IP is a SHARED HOSTING box (a WEAK same-operator signal).
+
+    Fixes the false-negative where a reseller/cPanel IP (many unrelated tenants) was
+    treated like dedicated operator infrastructure. Signals: (a) the cPanel service-
+    subdomain fingerprint across >=2 distinct registrable domains, or (b) >= shared_domains
+    distinct registrable domains on the IP. Either → shared hosting: co-tenancy then says
+    nothing about common ownership. Returns {shared, tenants, reason, cpanel}.
+    """
+    regs = {}
+    for h in hosts:
+        reg = _registrable(h)
+        if reg:
+            regs.setdefault(reg, []).append(h)
+    tenants = len(regs)
+    cpanel_regs = {reg for reg, hs in regs.items()
+                   if any(h.startswith(_CPANEL_SUBS) for h in hs)}
+    cpanel = len(cpanel_regs) >= 2
+    shared = cpanel or tenants >= shared_domains
+    if cpanel:
+        reason = (f"shared cPanel/reseller host — {tenants} tenants, "
+                  f"cPanel panel on {len(cpanel_regs)}")
+    elif shared:
+        reason = f"shared hosting — {tenants} unrelated registrable domains on this IP"
+    else:
+        reason = f"{tenants} co-tenant(s) — not obviously shared hosting"
+    return {"shared": shared, "tenants": tenants, "reason": reason, "cpanel": cpanel}
 
 
 def urlscan_submit(url: str, timeout: int = 30, visibility: str = "unlisted"):
@@ -1747,6 +1812,29 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                 if r is not None:
                     piv.setdefault("live_results", {})[f"reverse_whois_{st}"] = r
         result["pivots"].append(piv)
+
+    # registrant phone (current + every historical) → high-value selector.
+    # WhoisXML reverse-WHOIS has no phone index, so we surface reverse-lookup services
+    # rather than calling reverse_whois — but a non-privacy phone is still a strong pivot.
+    phones = []
+    if w.get("registrant_phone"):
+        phones.append(w["registrant_phone"])
+    for ph in hist.get("registrant_phones") or []:
+        if ph not in phones:
+            phones.append(ph)
+    for ph in phones:
+        if whois_enrich.is_privacy(ph):
+            continue  # registrar/privacy-proxy phone — not the owner
+        result["pivots"].append({
+            "kind": "whois:registrant_phone", "value": ph, "confidence": "high",
+            "note": ("Registrant phone (WHOIS current+history) — high-value selector. "
+                     "Reverse it to find the owner's other domains/accounts."),
+            "queries": [
+                {"service": "ViewDNS reverse-whois (phone)", "query": ph},
+                {"service": "reverse-phone (TrueCaller/Sync.me)", "query": ph},
+                {"service": "Google exact-match", "query": f'"{ph}"'},
+            ],
+        })
     return result
 
 
@@ -1916,9 +2004,13 @@ def main():
     ap.add_argument("--no-whois", action="store_true",
                     help="do NOT run WhoisXML enrichment even if WHOISXML_API_KEY is set")
     ap.add_argument("--whois-reverse", action="store_true",
-                    help="run reverse-WHOIS live on registrant emails (costs WhoisXML credits)")
+                    help="(default ON) run reverse-WHOIS live on HIGH-VALUE registrant email/name "
+                         "— kept for back-compat; reverse now runs by default")
+    ap.add_argument("--no-whois-reverse", action="store_true",
+                    help="do NOT auto reverse-WHOIS high-value registrant email/name "
+                         "(reverse is ON by default; costs WhoisXML credits)")
     ap.add_argument("--whois-history-mode", choices=["preview", "purchase"], default="purchase",
-                    help="WHOIS history: preview (count only) or purchase (full records)")
+                    help="WHOIS history: preview (count only) or purchase (full records, default)")
     ap.add_argument("-o", "--out", help="write JSON to file")
     ap.add_argument("--save-dom", nargs="?", const=True, default=None, metavar="PATH",
                     help="store the raw fetched/rendered DOM to disk. Bare flag → alongside "
@@ -1996,6 +2088,11 @@ def main():
                     base_url, _, headers, body = fetch(snap_url, timeout=args.timeout, ua=seed_ua,
                                                        proxy=seed_proxy)
                     html = body.decode("utf-8", "ignore")
+                    # These response headers are archive.org's, not the target's. Keep ONLY the
+                    # real origin headers Wayback preserves as x-archive-orig-*, so tech_fingerprint
+                    # reflects the target's server — not archive.org's nginx/CSP.
+                    headers = {k[len("x-archive-orig-"):]: v for k, v in (headers or {}).items()
+                               if k.lower().startswith("x-archive-orig-")}
                     recovered_via = f"wayback:{ts}"
                     print(f"[+] recovered archived copy: {snap_url}", file=sys.stderr)
                 except Exception:
@@ -2038,12 +2135,43 @@ def main():
                     "note": "Domain seen in urlscan scans of the same host/target.",
                     "queries": [{"service": "urlscan.io", "query": f"domain:{d}"},
                                 {"service": "crt.sh", "query": f"%.{d}"}]})
-        for ip in intel.get("ips", [])[:10]:
-            result["pivots"].append({
+        seed_reg = _registrable(result["meta"].get("host") or "")
+        ip_hosting = {}
+        seen_cohost = set()  # dedupe co-hosted candidates by registrable domain
+        for idx, ip in enumerate(intel.get("ips", [])[:10]):
+            piv = {
                 "kind": "urlscan_ip", "value": ip, "confidence": "medium",
                 "note": "IP that served the target in a urlscan scan — reverse it.",
                 "queries": [{"service": "urlscan.io", "query": f"ip:{ip}"},
-                            {"service": "Validin/DNSlytics reverse-IP", "query": ip}]})
+                            {"service": "Validin/DNSlytics reverse-IP", "query": ip}]}
+            # Classify shared hosting so a reseller/cPanel IP isn't mistaken for a same-
+            # operator link. Bounded to the first 5 IPs to cap keyless reverse-IP calls.
+            cotenants = reverse_ip(ip, ua=seed_ua) if (not args.no_enrich and idx < 5) else []
+            if cotenants:
+                h = classify_hosting(cotenants)
+                ip_hosting[ip] = {"tenants": h["tenants"], "shared": h["shared"],
+                                  "cpanel": h["cpanel"], "cotenants": cotenants[:40]}
+                if h["shared"]:
+                    piv["confidence"] = "low"
+                    piv["note"] = (f"Serving IP — {h['reason']}. Co-tenancy is a WEAK "
+                                   "same-operator signal here; corroborate before clustering.")
+                else:
+                    # few, non-cPanel co-tenants → candidate same-operator siblings
+                    for ch in cotenants:
+                        chreg = _registrable(ch)
+                        head = ch.split(".", 1)[0]
+                        if (chreg and chreg != seed_reg and chreg not in seen_cohost
+                                and not head.startswith(("ns", "dns"))):
+                            seen_cohost.add(chreg)
+                            result["pivots"].append({
+                                "kind": "co_hosted_domain", "value": chreg, "confidence": "medium",
+                                "note": (f"Registrable co-hosted with the target on {ip} "
+                                         f"({h['tenants']} tenants) — candidate same-operator."),
+                                "queries": [{"service": "urlscan.io", "query": f"domain:{chreg}"},
+                                            {"service": "crt.sh", "query": f"%.{chreg}"}]})
+            result["pivots"].append(piv)
+        if ip_hosting:
+            result.setdefault("artifacts", {})["ip_hosting"] = ip_hosting
 
     # --- crawl the site's navigation / tabs / panels (opt-in via --crawl) ---
     if args.crawl is not None and html and base_url and src.startswith(("http://", "https://")):
@@ -2092,7 +2220,8 @@ def main():
     if not args.no_enrich:
         enrich_live(result)
     if not args.no_whois:
-        whois_enrich_result(result, do_reverse=args.whois_reverse,
+        # Reverse-WHOIS high-value registrant fields by DEFAULT; opt out with --no-whois-reverse.
+        whois_enrich_result(result, do_reverse=(not args.no_whois_reverse),
                             history_mode=args.whois_history_mode)
 
     # --- store the raw DOM (the collected page) ---
