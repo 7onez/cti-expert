@@ -14,21 +14,25 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
-import glob
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
 from typing import Any
-from urllib.parse import urlparse
 
 from claude_agent_sdk import ToolAnnotations, create_sdk_mcp_server, tool
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root (harness/..)
 PY = sys.executable
 READONLY = ToolAnnotations(readOnlyHint=True)  # lets the model batch these in parallel
+
+# The host-collection routine + its flag/cache helpers are single-sourced in the stdlib-only
+# tools/collect_core.py so the deterministic pipeline (tools/intel.py) shares the SAME collector
+# invocation path without importing this SDK module. This module keeps its own thin helper names
+# (below) as delegates so the rest of the file is untouched.
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import collect_core  # noqa: E402
 
 # knobs (env) — cheap/isolated smoke runs without touching the real KB:
 KB_DIR = os.environ.get("HARNESS_KB", "knowledge")        # e.g. HARNESS_KB=knowledge_scratch
@@ -99,71 +103,22 @@ POLICY: dict[str, bool] = {"hostile": os.environ.get("HARNESS_HOSTILE", "").stri
                            in ("1", "true", "yes", "on")}
 
 
+# Thin delegates to the single-sourced helpers in collect_core (bodies live there now; these keep
+# the local names so the ~40 call sites across this module are untouched).
 def _host(url: str) -> str:
-    return urlparse(url if "://" in url else "http://" + url).hostname or url
+    return collect_core.host_of(url)
 
 
 def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
-
-
-_FLAGS_CACHE: dict[str, frozenset[str]] = {}
-_FLAGS_LOCK = threading.Lock()
-
-
-def _supported_flags(script: str) -> frozenset[str]:
-    """The option strings a collector script actually accepts, read from its own --help.
-
-    The engine and cti-expert each ship a pivot_extract; the canonical one resolved via the
-    WebPivot shim does NOT accept every flag the engine's richer collector once did (see
-    STRUCTURE.md's anti-drift note). Passing an unknown flag makes argparse exit 2 and the whole
-    collection fails. Probing --help once per script keeps the wrapper working across either
-    layer instead of hard-coding one collector's vocabulary."""
-    with _FLAGS_LOCK:
-        hit = _FLAGS_CACHE.get(script)
-    if hit is not None:
-        return hit
-    flags: set[str] = set()
-    try:
-        r = _run([PY, script, "--help"], timeout=30)
-        for tok in (r.stdout or "").replace(",", " ").split():
-            if tok.startswith("-") and len(tok) > 1:
-                flags.add(tok.split("=", 1)[0].rstrip("[]"))
-    except Exception:  # noqa: BLE001
-        flags = set()   # probe failed → treat every flag as supported, same as the old behaviour
-    out = frozenset(flags)
-    with _FLAGS_LOCK:
-        _FLAGS_CACHE[script] = out
-    return out
+    return collect_core.run(cmd, ROOT, timeout)
 
 
 def _filter_args(script: str, args: list[str]) -> tuple[list[str], list[str]]:
-    """Drop (flag, value) pairs the collector does not support. Returns (kept, dropped_flags)."""
-    supported = _supported_flags(script)
-    if not supported:
-        return args, []
-    kept: list[str] = []
-    dropped: list[str] = []
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a.startswith("-") and a not in supported:
-            dropped.append(a)
-            i += 1
-            # also swallow this flag's value, if it has one
-            while i < len(args) and not args[i].startswith("-"):
-                i += 1
-            continue
-        kept.append(a)
-        i += 1
-    return kept, dropped
+    return collect_core.filter_args(PY, script, ROOT, args)
 
 
 def _load_json(path: str):
-    try:
-        return json.load(open(path, encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return None
+    return collect_core.load_json(path)
 
 
 def _load_json_str(s: str):
@@ -174,10 +129,7 @@ def _load_json_str(s: str):
 
 
 def _find_cached_raw(host: str, exclude: str = "") -> str:
-    """Newest existing pivot JSON for this host across ALL cases (already investigated?)."""
-    hits = [p for p in glob.glob(os.path.join(ROOT, "cases", "*", "raw", host + ".json")) if p != exclude]
-    hits.sort(key=os.path.getmtime, reverse=True)
-    return hits[0] if hits else ""
+    return collect_core.find_cached_raw(ROOT, host, exclude)
 
 
 def _err(text: str) -> dict[str, Any]:
@@ -228,82 +180,17 @@ async def pivot_extract(args: dict[str, Any]) -> dict[str, Any]:
 def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = False,
                 proxy: str | None = None, force: bool = False) -> dict[str, Any]:
     """Collect ONE host end-to-end (cache-reuse → live fetch + enrichment → evidence capture →
-    manifest). Sync + self-contained (no globals beyond config) so it is safe to fan out across
-    threads via collect_many. Returns a summary dict, never raises."""
-    raw_dir = os.path.join(ROOT, "cases", case, "raw")
-    dom_dir = os.path.join(ROOT, "cases", case, "dom")
-    shot_dir = os.path.join(ROOT, "cases", case, "screenshots")
-    os.makedirs(raw_dir, exist_ok=True)
-    os.makedirs(dom_dir, exist_ok=True)
-    host = _host(url)
-    out = os.path.join(raw_dir, host + ".json")
-    dom = os.path.join(dom_dir, host + ".html")
-    shot = os.path.join(shot_dir, host + ".png")
-
-    # ALREADY INVESTIGATED? reuse the cached pivot rather than (expensively) re-collecting.
-    if not (FORCE or force):
-        prior = out if os.path.exists(out) else _find_cached_raw(host, exclude=out)
-        data = _load_json(prior) if prior else None
-        if data is not None:
-            if prior != out:
-                shutil.copyfile(prior, out)  # bring it into this case so kb_ingest still sees it
-            _append_manifest(case, host, data, reused=True, dom_path=dom if os.path.exists(dom) else "")
-            return {"host": host, "ok": True, "reused": True, "error": None, "dom": dom,
-                    "n_pivots": len(data.get("pivots", [])), "note": " (cached)", "data": data}
-
-    if hostile and not passive and not proxy:
-        return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,
-                "note": "", "error": (f"BLOCKED by egress policy: {host} is hostile. Re-call with "
-                                      "passive=true or proxy='<cidr>'.")}
-    script = os.path.join("WebPivot", "tools", "pivot_extract.py")
-    args = [url, "--pretty", "-o", out, "--save-dom", dom]
-    if proxy:
-        args += ["--proxy-range", proxy]
-    if SMOKE:
-        args += ["--no-enrich", "--no-whois"]                # cheap smoke only
-    elif not NO_ARCHIVE:
-        # EVIDENCE CAPTURE (default on): Wayback SPN snapshot + master evidence ledger, case-tagged.
-        # --submit is the canonical collector's equivalent (Wayback SPN + urlscan); the engine's
-        # richer collector uses the --archive-missing/--master/--case trio. Emit both and let
-        # _filter_args keep whichever the resolved collector understands.
-        args += ["--submit", "--archive-missing", "--master", "--case", case]
-    screenshot_py = PY
-    if SHOT and not SMOKE and not (hostile and not proxy):    # screenshot needs a browser
-        os.makedirs(shot_dir, exist_ok=True)                 # pivot_extract writes the PNG here
-        args += ["--render", "--screenshot", shot]
-        screenshot_py = RENDER_PY
-    args, dropped = _filter_args(os.path.join(ROOT, script), args)
-    base = [script, *args]
-    r = _run([screenshot_py, *base], timeout=300 if SHOT else 240)
-    data = _load_json(out)
-    if data is None:
-        return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,
-                "note": "", "error": f"pivot_extract failed for {host}: {(r.stderr or '')[-500:]}"}
-    cf = (data.get("meta") or {}).get("cloudflare")            # Cloudflare interstitial? retry via browser/FS
-    used = "direct"
-    if cf and not SMOKE:
-        retry, cf_dropped = _filter_args(
-            os.path.join(ROOT, script),
-            ["--solve-cf", "--flaresolverr", FLARESOLVERR] if FLARESOLVERR else ["--render"])
-        if FLARESOLVERR and not cf_dropped:
-            _run([PY, *base, *retry], timeout=300)
-            used = "flaresolverr"
-        elif retry:
-            _run([RENDER_PY, *base, *retry], timeout=300)
-            used = "render(browser)"
-        else:
-            used = "no CF bypass available (collector lacks --solve-cf/--render)"
-        data = _load_json(out) or data
-    _append_manifest(case, host, data, reused=False, dom_path=dom, shot_path=shot)
-    walled = (data.get("meta") or {}).get("cloudflare")
-    cfnote = f"  · CF {cf} → {used} ({'STILL WALLED' if walled else 'bypassed'})" if cf else ""
-    archnote = "" if (SMOKE or NO_ARCHIVE) else "  · archived + logged"
-    # Never silently drop a requested capability — an unsupported flag means the collector in use
-    # cannot do that step, and the analyst has to know the evidence was not captured.
-    dropnote = f"  · unsupported by collector, skipped: {' '.join(dropped)}" if dropped else ""
-    return {"host": host, "ok": True, "reused": False, "error": None, "dom": dom,
-            "n_pivots": len(data.get("pivots", [])), "note": cfnote + archnote + dropnote,
-            "data": data}
+    manifest) via the shared, single-sourced collect_core.collect_host — the SAME routine the
+    deterministic pipeline (tools/intel.py) delegates to. This wrapper only supplies the harness's
+    config (env knobs + the WebPivot-shim collector + the evidence-manifest callback). Sync + safe
+    to fan out across threads via collect_many. Returns a summary dict, never raises."""
+    return collect_core.collect_host(
+        url, case,
+        root=ROOT, py=PY, render_py=RENDER_PY,
+        collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
+        hostile=hostile, passive=passive, proxy=proxy,
+        force=(FORCE or force), smoke=SMOKE, no_archive=NO_ARCHIVE, want_shot=SHOT,
+        flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest)
 
 
 def collect_many(seeds: list[str], case: str, *, hostile: bool = False,

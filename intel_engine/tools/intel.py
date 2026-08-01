@@ -37,6 +37,8 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)                              # for the sibling collect_core module
+import collect_core                                   # noqa: E402  shared host-collection routine
 ROOT = os.path.dirname(HERE)                          # intel_engine project root
 WP = os.path.join(ROOT, "WebPivot", "tools")
 KB_TOOLS = os.path.join(ROOT, "tools", "kb")
@@ -179,33 +181,41 @@ def _prior_overlap(hosts, min_shared=1):
         print(f"      … and {len(strong) - 15} more (see shared.txt for the full cluster).")
 
 
-def _extract_one(host, case_dir, timeout, whois_reverse, fofa_full=False, render=False):
-    """Extract one host into raw/<host>.json. Returns (host, ok, note)."""
-    out_file = os.path.join(case_dir, "raw", f"{host}.json")
-    cmd = [sys.executable, PIVOT_EXTRACT,
-           f"https://{host}", "--pretty", "--timeout", str(timeout), "-o", out_file]
+def _extract_one(host, case_dir, timeout, whois_reverse, fofa_full=False, render=False,
+                 force=False, archive=False):
+    """Extract one host into raw/<host>.json via the shared collector core (collect_core.collect_host
+    — the SAME routine the MCP harness uses). This delegation is what lets the pipeline inherit
+    cache-reuse (already investigated in ANY case → no re-spend), the egress policy, Cloudflare
+    retry and DOM capture, instead of re-implementing a thinner extractor. Evidence archiving stays
+    opt-in (`archive=True` / `--archive`) so the pipeline's cost profile is unchanged by default.
+    Returns (host, ok, note)."""
+    case = os.path.basename(os.path.normpath(case_dir))
+    extra = []
     if whois_reverse:
-        cmd.append("--whois-reverse")
+        extra.append("--whois-reverse")
     if fofa_full and not PIVOT_IS_CTI:
-        cmd.append("--fofa-full")   # engine-only flag; cti-expert's collector doesn't take it
+        extra.append("--fofa-full")   # engine-only flag; cti-expert's collector doesn't take it
     if render:
-        cmd.append("--render")      # post-JS DOM — unlocks SaaS/analytics tokens
+        extra.append("--render")      # post-JS DOM — unlocks SaaS/analytics tokens
 
-    def attempt():
-        r = _run(cmd, capture_output=True, text=True)
-        # a "miss" = no file, or extraction produced no host (rate-limit / dead site)
-        if not os.path.isfile(out_file):
-            return False
-        import json
-        try:
-            data = json.load(open(out_file, encoding="utf-8"))
-        except Exception:
-            return False
-        return bool((data.get("meta") or {}).get("host"))
+    def go(refresh):
+        return collect_core.collect_host(
+            f"https://{host}", case,
+            root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
+            timeout=timeout, force=refresh, no_archive=(not archive),
+            extra_flags=extra, manifest_cb=None)
 
-    if attempt():
+    def ok_of(res):
+        # a "miss" = collector produced no file, or extraction yielded no host (rate-limit / dead)
+        return bool(res.get("ok") and ((res.get("data") or {}).get("meta") or {}).get("host"))
+
+    res = go(force)
+    if res.get("reused") and ok_of(res):
+        return (host, True, "ok (cached)")
+    if ok_of(res):
         return (host, True, "ok")
-    if attempt():                       # one retry (archive.org / transient rate-limit)
+    res = go(True)                      # one retry, forced past any partial cache (transient rate-limit)
+    if ok_of(res):
         return (host, True, "ok (retry)")
     return (host, False, "no host extracted (rate-limit / unreachable)")
 
@@ -252,7 +262,7 @@ def cmd_open(a):
     ok, failed = [], []
     with cf.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
         futs = {ex.submit(_extract_one, h, case_dir, a.timeout, a.whois_reverse,
-                          a.fofa_full, a.render_extract): h
+                          a.fofa_full, a.render_extract, a.force, a.archive): h
                 for h in hosts}
         for fut in cf.as_completed(futs):
             host, good, note = fut.result()
@@ -371,6 +381,13 @@ def main():
     o.add_argument("--operator-links", default=None)
     o.add_argument("--min", type=int, default=2)
     o.add_argument("--timeout", type=int, default=20)
+    o.add_argument("--force", action="store_true",
+                   help="re-collect even if this host was already investigated in another case "
+                        "(default: reuse the cached pivot — inherited from the shared collector core)")
+    o.add_argument("--archive", action="store_true",
+                   help="capture evidence while collecting (Wayback SPN snapshot + master ledger + "
+                        "manifest). Off by default to keep the pipeline's cost profile; the MCP "
+                        "harness archives by default")
     o.add_argument("--no-report", action="store_true",
                    help="skip the ICD-203 cluster assessment (default: write assessment.md)")
     o.add_argument("--analyst", default=None, help="analyst handle stamped on the assessment")
