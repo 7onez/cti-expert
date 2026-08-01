@@ -346,15 +346,31 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + �
 
 ---
 
+### 第三步 &mdash; 把命令注册到 Claude Code
+
+`install.sh` 安装的是 OSINT **工具**。这一步只需做一次，它把**技能、8 条 `/cti*` 斜杠命令以及 MCP 工具**接入 Claude Code，使它们在任意项目的冷启动提示符下都能用 —— 它会把 `commands/*.md` 软链接进 `~/.claude/commands/`，并写出这台机器专属的 `.mcp.json`。该步骤是幂等的，`git pull` 之后重跑也安全。
+
+```bash
+# 注册技能 + 8 条命令 + 写出本机专属的 .mcp.json
+bash ~/.claude/skills/cti-expert/scripts/register.sh
+
+# 推荐：把内置深度流水线（intel_engine）的依赖安装一次
+cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
+```
+
+> **Windows（原生 PowerShell）：** 请从 **Git Bash 或 WSL** 运行 `register.sh` —— 它使用了软链接。之后，在所有平台上都要**重启 Claude Code**，让技能与命令在启动时加载。
+
+---
+
 ### 验证安装
 
 ```bash
-claude   # 打开 Claude Code CLI
-# 然后输入：
-/cti-expert
+claude              # 打开 Claude Code CLI，然后输入：
+/cti-status         # 健康检查 —— 后端层级、MCP 工具、API 额度余额
+/cti example.com    # ……或者直接开始调查
 ```
 
-> 如果技能加载成功，你会看到 CTI Expert 的命令菜单。输入 `/cti` 并描述你的目标，或打开 `SKILL.md` 查看完整命令列表。
+> `/cti-status` 一次性确认后端、MCP 工具与 API 额度余额。如果 `/cti*` 命令没有被识别，请重跑**第三步**（`register.sh`）并重启 Claude Code。你也可以输入 `/cti-expert` 直接加载技能，然后用自然语言描述你的目标。
 
 ---
 
@@ -396,20 +412,21 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
    > **注意：** 如果 `skills` 文件夹不存在，先在 `.claude` 文件夹内创建它。
 
-4. **运行安装脚本** &mdash; 打开 Claude Code 桌面版终端并运行：
+4. **运行安装脚本 + 注册** &mdash; 打开 Claude Code 桌面版终端并运行：
 
    ```bash
-   bash ~/.claude/skills/cti-expert/scripts/install.sh
+   bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT 工具
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # 技能 + 8 条命令 + MCP
    ```
 
-   或在 Windows PowerShell 上（仅 Python）：
+   或在 Windows PowerShell 上（仅 Python 依赖；`register.sh` 请从 Git Bash/WSL 运行）：
 
    ```powershell
    pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
    ```
 
 5. **重启 Claude Code 桌面版** &mdash; 关闭并重新打开应用
-6. **验证** &mdash; 在对话中输入 `/cti-expert`，确认技能已加载
+6. **验证** &mdash; 在对话中输入 `/cti-status`，确认技能与命令均已加载（或输入 `/cti-expert` 直接加载技能）
 
 <details>
 <summary><b>系统要求</b></summary>
@@ -966,7 +983,22 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 </tr>
 </table>
 
-<sub>由 <code>scripts/generate-cti-html.py</code>（HTML）· <code>scripts/generate-cti-iocs.py</code>（IOC）· <code>scripts/generate-cti-docx-hybrid.py</code>（DOCX）生成</sub>
+**每一种报告变体都只是一条命令** —— 五格式默认套件（`.md` · `.html` · `.json` · `.csv` · IOC 包）在每次 `/report`、`/brief` 与 `/case` 时自动保存；下面的变体则用于指定某种具体格式或读者对象：
+
+| 命令 | 格式 | 最适合 |
+|---------|--------|----------|
+| `/report` · `/report html` | 交互式 HTML *（默认，主交付物）* | 所有人 —— 从分析师到高管 |
+| `/report` | 技术 INTSUM（Markdown） | 分析师、安全团队 |
+| `/report brief` | 高管简报 | 决策者、管理层 |
+| `/brief` | 通俗语言摘要 | 非技术相关方 |
+| `/report legal` | 法务证据格式 *（自动附加 DOCX/PDF）* | 律师、合规团队 |
+| `/report journalist` | 侧重信源引用 | 记者、媒体 |
+| `/report json` · `/report csv` | JSON · CSV 导出 | 流水线、电子表格、SIEM |
+| `/report ioc` | IOC／选择子包（STIX 2.1 · 扁平 · CSV） | SIEM / TIP 摄入、威胁情报共享 |
+| `/report docx` | Word 文档 *（图表、封面、目录）* | 正式分享 —— 按需生成 |
+| `/cti-report <ID> --pdf` | IntelReport pandoc PDF/DOCX | 精美的、出版级案件交付物 |
+
+<sub>由 <code>scripts/generate-cti-html.py</code>（HTML）· <code>scripts/generate-cti-iocs.py</code>（IOC）· <code>scripts/generate-cti-docx-hybrid.py</code>（DOCX）· <code>intel_engine/IntelReport</code>（pandoc PDF/DOCX）生成</sub>
 
 <br>
 

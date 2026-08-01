@@ -346,15 +346,31 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 ---
 
+### Bước 3 &mdash; Đăng ký các lệnh với Claude Code
+
+`install.sh` cài các *công cụ* OSINT. Bước một lần này gắn **skill, 8 lệnh slash `/cti*`, và các công cụ MCP** vào Claude Code để chúng hoạt động ngay từ một prompt lạnh trong bất kỳ dự án nào — nó tạo symlink `commands/*.md` vào `~/.claude/commands/` và ghi tệp `.mcp.json` riêng cho từng máy. Bước này idempotent, nên chạy lại sau một `git pull` là an toàn.
+
+```bash
+# Register the skill + 8 commands + write the per-machine .mcp.json
+bash ~/.claude/skills/cti-expert/scripts/register.sh
+
+# Recommended: install the built-in deep-pipeline (intel_engine) deps once
+cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
+```
+
+> **Windows (PowerShell bản địa):** hãy chạy `register.sh` từ **Git Bash hoặc WSL** — nó dùng symlink. Sau đó, trên mọi nền tảng, hãy **khởi động lại Claude Code** để skill và các lệnh được nạp lúc khởi động.
+
+---
+
 ### Kiểm tra cài đặt
 
 ```bash
-claude   # opens Claude Code CLI
-# then type:
-/cti-expert
+claude              # open Claude Code CLI, then type:
+/cti-status         # health check — backend tier, MCP tools, API-credit balances
+/cti example.com    # …or just start investigating
 ```
 
-> Nếu skill nạp thành công, bạn sẽ thấy menu lệnh của CTI Expert. Gõ `/cti` và mô tả mục tiêu của bạn, hoặc mở `SKILL.md` để xem danh sách lệnh đầy đủ.
+> `/cti-status` xác nhận backend, các công cụ MCP và số dư tín dụng API chỉ trong một lượt. Nếu các lệnh `/cti*` không được nhận diện, hãy chạy lại **Bước 3** (`register.sh`) rồi khởi động lại Claude Code. Bạn cũng có thể gõ `/cti-expert` để nạp skill trực tiếp, sau đó mô tả mục tiêu của bạn bằng lời thường.
 
 ---
 
@@ -396,20 +412,21 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
    > **Lưu ý:** Nếu thư mục `skills` chưa tồn tại, hãy tạo nó bên trong thư mục `.claude` trước.
 
-4. **Chạy trình cài đặt** &mdash; Mở terminal của Claude Code Desktop và chạy:
+4. **Chạy trình cài đặt + đăng ký** &mdash; Mở terminal của Claude Code Desktop và chạy:
 
    ```bash
-   bash ~/.claude/skills/cti-expert/scripts/install.sh
+   bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT tools
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 8 commands + MCP
    ```
 
-   Hoặc trên Windows PowerShell (chỉ Python):
+   Hoặc trên Windows PowerShell (chỉ phụ thuộc Python; hãy chạy `register.sh` từ Git Bash/WSL):
 
    ```powershell
    pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
    ```
 
 5. **Khởi động lại Claude Code Desktop** &mdash; Đóng và mở lại ứng dụng
-6. **Xác nhận** &mdash; Gõ `/cti-expert` trong khung chat để xác nhận skill đã được nạp
+6. **Xác nhận** &mdash; Gõ `/cti-status` trong khung chat để xác nhận skill và các lệnh đã được nạp (hoặc `/cti-expert` để nạp skill trực tiếp)
 
 <details>
 <summary><b>Yêu cầu hệ thống</b></summary>
@@ -966,7 +983,22 @@ Cùng một vụ việc, ở những định dạng mà công cụ khác đọc 
 </tr>
 </table>
 
-<sub>Được tạo bởi <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOC) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX)</sub>
+**Mỗi biến thể báo cáo chỉ là một lệnh** — bộ mặc định năm định dạng (`.md` · `.html` · `.json` · `.csv` · gói IOC) tự động lưu ở mọi lượt `/report`, `/brief` và `/case`; các biến thể dưới đây chọn một định dạng hoặc một đối tượng người đọc cụ thể:
+
+| Lệnh | Định dạng | Phù hợp nhất cho |
+|---------|--------|----------|
+| `/report` · `/report html` | HTML tương tác *(mặc định, sản phẩm bàn giao chính)* | Tất cả mọi người — từ nhà phân tích đến lãnh đạo |
+| `/report` | INTSUM kỹ thuật (Markdown) | Nhà phân tích, đội bảo mật |
+| `/report brief` | Bản tóm tắt điều hành | Người ra quyết định, ban quản lý |
+| `/brief` | Bản tóm tắt bằng ngôn ngữ phổ thông | Các bên liên quan không chuyên kỹ thuật |
+| `/report legal` | Định dạng bằng chứng pháp lý *(tự động thêm DOCX/PDF)* | Luật sư, đội tuân thủ |
+| `/report journalist` | Nặng về trích dẫn nguồn | Phóng viên, cơ quan truyền thông |
+| `/report json` · `/report csv` | Xuất JSON · CSV | Pipeline, bảng tính, SIEM |
+| `/report ioc` | Gói IOC / selector (STIX 2.1 · danh sách phẳng · CSV) | Nạp vào SIEM / TIP, chia sẻ tình báo mối đe dọa |
+| `/report docx` | Tài liệu Word *(biểu đồ, trang bìa, mục lục)* | Chia sẻ chính thức — khi có yêu cầu |
+| `/cti-report <ID> --pdf` | PDF/DOCX qua pandoc của IntelReport | Sản phẩm bàn giao chỉn chu, đạt chuẩn xuất bản |
+
+<sub>Được tạo bởi <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOC) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX) · <code>intel_engine/IntelReport</code> (pandoc PDF/DOCX)</sub>
 
 <br>
 
