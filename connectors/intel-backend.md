@@ -153,6 +153,14 @@ resolve), injects `--kb knowledge` where needed, and forwards the rest of the ar
 verbatim. Backend absent → it prints one note and exits 3. `intel.py list` prints the
 op → script map; `intel.py --dry-run <op> …` prints the exact command without running it.
 
+> **Shared collector core.** The deterministic `pipeline` (`intel.py open …`) and the MCP
+> harness now delegate to **one** host-collection routine (`intel_engine/tools/collect_core.py`),
+> so both inherit the same cache-reuse, egress policy, Cloudflare retry and DOM capture. Two
+> consequences for `open`: a seed already collected in **any** case is **reused by default** (pass
+> `--force` to re-collect), and evidence archiving (Wayback SPN + manifest) stays **opt-in** via
+> `--archive` so the pipeline's cost profile is unchanged unless you ask for it. The MCP harness
+> still archives by default.
+
 ```bash
 # Every op maps 1:1 to a Tier-1 MCP tool — same engine underneath.
 uv run scripts/backend/intel.py kb --stats                    # KB overview

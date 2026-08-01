@@ -59,7 +59,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (18 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (17 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an
@@ -180,6 +180,10 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
   Verified in both directions: it flags a real registrant email, GTM container, ETH address and
   TRON address; it stays silent on `GTM-XXXXXXX`, `G-XXXXXXXXXX`, `registrant@example.com`,
   `CASE-0001`, and on the whole existing `SKILL.md`.
+
+- **Make the leak check self-enforcing:** run `bash scripts/install-hooks.sh` once per clone to
+  wire `leakcheck.sh` as a `pre-commit` hook. `.git/hooks/` is per-clone and never travels with the
+  skill, so re-run it after cloning. Bypass a single commit with `git commit --no-verify`.
 
 - If a tool needs case-specific behaviour, take it as a **parameter or CLI arg** — never bake the
   case into the code.

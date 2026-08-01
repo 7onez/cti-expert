@@ -205,7 +205,7 @@ Commands grouped by AEAD phase.
 | `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks | `/github-osint github.com/org/repo` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
-| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` | `/webpivot https://scam-site.top` |
+| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) | `/webpivot https://scam-site.top` |
 | `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) | `/cert-pivot scam-site.top` |
 | `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline | `/sensitive-paths waymore_index.txt` |
 | `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable/MX/free/role) | `/email-hygiene admin@site.top` |
@@ -978,6 +978,9 @@ cti-expert/
 │   ├── report-template.md      INTSUM format specification
 │   ├── admin-endpoint-indicators.md  Admin-panel / sensitive-endpoint detection vocab & rules
 │   ├── analytic-standards.md    Likelihood bands, 5W1H coverage overlay, ACH (competing hypotheses)
+│   ├── pivot-artifacts.md      Pivot-artifact catalog (favicon, trackers, wallets, certs…)
+│   ├── pivot-services.md       Reverse-lookup engines per artifact — hash algo, cost, API/key notes
+│   ├── api-keys.md             Premium/pro API key management and unlocks
 │   └── tool-cascade-reference.md Tool priority and fallback chains
 │
 ├── guides/                     Worked case walkthroughs
