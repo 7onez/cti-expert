@@ -114,6 +114,40 @@ _PRIV = ("privacy", "redacted", "whoisguard", "data protected", "withheld",
 _PROXY_DOM = ("porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com",
               "withheldforprivacy.com", "privacyprotect.org", "contactprivacy.com")
 
+# Generic registrant ROLE placeholders. Distinct from _PRIV, which matches privacy-SIGNALLING
+# words ("privacy", "redacted", "withheld"). These strings contain no such word, so _PRIV misses
+# them — yet they are boilerplate emitted by registrars in place of a registrant, shared across
+# unrelated customers. Left unfiltered, `Domain Admin` becomes a high-confidence
+# `registered_by -> person` edge and merges every domain whose registrar used that placeholder.
+#
+# Matched on the NORMALISED form (lowercased, punctuation stripped, whitespace collapsed) and
+# EXACTLY, never as a substring — a substring rule would eat legitimate registrant orgs such as
+# "Admin Solutions GmbH" or "Domain Manager Services Ltd". Exactness is the safety property here:
+# over-filtering silently destroys real attribution, which is the costlier direction.
+_ROLE_NAME_PLACEHOLDERS = frozenset({
+    "domain admin", "domain admins", "domain administrator", "domain administrators",
+    "domainadmin", "domain manager", "domain name administrator", "domain owner",
+    "domain registrant", "registrant", "dns admin", "dns administrator",
+    "admin", "administrator", "hostmaster", "postmaster", "webmaster",
+    "statutory masking enabled", "non public data", "nonpublic data",
+    "not available", "not applicable", "na", "n a", "none", "null", "unknown",
+    "no name", "anonymous", "customer", "client", "owner", "registry",
+})
+
+
+def _norm_name(v):
+    """Lowercase, drop punctuation, collapse whitespace — so 'Domain Admin.', 'DOMAIN  ADMIN'
+    and 'domain-admin' all normalise to 'domain admin'."""
+    s = (v or "").lower()
+    s = "".join(c if (c.isalnum() or c.isspace()) else " " for c in s)
+    return " ".join(s.split())
+
+
+def _is_role_placeholder(v):
+    """True if a WHOIS registrant NAME is a generic role/boilerplate placeholder rather than an
+    identity. Such a name must never become a `registered_by` clustering edge."""
+    return _norm_name(v) in _ROLE_NAME_PLACEHOLDERS
+
 
 def _is_privacy(v):
     s = (v or "").strip().lower()
@@ -407,12 +441,16 @@ def ingest_file(kb, path):
         names = ([wh.get("registrant_name") or wh.get("registrant_org")] +
                  ((wh.get("history") or {}).get("registrant_names") or []))
         for nm in names:
-            if nm and not _is_privacy(nm):
+            if nm and not _is_privacy(nm) and not _is_role_placeholder(nm):
                 kind = _name_kind(nm)          # org / person / None(junk label — skip)
                 if not kind:
                     continue
                 kb.add_edge("domain", host, "registered_by", kind, nm.strip(),
                             "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                n += 1
+            elif nm and _is_role_placeholder(nm):   # generic role boilerplate — fact, never an edge
+                kb.add_fact("domain", host, "whois_role_name", nm.strip(),
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
                 n += 1
         for ns in wh.get("name_servers") or []:
             if is_managed_dns(ns):

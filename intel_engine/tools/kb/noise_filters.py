@@ -31,6 +31,10 @@ MANAGED_DNS_SUFFIXES = (
     "domaincontrol.com",            # GoDaddy
     "registrar-servers.com",        # Namecheap
     "namecheaphosting.com",
+    "dns-parking.com",              # Hostinger default/parking NS (ns1-ns4.dns-parking.com) —
+                                    # every Hostinger domain without custom DNS lands here, so
+                                    # it is shared by a very large unrelated population
+    "secureserver.net",             # GoDaddy / Wild West Domains hosting + parked NS
     "awsdns",                       # AWS Route 53 (awsdns-xx.net/org/com/co.uk)
     "azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info",
     "googledomains.com", "google.com",  # Google Domains / Cloud DNS (ns-cloud-*.googledomains.com)
