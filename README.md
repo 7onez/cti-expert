@@ -523,6 +523,43 @@ Every *other* command on this page (`/case`, `/webpivot`, `/report`, `/sweep`…
 
 <br>
 
+## Best Practices
+
+Habits that keep investigations fast, cheap, and correct — most are enforced by the skill itself,
+but knowing them helps.
+
+**Running a case**
+- **Start with `/cti <target>`.** It's the single entry point and routes by target type
+  (domain, IP, email, username, phone, wallet, hash, APK). Don't hand-run collectors.
+- **Recall before you collect.** `/cti-recall <seed>` (or Step 0 of `/cti`) is the cheapest call in
+  the toolkit — it tells you if a seed is already attributed, saving credits and avoiding
+  contradicting a prior assessment.
+- **`--passive` for anything hostile.** The egress gate refuses a direct fetch of hostile
+  infrastructure; passive mode works from Wayback/urlscan captures, so your IP never touches it.
+- **Screen indicators before clustering.** `/cti-check <indicator>` (false-positive control) —
+  a false merge names an innocent party; a false split loses the case.
+- **`--deep` earns its cost at 3+ live seeds** (parallel sub-agent fan-out); a single seed runs
+  inline.
+- **`/cti-status` when something behaves oddly** — backend tier, MCP tools, and API balances in one
+  shot.
+
+**Cost & keys**
+- **Two separate ledgers:** model reasoning (`/cost`) vs third-party API credits (`api_usage`) —
+  never the same number.
+- **Keyless by default; `/apikeys` upgrades.** Keys enrich pivots (Shodan/Censys/FOFA/…) but
+  nothing requires them.
+
+**If you're developing the skill**
+- `bash scripts/install-hooks.sh` once per clone — wires the leak check as a pre-commit hook.
+- `bash scripts/audit.sh` before pushing — the drift/leak/test gate (also runs in CI on every PR).
+- A classification change ships **with** its test (RULE 5).
+
+<br>
+
+---
+
+<br>
+
 ## Features
 
 <table>
