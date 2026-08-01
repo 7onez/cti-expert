@@ -12,7 +12,6 @@ your scripts (e.g. pivot_extract's --crawl / --rotate-ua, risk_signals' options)
 """
 from __future__ import annotations
 
-import concurrent.futures
 import datetime
 import json
 import os
@@ -196,17 +195,15 @@ def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = F
 def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
                  max_workers: int = 8) -> list[dict[str, Any]]:
     """Fan collect_one across `seeds` concurrently (mechanical, no LLM) — the Phase-3 collector
-    that scales to a big seed set without blowing one model session's context/turn budget."""
-    results: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(collect_one, s, case, hostile=hostile): s for s in seeds}
-        for fu in concurrent.futures.as_completed(futs):
-            try:
-                results.append(fu.result())
-            except Exception as e:  # noqa: BLE001
-                results.append({"host": _host(futs[fu]), "ok": False, "reused": False,
-                                "n_pivots": 0, "error": str(e), "data": None})
-    return results
+    that scales to a big seed set without blowing one model session's context/turn budget. Same
+    single-sourced fan-out (collect_core.collect_many) the deterministic pipeline uses; this
+    wrapper only supplies the harness's config + evidence-manifest callback."""
+    return collect_core.collect_many(
+        seeds, case, max_workers=max_workers,
+        root=ROOT, py=PY, render_py=RENDER_PY,
+        collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
+        hostile=hostile, force=FORCE, smoke=SMOKE, no_archive=NO_ARCHIVE,
+        want_shot=SHOT, flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest)
 
 
 def ingest(case: str) -> tuple[bool, str]:

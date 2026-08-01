@@ -19,6 +19,7 @@ SDK, requests, or anything outside the standard library here.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import glob
 import os
 import shutil
@@ -220,3 +221,42 @@ def collect_host(
     return {"host": host, "ok": True, "reused": False, "error": None, "dom": dom,
             "n_pivots": len(data.get("pivots", [])), "note": cfnote + archnote + dropnote,
             "data": data}
+
+
+def collect_many(
+    seeds: Sequence[str],
+    case: str,
+    *,
+    max_workers: int = 8,
+    on_result: Optional[Callable[[dict], None]] = None,
+    retry_misses: int = 0,
+    **collect_kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Fan collect_host across `seeds` concurrently (threads, mechanical — NO LLM). Both front-ends
+    delegate here so the parallel-collection wrapper is single-sourced too. `collect_kwargs` are
+    forwarded to collect_host per seed (root/py/collector/knobs). `on_result(res)` fires as each
+    host finalizes — use it for live per-host status. `retry_misses` re-collects a host whose
+    result is not ok, up to N extra times, forcing past any partial cache (transient rate-limits /
+    archive.org). Returns the list of collect_host result dicts (order = completion order)."""
+    results: list[dict[str, Any]] = []
+
+    def _one(seed: str) -> dict[str, Any]:
+        res = collect_host(seed, case, **collect_kwargs)
+        tries = 0
+        while (not res.get("ok")) and tries < retry_misses:
+            res = collect_host(seed, case, **{**collect_kwargs, "force": True})
+            tries += 1
+        return res
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+        futs = {ex.submit(_one, s): s for s in seeds}
+        for fu in concurrent.futures.as_completed(futs):
+            try:
+                res = fu.result()
+            except Exception as e:  # noqa: BLE001
+                res = {"host": host_of(futs[fu]), "ok": False, "reused": False, "n_pivots": 0,
+                       "error": str(e), "data": None, "note": "", "dom": ""}
+            if on_result:
+                on_result(res)
+            results.append(res)
+    return results

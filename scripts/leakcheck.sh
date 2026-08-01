@@ -21,8 +21,10 @@ fi
 F=/tmp/.leakcheck.$$
 trap 'rm -f "$F"' EXIT
 
-# Approved placeholders from CLAUDE.md's example table — never a leak.
-ALLOW='X{5,}|example\.(com|org)|CASE-0001|ExampleBitcoinAddress'
+# Approved placeholders from CLAUDE.md's example table — never a leak. The UA entry is the
+# synthetic placeholder range from that table (e.g. UA-100000001); a real UA carries a dashed
+# property suffix, which this pattern deliberately does not match.
+ALLOW='X{5,}|example\.(com|org)|CASE-0001|ExampleBitcoinAddress|UA-10000000[0-9]'
 
 HITS="$(
   {
