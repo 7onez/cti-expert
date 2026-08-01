@@ -24,6 +24,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
+from ingest_webpivot import _is_role_placeholder   # one source of truth with the ingester
 try:
     from pivot_extract import valid_crypto_address as _valid_wallet
 except Exception:
@@ -62,6 +63,12 @@ def classify_edge(e):
         kind, addr = _wallet_parts(e["dst"])
         if addr and not _valid_wallet(kind, addr):
             return ("drop", "invalid wallet (checksum)")
+    if e["rel"] == "registered_by" and e["dst_type"] in ("person", "org"):
+        # Generic registrant ROLE boilerplate ("Domain Admin", "Hostmaster", …). The ingester now
+        # rejects these at the door, but edges created BEFORE that guard persist — and one such
+        # edge silently merges every domain whose registrar emitted the same placeholder.
+        if _is_role_placeholder(e["dst"]):
+            return ("drop", "generic registrant role placeholder")
     if e["rel"] == "registered_by" and e["dst_type"] == "person":
         k = _name_kind(e["dst"])
         if k is None:
