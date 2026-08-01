@@ -547,6 +547,25 @@ Activate via `/flow [type]` — interactive guided prompts walk through each ste
 
 Reference: `output/reports/`, `connectors/`
 
+### Conversational domain table — show this in chat on every collection turn (CRITICAL)
+
+Whenever a collection command (`/cti`, `/case`, `/sweep`, `/webpivot`, `/subdomain`, or the
+pipeline) returns one or more domains, the reply's **first** element — before any prose — is a
+markdown table summarizing each domain, so the operator sees the yield at a glance **in the
+conversation**. The §8 file exports are the durable record; this table is the live view and is
+never skipped, even for a single domain.
+
+| Domain | Resolves | Top pivots | Risk | Cluster / peers | Seen before |
+|---|---|---|---|---|---|
+| `site-a.example` | ✓ | `favicon:123456789` · `G-XXXXXXXXXX` | NRD, BPH | 3 peers | CASE-0001 (Operator A) |
+| `site-b.example` | ✓ | `registrant@example.com` | — | 3 peers | new |
+
+Columns: **Resolves** ✓/✗ (collector got a host); **Top pivots** the 1–3 highest-rung indicators
+(§2.5 ladder) as `kind:value`; **Risk** the `risk_signals` flags (NRD / BPH / money-trail, or `—`);
+**Cluster / peers** shared-indicator peer count from the KB; **Seen before** the prior case +
+operator from `/recall`, or `new`. Keep to these columns — detail goes in the prose below. One row
+per domain; for a large sweep show the top 20 by risk and note how many rows were omitted.
+
 ### Mandatory File Export (CRITICAL)
 
 **Every `/report`, `/brief`, and `/case` command MUST auto-save the default export set to disk at the end of delivery:**
