@@ -10,7 +10,13 @@ the map, and the rules that keep the two from drifting.
 - `SKILL.md` — the single skill entrypoint (there is exactly one SKILL.md in the repo)
 - `scripts/` — collectors (`scripts/webpivot/`), the backend dispatcher (`scripts/backend/`), report generators
 - `techniques/`, `handbook/`, `connectors/`, `analysis/`, `validation/`, `experience/`, `guides/`,
-  `workflows/`, `engine/` (design docs), `assets/`, `codex/`, `output/`
+  `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
+  `assets/`, `codex/`, `output/`
+- `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
+  indicator classification + the shared collector core (`collect_core`)
+- `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports,
+  `@tool` count matches CLAUDE.md, compile, tests); `scripts/install-hooks.sh` wires
+  `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via `.github/workflows/audit.yml`
 - `requirements.txt` — deps for the vendored deep layer (installed into `.venv`)
 
 **Vendored engine — one subtree** (`intel_engine/`, copied one-way from the `intel_engine`
