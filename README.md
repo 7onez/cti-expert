@@ -980,61 +980,51 @@ The same case, in formats other tools can read.
 <summary><b>Project structure</b> — click to expand</summary>
 <br>
 
+cti-expert is **one skill, two layers** — a broad *collector* plus a vendored, self-contained *deep pipeline*. `STRUCTURE.md` is the authoritative map.
+
 ```
 cti-expert/
-├── SKILL.md                       Command reference & skill definition
-├── README.md                      This file
+├── SKILL.md                    The single skill entrypoint — commands & tradecraft
+├── README.md                   This file  ·  README.vi.md · README.zh-CN.md
+├── STRUCTURE.md                Authoritative layout + anti-drift rules
+├── AGENTS.md                   Cross-agent runtime contract (Claude Code + Codex)
+├── CLAUDE.md                   Contributor rules (loads only when building the repo)
 │
-├── engine/                        Case data model & state management
-│   ├── subject-registry.md        How subjects are tracked
-│   ├── finding-framework.md       Finding lifecycle & evidence chains
-│   ├── workspace-format.md        Workspace serialization spec
-│   └── conflict-resolver.md       CONTESTED finding resolution
+├── commands/                   8 registered slash commands — work from a cold prompt
+│   ├── cti.md                  /cti — the entry point, routes by target type
+│   ├── cti-recall.md · cti-case.md · cti-pivot.md · cti-cluster.md
+│   └── cti-check.md · cti-report.md · cti-status.md
 │
-├── techniques/                    Collection techniques (34 files)
-│   ├── whois-universal.md         Universal multi-TLD WHOIS cascade
-│   ├── web-collection-scrapling.md Scrapling adaptive web collection
-│   ├── agentflow-enrichment.md    Parallel enrichment orchestration
-│   ├── fx-metadata-parsing.md, fx-image-verification.md, ...
-│   ├── username-osint.md, phone-osint.md, email-osint.md
-│   ├── cloud-audit.md, dependency-audit.md, disk-forensics.md
-│   └── ...
+│  ── LAYER 1 · Broad collector — cti-expert's own tools ──────────────
+├── scripts/                    Collectors, backend dispatcher, report generators
+│   ├── backend/                backend.py (tier resolver) · intel.py (T2 CLI dispatch)
+│   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── generate-cti-html.py    Interactive, offline, self-contained HTML report
+│   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV)
+│   ├── generate-cti-docx-hybrid.py   DOCX report (charts, diagrams, cover page)
+│   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
+│   ├── install.sh · install.ps1      All-in-one cross-platform installer
+│   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
-├── experience/                    UX, tiers, guided flows
-│   ├── guided-flows/              Interactive workflows
-│   ├── case-templates/            Pre-built case templates
-│   └── accessibility/             Glossary, low-jargon mode
+├── techniques/                 49 collection techniques (the OSINT tradecraft)
+├── handbook/                   Pivot artifacts, API keys, operator queries, analytic standards
+├── engine/                     Case data-model design docs (schema, findings, pivot logic)
+├── analysis/ · validation/     Pattern & exposure engines · QA + coverage matrices
+├── experience/                 UX — skill tiers, guided flows, case templates
+├── workflows/ · guides/        Professional use-case guides · worked walkthroughs
+├── connectors/                 intel-backend · Maltego · Notion · Obsidian export
+├── tests/                      Zero-dep regression tests (RULE 5 classification + collect_core)
 │
-├── analysis/                      Pattern detection & intelligence engines
-│   ├── deviation-detector.md      Behavioral anomaly detection
-│   ├── cross-reference-engine.md  Shared identifier detection
-│   └── exposure-model.md          Risk score calculation
-│
-├── output/                        Report & visualization specs
-│   ├── reports/                   Report templates
-│   └── visuals/                   Chart & render engine specs
-│
-├── scripts/                       HTML / IOC / DOCX report generation
-│   ├── cti-report-template.html   Interactive HTML report template (offline)
-│   ├── generate-cti-html.py       HTML report generator (primary)
-│   ├── generate-cti-iocs.py       Comprehensive IOC/selector exporter (STIX/flat/CSV)
-│   ├── generate-cti-docx-hybrid.py DOCX generator (on request / legal)
-│   └── requirements.txt           Python dependencies
-│
-├── workflows/                     Professional use-case guides
-│   ├── wf-journalist.md           Journalist source verification
-│   ├── wf-threat-analyst.md       Cyber threat intelligence
-│   └── wf-hr-screening.md        Background checks
-│
-├── guides/walkthroughs/           Worked case examples
-│   ├── walkthrough-person-lookup.md
-│   ├── walkthrough-domain-sweep.md
-│   └── walkthrough-username-trace.md
-│
-└── validation/                    Quality assurance
-    ├── coverage-matrix.md         Investigation area coverage
-    ├── quality-scoring.md         Finding scoring methodology
-    └── verification-checklist.md  Evidence chain validation
+│  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
+└── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (18 @tool)
+    ├── tools/                  intel.py (deterministic pipeline) · kb/ (KB + correlation) · cert_overlap
+    ├── WebPivot/               Engine collector helpers + de-dup re-export shims
+    ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
+    ├── IntelReport/            Pandoc render of an assessment → polished PDF/DOCX
+    ├── IntelAnalysis/          Correlation, attribution, confidence calibration
+    ├── BinaryPivot/            Static IOC extraction from a scam APK / exe
+    └── knowledge/ · cases/     Local runtime data — gitignored, never committed
 ```
 
 </details>
