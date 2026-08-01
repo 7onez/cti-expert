@@ -30,7 +30,6 @@ Common flags for `open`:
     --timeout S         per-fetch timeout (default 20)
 """
 import argparse
-import concurrent.futures as cf
 import os
 import re
 import subprocess
@@ -181,43 +180,10 @@ def _prior_overlap(hosts, min_shared=1):
         print(f"      … and {len(strong) - 15} more (see shared.txt for the full cluster).")
 
 
-def _extract_one(host, case_dir, timeout, whois_reverse, fofa_full=False, render=False,
-                 force=False, archive=False):
-    """Extract one host into raw/<host>.json via the shared collector core (collect_core.collect_host
-    — the SAME routine the MCP harness uses). This delegation is what lets the pipeline inherit
-    cache-reuse (already investigated in ANY case → no re-spend), the egress policy, Cloudflare
-    retry and DOM capture, instead of re-implementing a thinner extractor. Evidence archiving stays
-    opt-in (`archive=True` / `--archive`) so the pipeline's cost profile is unchanged by default.
-    Returns (host, ok, note)."""
-    case = os.path.basename(os.path.normpath(case_dir))
-    extra = []
-    if whois_reverse:
-        extra.append("--whois-reverse")
-    if fofa_full and not PIVOT_IS_CTI:
-        extra.append("--fofa-full")   # engine-only flag; cti-expert's collector doesn't take it
-    if render:
-        extra.append("--render")      # post-JS DOM — unlocks SaaS/analytics tokens
-
-    def go(refresh):
-        return collect_core.collect_host(
-            f"https://{host}", case,
-            root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
-            timeout=timeout, force=refresh, no_archive=(not archive),
-            extra_flags=extra, manifest_cb=None)
-
-    def ok_of(res):
-        # a "miss" = collector produced no file, or extraction yielded no host (rate-limit / dead)
-        return bool(res.get("ok") and ((res.get("data") or {}).get("meta") or {}).get("host"))
-
-    res = go(force)
-    if res.get("reused") and ok_of(res):
-        return (host, True, "ok (cached)")
-    if ok_of(res):
-        return (host, True, "ok")
-    res = go(True)                      # one retry, forced past any partial cache (transient rate-limit)
-    if ok_of(res):
-        return (host, True, "ok (retry)")
-    return (host, False, "no host extracted (rate-limit / unreachable)")
+def _extract_ok(res):
+    """A collection result counts as a hit only if the collector produced a file AND extraction
+    yielded a host (no file / no host = rate-limit or dead site)."""
+    return bool(res.get("ok") and ((res.get("data") or {}).get("meta") or {}).get("host"))
 
 
 def _risk_signals(raw_files):
@@ -258,16 +224,27 @@ def cmd_open(a):
     if not os.environ.get("WHOISXML_API_KEY"):
         print("   note: WHOISXML_API_KEY not set — WHOIS registrant spine will be empty.")
 
-    # 1) extract (parallel) --------------------------------------------------
+    # 1) extract (parallel, via the shared collector core) -------------------
     ok, failed = [], []
-    with cf.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
-        futs = {ex.submit(_extract_one, h, case_dir, a.timeout, a.whois_reverse,
-                          a.fofa_full, a.render_extract, a.force, a.archive): h
-                for h in hosts}
-        for fut in cf.as_completed(futs):
-            host, good, note = fut.result()
-            print(f"   [{'ok ' if good else 'MISS'}] {host}  {note}")
-            (ok if good else failed).append(host)
+    extra = []
+    if a.whois_reverse:
+        extra.append("--whois-reverse")
+    if a.fofa_full and not PIVOT_IS_CTI:
+        extra.append("--fofa-full")   # engine-only flag; cti-expert's collector doesn't take it
+    if a.render_extract:
+        extra.append("--render")      # post-JS DOM — unlocks SaaS/analytics tokens
+
+    def _status(res):
+        good = _extract_ok(res)
+        note = (res.get("note") or "").strip() or ("ok" if good else res.get("error") or "miss")
+        print(f"   [{'ok ' if good else 'MISS'}] {res['host']}  {note}")
+        (ok if good else failed).append(res["host"])
+
+    collect_core.collect_many(
+        [f"https://{h}" for h in hosts], a.case,
+        max_workers=max(1, a.jobs), on_result=_status, retry_misses=1,
+        root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
+        timeout=a.timeout, force=a.force, no_archive=(not a.archive), extra_flags=extra)
 
     raw_glob = os.path.join(case_dir, "raw")
     raw_files = [os.path.join(raw_glob, f) for f in os.listdir(raw_glob) if f.endswith(".json")]

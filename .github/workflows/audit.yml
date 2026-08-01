@@ -1,0 +1,35 @@
+name: audit
+
+# Structural drift + leak gate (complements smoke.yml, which proves a fresh VPS can install).
+# Fast: stdlib/grep only, no venv or SDK — py_compile is syntax-only so it needs no claude_agent_sdk.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  structural:
+    name: structural audit + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scripts/audit.sh (DISPATCH resolve, shim integrity, @tool count, compile, tests)
+        run: bash scripts/audit.sh
+
+  leak-diff:
+    name: leak check (PR diff, RULE 1)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0            # need the base ref to diff against
+      - name: Scan only the lines this PR ADDS for case data
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          # Only added lines (leading '+', excluding the '+++' file headers) — so curated example
+          # values already in the tree (UA-100000001, sample wallets, test fixtures) are never
+          # re-flagged; a hit is something THIS PR introduced.
+          git diff "origin/${{ github.base_ref }}...HEAD" | grep '^+' | grep -v '^+++' > /tmp/added.txt || true
+          bash scripts/leakcheck.sh /tmp/added.txt
