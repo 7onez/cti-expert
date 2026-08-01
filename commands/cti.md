@@ -99,10 +99,22 @@ wave of deep pivots, converged back into a single case.
    - **Depth cap:** default frontier depth **2 hops** from the original seed. A seed a sub-agent
      discovers goes into the *next* round's frontier, not an unbounded recursion.
    - **`--deep --passive`** propagates: every sub-agent runs `--quick --passive`.
-4. **Converge (you run it).** Ingest every sub-agent's pivot JSON, then run cluster → risk →
-   ICD-203 assessment over the **merged** set. Apply SKILL.md §2.5 across the whole frontier — an
-   edge is only real on the rung it rests on. Repeat rounds 1–4 until a round adds no new
-   un-attributed seed (frontier exhausted) or the depth cap is hit.
+4. **Converge + cluster (you run it).** Ingest every sub-agent's pivot JSON, then run cluster →
+   risk over the **merged** set to partition it into distinct operator clusters. Apply SKILL.md
+   §2.5 across the whole frontier — an edge is only real on the rung it rests on. Repeat rounds 1–4
+   until a round adds no new un-attributed seed (frontier exhausted) or the depth cap is hit.
+4b. **Assess in parallel — one sub-agent per cluster (Assess-phase fan-out).** Collection is
+   already parallel (Step 3 sub-agents + the mechanical `collect_many` threads); the assessment is
+   the other slow, serial part. When convergence yields **2+ distinct clusters**, don't judge them
+   one-at-a-time — spawn one **assessment sub-agent per cluster** (same ≤ 6 concurrency cap), each
+   scoped to its cluster's members + shared indicators:
+   > Load the `cti-expert` skill. Assess ONLY this cluster: run the ICD-203 / ACH pass over these
+   > domains + shared indicators, apply §2.5 rung discipline, and return a structured verdict —
+   > operator hypothesis, confidence (likelihood term), risk flags, and the single strongest and
+   > weakest edge. Do not collect, and do not reason about other clusters.
+   Then **you synthesise** — this stays central, because a per-cluster agent cannot see the whole
+   board: merge the verdicts, resolve cross-cluster links, dedup shared operators, and write the
+   case assessment. One cluster only → assess inline; the fan-out overhead isn't worth it.
 5. **Report what the fleet could not reach.** List seeds you pruned, sub-agents that returned
    empty, and any seed left unexpanded because of the depth/concurrency cap.
 
