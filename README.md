@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 74+ commands, 40 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 74+ commands, 49 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.6-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.6"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-40-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="40 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **40 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **49 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default, more powerful with your keys.** Every core technique runs with zero API keys. Add any free or paid keys to `.env` (or run `/apikeys set <service> <KEY>`) and the skill auto-detects them, unlocking higher-tier pivots: reverse favicon→host, passive DNS, certificate search, sibling-domain discovery. A missing or bad key never breaks a run — it just degrades to a note. Setup guide: [handbook/api-keys.md](handbook/api-keys.md).
@@ -854,6 +854,8 @@ All backend commands dispatch through `scripts/backend/intel.py` at Tier 2 (or t
 
 ## Skill Tiers
 
+Output density and automation adapt to your proficiency. **Switch tiers any time — the output changes immediately:** `/novice` enters Novice, `/novice off` gives you Specialist, and Practitioner is the default in between.
+
 <table>
 <tr>
 <th width="33%">Novice</th>
@@ -865,21 +867,27 @@ All backend commands dispatch through `scripts/backend/intel.py` at Tier 2 (or t
 
 Low-jargon mode, step-by-step guidance, pre-built templates for due diligence, background checks, security reviews.
 
-**Entry:** `/flow person`, `/flow domain`, `/template list`
+**Switch:** `/novice`
+
+**Try:** `/flow person`, `/flow domain`, `/template list`
 
 </td>
 <td valign="top">
 
 Advanced search operators, manual pivot expansion, custom threat modeling, guided flows with explanation.
 
-**Entry:** `/query [target]`, `/branch [data]`, `/crossref`, `/threat-model`
+**Switch:** default — no command
+
+**Try:** `/query [target]`, `/branch [data]`, `/crossref`, `/threat-model`
 
 </td>
 <td valign="top">
 
 Raw technique access, custom evidence weighting, CONTESTED finding resolution, direct database queries.
 
-**Entry:** `/username [handle]`, `/email-deep [email]`, `/secrets [target]`, `/threat-check [target]`
+**Switch:** `/novice off`
+
+**Try:** `/username [handle]`, `/email-deep [email]`, `/secrets [target]`, `/threat-check [target]`
 
 </td>
 </tr>
@@ -894,7 +902,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>40 techniques</b> — click to expand full catalog</summary>
+<summary><b>49 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -939,6 +947,15 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 | `fx-email-header-analysis.md` | Email header analysis, SPF/DKIM | No |
 | `fx-edge-appliance-recon.md` | Edge/VPN appliance fingerprint → CISA KEV/CVE catalog + port-risk matrix | No (Shodan/Censys optional) |
 | `fx-saas-identity-recon.md` | SaaS tenancy (DNS-TXT) + IdP fingerprint + API/GraphQL/spec discovery | No |
+| `web-pivot.md` | Web-infra pivoting — favicon mmh3, tracker/wallet/SaaS-operator artifacts → ranked pivots | Optional (premium keys upgrade tiers) |
+| `whois-universal.md` | Universal multi-TLD WHOIS cascade — gTLD/ccTLD (.vn/.th/.sg/.kr), reverse & historical | Optional (Whoxy/WhoisXML for reverse/history) |
+| `web-collection-scrapling.md` | Adaptive web scraping — static → anti-bot → JS rendering | No |
+| `agent-browser.md` | Interactive browser collection — CDP, accessibility-tree snapshots, screenshot evidence | No (chat mode optional) |
+| `agentflow-enrichment.md` | Parallel DAG enrichment orchestration for 3+ subjects | No |
+| `microsoft-tenant-recon.md` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint | No |
+| `stealer-log-analysis.md` | Infostealer-log triage — family ID, victim-vs-operator profiling, cross-log correlation, IOC | No |
+| `fx-dork-sweep.md` | Zero-auth dork sweep — Telegram ecosystem, doc-hosts, filetype families | No |
+| `fx-document-leak-hunt.md` | 18-platform document-leak hunt with severity classification | No |
 
 </details>
 

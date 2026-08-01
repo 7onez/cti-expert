@@ -4,7 +4,7 @@
 
 ### 网络威胁情报与开源情报分析工具箱
 
-**把 Claude 变成一名训练有素的情报分析师 —— 74+ 条命令、40 种技术，核心功能零 API 密钥。**
+**把 Claude 变成一名训练有素的情报分析师 —— 74+ 条命令、49 种技术，核心功能零 API 密钥。**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.6-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.6"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#命令参考"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
-  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-40-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="40 Techniques"></a>&nbsp;
+  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
   <a href="#安装"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## 什么是 CTI Expert？
 
-一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **74+ 条命令**、**40 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
+一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **74+ 条命令**、**49 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
 > [!TIP]
 > **默认无密钥，有你的密钥则更强。** 每一项核心技术都能零密钥运行。把任意免费或付费密钥放入 `.env`（或运行 `/apikeys set <service> <KEY>`），技能会自动检测并解锁更高层级的枢轴：反向 favicon→主机、被动 DNS、证书检索、兄弟域名发现。缺失或失效的密钥绝不会中断运行 —— 它只会降级为一条提示。配置指南：[handbook/api-keys.md](handbook/api-keys.md)。
@@ -854,6 +854,8 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 ## 技能层级
 
+输出的信息密度与自动化程度会随你的熟练度自动调整。**随时切换层级 —— 输出会立即改变：** `/novice` 进入新手层级，`/novice off` 给你专家层级，中间的熟练者是默认层级。
+
 <table>
 <tr>
 <th width="33%">新手</th>
@@ -865,21 +867,27 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 低术语模式、分步引导，以及尽职调查、背景核查、安全审查的预置模板。
 
-**入口：** `/flow person`、`/flow domain`、`/template list`
+**切换：** `/novice`
+
+**试试：** `/flow person`、`/flow domain`、`/template list`
 
 </td>
 <td valign="top">
 
 高级搜索运算符、手动枢轴扩展、自定义威胁建模、带讲解的引导式流程。
 
-**入口：** `/query [target]`、`/branch [data]`、`/crossref`、`/threat-model`
+**切换：** 默认层级 —— 无需命令
+
+**试试：** `/query [target]`、`/branch [data]`、`/crossref`、`/threat-model`
 
 </td>
 <td valign="top">
 
 原始技术直调、自定义证据权重、CONTESTED 发现的裁定、直接数据库查询。
 
-**入口：** `/username [handle]`、`/email-deep [email]`、`/secrets [target]`、`/threat-check [target]`
+**切换：** `/novice off`
+
+**试试：** `/username [handle]`、`/email-deep [email]`、`/secrets [target]`、`/threat-check [target]`
 
 </td>
 </tr>
@@ -894,7 +902,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 ## 技术目录
 
 <details>
-<summary><b>40 种技术</b> —— 点击展开完整目录</summary>
+<summary><b>49 种技术</b> —— 点击展开完整目录</summary>
 <br>
 
 | 技术 | 覆盖范围 | 是否需要 API 密钥？ |
@@ -939,6 +947,15 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 | `fx-email-header-analysis.md` | 邮件头分析、SPF/DKIM | 否 |
 | `fx-edge-appliance-recon.md` | 边界／VPN 设备指纹 → CISA KEV/CVE 目录 + 端口风险矩阵 | 否（Shodan/Censys 可选） |
 | `fx-saas-identity-recon.md` | SaaS 租户（DNS-TXT）+ IdP 指纹 + API/GraphQL/规范发现 | 否 |
+| `web-pivot.md` | Web 基础设施枢轴 —— favicon mmh3、追踪码／钱包／SaaS 运营者要素 → 排序后的枢轴 | 可选（付费密钥可升级层级） |
+| `whois-universal.md` | 面向多 TLD 的通用 WHOIS 级联 —— gTLD/ccTLD（.vn/.th/.sg/.kr）、反向与历史查询 | 可选（反向／历史需 Whoxy/WhoisXML） |
+| `web-collection-scrapling.md` | 自适应网页采集 —— 静态 → 反爬 → JS 渲染 | 否 |
+| `agent-browser.md` | 交互式浏览器采集 —— CDP、无障碍树快照、截图证据 | 否（chat 模式可选） |
+| `agentflow-enrichment.md` | 面向 3 个以上主体的并行 DAG 富化编排 | 否 |
+| `microsoft-tenant-recon.md` | M365/Azure 租户侦察 —— 租户 ID、联合身份、MDI、SharePoint | 否 |
+| `stealer-log-analysis.md` | 信息窃取日志分流 —— 家族识别、受害者与运营者画像、跨日志关联、IOC | 否 |
+| `fx-dork-sweep.md` | 零认证 dork 扫描 —— Telegram 生态、文档托管站、文件类型族 | 否 |
+| `fx-document-leak-hunt.md` | 覆盖 18 个平台的文档泄露搜寻，并做严重度分级 | 否 |
 
 </details>
 

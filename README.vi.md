@@ -4,7 +4,7 @@
 
 ### Bộ công cụ Tình báo Mối đe dọa Mạng & Phân tích OSINT
 
-**Biến Claude thành một nhà phân tích tình báo lành nghề — 74+ lệnh, 40 kỹ thuật, không cần API key cho chức năng cốt lõi.**
+**Biến Claude thành một nhà phân tích tình báo lành nghề — 74+ lệnh, 49 kỹ thuật, không cần API key cho chức năng cốt lõi.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.6-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.6"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#tham-chiếu-lệnh"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
-  <a href="#danh-mục-kỹ-thuật"><img src="https://img.shields.io/badge/techniques-40-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="40 Techniques"></a>&nbsp;
+  <a href="#danh-mục-kỹ-thuật"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
   <a href="#cài-đặt"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -54,7 +54,7 @@
 
 ## CTI Expert là gì?
 
-Một **kỹ năng (skill) của Claude Code** biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở lành nghề. Nó chạy thu thập tình báo có cấu trúc với **74+ lệnh** trải trên **40 kỹ thuật** — không cần API key cho chức năng cốt lõi. Để khai thác tối đa, hãy thêm API key **miễn phí *hoặc* trả phí** của riêng bạn vào tệp `.env` của skill — mỗi key được **tự động phát hiện** và mở khóa quyền truy cập cấp cao hơn (VD: Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+Một **kỹ năng (skill) của Claude Code** biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở lành nghề. Nó chạy thu thập tình báo có cấu trúc với **74+ lệnh** trải trên **49 kỹ thuật** — không cần API key cho chức năng cốt lõi. Để khai thác tối đa, hãy thêm API key **miễn phí *hoặc* trả phí** của riêng bạn vào tệp `.env` của skill — mỗi key được **tự động phát hiện** và mở khóa quyền truy cập cấp cao hơn (VD: Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Không cần key theo mặc định, mạnh hơn khi có key của bạn.** Mọi kỹ thuật cốt lõi đều chạy được với zero API key. Thêm bất kỳ key miễn phí hay trả phí nào vào `.env` (hoặc chạy `/apikeys set <service> <KEY>`) và skill tự phát hiện, mở khóa các pivot cấp cao hơn: reverse favicon→host, passive DNS, tra cứu chứng chỉ, phát hiện tên miền anh em. Key thiếu hoặc sai không bao giờ làm hỏng một lượt chạy — nó chỉ hạ xuống thành một ghi chú. Hướng dẫn thiết lập: [handbook/api-keys.md](handbook/api-keys.md).
@@ -854,6 +854,8 @@ Mọi lệnh backend đều điều phối qua `scripts/backend/intel.py` ở Ti
 
 ## Cấp độ kỹ năng
 
+Mật độ thông tin đầu ra và mức tự động hóa thích ứng theo trình độ của bạn. **Chuyển cấp bất cứ lúc nào — kết quả đầu ra thay đổi ngay lập tức:** `/novice` vào cấp Người mới, `/novice off` cho bạn cấp Chuyên gia, và Người hành nghề là mặc định ở giữa.
+
 <table>
 <tr>
 <th width="33%">Người mới</th>
@@ -865,21 +867,27 @@ Mọi lệnh backend đều điều phối qua `scripts/backend/intel.py` ở Ti
 
 Chế độ ít thuật ngữ, hướng dẫn từng bước, mẫu dựng sẵn cho thẩm định, kiểm tra lý lịch, rà soát bảo mật.
 
-**Điểm vào:** `/flow person`, `/flow domain`, `/template list`
+**Chuyển cấp:** `/novice`
+
+**Thử ngay:** `/flow person`, `/flow domain`, `/template list`
 
 </td>
 <td valign="top">
 
 Toán tử tìm kiếm nâng cao, mở rộng pivot thủ công, mô hình mối đe dọa tùy chỉnh, quy trình có hướng dẫn kèm giải thích.
 
-**Điểm vào:** `/query [target]`, `/branch [data]`, `/crossref`, `/threat-model`
+**Chuyển cấp:** mặc định — không cần lệnh
+
+**Thử ngay:** `/query [target]`, `/branch [data]`, `/crossref`, `/threat-model`
 
 </td>
 <td valign="top">
 
 Truy cập kỹ thuật thô, tự gán trọng số bằng chứng, xử lý phát hiện CONTESTED, truy vấn cơ sở dữ liệu trực tiếp.
 
-**Điểm vào:** `/username [handle]`, `/email-deep [email]`, `/secrets [target]`, `/threat-check [target]`
+**Chuyển cấp:** `/novice off`
+
+**Thử ngay:** `/username [handle]`, `/email-deep [email]`, `/secrets [target]`, `/threat-check [target]`
 
 </td>
 </tr>
@@ -894,7 +902,7 @@ Truy cập kỹ thuật thô, tự gán trọng số bằng chứng, xử lý ph
 ## Danh mục kỹ thuật
 
 <details>
-<summary><b>40 kỹ thuật</b> — nhấn để mở toàn bộ danh mục</summary>
+<summary><b>49 kỹ thuật</b> — nhấn để mở toàn bộ danh mục</summary>
 <br>
 
 | Kỹ thuật | Phạm vi | Cần API key? |
@@ -939,6 +947,15 @@ Truy cập kỹ thuật thô, tự gán trọng số bằng chứng, xử lý ph
 | `fx-email-header-analysis.md` | Phân tích header email, SPF/DKIM | Không |
 | `fx-edge-appliance-recon.md` | Fingerprint thiết bị biên/VPN → danh mục CISA KEV/CVE + ma trận rủi ro cổng | Không (Shodan/Censys tùy chọn) |
 | `fx-saas-identity-recon.md` | Tenancy SaaS (DNS-TXT) + fingerprint IdP + phát hiện API/GraphQL/spec | Không |
+| `web-pivot.md` | Pivot hạ tầng web — favicon mmh3, artifact tracker/ví/nhà vận hành SaaS → pivot có xếp hạng | Tùy chọn (key premium nâng tầng truy cập) |
+| `whois-universal.md` | Chuỗi WHOIS toàn cầu đa TLD — gTLD/ccTLD (.vn/.th/.sg/.kr), đảo ngược & lịch sử | Tùy chọn (Whoxy/WhoisXML cho tra ngược/lịch sử) |
+| `web-collection-scrapling.md` | Thu thập web thích ứng — tĩnh → chống bot → kết xuất JS | Không |
+| `agent-browser.md` | Thu thập bằng trình duyệt tương tác — CDP, ảnh chụp cây accessibility, screenshot làm bằng chứng | Không (chế độ chat tùy chọn) |
+| `agentflow-enrichment.md` | Điều phối làm giàu song song theo DAG cho 3+ đối tượng | Không |
+| `microsoft-tenant-recon.md` | Trinh sát tenant M365/Azure — tenant ID, liên kết liên thông, MDI, SharePoint | Không |
+| `stealer-log-analysis.md` | Phân loại nhật ký infostealer — định danh họ mã độc, phân tích nạn nhân vs. nhà vận hành, tương quan chéo nhiều nhật ký, IOC | Không |
+| `fx-dork-sweep.md` | Quét dork không cần xác thực — hệ sinh thái Telegram, host tài liệu, nhóm filetype | Không |
+| `fx-document-leak-hunt.md` | Truy tìm tài liệu rò rỉ trên 18 nền tảng kèm phân loại mức nghiêm trọng | Không |
 
 </details>
 
