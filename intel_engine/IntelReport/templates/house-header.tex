@@ -90,3 +90,15 @@
 \usepackage{seqsplit}
 \let\oldtexttt\texttt
 \renewcommand{\texttt}[1]{\oldtexttt{\seqsplit{#1}}}
+% \seqsplit is FRAGILE, so the \renewcommand above dies with "Undefined control sequence
+% \SQSPL@scan" whenever inline code lands in a MOVING argument — a section title, a TOC entry, a
+% running header. "# Assessment — `domain.com`" is the normal shape of a CTI report heading, so
+% that is the common case, not an edge case. \robustify (etoolbox, loaded above) fixes it.
+%
+% DO NOT "simplify" this to \DeclareRobustCommand{\texttt}. LaTeX's \texttt is ALREADY robust
+% (\DeclareTextFontCommand), i.e. \texttt expands to \protect\texttt␣. \let\oldtexttt\texttt
+% therefore captures only the outer wrapper, and \DeclareRobustCommand redefines the INNER
+% \texttt␣ — the very macro \oldtexttt dispatches to. The result is infinite recursion: xelatex
+% spins at 100% CPU and never terminates (no error, just a hang). \renewcommand replaces the
+% outer \texttt and leaves the inner \texttt␣ intact, so \oldtexttt stays valid.
+\robustify{\texttt}
