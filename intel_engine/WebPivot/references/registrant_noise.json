@@ -1,0 +1,87 @@
+{
+  "_comment": "WHOIS REGISTRANT NOISE — values that appear in a registrant field but are NOT the owner: privacy proxies, registrar role mailboxes, redaction placeholders. Linking on one of these merges every domain at that registrar into a single bogus operator, and (for reverse-WHOIS) burns credits on a query that returns thousands of unrelated domains. This is WebPivot's COLLECTOR-side copy; the KB's analyst-side copy is tools/kb/references/registrant_noise.json. Keep new providers in sync across both — tests/test_references.py reports divergence.",
+  "privacy_markers": {
+    "_comment": "Substrings that mark a registrant NAME/ORG value as a privacy proxy or redaction. Matched as a case-insensitive substring of the whole value. Consumed by whois_enrich.is_privacy(), which gates whether a registrant is worth a reverse-WHOIS at all.",
+    "values": [
+      "privacy",
+      "redacted",
+      "whoisguard",
+      "data protected",
+      "withheld",
+      "not disclosed",
+      "domains by proxy",
+      "domainsbyproxy",
+      "registration private",
+      "private by design",
+      "identity protect",
+      "contact privacy",
+      "perfect privacy",
+      "gdpr masked",
+      "statutory masking"
+    ]
+  },
+  "role_email_prefixes": {
+    "_comment": "Email LOCAL-PART prefixes (including the '@') of registrar role mailboxes. A role mailbox is the registrar's, never the registrant's. Consumed by whois_enrich.is_privacy().",
+    "values": [
+      "abuse@",
+      "hostmaster@",
+      "noc@",
+      "registrar-abuse@",
+      "postmaster@"
+    ]
+  },
+  "proxy_email_domains": {
+    "_comment": "Email DOMAINS operated by a privacy/proxy service or a registrar. Any address at one of these fronts an unknown number of unrelated registrants. Consumed by whois_enrich.is_privacy().",
+    "values": [
+      "porkbun.com",
+      "godaddy.com",
+      "namecheap.com",
+      "domainsbyproxy.com",
+      "withheldforprivacy.com",
+      "privacyprotect.org",
+      "1and1.com",
+      "contactprivacy.com",
+      "whoisprivacyprotect.com",
+      "privacyguardian.org"
+    ]
+  },
+  "noise_email_substrings": {
+    "_comment": "Substrings anywhere in a registrant EMAIL that mark it as registrar/privacy boilerplate. Consumed by evidence_report's cluster report so a shared proxy address never drives a same-operator judgment in a deliverable.",
+    "values": [
+      "contact.gandi.net",
+      "@gandi.net",
+      "whoisguard",
+      "whoisprivacy",
+      "privacyprotect",
+      "domainsbyproxy",
+      "withheldforprivacy",
+      "perfectprivacy",
+      "privacy-protect",
+      "redacted",
+      "abuse@",
+      "tucows.com",
+      "namecheap",
+      "proxy@",
+      "identity-protect",
+      "data-protected",
+      "privacydotlink",
+      "privacyservice"
+    ]
+  },
+  "noise_name_substrings": {
+    "_comment": "Substrings anywhere in a registrant NAME that mark it as a proxy placeholder rather than a person. Consumed by evidence_report's cluster report.",
+    "values": [
+      "redacted",
+      "privacy",
+      "domain admin",
+      "whois",
+      "proxy",
+      "not disclosed",
+      "withheld",
+      "reactivation period",
+      "c/o id#",
+      "data protected",
+      "statutory masking"
+    ]
+  }
+}

@@ -228,7 +228,15 @@ def main():
         ("test_audit_medium_fixes", "audit MEDIUM fixes — CF challenge / SAN sibling / social key"),
         ("test_reverse_phone", "reverse-WHOIS phone + preview-first / confirm-if-large gate"),
         ("test_whois_parallel", "whois_summary parallelizes current+history (speed)"),
+        ("test_references", "reference DATA layer — files documented, consumers not on fallback"),
+        ("test_intelx_anyrun", "IntelX + ANY.RUN — selector typing, grading, keyless honesty"),
+        ("test_no_sample_submission", "OPSEC — no ANY.RUN sample-submission path exists"),
     ]
+    # test_references lives in the repo-root tests/ (one level above $INTEL_HOME), not in eval/.
+    # Without this the gate exists but never runs in the regression suite.
+    _tests_dir = os.path.join(os.path.dirname(REPO), "tests")
+    if os.path.isdir(_tests_dir) and _tests_dir not in sys.path:
+        sys.path.insert(0, _tests_dir)
     for modname, desc in unit_mods:
         try:
             mod = __import__(modname)

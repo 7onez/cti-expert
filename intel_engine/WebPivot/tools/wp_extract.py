@@ -143,13 +143,19 @@ COPYRIGHT_RE = re.compile(
     r"""(?:©|&copy;|copyright)\s*(?:\d{4}(?:\s*[-–]\s*\d{4})?)?\s*(?:by\s+)?([^.|©<>\n]{3,80})""",
     re.I)
 
-SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.I)
+# Attribute values are matched with OPTIONAL quotes. Every HTML minifier (html-minifier,
+# the default in a vue-cli / webpack / vite production build) drops quotes around values
+# that don't need them — `<script src=/static/js/app.6c9e4bdf.js>`. A quote-mandatory
+# pattern silently returns NOTHING on those pages, which is precisely the built-SPA kit
+# where the script inventory matters most. `[^"'\s>]+` is safe for both forms: a URL
+# never contains a raw space, so the unquoted branch stops at the tag/attribute boundary.
+SCRIPT_SRC_RE = re.compile(r"<script[^>]+src=[\"']?([^\"'\s>]+)[\"']?", re.I)
 
 INLINE_SCRIPT_RE = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.I | re.S)
 
-LINK_HREF_RE = re.compile(r"<(?:a|link)[^>]+href=[\"']([^\"']+)[\"']", re.I)
+LINK_HREF_RE = re.compile(r"<(?:a|link)[^>]+href=[\"']?([^\"'\s>]+)[\"']?", re.I)
 
-ANCHOR_HREF_RE = re.compile(r"<a\b[^>]+href=[\"']([^\"']+)[\"']", re.I)  # crawl frontier: <a> only
+ANCHOR_HREF_RE = re.compile(r"<a\b[^>]+href=[\"']?([^\"'\s>]+)[\"']?", re.I)  # crawl frontier: <a> only
 # Asset/resource extensions that are never navigation targets — kept out of the crawl.
 
 _ASSET_EXT_RE = re.compile(
@@ -170,7 +176,7 @@ TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 FAVICON_RE = re.compile(r"<link[^>]+rel=[\"'][^\"']*icon[^\"']*[\"'][^>]*>", re.I)
 
-HREF_IN_TAG_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.I)
+HREF_IN_TAG_RE = re.compile(r"href=[\"']?([^\"'\s>]+)[\"']?", re.I)
 
 TAG_RE = re.compile(r"<([a-zA-Z][a-zA-Z0-9]*)")
 

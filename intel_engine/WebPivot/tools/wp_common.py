@@ -205,21 +205,29 @@ def parse_proxies(spec: str):
 # wins over the file. With no key present, every network call degrades to the
 # previous keyless behavior — nothing breaks.
 
-_CUSTOMIZATION_ENV = os.path.expanduser(
-    "~/.config/cti-expert/WebPivot/.env")
+# cti-expert: the unified skill-wide key store is managed by /apikeys. CTI_API_KEYS_ENV
+# points at it; CTI_WEBPIVOT_ENV is a back-compat alias for a co-located key file. With
+# neither set we fall back to a per-user override dir outside the repo.
+_CUSTOMIZATION_ENV = (os.environ.get("CTI_API_KEYS_ENV")
+                      or os.environ.get("CTI_WEBPIVOT_ENV")
+                      or os.path.expanduser("~/.config/cti-expert/WebPivot/.env"))
 
 # Candidate .env locations, highest-priority first. A real env var always wins over any
 # file; among files, an earlier file wins over a later one (never overridden). Order:
-#   1. ./.env               — the invocation cwd (e.g. the intel_engine repo root the
-#                             harness runs from) → this is where operators actually keep keys
-#   2. <repo>/.env          — repo root relative to this script (tools/ -> WebPivot -> repo)
-#   3. <skill>/.env         — a skill-local .env next to WebPivot/
-#   4. customization .env   — an optional per-user override dir, outside the repo
+#   1. ./.env               — the invocation cwd (the harness runs from the engine root)
+#   2. <skill root>/.env    — cti-expert layout: tools/ -> WebPivot -> intel_engine -> repo.
+#                             THIS is where /apikeys writes and where the keys actually live;
+#                             upstream WebPivot ships one level shallower, so both are probed.
+#   3. <engine>/.env        — intel_engine/.env (upstream's "repo root")
+#   4. <skill>/.env         — a skill-local .env next to WebPivot/
+#   5. customization .env   — $CTI_API_KEYS_ENV / $CTI_WEBPIVOT_ENV, else a per-user
+#                             override dir outside the repo
 
 _SD = os.path.dirname(os.path.abspath(__file__))
 
 _ENV_CANDIDATES = [
     os.path.join(os.getcwd(), ".env"),
+    os.path.join(_SD, "..", "..", "..", ".env"),
     os.path.join(_SD, "..", "..", ".env"),
     os.path.join(_SD, "..", ".env"),
     _CUSTOMIZATION_ENV,
@@ -244,7 +252,7 @@ def _load_env_file(path: str) -> None:
 
 def _load_customization_env() -> None:
     """Load every candidate .env (dedup'd) so keys kept at the repo root are picked up, not
-    just the per-user override dir. Env wins; earlier file wins over later."""
+    just the PAI customization dir. Env wins; earlier file wins over later."""
     seen = set()
     for p in _ENV_CANDIDATES:
         rp = os.path.realpath(p)

@@ -18,7 +18,7 @@ extractors as pivot_extract.py.
 
 Usage:
   python3 wayback_ga.py <domain> [--max 12] [--from 2018] [--to 2026] [--timeline] [--pretty]
-  python3 wayback_ga.py baoxinviec.info --timeline
+  python3 wayback_ga.py example.com --timeline
   python3 wayback_ga.py -f domains.txt --pretty          # one domain per line
 
 FOR AUTHORIZED INVESTIGATIONS ONLY. All fetches hit web.archive.org, never the
@@ -75,6 +75,8 @@ def sample_evenly(snaps, n):
     """Pick up to n snapshots spread evenly across time (keep first & last)."""
     if len(snaps) <= n:
         return snaps
+    if n <= 1:                       # n==1 → one sample; avoids /(n-1) ZeroDivisionError
+        return snaps[:n]
     step = (len(snaps) - 1) / (n - 1)
     return [snaps[round(i * step)] for i in range(n)]
 

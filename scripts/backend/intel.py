@@ -79,6 +79,13 @@ DISPATCH = {
     "cdn-ranges":    ("WebPivot/tools/cdn_ranges.py",  []),    # CDN/ASN range classify (--update)
     "ct-monitor":    ("WebPivot/tools/ct_monitor.py",  []),    # CT-log watch
     "wayback-ga":    ("WebPivot/tools/wayback_ga.py",  []),    # historic GA/GTM harvest
+    "impersonate":   ("WebPivot/tools/wp_impersonate.py", []), # typosquat/TLD-sweep/CT lookalikes
+    "search-pivot":  ("tools/search_pivot.py",        []),     # multi-engine dork queries
+    "censys":        ("WebPivot/tools/wp_censys.py",  []),     # CenQL build + free-plan lookups
+    "capabilities":  ("WebPivot/tools/wp_capabilities.py", []),# which keys exist, what's unqueried
+    "jarm":          ("WebPivot/tools/jarm.py",       []),     # JARM TLS-stack fingerprint
+    "intelx":        ("WebPivot/tools/wp_intelx.py",  []),     # leak/paste/darknet selector search
+    "anyrun":        ("BinaryPivot/tools/bp_anyrun.py", []),   # TI Lookup — READ-ONLY, never submits
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
     "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
@@ -130,6 +137,13 @@ BLURB = {
     "cdn-ranges": "CDN/ASN range table — classify an IP, --update the cache",
     "ct-monitor": "certificate-transparency log watch",
     "wayback-ga": "historic GA/GTM tracker harvest from Wayback",
+    "impersonate": "hunt typosquat/lookalike domains (crt.sh + DNS, free)",
+    "search-pivot": "multi-engine dork queries for any indicator (no scraping)",
+    "censys": "Censys: cert/host/webproperty lookup, CenQL build, budget",
+    "capabilities": "which API keys exist and what each absence costs",
+    "jarm": "JARM TLS-stack fingerprint of a host",
+    "intelx": "IntelX: search a strong selector in leaks/pastes/darknet",
+    "anyrun": "ANY.RUN TI Lookup (read-only — never submits a sample)",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
     "kb-stats": "KB stats (positional root)",

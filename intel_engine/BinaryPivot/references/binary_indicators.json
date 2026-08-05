@@ -1,0 +1,272 @@
+{
+  "_comment": "BINARYPIVOT STATIC-ANALYSIS TABLES. Two jobs: (1) stop the string sweep from reporting filenames and Java package names as network infrastructure, and (2) name the packer / installer / app-protector wrapping a sample, which tells the analyst WHY a string sweep came back thin. Extend these as new protectors appear — they change far faster than the code that matches them.",
+  "fake_tlds": {
+    "_comment": "Trailing tokens that look like a TLD but never are one — file extensions, Android resource classes, server-side script extensions. A bare host token ending in one of these is a filename or identifier ('config.json', 'libapp.so', 'index.php'), not a domain. Matched EXACTLY against the last dot-separated label, and ONLY for tokens found outside a real URL (a host that appeared inside an http(s):// URL is trusted regardless).",
+    "values": [
+      "R",
+      "aab",
+      "aar",
+      "action",
+      "anim",
+      "apk",
+      "ashx",
+      "asmx",
+      "asp",
+      "aspx",
+      "attr",
+      "bak",
+      "bin",
+      "bmp",
+      "category",
+      "cfg",
+      "cgi",
+      "class",
+      "color",
+      "conf",
+      "css",
+      "csv",
+      "dat",
+      "db",
+      "dex",
+      "dimen",
+      "dll",
+      "drawable",
+      "dylib",
+      "eot",
+      "exe",
+      "extra",
+      "gif",
+      "gradle",
+      "gz",
+      "htm",
+      "html",
+      "ico",
+      "id",
+      "ini",
+      "intent",
+      "jar",
+      "java",
+      "jpeg",
+      "jpg",
+      "js",
+      "json",
+      "jsp",
+      "jspx",
+      "jsx",
+      "kt",
+      "kts",
+      "layout",
+      "log",
+      "md",
+      "menu",
+      "mipmap",
+      "mjs",
+      "mp3",
+      "mp4",
+      "nib",
+      "obb",
+      "ogg",
+      "otf",
+      "pak",
+      "pdf",
+      "permission",
+      "php",
+      "phtml",
+      "plist",
+      "png",
+      "pro",
+      "properties",
+      "provider",
+      "raw",
+      "scala",
+      "smali",
+      "so",
+      "sqlite",
+      "storyboard",
+      "string",
+      "style",
+      "svg",
+      "tar",
+      "tmp",
+      "ts",
+      "tsx",
+      "ttc",
+      "ttf",
+      "txt",
+      "wav",
+      "webp",
+      "woff",
+      "woff2",
+      "xib",
+      "xml",
+      "xmlns",
+      "yaml",
+      "yml"
+    ]
+  },
+  "package_prefixes": {
+    "_comment": "Leading labels of a reverse-DNS package/class name ('com.example.app', 'androidx.core.view'). A real hostname never starts with these, so a 3+ label token beginning with one is code, not infrastructure.",
+    "values": [
+      "android",
+      "androidhive",
+      "androidx",
+      "apple",
+      "com",
+      "dalvik",
+      "edu",
+      "google",
+      "gov",
+      "io",
+      "java",
+      "javax",
+      "junit",
+      "kotlin",
+      "kotlinx",
+      "net",
+      "org",
+      "squareup",
+      "sun"
+    ]
+  },
+  "pe_section_packers": {
+    "_comment": "PE section name -> packer/protector it identifies. Matched lower-cased and EXACTLY against the section name read out of the PE header. A hit is reported at high confidence; sections with no name match still get flagged by the entropy test in code.",
+    "entries": {
+      "upx0": "UPX",
+      "upx1": "UPX",
+      "upx2": "UPX",
+      "upx!": "UPX",
+      ".upx": "UPX",
+      ".aspack": "ASPack",
+      ".adata": "ASPack",
+      ".vmp0": "VMProtect",
+      ".vmp1": "VMProtect",
+      ".vmp2": "VMProtect",
+      ".themida": "Themida/WinLicense",
+      ".winlice": "Themida/WinLicense",
+      ".enigma1": "Enigma Protector",
+      ".enigma2": "Enigma Protector",
+      ".petite": "Petite",
+      ".pec2": "PECompact",
+      "pec1": "PECompact",
+      ".mpress1": "MPRESS",
+      ".mpress2": "MPRESS",
+      ".nsp0": "NsPack",
+      ".nsp1": "NsPack",
+      ".nsp2": "NsPack",
+      "fsg!": "FSG",
+      ".fsg": "FSG",
+      ".mew": "MEW",
+      ".taz": "PESpin",
+      ".y0da": "Yoda's Protector",
+      ".yoda": "Yoda's Protector",
+      ".upack": "Upack",
+      ".bydwing": "Upack",
+      ".neolite": "NeoLite",
+      ".boom": "The Boomerang",
+      ".sforce3": "StarForce",
+      ".vprotect": "VProtect",
+      ".packed": "generic packer",
+      ".perplex": "Perplex",
+      ".dyamar": "DYAMAR"
+    }
+  },
+  "installer_signatures": {
+    "_comment": "Self-extracting installer / wrapper name -> ASCII byte signatures that identify it. The signatures are searched in the sampled bytes in file order and the FIRST hit wins, so keep the more specific wrapper above a generic one. A hit means the real payload is nested inside the installer and needs unpacking before its IOCs are meaningful.",
+    "entries": {
+      "NSIS": [
+        "Nullsoft.NSIS.exehead",
+        "Nullsoft Install System",
+        "NSIS Error"
+      ],
+      "Inno Setup": [
+        "Inno Setup",
+        "InnoSetupLdr"
+      ],
+      "InstallShield": [
+        "InstallShield"
+      ],
+      "Wise Installer": [
+        "Wise Installation"
+      ],
+      "Setup Factory": [
+        "Setup Factory"
+      ],
+      "7-Zip SFX": [
+        ";!@Install@!UTF-8!",
+        "7zSFX"
+      ],
+      "WinRAR SFX": [
+        "WinRAR SFX"
+      ],
+      "Electron (asar)": [
+        "app.asar"
+      ],
+      "Squirrel/Electron": [
+        "Squirrel"
+      ]
+    }
+  },
+  "android_protectors": {
+    "_comment": "Android app-protector / DEX packer -> regexes matched against the file NAMES inside the APK. Name matching is used because it is fast and reliable; each of these wraps or encrypts the real classes.dex, which is exactly why a protected APK's string sweep comes back thin. Regexes are applied case-insensitively with re.search.",
+    "entries": {
+      "Bangcle / SecNeo": [
+        "libsecexe\\.so$",
+        "libsecmain\\.so$",
+        "libSecShell.*\\.so$",
+        "libDexHelper.*\\.so$",
+        "bangcle_classes\\.jar$",
+        "secData0\\.jar$"
+      ],
+      "Qihoo 360 Jiagu": [
+        "libjiagu.*\\.so$",
+        "libprotectClass\\.so$",
+        "libqihoo.*\\.so$"
+      ],
+      "Tencent Legu": [
+        "libshell.*\\.so$",
+        "libtup\\.so$",
+        "libtosprotection.*",
+        "libtxsafemode\\.so$"
+      ],
+      "Ijiami": [
+        "ijiami\\.dat$",
+        "ijiami\\.ajm$",
+        "libexec\\.so$",
+        "libexecmain\\.so$",
+        "libixgja\\.so$"
+      ],
+      "Baidu Protect": [
+        "libbaiduprotect.*\\.so$",
+        "baiduprotect.*\\.jar$"
+      ],
+      "NetEase Yidun": [
+        "libnesec\\.so$"
+      ],
+      "DexProtector": [
+        "dexprotect.*",
+        "classes\\.dex\\.dat$",
+        "assets/dp\\..*\\.so.*"
+      ],
+      "Alibaba / Mobile Security SDK": [
+        "libmobisec\\.so$",
+        "libpreverify1\\.so$",
+        "libsgmain\\.so$",
+        "libsgsecuritybody\\.so$"
+      ],
+      "AppSuit / CoVault": [
+        "libAppSuit\\.so$",
+        "libcovault.*\\.so$"
+      ],
+      "Promon SHIELD": [
+        "libshield\\.so$"
+      ],
+      "Virbox Protector": [
+        "libvbox.*\\.so$"
+      ],
+      "Nagain / APKProtect": [
+        "libnagain.*\\.so$",
+        "libapkprotect.*\\.so$"
+      ]
+    }
+  }
+}

@@ -9,7 +9,7 @@ services that recently changed — verify before relying.
 | **Shodan** | `http.favicon.hash:<int>` | **mmh3** | Paid (favicon filter needs membership) | REST + py lib, key |
 | **FOFA** | `icon_hash="<int>"` | **mmh3** | Freemium (heavy paid gating) | REST, key |
 | **ZoomEye** (zoomeye.ai) | `iconhash:"<mmh3>"` | **mmh3** | Freemium credits | REST, key |
-| **Censys** (Platform API) | `services.http.response.favicons.md5_hash` | **MD5** | Freemium | REST, key ⚠️ classic Search API retired |
+| **Censys** (Platform API) | `web.endpoints.http.favicons.hash_md5=<md5>` | **MD5** | Free plan = **no search API** (UI only, 5 credits/query); Starter+ for the API | REST, PAT ⚠️ **CenQL, not Legacy Search** — the old `services.http.response.favicons.md5_hash` no longer runs |
 | **Netlas** | `http.favicon.hash_sha256` | **SHA-256** | Freemium + 14-day trial | REST, key |
 | **Validin** | favicon in host-response graph | body hashes | Free community + free API | REST, free key |
 
@@ -48,8 +48,9 @@ tracker / description / footer / SaaS id) and takes analyst keywords via `--fofa
 
 **Unique subdomain label** (e.g. `svc-a.site-a.example`) — a distinctive, non-generic leftmost label is
 an operator naming convention. Reverse it across other apexes: FOFA `host="<label>."`, crt.sh
-`<label>.%`, Shodan `ssl.cert.subject.CN:"<label>"` / `hostname:"<label>"`, Shodan CTL / Censys
-`names: <label>.*`. `pivot_extract` emits this as a `subdomain` pivot automatically.
+`<label>.%`, Shodan `ssl.cert.subject.CN:"<label>"` / `hostname:"<label>"`, Censys
+`host.dns.names:"<label>"` (tokenised `:`, **not** `=` — the value is a label, not a whole
+hostname). `pivot_extract` emits this as a `subdomain` pivot automatically.
 
 ## 4. Certificate Transparency
 | Service | Query | Cost | API |
@@ -57,7 +58,7 @@ an operator naming convention. Reverse it across other apexes: FOFA `host="<labe
 | **crt.sh** | `%.domain`, cert hash | Free | JSON `?output=json`, no key ⚠️ often overloaded/down |
 | **Shodan CTL** ⭐ | domain | Free | **keyless mirror of the crt.sh DB — steadier when crt.sh 502s** |
 | **Certspotter** (SSLMate) | domain | Free tier + paid | REST, free key (low quota) |
-| **Censys** | cert fields | Freemium | Platform API, key |
+| **Censys** ⭐ | `cert.fingerprint_sha256=<sha256>` (search, Starter+) — **or the certificate LOOKUP, which works on the FREE plan and returns the cert's own `names` list** | Free (1 credit/lookup, 100/month) | Platform API, PAT · `wp_censys.py cert <sha256>` |
 | **Cloudflare Merkle Town / Azul** | dashboard | Free | limited |
 
 **Shodan CTL (keyless, no Shodan account needed)** — a second CT index that reads the same
@@ -116,8 +117,9 @@ enrichment and takedown routing. A bare IP into `pivot_extract.py` runs this pas
 
 ## Scriptable-API cheat sheet
 - **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web).
-- **Free-tier key:** Shodan, FOFA, ZoomEye, Censys, Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **Free-tier key:** Shodan, FOFA, ZoomEye, **Censys** (⚠️ free = **lookup endpoints only**, 100 credits/month; search is Starter+ — see `Setup.md`), Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.
 - **No official API (scrape/manual):** AnalyzeID, osint.sh, SpyOnWeb.
 
-Store your keys in `~/.config/cti-expert/WebPivot/keys.env` (never commit).
+Store your keys in a `chmod 600` `.env` at the repo root, or export them (never commit). See
+`references/Setup.md`.

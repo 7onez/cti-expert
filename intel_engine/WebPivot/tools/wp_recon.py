@@ -28,6 +28,7 @@ except Exception:
 import urllib.request
 import urllib.error
 from wp_common import *  # noqa
+from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
@@ -290,6 +291,22 @@ def fetch_tls_cert(host: str, port: int = 443, timeout: int = 15):
     except Exception as e:                    # never propagate to the caller
         return {"host": host, "port": port, "error": str(e),
                 "validated": False, "validation_error": verr}
+
+def fetch_jarm(host: str, port: int = 443, timeout: int = 8):
+    """Active JARM fingerprint of host:port — a hash of the TLS *server stack +
+    config* that survives re-branding/domain rotation (great against the
+    self-rotating infra scam apps use). Returns {target, ip, jarm, empty} or
+    {host, error}. Pure stdlib: delegates to the vendored Salesforce algorithm in
+    `jarm.py`, so the 62-hex value byte-matches Shodan `ssl.jarm:` / Censys
+    `services.jarm.fingerprint` / ZoomEye and is directly pivotable. This is an
+    ACTIVE probe (10 TLS handshakes) — the caller gates it to the primary live
+    host and suppresses it under --proxy (a raw socket can't use an HTTP proxy,
+    so a direct probe would leak the analyst's real IP)."""
+    try:
+        from jarm import jarm_fingerprint
+        return jarm_fingerprint(host, port, timeout=timeout)
+    except Exception as e:                    # never propagate to the caller
+        return {"host": host, "port": port, "error": str(e)}
 
 def _crtsh_fetch(value: str, timeout: int = 25):
     """Fetch crt.sh JSON rows for a search value, resilient to crt.sh flakiness.
@@ -671,30 +688,24 @@ def resolve_live_dns(host: str, timeout: int = 6) -> dict:
 # All of this is a recursive-resolver query (dig, nslookup fallback) — passive, no target
 # contact, no API cost.
 
-MAIL_PROVIDERS = (
-    ("Google Workspace", ("aspmx.l.google.com", ".aspmx.l.google.com", ".google.com",
-                          "googlemail.com", ".googlemail.com")),
-    ("Microsoft 365", (".mail.protection.outlook.com", ".outlook.com", ".office365.com")),
-    ("Proofpoint", (".pphosted.com", ".ppe-hosted.com")),
-    ("Mimecast", (".mimecast.com", ".mimecast.co.za")),
-    ("Zoho Mail", (".zoho.com", ".zoho.eu", ".zohomail.com")),
-    ("Yandex 360", (".yandex.net", ".yandex.ru")),
-    ("Proton Mail", (".protonmail.ch", ".proton.me", "protonmail-mx")),
-    ("Cloudflare Email Routing", (".mx.cloudflare.net",)),
-    ("Amazon WorkMail/SES", (".awsapps.com", ".amazonaws.com", ".amazonses.com")),
-    ("Fastmail", (".messagingengine.com", ".fastmail.com")),
-    ("Namecheap Private Email", (".privateemail.com",)),
-    ("GoDaddy (Secureserver)", (".secureserver.net",)),
-    ("Tencent Exmail", (".qq.com",)),
-    ("Alibaba Mail", (".mxhichina.com", ".alibaba-inc.com")),
-    ("NetEase", (".163.com", ".126.com", ".ym163.com")),
-    ("iCloud (Apple)", (".icloud.com", ".mail.me.com")),
-    ("ImprovMX (forwarder)", (".improvmx.com",)),
-    ("ForwardEmail (forwarder)", (".forwardemail.net",)),
-    ("SendGrid", (".sendgrid.net",)),
-    ("Mailgun", (".mailgun.org", ".mailgun.net")),
-    ("Zoho / Migadu / other SaaS", (".migadu.com",)),
-)
+# DATA: references/mail_providers.json. Add a provider there — order in the file is the match
+# order (first hit wins), so a specific signature must sit above a broader one.
+_MAIL_FALLBACK = {
+    "mx_providers": {
+        "Google Workspace": ["aspmx.l.google.com", ".google.com", ".googlemail.com"],
+        "Microsoft 365": [".mail.protection.outlook.com", ".outlook.com"],
+        "Zoho Mail": [".zoho.com"],
+        "Amazon WorkMail/SES": [".awsapps.com", ".amazonses.com"],
+        "GoDaddy (Secureserver)": [".secureserver.net"],
+    },
+    "spf_esp_hosts": ["_spf.google.com", "spf.protection.outlook.com", "sendgrid.net",
+                      "amazonses.com", "mailgun.org"],
+    "dmarc_report_vendors": ["dmarcian.com", "easydmarc.com", "valimail.com", "mxtoolbox.com"],
+}
+_MAIL_REF = load_ref(ref_path(__file__, "mail_providers.json"), _MAIL_FALLBACK)
+
+# (provider display name, MX hostname signatures). '.'-prefixed signature = suffix match.
+MAIL_PROVIDERS = tuple((name, tuple(sigs)) for name, sigs in _MAIL_REF["mx_providers"].items())
 
 def _mx_records(host: str, timeout: int = 8):
     """Return [(pref:int, exchange:str), …] sorted by preference, via dig then nslookup."""
@@ -731,23 +742,12 @@ def _classify_mx(exchange: str):
     return None
 
 # SPF include hosts that belong to a big ESP / mail SaaS — context, not an operator pivot.
-SPF_ESP = (
-    "_spf.google.com", ".google.com", "spf.protection.outlook.com", ".protection.outlook.com",
-    ".outlook.com", "sendgrid.net", ".sendgrid.net", "mailgun.org", "mailgun.net", "amazonses.com",
-    ".amazonses.com", "spf.mandrillapp.com", ".mcsv.net", ".mailchimp.com", "spf.mailjet.com", "mail.zendesk.com",
-    "_spf.salesforce.com", "spf.mtasv.net", "sparkpostmail.com", "_spf.qq.com", ".zoho.com", ".zoho.eu",
-    "_spf.mailspamprotection.com", "spf.constantcontact.com", "mktomail.com", "_spf.hubspotemail.net",
-    "_spf.firebasemail.com", ".secureserver.net", ".forwardemail.net", ".improvmx.com", ".pphosted.com",
-    ".mimecast.com", "_spf.yandex.net", "_spf.mail.ru", "spf.messagingengine.com", "_spf.protonmail.ch",
-)
+# DATA: references/mail_providers.json -> spf_esp_hosts
+SPF_ESP = tuple(_MAIL_REF["spf_esp_hosts"])
 
 # DMARC aggregate/forensic report SINKS (rua/ruf) run by monitoring vendors — noise, not a pivot.
-DMARC_VENDORS = (
-    "dmarc.postmarkapp.com", "dmarcanalyzer.com", "dmarcian.com", "agari.com", "returnpath.net",
-    "valimail.com", "redsift.com", "ondmarc.com", "uriports.com", "fraudmarc.com", "easydmarc.com",
-    "easydmarc.us", "dmarcadvisor.com", "mxtoolbox.com", "cyber.dhs.gov", "google.com", "proofpoint.com",
-    "mimecast.com", "barracudanetworks.com", "sophos.com", "250ok.com", "ondmarc.redsift.com",
-)
+# DATA: references/mail_providers.json -> dmarc_report_vendors
+DMARC_VENDORS = tuple(_MAIL_REF["dmarc_report_vendors"])
 
 def _txt_records(name: str, timeout: int = 8):
     """TXT records for `name` via dig then nslookup (255-char chunks re-joined)."""

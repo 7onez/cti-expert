@@ -8,7 +8,7 @@ Confidence = how strongly a shared value implies **same operator**.
 
 | Artifact | Where it lives | Confidence | Pivots to | Extracted by harness |
 |---|---|---|---|---|
-| **Favicon mmh3 hash** | `/favicon.ico`, `<link rel=icon>` | **High** | Shodan `http.favicon.hash`, FOFA `icon_hash`, ZoomEye `iconhash`, Censys (MD5), Netlas (SHA-256) | ✅ `favicon.shodan_mmh3/md5/sha256` |
+| **Favicon mmh3 hash** | `/favicon.ico`, `<link rel=icon>` | **High** | Shodan `http.favicon.hash`, FOFA `icon_hash`, ZoomEye `iconhash`, Censys `web.endpoints.http.favicons.hash_md5` (**MD5**), Netlas (SHA-256) | ✅ `favicon.shodan_mmh3/md5/sha256` |
 | **GA4 measurement ID `G-`** | inline gtag/GTM JS | **High** | PublicWWW, urlscan, DNSlytics reverse-analytics, NerdyData | ✅ `trackers.google_analytics_ga4` |
 | **GTM container `GTM-`** | GTM snippet | **High** | PublicWWW, urlscan | ✅ `trackers.google_tag_manager` |
 | **AdSense `pub-` / `ca-pub-`** | AdSense JS | **High** | DNSlytics reverse-adsense, AnalyzeID, osint.sh/adsense, PublicWWW | ✅ `trackers.google_adsense` |
@@ -31,6 +31,7 @@ Confidence = how strongly a shared value implies **same operator**.
 | **Form action + input names** | `<form>` | Medium | phishing-kit fingerprint; PublicWWW for reused field-name sets | ✅ `forms[].action / .inputs` |
 | **HTML comments** | `<!-- -->` | Low-Medium | kit author strings, build tools, dev leaks, template IDs | ✅ `html_comments` |
 | **DOM skeleton hash** | tag structure | Medium | template reuse — compare skeleton hashes across pages | ✅ `dom_skeleton_sha1` |
+| **JARM TLS fingerprint** | active 10-probe TLS handshake to :443 | Medium | Shodan `ssl.jarm:`, Censys `host.services.jarm.fingerprint` (⚠️ searchable only with the Adversary Investigation module — use Shodan on any lower tier), ZoomEye `jarm=` — fingerprints the server's TLS **stack + config**, so it clusters an operator's origin/backend hosts **across domain rotation & re-branding**. Noisy on stock stacks (nginx/CF defaults share a JARM) → corroborate with a 2nd artifact. Active probe, suppressed under `--proxy`. | ✅ `jarm.jarm` |
 | **Tech fingerprint** | headers + markers | Low | CMS/framework/jQuery version → narrows the population | ✅ `tech_fingerprint` |
 | **Cookie names** | `Set-Cookie`, JS | Low-Medium | session/tracking cookie name-sets can fingerprint a kit/platform | ✅ `cookie_names` |
 | **Server / X-Powered-By / CSP** | response headers | Low | infra + CSP `report-uri` / allowed hosts leak related domains | ✅ `server_headers` |
@@ -45,5 +46,5 @@ Confidence = how strongly a shared value implies **same operator**.
    (e.g. urlscan `page.url:* AND "G-XXXX"`; Shodan `http.favicon.hash:123 http.html:"pub-456"`).
 4. **Passive before active.** Resolve via urlscan/Wayback/crt.sh before touching the live host,
    especially for adversarial infrastructure.
-5. **Right hash per engine.** Shodan/FOFA/ZoomEye use **mmh3**, Censys uses **MD5**,
+5. **Right hash per engine.** Shodan/FOFA/ZoomEye use **mmh3**, Censys uses **MD5** (never hand Censys the mmh3 value — that query can never match),
    Netlas uses **SHA-256** — the harness emits all three from one favicon.

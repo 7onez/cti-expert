@@ -1,0 +1,210 @@
+{
+  "_comment": "IMPERSONATIONHUNT PERMUTATION TABLES — the search space `--hunt-impersonation` sweeps when hunting lookalikes of a seed brand. This is the file to tune per campaign: add the TLDs a ring is actually using, or the affixes it bolts onto the brand, and the next hunt covers them. Bigger tables = more candidates = more crt.sh/DNS lookups, and generate_variants caps the total at max_variants (default 600), so the nearest-first ordering matters: typo -> combosquat -> TLD sweep.",
+  "tld_sweep": {
+    "_comment": "TLDs the brand label is swapped across. Curated scam-heavy + common list, NOT the full IANA set — a full sweep would blow the candidate cap on TLDs no fraud ring uses. Multi-part suffixes (co.uk, com.vn) are fine.",
+    "values": [
+      "com",
+      "net",
+      "org",
+      "io",
+      "co",
+      "info",
+      "biz",
+      "me",
+      "tv",
+      "cc",
+      "xyz",
+      "top",
+      "vip",
+      "online",
+      "site",
+      "website",
+      "app",
+      "pro",
+      "club",
+      "shop",
+      "store",
+      "live",
+      "fun",
+      "icu",
+      "cyou",
+      "sbs",
+      "autos",
+      "cfd",
+      "bond",
+      "asia",
+      "us",
+      "co.uk",
+      "vn",
+      "com.vn",
+      "id",
+      "co.id",
+      "ph",
+      "in",
+      "br",
+      "com.br",
+      "ng",
+      "my",
+      "com.my",
+      "th",
+      "co.th",
+      "cn",
+      "com.cn",
+      "ru",
+      "de"
+    ]
+  },
+  "combo_affixes": {
+    "_comment": "Affixes an operator bolts onto a brand to make a combosquat (login-<brand>.com, <brand>-wallet.com). Applied as both prefix and suffix, with and without a hyphen.",
+    "values": [
+      "login",
+      "secure",
+      "account",
+      "verify",
+      "support",
+      "help",
+      "official",
+      "app",
+      "web",
+      "wallet",
+      "pay",
+      "online",
+      "vn",
+      "my",
+      "get",
+      "portal",
+      "auth",
+      "id",
+      "user",
+      "vip",
+      "global"
+    ]
+  },
+  "qwerty_adjacency": {
+    "_comment": "Physical QWERTY neighbours per character, used to bound fat-finger insertion/replacement to plausible typos instead of the whole alphabet. Key = character, value = string of its neighbours. Add a row to support another keyboard layout.",
+    "entries": {
+      "q": "wa",
+      "w": "qeas",
+      "e": "wrsd",
+      "r": "etdf",
+      "t": "ryfg",
+      "y": "tugh",
+      "u": "yihj",
+      "i": "uojk",
+      "o": "ipkl",
+      "p": "ol",
+      "a": "qwsz",
+      "s": "awedxz",
+      "d": "serfcx",
+      "f": "drtgvc",
+      "g": "ftyhbv",
+      "h": "gyujnb",
+      "j": "huikmn",
+      "k": "jiolm",
+      "l": "kop",
+      "z": "asx",
+      "x": "zsdc",
+      "c": "xdfv",
+      "v": "cfgb",
+      "b": "vghn",
+      "n": "bhjm",
+      "m": "njk",
+      "0": "9o",
+      "1": "2q",
+      "2": "13",
+      "3": "24",
+      "4": "35",
+      "5": "46",
+      "6": "57",
+      "7": "68",
+      "8": "79",
+      "9": "80"
+    }
+  },
+  "homoglyphs": {
+    "_comment": "Single-character ASCII visual confusables. Key = character, value = list of characters it can be swapped for (rn/vv style multi-char pairs go in homoglyph_sequences). ASCII only by design — the engine asserts every generated candidate is ASCII, so Unicode/IDN confusables belong in a punycode hunt, not here.",
+    "entries": {
+      "o": [
+        "0"
+      ],
+      "0": [
+        "o"
+      ],
+      "l": [
+        "1",
+        "i"
+      ],
+      "1": [
+        "l",
+        "i"
+      ],
+      "i": [
+        "1",
+        "l"
+      ],
+      "e": [
+        "3"
+      ],
+      "a": [
+        "4"
+      ],
+      "s": [
+        "5"
+      ],
+      "b": [
+        "8"
+      ],
+      "g": [
+        "9"
+      ],
+      "t": [
+        "7"
+      ],
+      "z": [
+        "2"
+      ],
+      "q": [
+        "9"
+      ],
+      "5": [
+        "s"
+      ],
+      "3": [
+        "e"
+      ]
+    }
+  },
+  "homoglyph_sequences": {
+    "_comment": "Multi-character visual confusable pairs as [from, to] — 'm' rendered as 'rn', 'w' as 'vv'. Both directions must be listed explicitly if you want both.",
+    "values": [
+      [
+        "m",
+        "rn"
+      ],
+      [
+        "rn",
+        "m"
+      ],
+      [
+        "w",
+        "vv"
+      ],
+      [
+        "vv",
+        "w"
+      ],
+      [
+        "d",
+        "cl"
+      ],
+      [
+        "cl",
+        "d"
+      ],
+      [
+        "nn",
+        "m"
+      ]
+    ]
+  }
+}

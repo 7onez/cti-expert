@@ -33,7 +33,10 @@ from wp_net import *  # noqa
 from wp_recon import *  # noqa
 from wp_extract import *  # noqa
 from wp_pivots import *  # noqa
+from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 import wp_extract  # for the QR_DECODE_IMAGES toggle main() sets
+import wp_assets   # asset layer: JS bundles, source maps, well-known files, API endpoints
+from wp_censys import censys_configured, censys_webproperty, censys_certificate
 try:
     import whois_enrich  # WhoisXML registration pivots (optional, same tools/ dir)
     HAVE_WHOIS = True
@@ -76,6 +79,36 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     description = meta.get("description") or meta.get("og:description")
     # ETag response header — a strong etag on a static asset can fingerprint a shared origin/kit.
     etag = headers.get("etag")
+
+    # --- ASSET LAYER: the page's own JS bundles, their source maps, the well-known/policy
+    # files, and the backend the build was compiled against. On an SPA kit the shell HTML is
+    # empty and ALL of the operator config lives here, so the extractors above are re-run over
+    # the bundle source and their results merged in (provenance kept in assets.js_derived).
+    # Same gate as the TLS/mail probes: live primary page only, never an archived or offline
+    # source, never re-run per crawled sub-page. Unlike the raw-socket TLS probe this routes
+    # through fetch(), so a --proxy is honored and no OPSEC suppression is needed.
+    assets = None
+    if probe_http and effective_url and not is_archived and base_url:
+        assets = wp_assets.collect(script_srcs, base_url, self_host,
+                                   ua=ua, proxy=proxy, timeout=20, html=html)
+        jd = assets.get("js_derived") or {}
+        for label, vals in (jd.get("trackers") or {}).items():
+            trackers[label] = uniq(list(trackers.get(label, [])) + list(vals))
+        for label, vals in (jd.get("saas_ids") or {}).items():
+            saas_ids[label] = uniq(list(saas_ids.get(label, [])) + list(vals))
+        for label, vals in (jd.get("crypto") or {}).items():
+            crypto[label] = uniq(list(crypto.get(label, [])) + list(vals))
+        for net, handles in (jd.get("socials") or {}).items():
+            socials[net] = uniq(list(socials.get(net, [])) + list(handles))
+        # telegram entries are dicts ({url,kind,handle}) — uniq() can't hash them, so
+        # de-dup on the handle the way extract_telegram itself does.
+        _tg_seen = {t.get("handle", "").lower() for t in telegram}
+        for t in (jd.get("telegram") or []):
+            h = (t.get("handle") or "").lower()
+            if h and h not in _tg_seen:
+                _tg_seen.add(h)
+                telegram.append(t)
+        emails = uniq(list(emails) + list(jd.get("emails") or []))[:40]
 
     third_party = []
     for u in script_srcs + all_hrefs:
@@ -138,13 +171,19 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     # when a proxy is set — the raw ssl socket can't use the proxy, so a direct
     # handshake would leak the analyst's real IP the proxy exists to hide.
     tls_cert = None
+    jarm = None
     if probe_tls and effective_url and not is_archived:
         parsed = urlparse(effective_url)
         if parsed.scheme == "https" and parsed.hostname:
             if proxy:
-                tls_cert = {"skipped": "proxy configured — direct TLS probe suppressed (OPSEC)"}
+                _suppressed = {"skipped": "proxy configured — direct TLS probe suppressed (OPSEC)"}
+                tls_cert = _suppressed
+                jarm = _suppressed
             else:
                 tls_cert = fetch_tls_cert(parsed.hostname, parsed.port or 443, timeout=8)
+                # JARM: active TLS-stack fingerprint (10 handshakes) — same gating as the
+                # cert probe (primary live host, never under proxy). Pivots on Shodan ssl.jarm.
+                jarm = fetch_jarm(parsed.hostname, parsed.port or 443, timeout=8)
 
     # --- CORS policy (which origins/backends the server trusts) ---
     # Passive read of any ACAO already on the fetched response, then — for a live origin —
@@ -217,9 +256,11 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "footer": footer,
         "etag": etag,
         "tls_cert": tls_cert,
+        "jarm": jarm,
         "mail": mail,
         "app_downloads": app_downloads,
         "qr_codes": qr_codes,
+        "assets": assets,
         "trackers": trackers,
         "saas_ids": saas_ids,
         "crypto": crypto,
@@ -271,6 +312,14 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
 def render_leads(result: dict) -> str:
     m = result["meta"]
     lines = [f"# Pivot leads — {m.get('host') or m['source']}", ""]
+    # Coverage caveat first: a short lead list on a keyless run means the reverse-lookup indexes
+    # were never queried, and that has to be visible in the same view as the leads themselves.
+    cap = m.get("capability") or {}
+    if cap.get("mode") and cap["mode"] != "keyed":
+        lines.append(f"> 🔑 **{cap['mode'].upper()}** — {cap.get('statement', '')}")
+        for b in (cap.get("reduced") or []):
+            lines.append(f"> · no **{b['service']}**: {b['lost']}")
+        lines.append("")
     chain = m.get("redirect_chain")
     if chain:
         hops = " → ".join([chain[0]["from"]] + [h["to"] for h in chain])
@@ -430,13 +479,13 @@ def classify_ip(ip: str):
 
 _DISTINCTIVE_RE = re.compile(r"\d{6,}|[A-Za-z0-9]{8,}")
 
-_GENERIC_SEGMENTS = {
-    "jquery", "bootstrap", "angular", "react", "vue", "lodash", "moment",
-    "analytics", "gtag", "gtm", "fbevents", "fbq", "hotjar", "clarity",
-    "runtime", "polyfills", "vendor", "vendors", "common", "commons", "chunk",
-    "main", "index", "app", "style", "styles", "script", "scripts", "bundle",
-    "widget", "install", "min", "esm", "umd", "core", "util", "utils", "js", "css",
-}
+# DATA: references/generic_labels.json -> resource_basename_segments. Loaded independently of
+# wp_pivots (which reads the same file for subdomain_labels) so neither module depends on the
+# other's import order.
+_SEG_FALLBACK = {"resource_basename_segments": ["jquery", "bootstrap", "vendor", "main", "index",
+                                                "app", "bundle", "min", "js", "css"]}
+_GENERIC_SEGMENTS = frozenset(
+    load_ref(ref_path(__file__, "generic_labels.json"), _SEG_FALLBACK)["resource_basename_segments"])
 
 def _is_distinctive_basename(base: str) -> bool:
     """A resource basename worth a urlscan filename: reverse — one carrying a build
@@ -477,7 +526,7 @@ def _resource_filename_for(result: dict, kind: str, val, seed_reg: str):
             return base
     return None
 
-def enrich_live(result: dict, fofa_full: bool = False) -> dict:
+def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) -> dict:
     """Run live pivots and attach the real hits to each pivot as pivot['live_results'].
 
     Keyless always-on: the base `domain` pivot is resolved live via crt.sh
@@ -488,15 +537,25 @@ def enrich_live(result: dict, fofa_full: bool = False) -> dict:
 
     fofa_full=True runs every FOFA reverse over ALL historical data (`full=true`)
     instead of the default ~1-year window.
+
+    free_only=True forces the FREE/keyless sources only — even when metered keys are
+    configured it skips FOFA, CIRCL passive DNS, and urlscan-Pro similarity, so the
+    autonomous convergence loop never spends credits without analyst approval.
     """
-    have_fofa = bool(_secret("FOFA_KEY", "FOFA_API_KEY"))
-    have_urlscan = bool(_secret("URLSCAN_API_KEY"))
-    have_pdns = bool(_secret("PDNS_USERNAME") and _secret("PDNS_PASSWORD"))
+    have_fofa = bool(_secret("FOFA_KEY", "FOFA_API_KEY")) and not free_only
+    have_urlscan = bool(_secret("URLSCAN_API_KEY")) and not free_only  # gates only Pro similarity
+    have_pdns = bool(_secret("PDNS_USERNAME") and _secret("PDNS_PASSWORD")) and not free_only
+    # Censys is metered in CREDITS (1 per lookup, and a free plan gets only 100 a month), so it is
+    # gated exactly like FOFA. Only the two LOOKUP endpoints are used here — they work on the free
+    # plan, unlike /search/query, which needs Starter.
+    have_censys = censys_configured() and not free_only
     sources = ["crtsh", "passivedns", "urlscan"]  # keyless domain enrichment
     if have_fofa:
         sources.append("fofa-full" if fofa_full else "fofa")
     if have_pdns:
         sources.append("pdns")
+    if have_censys:
+        sources.append("censys")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -514,7 +573,12 @@ def enrich_live(result: dict, fofa_full: bool = False) -> dict:
             if have_urlscan:
                 # urlscan Pro structure-similarity: clusters re-skinned kits (no-op/skipped on free)
                 jobs["urlscan_similar"] = lambda: urlscan_similar(val)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            if have_censys:
+                # Censys web property (hostname:443): the cert, favicon hashes, body hash, software
+                # and threat labels Censys recorded for THIS hostname — the server's own view of
+                # the page, independent of whatever the site served us just now.
+                jobs["censys"] = lambda: censys_webproperty(val)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
                 futures = {k: ex.submit(fn) for k, fn in jobs.items()}
                 lr = {k: fu.result() for k, fu in futures.items()}
             # Anchor pivots to the LIVE IP: reverse-search FOFA on what DNS resolves to
@@ -589,6 +653,15 @@ def enrich_live(result: dict, fofa_full: bool = False) -> dict:
                             us["reversed_resource"] = fn      # record what we searched
                 if us is not None:
                     lr["urlscan"] = us
+            # --- Censys certificate LOOKUP on the leaf fingerprint. This is the highest-value
+            #     Censys call a FREE plan can make: it costs 1 credit, needs no search
+            #     entitlement, and returns the certificate's own `names` — every hostname on
+            #     that exact cert, i.e. the operator's apex list. crt.sh gives fuzzy name
+            #     overlap; this is the cert stating its own coverage.
+            if have_censys and kind == "tls_cert:fingerprint_sha256" and val:
+                cert = censys_certificate(str(val))
+                if cert:
+                    lr["censys_cert"] = cert
         if lr:
             piv["live_results"] = lr
     return result
@@ -606,25 +679,32 @@ def _whois_registrant_vals(w: dict, hist: dict, field: str):
     return vals
 
 def whois_enrich_result(result: dict, do_reverse: bool = False,
-                        history_mode: str = "purchase") -> dict:
-    """Attach WhoisXML registration data + registrant pivots to a result.
+                        history_mode: str = "purchase", free_only: bool = False) -> dict:
+    """Attach WHOIS registration data + registrant pivots to a result.
 
     Adds result['artifacts']['whois'] (registrant email/name/org, registrar, dates,
     name servers, and every historical registrant email/name), and a HIGH-confidence
     'whois:registrant_email' pivot with reverse-WHOIS queries. With do_reverse, runs
-    the reverse-WHOIS live and attaches sibling domains. No WHOISXML key → no-op.
+    the reverse-WHOIS live and attaches sibling domains.
+
+    Runs on EVERY domain: WhoisXML (current+history+reverse) when keyed, else keyless
+    RDAP (+ port-43). free_only=True forces the keyless RDAP path even when a WhoisXML
+    key is present, so the autonomous loop spends no WhoisXML credits.
     """
-    if not (HAVE_WHOIS and whois_enrich._key()):
+    # Only a total absence of the module skips WHOIS.
+    if not HAVE_WHOIS:
         return result
     host = result.get("meta", {}).get("host")
     if not host:
         return result
-    w = whois_enrich.whois_summary(host, history_mode=history_mode)
+    w = (whois_enrich.whois_summary_keyless(host) if free_only
+         else whois_enrich.whois_summary(host, history_mode=history_mode))
     if not w or w.get("error"):
         result.setdefault("meta", {})["whois_error"] = (w or {}).get("error", "no data")
         return result
     result.setdefault("artifacts", {})["whois"] = w
-    result.setdefault("meta", {}).setdefault("enriched_with", []).append("whoisxml")
+    # record the actual source so cost/provenance is honest (rdap / whois43 / whoisxml[+rdap])
+    result.setdefault("meta", {}).setdefault("enriched_with", []).append(w.get("source", "whoisxml"))
 
     # registrant email → same-operator pivot (reverse WHOIS)
     hist = w.get("history") or {}

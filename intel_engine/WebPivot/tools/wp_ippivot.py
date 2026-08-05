@@ -28,23 +28,25 @@ import urllib.error
 from urllib.parse import urlencode
 
 from wp_common import *      # noqa  — DEFAULT_UA, _secret, uniq, strip_www, _registrable
+from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_recon import fofa_search
 from wp_analyze import classify_ip
+from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
+from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
     api_usage = None
 
-_ASN_REGISTRY = os.path.join(os.path.dirname(__file__), "..", "references", "asn_registry.json")
+_ASN_REGISTRY = ref_path(__file__, "asn_registry.json")
 
 # MX hostnames that belong to a managed mail provider — a shared one is NOT an operator pivot.
-_MANAGED_MX = (
-    "google.com", "googlemail.com", "l.google.com", "outlook.com", "protection.outlook.com",
-    "microsoft.com", "office365.com", "zoho.com", "zohomail.com", "yandex.net", "mail.ru",
-    "qq.com", "163.com", "mxhichina.com", "aliyun.com", "amazonses.com", "amazonaws.com",
-    "sendgrid.net", "mailgun.org", "pphosted.com", "mimecast.com", "secureserver.net",
-    "improvmx.com", "forwardemail.net", "yahoodns.net", "icloud.com", "cloudflare.com",
-)
+# DATA: references/third_party_noise.json -> managed_mx_suffixes (add providers there).
+_MX_FALLBACK = {"managed_mx_suffixes": [
+    "google.com", "googlemail.com", "outlook.com", "protection.outlook.com", "zoho.com",
+    "yandex.net", "qq.com", "163.com", "amazonaws.com", "secureserver.net", "cloudflare.com"]}
+_MANAGED_MX = tuple(
+    load_ref(ref_path(__file__, "third_party_noise.json"), _MX_FALLBACK)["managed_mx_suffixes"])
 
 
 # --------------------------------------------------------------------------- input detection
@@ -341,7 +343,7 @@ def _distinctive_ptr(ptr: str, ip: str) -> bool:
     return True
 
 
-def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
+def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool = False) -> dict:
     """Run the full passive IP recon and return a WebPivot-shaped result: {meta, artifacts, pivots}.
 
     The result flows through the SAME pivot_extract output path (JSON / --leads / --report /
@@ -358,10 +360,19 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
 
     jobs = {"ipinfo": lambda: ipinfo_lookup(ip), "fofa": lambda: fofa_ip(ip, full=fofa_full),
             "shodan": lambda: shodan_host(ip), "revmail": _rev_mail}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+    # Censys host lookup — 1 credit, and the ONE Censys endpoint a free plan can call. It adds the
+    # forward+reverse DNS names Censys resolved for the IP (co-hosted hostnames FOFA/Shodan miss)
+    # and the per-service cert fingerprints. Metered, so --free-only skips it like FOFA.
+    if censys_configured() and not free_only:
+        jobs["censys"] = lambda: censys_host(ip)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
         futs = {k: ex.submit(fn) for k, fn in jobs.items()}
         res = {k: fu.result() for k, fu in futs.items()}
     ipinfo, fofa, shodan = res["ipinfo"], res["fofa"], res["shodan"]
+    censys = res.get("censys") if isinstance(res.get("censys"), dict) else {}
+    # a skipped/errored Censys call is still recorded (the analyst must see WHY), but must not
+    # contribute names or ports as if it had answered
+    cen_ok = censys and not censys.get("error") and not censys.get("skipped")
     ptr, mail = res["revmail"]
     ptr_reg = _registrable(ptr) if ptr else None
     classified = classify_ip(ip)                    # local (cached CDN ranges) — no network
@@ -370,10 +381,12 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
                                             tenant_total=(fofa or {}).get("total"))
 
     f, s = fofa or {}, shodan or {}
-    ports = sorted(set(f.get("ports", []) + s.get("ports", [])),
+    c = censys if cen_ok else {}
+    ports = sorted(set(f.get("ports", []) + s.get("ports", []) + c.get("ports", [])),
                    key=lambda p: int(p) if str(p).isdigit() else 0)
-    services = uniq(f.get("services", []) + s.get("services", []))
-    co_domains = uniq(f.get("co_domains", []) + s.get("hostnames", []))
+    services = uniq(f.get("services", []) + s.get("services", [])
+                    + [p for svc in c.get("services", []) for p in svc.get("software", [])])
+    co_domains = uniq(f.get("co_domains", []) + s.get("hostnames", []) + c.get("dns_names", []))
 
     artifacts = {"ip_intel": {
         "ipinfo": {k: ipinfo.get(k) for k in
@@ -382,6 +395,8 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
         "ports": ports, "services": services, "co_hosted_domains": co_domains,
         "mail": mail, "noise": noise, "noise_reason": noise_reason,
     }}
+    if censys:
+        artifacts["ip_intel"]["censys"] = censys
     result = {"meta": {"host": ip, "final_url": ip, "kind": "ip",
                        "source": "IPPivot", "case": case},
               "artifacts": artifacts, "pivots": []}
@@ -416,7 +431,10 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
             {"service": "Validin / DNSlytics reverse-IP", "query": ip},
             {"service": "urlscan.io", "query": f"ip:{ip}"},
             {"service": "Shodan", "query": f"ip:{ip}" if not shodan else f"https://www.shodan.io/host/{ip}"},
-        ], "Origin-candidate IP (not a shared CDN/cloud edge). Domains co-hosted here are strong "
+            {"service": "Censys (lookup — free plan)",
+             "query": f"python3 wp_censys.py host {ip}"},
+        ] + censys_queries("ip", ip),
+           "Origin-candidate IP (not a shared CDN/cloud edge). Domains co-hosted here are strong "
            "same-operator leads — reverse it and pull the co-tenants.",
            live={"co_hosted_domains": co_domains} if co_domains else None)
 
@@ -436,6 +454,19 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
            f"Open ports / services seen on the IP: {', '.join(services) if services else 'n/a'}. "
            f"An unusual admin/panel port or a distinctive banner narrows the operator.")
 
+    # Censys saw the leaf certificate(s) this IP actually serves — the strongest artifact an IP
+    # run can yield, because the same cert on a DIFFERENT IP is a same-operator link that survives
+    # the domain rotation the whole IP layer is trying to see through. Free-plan reachable: the
+    # certificate LOOKUP resolves the fingerprint to its full hostname list, no search entitlement.
+    for fp in ((censys.get("cert_fingerprints") or [])[:5] if cen_ok else []):
+        add("tls_cert:fingerprint_sha256", fp, "high", [
+            {"service": "Censys (lookup — free plan)", "query": f"python3 wp_censys.py cert {fp}"},
+            {"service": "crt.sh", "query": f"https://crt.sh/?q={fp}"},
+        ] + censys_queries("tls_cert:fingerprint_sha256", fp),
+           f"Leaf certificate served on {ip} (seen by Censys). Every other host serving this exact "
+           f"cert is the same operator/deployment; the Censys certificate lookup returns the cert's "
+           f"own full hostname list.")
+
     if ptr and _distinctive_ptr(ptr, ip):
         add("ip:ptr", ptr, "medium", [
             {"service": "FOFA", "query": f'host="{ptr}"'},
@@ -453,7 +484,8 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False) -> dict:
            + (f" SPF: {mail['spf']}" if mail.get("spf") else ""))
 
     from wp_pivots import sort_pivots
-    return {"meta": result["meta"], "artifacts": artifacts, "pivots": sort_pivots(pivots)}
+    return {"meta": result["meta"], "artifacts": artifacts,
+            "pivots": sort_pivots(attach_intelx_queries(attach_censys_queries(pivots)))}
 
 
 __all__ = ["ip_mode_target", "ipinfo_lookup", "dns_records", "reverse_dns", "mail_intel",

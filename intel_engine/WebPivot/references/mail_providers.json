@@ -1,0 +1,160 @@
+{
+  "_comment": "MAIL-SIDE PROVIDER REGISTRIES for the passive DNS recon step (MX / SPF / DMARC). These decide whether a mail record is CONTEXT ('this domain uses Google Workspace') or a PIVOT ('this domain self-hosts mail on the operator's own box'). Nothing here is fetched from the target — it is all recursive-resolver data. Add a provider when an MX/SPF/rua host shows up unclassified in a run.",
+  "mx_providers": {
+    "_comment": "Provider display name -> MX hostname signatures. A signature beginning with '.' matches as a SUFFIX; otherwise it matches the host exactly or as a parent domain. Evaluated in file order, first match wins — so put a specific signature above a broader one. Consumed by wp_recon._classify_mx.",
+    "entries": {
+      "Google Workspace": [
+        "aspmx.l.google.com",
+        ".aspmx.l.google.com",
+        ".google.com",
+        "googlemail.com",
+        ".googlemail.com"
+      ],
+      "Microsoft 365": [
+        ".mail.protection.outlook.com",
+        ".outlook.com",
+        ".office365.com"
+      ],
+      "Proofpoint": [
+        ".pphosted.com",
+        ".ppe-hosted.com"
+      ],
+      "Mimecast": [
+        ".mimecast.com",
+        ".mimecast.co.za"
+      ],
+      "Zoho Mail": [
+        ".zoho.com",
+        ".zoho.eu",
+        ".zohomail.com"
+      ],
+      "Yandex 360": [
+        ".yandex.net",
+        ".yandex.ru"
+      ],
+      "Proton Mail": [
+        ".protonmail.ch",
+        ".proton.me",
+        "protonmail-mx"
+      ],
+      "Cloudflare Email Routing": [
+        ".mx.cloudflare.net"
+      ],
+      "Amazon WorkMail/SES": [
+        ".awsapps.com",
+        ".amazonaws.com",
+        ".amazonses.com"
+      ],
+      "Fastmail": [
+        ".messagingengine.com",
+        ".fastmail.com"
+      ],
+      "Namecheap Private Email": [
+        ".privateemail.com"
+      ],
+      "GoDaddy (Secureserver)": [
+        ".secureserver.net"
+      ],
+      "Tencent Exmail": [
+        ".qq.com"
+      ],
+      "Alibaba Mail": [
+        ".mxhichina.com",
+        ".alibaba-inc.com"
+      ],
+      "NetEase": [
+        ".163.com",
+        ".126.com",
+        ".ym163.com"
+      ],
+      "iCloud (Apple)": [
+        ".icloud.com",
+        ".mail.me.com"
+      ],
+      "ImprovMX (forwarder)": [
+        ".improvmx.com"
+      ],
+      "ForwardEmail (forwarder)": [
+        ".forwardemail.net"
+      ],
+      "SendGrid": [
+        ".sendgrid.net"
+      ],
+      "Mailgun": [
+        ".mailgun.org",
+        ".mailgun.net"
+      ],
+      "Zoho / Migadu / other SaaS": [
+        ".migadu.com"
+      ]
+    }
+  },
+  "spf_esp_hosts": {
+    "_comment": "SPF `include:` hosts belonging to a big ESP / mail SaaS. Shared by every customer of that ESP, so it is context, not an operator pivot. A '.'-prefixed entry matches as a suffix.",
+    "values": [
+      "_spf.google.com",
+      ".google.com",
+      "spf.protection.outlook.com",
+      ".protection.outlook.com",
+      ".outlook.com",
+      "sendgrid.net",
+      ".sendgrid.net",
+      "mailgun.org",
+      "mailgun.net",
+      "amazonses.com",
+      ".amazonses.com",
+      "spf.mandrillapp.com",
+      ".mcsv.net",
+      ".mailchimp.com",
+      "spf.mailjet.com",
+      "mail.zendesk.com",
+      "_spf.salesforce.com",
+      "spf.mtasv.net",
+      "sparkpostmail.com",
+      "_spf.qq.com",
+      ".zoho.com",
+      ".zoho.eu",
+      "_spf.mailspamprotection.com",
+      "spf.constantcontact.com",
+      "mktomail.com",
+      "_spf.hubspotemail.net",
+      "_spf.firebasemail.com",
+      ".secureserver.net",
+      ".forwardemail.net",
+      ".improvmx.com",
+      ".pphosted.com",
+      ".mimecast.com",
+      "_spf.yandex.net",
+      "_spf.mail.ru",
+      "spf.messagingengine.com",
+      "_spf.protonmail.ch"
+    ]
+  },
+  "dmarc_report_vendors": {
+    "_comment": "DMARC aggregate/forensic report SINKS (the rua=/ruf= mailbox domains) run by monitoring vendors. A shared report sink means both domains bought the same DMARC product — noise.",
+    "values": [
+      "dmarc.postmarkapp.com",
+      "dmarcanalyzer.com",
+      "dmarcian.com",
+      "agari.com",
+      "returnpath.net",
+      "valimail.com",
+      "redsift.com",
+      "ondmarc.com",
+      "uriports.com",
+      "fraudmarc.com",
+      "easydmarc.com",
+      "easydmarc.us",
+      "dmarcadvisor.com",
+      "mxtoolbox.com",
+      "cyber.dhs.gov",
+      "google.com",
+      "proofpoint.com",
+      "mimecast.com",
+      "barracudanetworks.com",
+      "sophos.com",
+      "250ok.com",
+      "ondmarc.redsift.com"
+    ]
+  }
+}

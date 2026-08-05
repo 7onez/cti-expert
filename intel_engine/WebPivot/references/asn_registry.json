@@ -1,4 +1,5 @@
 {
+  "_comment": "Hosting/CDN ASN registry: ASN -> generic provider facts. Read by wp_ippivot to decide whether a shared IP is an operator signal or shared-tenancy noise, and to route abuse contact. GROWS AUTOMATICALLY \u2014 wp_ippivot.asn_registry_upsert banks each new ASN it meets, so hand-editing is only needed to correct a `noise` or `kind` call. See _meta for the field contract and the RULE 1 opsec constraint.",
   "_meta": {
     "purpose": "Known hosting/CDN ASNs -> GENERIC provider facts, used by wp_ippivot to decide whether an IP is same-operator signal or shared noise, and to route abuse/takedown contact.",
     "opsec": "Provider-level metadata ONLY (ASN, org name, abuse contact, noise flag, kind). NEVER a target IP, domain, or case id (repo CLAUDE.md RULE 1). wp_ippivot.asn_registry_upsert enforces this.",
@@ -101,7 +102,7 @@
         "abuse@ovh.net"
       ],
       "noise": true,
-      "kind": "hosting"
+      "kind": "origin_candidate"
     },
     "AS24940": {
       "asn": "AS24940",

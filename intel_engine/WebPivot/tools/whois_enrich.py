@@ -24,21 +24,30 @@ Usage:
 """
 
 import os
+import re
 import sys
 import json
+import shutil
 import argparse
+import subprocess
 import concurrent.futures
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # importable from anywhere
+from wp_refs import ref_path, load_ref    # noqa: E402 — reference DATA in references/*.json
+
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
     api_usage = None
 
 DEFAULT_UA = "WebPivot-whois/1.0"
-_CUSTOMIZATION_ENV = os.path.expanduser(
-    "~/.config/cti-expert/WebPivot/.env")
+# cti-expert: unified key store managed by /apikeys (see wp_common for the same contract).
+_CUSTOMIZATION_ENV = (os.environ.get("CTI_API_KEYS_ENV")
+                      or os.environ.get("CTI_WEBPIVOT_ENV")
+                      or os.path.expanduser("~/.config/cti-expert/WebPivot/.env"))
 
 WHOIS_CURRENT_URL = "https://www.whoisxmlapi.com/whoisserver/WhoisService"
 WHOIS_HISTORY_URL = "https://whois-history.whoisxmlapi.com/api/v1"
@@ -100,6 +109,16 @@ def _load_customization_env(path=_CUSTOMIZATION_ENV):
 
 _load_customization_env()
 
+# Run STANDALONE (`intel.py whois`, or a bare `python3 whois_enrich.py`) this module only reads
+# _CUSTOMIZATION_ENV, so it would miss the skill-root .env that /apikeys actually writes — the
+# keys are found in-process only because pivot_extract imports wp_common first. Importing the
+# sibling loader here makes the standalone path resolve the same candidate list. It is a no-op
+# when wp_common already ran, and WebPivot still runs if the sibling is absent.
+try:
+    import wp_common  # noqa: F401 — import side effect: populates os.environ from the .env chain
+except Exception:  # noqa: BLE001
+    pass
+
 
 def _key():
     for n in ("WHOISXML_API_KEY", "WHOISXMLAPI_KEY", "WHOIS_API_KEY"):
@@ -112,14 +131,19 @@ def _key():
 # Privacy-proxy / registrar-role markers — these are NOT the real owner and must
 # never become a same-operator hub or trigger a reverse-WHOIS (which would return
 # thousands of unrelated domains and waste credits).
-_PRIVACY_MARKERS = (
-    "privacy", "redacted", "whoisguard", "data protected", "withheld", "not disclosed",
-    "domains by proxy", "domainsbyproxy", "registration private", "private by design",
-    "identity protect", "contact privacy", "perfect privacy", "gdpr masked", "statutory masking")
-_ROLE_PREFIXES = ("abuse@", "hostmaster@", "noc@", "registrar-abuse@", "postmaster@")
-_PROXY_DOMAINS = ("porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com",
-                  "withheldforprivacy.com", "privacyprotect.org", "1and1.com",
-                  "contactprivacy.com", "whoisprivacyprotect.com", "privacyguardian.org")
+# DATA: references/registrant_noise.json. Add a proxy provider THERE — it takes effect for
+# every WebPivot consumer at once, and costs nothing to get wrong in the safe direction.
+_WHOIS_FALLBACK = {
+    "privacy_markers": ("privacy", "redacted", "whoisguard", "data protected", "withheld",
+                        "not disclosed", "domains by proxy", "statutory masking"),
+    "role_email_prefixes": ("abuse@", "hostmaster@", "noc@", "postmaster@"),
+    "proxy_email_domains": ("godaddy.com", "namecheap.com", "domainsbyproxy.com",
+                            "withheldforprivacy.com", "privacyprotect.org"),
+}
+_WHOIS_REF = load_ref(ref_path(__file__, "registrant_noise.json"), _WHOIS_FALLBACK)
+_PRIVACY_MARKERS = tuple(_WHOIS_REF["privacy_markers"])
+_ROLE_PREFIXES = tuple(_WHOIS_REF["role_email_prefixes"])
+_PROXY_DOMAINS = tuple(_WHOIS_REF["proxy_email_domains"])
 
 
 def is_privacy(value):
@@ -263,11 +287,11 @@ def whois_history(domain, mode="purchase", timeout=40, keep_raw=True):
         if e.code == 403:
             body = ""
             try:
-                body = (json.load(e) or {}).get("messages") or ""
+                body = e.read().decode("utf-8", "replace")
             except Exception:  # noqa: BLE001
                 pass
             return {"error": _explain_403(WHOIS_HISTORY_URL, body), "domain": domain, "http": 403}
-        return {"error": f"HTTP {e.code} from Whois History API: {e.reason}", "domain": domain}
+        return {"error": str(e), "domain": domain}
     except Exception as e:
         return {"error": str(e), "domain": domain}
     recs = data.get("records") or []
@@ -330,14 +354,18 @@ def reverse_whois(term, kind="email", search_type="current", mode="purchase", ti
     try:
         data = _post_json(REVERSE_WHOIS_URL, payload, timeout=timeout)
     except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = (json.load(e) or {}).get("messages") or ""
-        except Exception:  # noqa: BLE001
-            pass
         if e.code == 403:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                pass
             return {"error": _explain_403(REVERSE_WHOIS_URL, body), "term": term, "http": 403}
-        return {"error": body or str(e), "term": term}
+        try:
+            body = json.load(e)
+            return {"error": body.get("messages") or str(e), "term": term}
+        except Exception:
+            return {"error": str(e), "term": term}
     except Exception as e:
         return {"error": str(e), "term": term}
     domains = [d.get("domainName") if isinstance(d, dict) else d
@@ -347,14 +375,178 @@ def reverse_whois(term, kind="email", search_type="current", mode="purchase", ti
             "domains": [d for d in domains if d][:200]}
 
 
+# --------------------------------------------------------------- keyless WHOIS (RDAP + port-43)
+#
+# Registration data must land on EVERY domain, not only when a WhoisXML key is present. RDAP is
+# the IETF-standard (RFC 9082/9083), free, structured-JSON, ToS-respecting successor to port-43
+# whois: one polite request per domain via the bootstrap redirector, no key, no scraping. Even
+# when the registrant is GDPR-redacted it reliably returns registrar, registration/expiry/updated
+# dates, name servers, and domain status — exactly what the Domain Summary table needs on every
+# host. A port-43 `whois` fallback covers ccTLDs with no RDAP service (e.g. .vn).
+
+_RDAP_BOOTSTRAP = "https://rdap.org/domain/"          # redirects to the authoritative registry RDAP
+_RDAP_UA = "WebPivot-whois/1.0 (RDAP; +authorized-osint)"
+
+
+def _rdap_fetch(domain, timeout=25):
+    """GET the RDAP domain object via the bootstrap redirector. Keyless, credits=0."""
+    req = urllib.request.Request(
+        _RDAP_BOOTSTRAP + domain,
+        headers={"User-Agent": _RDAP_UA, "Accept": "application/rdap+json, application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:   # urllib follows the 302 to the registry
+        data = json.load(r)
+    if api_usage:
+        api_usage.record("rdap", "domain", credits=0, query=domain)   # free/keyless — cost visibility only
+    return data
+
+
+def _vcard_get(vcard, field):
+    """Pull a field's value from an RDAP jCard (vcardArray[1]). adr → single line; else the string."""
+    for item in (vcard or []):
+        if not isinstance(item, list) or len(item) < 4 or item[0] != field:
+            continue
+        val = item[3]
+        if field == "adr":
+            # value is a 7-element structured array (pobox, ext, street, city, region, code, country)
+            parts = [str(p).strip() for p in (val if isinstance(val, list) else [val])
+                     if p and str(p).strip()]
+            return ", ".join(parts) or None
+        return str(val).strip() or None
+    return None
+
+
+def rdap_lookup(domain, timeout=25, keep_raw=True):
+    """Keyless current-registration lookup via RDAP. Normalized to the whois_current() shape
+    (so every downstream consumer works unchanged) plus 'source' and 'status'. None on failure."""
+    try:
+        data = _rdap_fetch(domain, timeout=timeout)
+    except Exception as e:
+        return {"error": str(e), "domain": domain, "source": "rdap"}
+    if not isinstance(data, dict) or data.get("errorCode"):
+        return {"error": (data or {}).get("title", "no RDAP record"),
+                "domain": domain, "source": "rdap"}
+    # events → registration / expiration / last-changed dates
+    ev = {}
+    for e in data.get("events") or []:
+        act = (e.get("eventAction") or "").lower()
+        if e.get("eventDate"):
+            ev[act] = e["eventDate"]
+    # entities → registrar name + (usually redacted) registrant contact
+    registrar = reg = {}
+    reg_vcard = []
+    for ent in data.get("entities") or []:
+        roles = [str(x).lower() for x in (ent.get("roles") or [])]
+        vcard = (ent.get("vcardArray") or [None, []])[1]
+        if "registrar" in roles and not registrar:
+            registrar = {"name": _vcard_get(vcard, "fn")}
+        if "registrant" in roles and not reg_vcard:
+            reg, reg_vcard = ent, vcard
+    ns = sorted({(n.get("ldhName") or "").lower() for n in (data.get("nameservers") or [])
+                 if n.get("ldhName")})
+    res = {
+        "domain": (data.get("ldhName") or domain).lower(),
+        "registrant_email": (_vcard_get(reg_vcard, "email") or "").lower() or None,
+        "registrant_name": _vcard_get(reg_vcard, "fn"),
+        "registrant_org": _vcard_get(reg_vcard, "org"),
+        "registrant_country": _vcard_get(reg_vcard, "country-name"),
+        "registrant_phone": _vcard_get(reg_vcard, "tel"),
+        "registrant_address": _vcard_get(reg_vcard, "adr"),
+        "registrar": registrar.get("name"),
+        "created": ev.get("registration"),
+        "updated": ev.get("last changed") or ev.get("last update of rdap database"),
+        "expires": ev.get("expiration"),
+        "name_servers": ns,
+        "status": [str(s) for s in (data.get("status") or [])],
+        "source": "rdap",
+    }
+    if keep_raw:
+        res["_raw"] = data
+    return res
+
+
+# port-43 whois fields → normalized keys (best-effort; ccTLD servers vary wildly)
+_W43_FIELDS = {
+    "registrant_email": (r"registrant\s*email", r"registrant contact email"),
+    "registrant_name": (r"registrant\s*name", r"registrant"),
+    "registrant_org": (r"registrant\s*organi[sz]ation", r"registrant\s*org"),
+    "registrant_country": (r"registrant\s*country",),
+    "registrant_phone": (r"registrant\s*phone",),
+    "registrar": (r"^\s*registrar:", r"sponsoring registrar"),
+    "created": (r"creation date", r"created", r"registration time", r"registered on"),
+    "updated": (r"updated date", r"last updated", r"modified"),
+    "expires": (r"regist(?:ry|rar) expiry date", r"expir\w+ date", r"expiration time", r"expires? on"),
+}
+
+
+def whois_port43(domain, timeout=25):
+    """System `whois` fallback for TLDs with no RDAP service (e.g. .vn). None if unavailable."""
+    binary = shutil.which("whois")
+    if not binary:
+        return None
+    try:
+        out = subprocess.run([binary, domain], capture_output=True, text=True,
+                             timeout=timeout, errors="replace").stdout
+    except Exception:
+        return None
+    if not out:
+        return None
+    res = {"domain": domain.lower(), "source": "whois43", "name_servers": [], "status": []}
+    ns, status = [], []
+    for raw in out.splitlines():
+        line = raw.strip()
+        low = line.lower()
+        if ":" not in line:
+            continue
+        val = line.split(":", 1)[1].strip()
+        if not val:
+            continue
+        if re.match(r"(name server|nserver|nameserver)", low):
+            ns.append(val.split()[0].lower())
+        elif low.startswith(("domain status", "status")):
+            status.append(val)
+        else:
+            for field, pats in _W43_FIELDS.items():
+                if field in res:
+                    continue
+                if any(re.match(p, low) for p in pats):
+                    res[field] = val.lower() if field == "registrant_email" else val
+                    break
+    res["name_servers"] = sorted(set(ns))
+    res["status"] = status
+    # a whois server that returned no owning fields at all is not useful
+    if not any(res.get(k) for k in ("registrar", "created", "expires", "registrant_name")) and not ns:
+        return None
+    return res
+
+
+def whois_summary_keyless(domain, timeout=25, keep_raw=True):
+    """Keyless combined block in the whois_summary() shape: RDAP first, port-43 fallback, empty
+    history (reverse/history need the licensed WhoisXML API). None only if both keyless paths fail."""
+    cur = rdap_lookup(domain, timeout=timeout, keep_raw=keep_raw)
+    if not cur or cur.get("error") or not any(
+            cur.get(k) for k in ("registrar", "created", "expires", "name_servers", "registrant_name")):
+        w43 = whois_port43(domain, timeout=timeout)
+        if w43:
+            cur = w43
+    if not cur or cur.get("error"):
+        return None
+    cur_raw = cur.pop("_raw", None)
+    out = dict(cur)
+    out["history"] = {}          # history + reverse-WHOIS require the licensed WhoisXML API
+    if keep_raw:
+        out["raw"] = {"current": cur_raw, "history": None}
+    return out
+
+
 def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
     """Combined current + history block, ready to attach to a pivot_extract result.
 
-    Always fetches the FULL current + history WHOIS. With keep_raw (default) the
-    complete unmodified API responses are archived under out['raw'] = {current, history}
+    With a WhoisXML key: fetches the FULL current + history WHOIS. WITHOUT a key it falls back to
+    keyless RDAP (+ port-43) so registration data lands on every domain regardless. With keep_raw
+    (default) the complete unmodified API responses are archived under out['raw'] = {current, history}
     so later analysis can mine fields we don't normalize today."""
     if not _key():
-        return None
+        return whois_summary_keyless(domain, timeout=min(timeout, 30), keep_raw=keep_raw)
     # current + history are two INDEPENDENT WhoisXML calls (the long pole of enrichment). Run them
     # concurrently to ~halve WHOIS latency per host. Same two API calls, same credits/egress — only
     # concurrency changes; api_usage.record's single-line append is atomic, so it's ledger-safe.
@@ -365,7 +557,19 @@ def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
         hist = _f_hist.result() or {}
     cur_raw = cur.pop("_raw", None)
     hist_raw = hist.pop("_raw", None)
+    # WhoisXML sometimes returns "no WhoisRecord" for new/obscure TLDs that RDAP serves fine —
+    # backfill the empty core fields (registrar/dates/NS/status) from keyless RDAP rather than
+    # leaving the Domain Summary blank. Only fills what WhoisXML left empty; never overwrites.
+    if cur.get("error") or not any(cur.get(k) for k in ("registrar", "created", "expires", "name_servers")):
+        rd = rdap_lookup(domain, timeout=min(timeout, 30), keep_raw=False)
+        if rd and not rd.get("error"):
+            for k, v in rd.items():
+                if v and not cur.get(k):
+                    cur[k] = v
+            cur.setdefault("source", "whoisxml+rdap")
+    cur.setdefault("source", "whoisxml")
     out = dict(cur)
+    out.pop("_raw", None)
     out["history"] = {k: hist.get(k) for k in
                       ("count", "registrant_emails", "registrant_names",
                        "registrant_phones", "registrant_addresses", "registrars")}
@@ -390,9 +594,13 @@ def main():
     args = ap.parse_args()
 
     if not _key():
-        print("[!] no WHOISXML_API_KEY set (env or customization .env). Nothing to do.",
-              file=sys.stderr)
-        sys.exit(2)
+        if args.reverse_email or args.reverse_name or args.reverse_phone:
+            print("[!] reverse-WHOIS needs WHOISXML_API_KEY (RDAP has no reverse index).",
+                  file=sys.stderr)
+            sys.exit(2)
+        if args.domain:
+            print("[i] no WHOISXML_API_KEY — using keyless RDAP (+ port-43) for current registration.",
+                  file=sys.stderr)
 
     out = {}
     if args.reverse_email:

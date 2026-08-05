@@ -1,0 +1,150 @@
+{
+  "_comment": "API KEY REGISTRY — what each optional key unlocks, and EXACTLY what is lost without it. WebPivot always runs keyless: nothing here is required, and no missing key is an error. But 'it ran' and 'it ran at full capability' are different facts, and an analyst who is not told which one happened will read an empty result as 'no related infrastructure' when it really means 'the index that would have found it was never queried'. So this file is the source of truth for the KEYLESS BANNER that `wp_capabilities.py` prints at the top of every run and embeds in `meta.capability` — the tool states which keys are absent, which reverse-lookups that removes, and what free path substitutes. Edit this file when a key is added, a provider changes what a tier includes, or a free fallback appears/disappears — the code holds only the presence check. Nothing here is case data: these are environment-variable names and public product facts.",
+
+  "api_keys": {
+    "_comment": "One entry per optional credential, ordered MOST to LEAST costly to be missing — the banner prints them in this order so the first line an analyst reads is the biggest hole. `env` is implied by the key. `aliases` are alternative env names accepted by `_secret()` (they must match the code's lookup order or the banner will claim a key is missing that the tool is happily using). `companion` lists related variables that improve the call but are OPTIONAL; `requires` lists variables the credential genuinely cannot authenticate without, and ONLY those — get this wrong in the strict direction and the banner reports a working key as missing, which is the same false alarm this file exists to prevent (FOFA_EMAIL, for instance, is needed only by FOFA's classic API and must NOT be listed as required). `metered` = spending it costs credits, so it is ALSO skipped under --free-only even when the key is present. `unlocks` is what the key buys, `without_it` is the capability actually lost (write this as the analytic consequence, not the API name), and `free_fallback` is what still runs instead — an empty string means nothing does, which is the case worth shouting about. `impact` is one of the impact_labels keys. `power_without_key` is OPTIONAL: set it to the percentage of that layer's capability that survives with no key, for layers where a keyless run still does real work (composing every query, classifying every selector) but cannot execute any of it — the banner then says '~N% capability' out loud instead of leaving the analyst to guess how degraded the run was. Omit it when the split does not divide cleanly.",
+    "entries": {
+      "FOFA_KEY": {
+        "service": "FOFA",
+        "aliases": ["FOFA_API_KEY"],
+        "companion": ["FOFA_EMAIL"],
+        "requires": [],
+        "metered": true,
+        "impact": "critical",
+        "unlocks": "reverse-search the favicon icon_hash, tracker/verification IDs and arbitrary body keywords across FOFA's whole index; reverse an origin IP to its co-hosted domains; --fofa-full historical sweep",
+        "without_it": "the single highest-yield clustering move is gone — a favicon hash or GA4 ID can be EXTRACTED but not REVERSED, so sibling domains sharing it are never discovered. An empty cluster in keyless mode is not evidence of a small operation",
+        "free_fallback": "crt.sh + Shodan CTL certificate transparency, anonymous urlscan search, and the emitted Censys/PublicWWW/Shodan query strings for the analyst to run by hand in each web UI",
+        "signup": "https://en.fofa.info/"
+      },
+      "URLSCAN_API_KEY": {
+        "service": "urlscan.io",
+        "aliases": [],
+        "companion": [],
+        "metered": true,
+        "impact": "critical",
+        "unlocks": "authenticated content/resource/hash search (far higher rate limits + search_after pagination), --submit scanning, and on a Pro key the structure-similarity pivot (clusters re-skinned kits), verdict/brand capture, and URLSCAN_VISIBILITY=private so hostile-infra scans never hit the public feed",
+        "without_it": "reverse-by-favicon-sha256 and reverse-by-resource-filename run anonymously at a much lower rate limit and no pagination, so a busy artifact returns a truncated sibling list; no re-skin clustering; any scan you do submit is PUBLIC, which tips off the operator",
+        "free_fallback": "anonymous urlscan search (rate-limited, first page only) and the stored-DOM fallback for dead targets",
+        "signup": "https://urlscan.io/user/signup"
+      },
+      "CENSYS_PAT": {
+        "service": "Censys Platform",
+        "aliases": ["CENSYS_API_KEY", "CENSYS_TOKEN"],
+        "companion": ["CENSYS_ORG_ID"],
+        "metered": true,
+        "impact": "high",
+        "unlocks": "the three FREE-plan lookup endpoints — certificate by SHA-256 (the cert's own `names`: every hostname on that exact leaf cert), host by IP (ASN/WHOIS org, forward+reverse DNS, ports, banners), web property by hostname:port (cert, favicon, body hash, software, threat labels)",
+        "without_it": "no server-side view at all — the cert's own hostname list, which is the cleanest cross-brand same-operator link available on a free plan, is simply never retrieved",
+        "free_fallback": "the CenQL query builder is OFFLINE and keyless, so every pivot still carries its Censys query plus a platform.censys.io UI link the analyst can run by hand — but each UI search spends 5 of the account's 100 monthly credits, so it is a deliberate move, not a default one",
+        "signup": "https://platform.censys.io/ (free, no card) → user icon → API Access → Create New Token"
+      },
+      "WHOISXML_API_KEY": {
+        "service": "WhoisXML API",
+        "aliases": [],
+        "companion": [],
+        "metered": true,
+        "impact": "high",
+        "unlocks": "WHOIS HISTORY (every registrant email/name/phone/address the domain ever carried) and REVERSE WHOIS by registrant email, name or phone",
+        "without_it": "attribution loses its whole historical dimension: a registrant scrubbed behind privacy today is invisible, and the reverse-WHOIS sweep that finds an operator's other domains cannot run — RDAP has no reverse index and no history, at any price",
+        "free_fallback": "keyless RDAP (+ port-43 for ccTLDs like .vn) still fills registrar, registration/expiry/updated dates, name servers and domain status on EVERY domain, so the Domain Summary table is never blank",
+        "signup": "https://whois.whoisxmlapi.com/"
+      },
+      "INTELX_KEY": {
+        "service": "Intelligence X",
+        "aliases": ["INTELX_API_KEY", "INTELLIGENCEX_KEY"],
+        "companion": ["INTELX_BASE_URL"],
+        "metered": true,
+        "impact": "high",
+        "power_without_key": 50,
+        "unlocks": "strong-selector search across a corpus nothing else in the toolkit indexes — breach dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS snapshots and IntelX's own web crawl — plus the PHONEBOOK inventory that turns one apex into every email address, subdomain and URL IntelX has seen under it",
+        "without_it": "the whole leak/paste/darknet dimension is unqueried: an operator's registrant email, support phone or payout wallet is never checked against the corpora where operators advertise, and the domain->emails/subdomains inventory (a collection input, not just evidence) never runs. Roughly HALF the layer — the selectors are still classified and every query is still built, they are just never executed",
+        "free_fallback": "the selector classifier and a ready-to-run intelx.io / phonebook.cz URL for every artifact, which a free web account can run by hand",
+        "signup": "https://intelx.io/account?tab=developer (Account -> Developer tab)"
+      },
+      "ANYRUN_API_KEY": {
+        "service": "ANY.RUN TI Lookup (BinaryPivot)",
+        "aliases": ["ANY_RUN_API_KEY", "ANYRUN_KEY"],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "power_without_key": 50,
+        "unlocks": "Threat Intelligence Lookup over sandbox DETONATION OBSERVATIONS — the domains, IPs, URLs and ports samples actually contacted, the family label, Suricata context and the public task links. Needs a TI Lookup licence, which is separate from a sandbox subscription",
+        "without_it": "BinaryPivot stays limited to what is statically visible in the file. That is worst exactly where it hurts: a PACKED or protected sample's real backend only exists at runtime, so the endpoints are recoverable from a detonation record and from nowhere else. Roughly HALF the layer — the TI Lookup query is still composed for every artifact, it is just never run",
+        "free_fallback": "the composed TI Lookup query plus the intelligence.any.run UI address to paste it into, and the existing keyless VirusTotal / MalwareBazaar / Triage / Koodous query strings",
+        "signup": "https://app.any.run/profile (API and Limits tab)"
+      },
+      "SHODAN_KEY": {
+        "service": "Shodan",
+        "aliases": ["SHODAN_API_KEY"],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "IPPivot host lookup (open ports, service banners, vulns) and the ssl.jarm reverse — the free path for JARM, which Censys only makes searchable on its Adversary Investigation module",
+        "without_it": "an origin IP's port/service surface is only what FOFA happens to have, and the jarm:hash pivot becomes a query string with nothing to run it against",
+        "free_fallback": "FOFA ip= (if keyed), the keyless Shodan CTL certificate mirror (ctl.shodan.io — needs no key), and dig PTR/MX/NS/TXT",
+        "signup": "https://account.shodan.io/register"
+      },
+      "PDNS_PASSWORD": {
+        "service": "Passive DNS (CIRCL-style COF)",
+        "aliases": [],
+        "companion": ["PDNS_URL"],
+        "requires": ["PDNS_USERNAME"],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "historical A/AAAA records for the host (the IPs it used BEFORE today's Cloudflare front) and other domains seen co-hosted on them",
+        "without_it": "a domain that moved behind a CDN reads as un-pivotable; the origin IP it used last year — usually where the co-tenancy evidence lives — is never seen",
+        "free_fallback": "HackerTarget passive DNS (keyless, rate-limited) and the Wayback/urlscan historical IP records",
+        "signup": "https://www.circl.lu/services/passive-dns/ (or any COF-compatible instance via PDNS_URL)"
+      },
+      "IPINFO_TOKEN": {
+        "service": "IPinfo.io",
+        "aliases": ["IPINFO_API_KEY"],
+        "companion": [],
+        "metered": true,
+        "impact": "low",
+        "unlocks": "structured ASN object, abuse contact, hosting/proxy/VPN flags and privacy detection on IPPivot",
+        "without_it": "ASN/org/geo still resolve but the abuse contact used for takedown routing and the hosting-vs-residential flag are missing or coarse",
+        "free_fallback": "keyless IPinfo (rate-limited), ip-api, and the ASN facts banked in references/asn_registry.json",
+        "signup": "https://ipinfo.io/signup"
+      },
+      "FLARESOLVERR_URL": {
+        "service": "FlareSolverr (self-hosted, not a paid key)",
+        "aliases": [],
+        "companion": [],
+        "metered": false,
+        "impact": "low",
+        "unlocks": "--solve-cf escalation: runs a Cloudflare managed challenge in a real headless browser and returns the solved HTML + cookies",
+        "without_it": "--solve-cf falls back to a Playwright render only; a hard managed challenge on a datacenter IP usually still wins",
+        "free_fallback": "--render (Playwright), a residential --proxy / --proxy-range, and the urlscan/Wayback passive-recovery path",
+        "signup": "docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr"
+      }
+    }
+  },
+
+  "keyless_baseline": {
+    "_comment": "What WebPivot still does with ZERO keys. The banner prints this next to the missing-key list on purpose: 'keyless' must not read as 'broken'. Every line here is free, needs no account, and is never skipped by --free-only. Add a line when a capability becomes keyless (as WHOIS did when RDAP landed) — an out-of-date list here understates the tool and pushes analysts to buy keys they do not need.",
+    "values": [
+      "full artifact extraction from the HTML/DOM — favicon mmh3/md5/sha256, trackers, wallets, emails, phones, Telegram, SaaS tokens, forms, DOM/template fingerprints",
+      "the asset layer — the page's own JS bundles, source maps (dev_username / dev_project), build-time env vars, and the SPA route table, at zero extra requests to the target",
+      "well-known / policy files — robots.txt, sitemap.xml, ads.txt (the owner-registered AdSense pub- id), security.txt, apple-app-site-association",
+      "WHOIS on every domain via keyless RDAP + port-43 fallback — registrar, registration/expiry/updated dates, name servers, domain status",
+      "certificate transparency — crt.sh plus the keyless Shodan CTL mirror, wildcard-aware, with SAN-sibling extraction",
+      "the live TLS certificate read directly off the 443 handshake — SANs, issuer, serial, validity, SHA-256 fingerprint",
+      "JARM fingerprinting of the TLS stack (active, computed locally)",
+      "mail posture via dig — MX provider, M365 tenant, custom mail_server, SPF includes/sender IPs, DMARC contacts",
+      "the Wayback CDX timeline and archived-DOM recovery for dead or blocked targets",
+      "ImpersonationHunt — typosquat/TLD-sweep/crt.sh keyword lookalike hunting, existence-checked by live DNS",
+      "every pivot's ready-to-run QUERY STRINGS for Shodan, FOFA, Censys (CenQL + a UI link), PublicWWW, urlscan, Validin, crt.sh and Chainabuse — the analyst runs them by hand in each web UI"
+    ]
+  },
+
+  "impact_labels": {
+    "_comment": "How the banner phrases the consequence of each missing key. Keep these short — they are printed inline on a stderr line that must stay readable in a scrolling run. The wording is deliberately about EVIDENCE, not about features: the risk of keyless mode is not that a button is greyed out, it is that a negative result gets misread as a finding.",
+    "entries": {
+      "critical": "a primary reverse-lookup index is unavailable — absence of siblings is NOT evidence here",
+      "high": "a distinct evidence class is unavailable; corroboration drops to the free indexes",
+      "medium": "one enrichment dimension is missing; the free fallback covers part of it",
+      "low": "detail/quality reduced; the capability itself still runs keyless"
+    }
+  }
+}
