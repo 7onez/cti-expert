@@ -1,0 +1,126 @@
+{
+  "_comment": "ANY.RUN — the SANDBOX-OBSERVATION layer for BinaryPivot. analyze_artifact reads what a sample IS (hashes, signing cert, embedded hosts, packer); ANY.RUN's Threat Intelligence Lookup reports what samples like it DID when they were detonated by ~15k organisations: the domains and IPs they actually contacted, the threat/family label, the Suricata alerts, and the public sandbox tasks you can open and watch. That turns a static IOC into behaviour, and — the part that matters for casework — into MORE infrastructure, because a backend host the app only builds at runtime never appears in its strings. This file holds everything about ANY.RUN that changes without our code changing: API paths, the TI Lookup query grammar, which BinaryPivot pivot kinds map to which lookup field, the entitlement matrix, the request guard and the web-UI links the KEYLESS path emits. Edit this file, not bp_anyrun.py. Nothing here is case data — public product facts only.",
+
+  "endpoints": {
+    "_comment": "ANY.RUN REST paths. `api_base` is the v1 API root, `report_base` serves the per-task report renderings, `content_base` the downloadable artifacts. Auth is `Authorization: API-KEY <key>` on every call (the client adds the prefix if you paste a bare key). NOTE what is deliberately ABSENT: the submission endpoint. BinaryPivot never detonates — submitting a scam-funnel sample is an outbound action that spends a run, can be seen by the operator on a public plan, and belongs to a decision the analyst makes explicitly in the sandbox UI, not to a collector.",
+    "entries": {
+      "api_base": "https://api.any.run/v1",
+      "report_base": "https://api.any.run/report",
+      "content_base": "https://content.any.run/tasks",
+      "ti_search": "/intelligence/api/search",
+      "ti_keycheck": "/intelligence/keycheck",
+      "yara_search": "/intelligence/yara-lookup/search",
+      "yara_result": "/intelligence/yara-lookup/search/{id}",
+      "analysis_history": "/analysis",
+      "analysis_report": "/analysis/{id}",
+      "report_ioc": "/{id}/ioc/json",
+      "report_summary": "/{id}/summary/{format}",
+      "user_limits": "/user",
+      "environment": "/environment"
+    }
+  },
+
+  "query_fields": {
+    "_comment": "The TI Lookup query grammar. A query is one or more `field:\"value\"` terms joined with AND/OR; the API takes it as the `query` field of the search body, and the same string is what you paste into the TI Lookup web UI. Listed here so the tool can name the RIGHT field for an artifact instead of guessing — `destinationIP` and `domainName` are network-observation fields, so a hit means a sandboxed sample actually contacted that host, which is a much stronger statement than a string appearing in a binary. Add a field when ANY.RUN adds one; the value is what appears after the colon.",
+    "entries": {
+      "sha256": "file hash of a submitted or dropped sample",
+      "sha1": "file hash (sha1)",
+      "md5": "file hash (md5)",
+      "domainName": "a domain contacted during detonation",
+      "destinationIP": "an IP contacted during detonation",
+      "destinationPort": "the port of that connection — pair with destinationIP for a C2 endpoint",
+      "destinationIpAsn": "ASN of the contacted IP",
+      "destinationIPgeo": "country of the contacted IP",
+      "url": "a full URL requested during detonation",
+      "threatName": "the family/threat label ANY.RUN assigned (e.g. a stealer or RAT name)",
+      "threatLevel": "malicious / suspicious / info",
+      "taskType": "file or url submission",
+      "filePath": "a path the sample wrote to",
+      "fileEventPath": "a path involved in a file event",
+      "fileExtension": "extension of a dropped file",
+      "imagePath": "the executable image path of a spawned process",
+      "commandLine": "the command line of a spawned process",
+      "registryKey": "a registry key touched",
+      "registryName": "a registry value name touched",
+      "moduleImagePath": "a loaded module path",
+      "suricataID": "the Suricata signature ID that fired",
+      "suricataMessage": "the Suricata alert text",
+      "suricataClass": "the Suricata alert class",
+      "ja3": "client TLS fingerprint of the sample's own traffic",
+      "ja3s": "server TLS fingerprint seen in that traffic",
+      "jarm": "JARM of the contacted server — joins straight onto WebPivot's own jarm:hash pivot",
+      "MITRE": "ATT&CK technique id",
+      "submissionCountry": "country the task was submitted from"
+    }
+  },
+
+  "pivot_field_map": {
+    "_comment": "BinaryPivot pivot `kind` -> the TI Lookup field that reverses it. `file:sha256`, `app:backend_host` and `app:c2_endpoint` are the kinds analyze_artifact actually emits; `file:md5` / `file:sha1` are the CLI's own hash flags; `domain` / `ip` / `url` / `jarm:hash` are the WebPivot-shaped kinds, since a BinaryPivot result is ingested through the same schema. A kind that is absent gets no ANY.RUN query, which is correct for artifacts the sandbox does not index — an APK package name, a signing certificate and a firebase project id are identity, not observation, and belong on VirusTotal/Koodous/Triage instead. `app:c2_endpoint` is special-cased in code: an `ip:port` value is split into destinationIP + destinationPort so the query matches the CONNECTION rather than a literal string that appears in no index. Prefix entries ending in `:` match any kind starting with that prefix.",
+    "entries": {
+      "file:sha256": "sha256",
+      "file:sha1": "sha1",
+      "file:md5": "md5",
+      "app:backend_host": "domainName",
+      "app:c2_endpoint": "destinationIP",
+      "domain": "domainName",
+      "ip": "destinationIP",
+      "url": "url",
+      "jarm:hash": "jarm"
+    }
+  },
+
+  "verdict_levels": {
+    "_comment": "How to read the threat level on a returned task, so a report says what was OBSERVED rather than repeating a vendor label. `info` on a live scam host is not exoneration — an interactive sandbox that was served a benign decoy (geo/UA/referrer filtering is standard on these funnels) records exactly that.",
+    "entries": {
+      "malicious": "the sandbox scored the behaviour as malicious",
+      "suspicious": "some malicious traits, not conclusive",
+      "info": "nothing malicious observed in THAT detonation — check whether the sample was served a decoy",
+      "unknown": "no verdict recorded"
+    }
+  },
+
+  "plan_capabilities": {
+    "_comment": "What each ANY.RUN entitlement allows, so the tool degrades with an accurate sentence instead of an opaque 401/403. TI Lookup is a SEPARATE licence from the sandbox: a sandbox API key does not automatically answer /intelligence/*, which is why `ti_lookup` and `sandbox_api` are tracked apart. A trial TI Lookup licence is a small fixed number of requests, so the request guard below matters from the first call.",
+    "entries": {
+      "none": {"ti_lookup": false, "sandbox_api": false, "note": "no key — the query BUILDER and the UI links still work; nothing is queried from here"},
+      "sandbox": {"ti_lookup": false, "sandbox_api": true, "note": "sandbox API key: task history and reports for YOUR OWN submissions only; /intelligence/* answers 401/403"},
+      "ti_trial": {"ti_lookup": true, "sandbox_api": false, "note": "TI Lookup trial: a small fixed request allowance — spend it on the two or three artifacts that actually decide the case"},
+      "ti_full": {"ti_lookup": true, "sandbox_api": true, "note": "full TI Lookup licence: lookup + YARA search + feeds"}
+    }
+  },
+
+  "request_budget": {
+    "_comment": "THE SPEND GUARD. A TI Lookup trial is measured in tens of requests, not thousands, and the failure mode is the usual one — the allowance runs out mid-batch and the empty answers read as 'this sample is unknown to the sandbox world'. So requests are counted from MEMORY/api_usage.jsonl before the call and capped per run and per month, the same pattern as the Censys and IntelX guards. Override per run with ANYRUN_MAX_REQUESTS_PER_RUN / ANYRUN_MONTHLY_REQUESTS.",
+    "monthly_requests": 50,
+    "max_requests_per_run": 10,
+    "warn_at_remaining": 10,
+    "lookup_costs": 1,
+    "block_when_exhausted": true
+  },
+
+  "result_limits": {
+    "_comment": "Per-call ceilings so one lookup cannot dominate a case file. `max_tasks` bounds the related sandbox tasks kept per artifact; `lookup_days` is the default time window (ANY.RUN expects an explicit start/end date, and an unbounded window is both slower and noisier).",
+    "max_tasks": 25,
+    "max_related_indicators": 100,
+    "lookup_days": 180
+  },
+
+  "ui_templates": {
+    "_comment": "The KEYLESS deliverable. ANY.RUN's TI Lookup UI does not take a shareable query URL, so the emitted entry is the UI address PLUS the exact query text to paste — building the right query is most of the skill, and that part costs nothing. `public_task` opens one public sandbox session by uuid; `submissions` is the public feed. Keep these as data: ANY.RUN moves UI paths independently of its API.",
+    "entries": {
+      "lookup_ui": "https://intelligence.any.run/analysis/lookup",
+      "yara_ui": "https://intelligence.any.run/analysis/yara",
+      "public_task": "https://app.any.run/tasks/{id}",
+      "submissions": "https://app.any.run/submissions",
+      "signup": "https://app.any.run/",
+      "api_key_tab": "https://app.any.run/profile (API and Limits tab)"
+    }
+  },
+
+  "clustering_policy": {
+    "_comment": "FALSE-POSITIVE CONTROL — read this before turning an ANY.RUN hit into a same-operator edge. A sandbox observation says a sample CONTACTED a host; it does not say who owns it. Half of what a detonation contacts is shared internet furniture, and a threat-family label groups by KIT, not by operator — two crews running the same commodity stealer are not one crew. `cluster_on` is what may support an edge (an operator-specific host or C2 endpoint reached by a sample you already tie to the case); `context_only` is everything that describes the malware family or the environment. Same rule as everywhere else in this repo: corroborate with a second, independent artifact class before committing.",
+    "cluster_on": ["domainName", "destinationIP", "url", "jarm"],
+    "context_only": ["threatName", "suricataID", "suricataMessage", "MITRE", "destinationIpAsn", "destinationIPgeo", "submissionCountry"],
+    "note": "A shared threatName is a same-KIT signal, exactly like a shared app protector or a shared white-label CDN — record it as kit-level and do not let it carry an attribution claim on its own."
+  }
+}

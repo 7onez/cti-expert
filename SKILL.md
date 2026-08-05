@@ -140,6 +140,27 @@ Six traps, all of which have produced real false clusters:
 > uninvolved business is the most damaging error this skill can produce. When a cluster rests on a
 > single rung-7-or-below indicator, label it *candidate, single-indicator* — not a cluster member.
 
+### Never submit the case's own sample to a public sandbox (CRITICAL)
+
+`/anyrun` is **lookup-only**. It reads detonations that already happened; it has no submit path,
+and the submission endpoint is deliberately absent from `BinaryPivot/references/anyrun.json`.
+`tests/test_no_sample_submission.py` enforces that as a gate, so it cannot regress quietly.
+
+**Do not work around it.** Uploading the case's own APK / installer / archive to ANY.RUN —
+or VirusTotal, or any public sandbox — is an **outbound, irreversible** act:
+
+- A public task is **world-readable**: the file, its hash, screenshots and full network log.
+- **Operators watch for their own samples.** The standard response is to rotate the backend,
+  revoke the signing key and re-skin the front — destroying the infrastructure the case is built
+  on, often days before a takedown or referral can land.
+- **It cannot be recalled.** Unlike a query from the wrong egress, there is no cleanup.
+
+If detonation is genuinely necessary, **stop and put it to the analyst in plain terms** — what
+becomes public, and that it is permanent — and let them do it themselves in the sandbox UI on a
+**private** plan. Never as a side effect of a pivot, and never on standing permission inferred
+from an earlier approval. The same reasoning governs `--submit` (urlscan/Wayback): a public
+urlscan scan of a live scam funnel is visible to the operator too.
+
 ### Dead seed? Do not stop
 
 Zero pivots, a parked page, or NXDOMAIN is not an answer. Run **`/fallback <domain>`** — crt.sh,
@@ -181,6 +202,12 @@ by layer — T0 uses `kebab-case` after a slash, T2 uses `kebab-case` ops, T1 us
 tools. The table above is the canonical mapping; when you add a capability, add a row here in the
 same commit or the layers drift apart again.
 
+Capabilities that are *not* registered commands still carry their layer mapping inline in the §3
+tables. The engine's WebPivot/BinaryPivot collectors add these: `/capabilities` (T2 `capabilities`,
+T1 `capability_check`), `/impersonate` (T2 `impersonate`, T1 `impersonation_hunt`), `/search-pivot`
+(T2 `search-pivot`, T1 `search_pivot`), `/censys` (T2 `censys`, T1 `censys`), `/intelx`
+(T2 `intelx`, T1 `intelx_search`) and `/anyrun` (T2 `anyrun`, T1 `anyrun_lookup`).
+
 ---
 
 Commands grouped by AEAD phase.
@@ -206,6 +233,13 @@ Commands grouped by AEAD phase.
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
 | `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) | `/webpivot https://scam-site.top` |
+| *(automatic — no flag)* | Four layers now run on **every** collection and need no command. **Asset layer:** fetches the page's own JS bundles and re-runs every extractor over the source — the fix for SPA/white-label kits where the shell HTML is empty; yields off-apex `api_endpoint`/`websocket_endpoint` (the backend survives a front-end re-skin), `build_env:<KEY>` tenant tokens, `js_bundle_sha256`, and via `sourceMappingURL` the operator's own `dev_username`/`dev_project`. **SPA route table:** reads the app's router literals — `spa_route:admin`, `spa_route:funnel`, and a `spa_route_signature` that survives a re-skin. Zero extra requests, routes are leads only and are never fetched. **Well-known/policy files:** a fixed standards list (never a wordlist, no path brute-forcing) → `adstxt_publisher`, `apple_team_id`, `security_contact`. **JARM:** TLS-stack fingerprint of the server. Suppress with `--no-assets` / `--no-well-known`; cap fetches with `--assets-max N` | *(runs inside `/cti-pivot`)* |
+| `/capabilities` | **Run this first, and again before reporting any "nothing found".** Which optional API keys are configured, and for each absent one the *evidence class that went unqueried* plus the free path that substitutes. A keyless run extracts every artifact but cannot **reverse** most of them — so "no sibling domains" with no FOFA/urlscan key is a fact about the credentials, not about the operator. Every collection also records this in `meta.capability`; carry the limitation statement into the assessment and cap confidence accordingly. T2: `capabilities` · T1: `capability_check` | `/capabilities` |
+| `/impersonate [domain]` | Hunt **lookalike / typosquat** domains of a seed — typosquat permutations (omission, insertion, adjacent-key, transposition, homoglyph, hyphenation, combosquat) + a curated scam-heavy TLD sweep + a crt.sh keyword hunt, then existence-checked by live DNS. Output separates **confirmed registered lookalikes** (each an `impersonation:candidate` — run `/cti-pivot` on it and compare) from an unregistered **monitoring watchlist**. FREE (crt.sh + DNS); `--fofa` / `--urlscan` add the metered sweeps. Never live-fetches the lookalike infra. Tune the TLDs/affixes per campaign in `intel_engine/WebPivot/references/impersonation.json`. T2: `impersonate` · T1: `impersonation_hunt` | `/impersonate example.com` |
+| `/search-pivot [indicator]` | Multi-engine **search-engine** pivot — the general-web complement to FOFA/PublicWWW, which only see served HTML. Takes any indicator (domain, slogan, tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded dork queries across Google/Yandex/DuckDuckGo/Bing/Brave. It does **not** scrape: fire the queries with WebSearch, or WebFetch the DuckDuckGo html URL, then feed new hosts back into `/cti-pivot`. FREE, no keys. T2: `search-pivot` · T1: `search_pivot` | `/search-pivot "distinctive slogan"` |
+| `/censys [mode] [value]` | Censys Platform — the **server-side** view FOFA/urlscan don't give. `cert <sha256>` returns every hostname on that exact leaf certificate (near-decisive cross-brand same-operator evidence, and it works on a **free** plan); `host <ip>`, `webproperty <host>` also free-plan. `query <kind> <value>` builds the CenQL **offline and keyless**; `budget` reports the balance. ⚠️ **100 credits/MONTH per account, no rollover** — a lookup is 1, a search 5, and running the emitted CenQL in the web UI costs the same 5. Prefer handing the analyst the query over spending a search. Needs `CENSYS_PAT`. T2: `censys` · T1: `censys` | `/censys cert 1a2b3c…` |
+| `/intelx [selector]` | **Intelligence X** — search ONE strong selector across a corpus nothing else here indexes: breach dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS. Takes an email / domain (`*.apex` wildcard ok) / URL / IP / phone / wallet / IBAN — **never a brand or person name** (soft terms are refused *and still cost a unit*; `classify_selector()` blocks them locally). `--phonebook <domain>` inventories every email, subdomain and URL under an apex — the highest-value call, PAID-only. **Grading is not optional:** a hit in a breach dump or stealer log is **EXPOSURE**, flagged NOT clusterable — two addresses in one combolist share *victims*, not an operator. Only `whois` / `pastes` / darknet hits may carry a same-operator edge. Keyless ≈ 50%: it still types the selector and hands you the intelx.io URL. T2: `intelx` · T1: `intelx_search` | `/intelx registrant@example.com` |
+| `/anyrun [indicator]` | **ANY.RUN TI Lookup — READ-ONLY.** What samples carrying this indicator *did* when **other people** detonated them: contacted domains/IPs/URLs/ports, family label, Suricata context, public task links. Run it after `/binary` on the sample's sha256, backend host or `ip:port`. It is the **only** way to recover a **packed** sample's real endpoints — those exist only at runtime, so a thin string sweep plus a `binary:protection` finding is exactly the cue. A shared *family* is same-KIT, never attribution on its own. Keyless ≈ 50%: composes the query + UI link. **⚠️ This tool never submits a sample — see the box below.** T2: `anyrun` · T1: `anyrun_lookup` | `/anyrun <sha256>` |
 | `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) | `/cert-pivot scam-site.top` |
 | `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline | `/sensitive-paths waymore_index.txt` |
 | `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable/MX/free/role) | `/email-hygiene admin@site.top` |

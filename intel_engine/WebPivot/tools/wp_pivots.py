@@ -29,32 +29,27 @@ import urllib.request
 import urllib.error
 from wp_common import *  # noqa
 from wp_extract import *  # noqa
+from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
+from wp_censys import censys_queries, attach_censys_queries  # CenQL builder (keyless — no PAT needed)
+from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
 
-SAAS_PIVOTS = {
-    "gohighlevel_location": ("high", "GoHighLevel sub-account (location) ID. Same GHL tenant = same operator; find its whole portfolio."),
-    "google_sheet": ("high", "Backend Google Sheet ID embedded in the page. Same sheet = same operator — and it may be publicly readable (check for exposed leads/PII)."),
-    "google_doc": ("high", "Backend Google Doc ID embedded in the page. Same doc = same operator — and it may be publicly readable."),
-    "google_slides": ("high", "Backend Google Slides ID embedded in the page. Same deck = same operator."),
-    "google_form": ("high", "Google Form the page collects leads with — operator-controlled. Same form = same operator (responses may be readable)."),
-    "google_drive": ("high", "Google Drive folder/file ID referenced by the page — operator asset store. Same ID = same operator."),
-    "make_webhook": ("high", "Make.com automation webhook — operator-controlled endpoint. Same token = same operator."),
-    "integromat_webhook": ("high", "Integromat/Make automation webhook — operator-controlled. Same token = same operator."),
-    "zapier_webhook": ("high", "Zapier catch hook — operator-controlled automation endpoint. Same token = same operator."),
-    "apps_script": ("high", "Google Apps Script web-app the form posts to — operator-controlled. Same deployment = same operator."),
-    "trustedform": (None, "TrustedForm (TCPA lead certification) — signals a lead-generation funnel; not an operator pivot."),
+# ---------------------------------------------------------------- reference data (RULE 3)
+# How much a pivot artifact is WORTH (SaaS-token confidence) and which URL params carry
+# affiliate attribution are analyst judgments that change with tradecraft, so they live in
+# references/pivot_tables.json. Tune that file — not this module.
+_PIVOT_FALLBACK = {
+    "saas_pivots": {"google_sheet": ["high", "Backend Google Sheet ID — same sheet = same operator."]},
+    "affiliate_params": ["affid", "aff", "ref", "clickid", "btag"],
 }
+_PIVOT_REF = load_ref(ref_path(__file__, "pivot_tables.json"), _PIVOT_FALLBACK)
 
+# artifact kind -> (confidence|None, analyst note). None = signals a funnel type, never clusters.
+SAAS_PIVOTS = {k: (v[0], v[1]) for k, v in _PIVOT_REF["saas_pivots"].items()}
 
 # Query params that carry affiliate / referral / campaign attribution. A redirector's
 # destination usually stamps the promoter's code here (affid=…, 8c=…, ref=…) — that code
 # is the real pivot: source-search it to find where the affiliate promotes the link.
-
-AFFILIATE_PARAMS = {
-    "affid", "aff", "aff_id", "affiliate", "affiliateid", "ref", "refid", "ref_id",
-    "referral", "referralcode", "partner", "partnerid", "pid", "subid", "sub_id",
-    "clickid", "click_id", "btag", "a_aid", "a_bid", "promo", "promocode", "invite",
-    "invitecode", "agent", "agentid", "ib", "8c",
-}
+AFFILIATE_PARAMS = frozenset(_PIVOT_REF["affiliate_params"])
 
 def _maybe_b64(v: str):
     """If v is base64 that decodes to a short printable ASCII string, return it, else None."""
@@ -168,20 +163,27 @@ def sort_pivots(pivots: list) -> list:
     return pivots
 
 
+def add_pivot(pivots: list, kind, value, confidence, queries, note="", live=None):
+    """Append one pivot dict (the WebPivot pivot schema) to `pivots`. Shared builder so every
+    collector (domainPivot, IPPivot, ImpersonationHunt) emits the identical shape."""
+    p = {"kind": kind, "value": value, "confidence": confidence, "note": note, "queries": queries}
+    if live is not None:
+        p["live_results"] = live
+    pivots.append(p)
+    return p
+
+
 # Subdomain labels that are generic infrastructure/service names — a shared one clusters nothing,
 # so they are NOT treated as a distinctive same-operator signal.
-_GENERIC_SUBLABELS = {
-    "www", "www2", "www3", "web", "m", "mobile", "wap", "amp", "api", "api2", "app", "apps",
-    "mail", "email", "webmail", "smtp", "imap", "pop", "pop3", "mx", "mx1", "mx2", "autodiscover",
-    "autoconfig", "ns", "ns1", "ns2", "ns3", "ns4", "dns", "cpanel", "whm", "webdisk", "ftp",
-    "sftp", "cdn", "cdn1", "cdn2", "static", "assets", "img", "images", "media", "js", "css",
-    "files", "download", "downloads", "dl", "admin", "portal", "dashboard", "panel", "my",
-    "account", "accounts", "login", "signin", "sso", "auth", "secure", "vpn", "remote", "gw",
-    "gateway", "proxy", "blog", "news", "shop", "store", "support", "help", "docs", "wiki",
-    "status", "stats", "test", "dev", "staging", "stage", "uat", "demo", "beta", "sandbox",
-    "local", "localhost", "go", "link", "links", "l", "t", "track", "click", "e", "c", "s",
-    "server", "host", "vps", "cloud", "edge", "origin",
+# DATA: references/generic_labels.json -> subdomain_labels (add a label there, not here).
+_LABELS_FALLBACK = {
+    "subdomain_labels": ["www", "mail", "api", "app", "cdn", "static", "admin", "ns1", "ns2",
+                         "shop", "blog", "test", "dev", "m", "web"],
+    "resource_basename_segments": ["jquery", "bootstrap", "vendor", "main", "index", "app",
+                                   "bundle", "min", "js", "css"],
 }
+_LABELS_REF = load_ref(ref_path(__file__, "generic_labels.json"), _LABELS_FALLBACK)
+_GENERIC_SUBLABELS = frozenset(_LABELS_REF["subdomain_labels"])
 
 
 def _distinctive_subdomain(host: str):
@@ -219,19 +221,21 @@ def build_pivots(art: dict, base_host: str):
             {"service": "Shodan", "query": f'http.favicon.hash:{fav["shodan_mmh3"]}'},
             {"service": "FOFA", "query": f'icon_hash="{fav["shodan_mmh3"]}"'},
             {"service": "ZoomEye", "query": f'iconhash:"{fav["shodan_mmh3"]}"'},
-            {"service": "Censys", "query": f'services.http.response.favicons.md5_hash={fav["md5"]}'},
             {"service": "Netlas", "query": f'http.favicon.hash_sha256:{fav["sha256"]}'},
-        ], "Same favicon across unrelated domains = shared operator/kit.")
+        ] + censys_queries("favicon_hash", fav["md5"]),      # Censys wants the MD5, not the mmh3
+           "Same favicon across unrelated domains = shared operator/kit.")
 
     cert = art.get("tls_cert")
     if cert and not cert.get("error") and not cert.get("skipped"):
         fp = cert.get("fingerprint_sha256")
         if fp:
             add("tls_cert:fingerprint_sha256", fp, "high", [
-                {"service": "Censys", "query": f"services.tls.certificates.leaf_data.fingerprint_sha256:{fp}"},
                 {"service": "Validin", "query": fp},
                 {"service": "crt.sh", "query": f"https://crt.sh/?q={fp}"},
-            ], "Every host serving this exact certificate = same operator/deployment.")
+            ] + censys_queries("tls_cert:fingerprint_sha256", fp),
+               "Every host serving this exact certificate = same operator/deployment. The Censys "
+               "certificate LOOKUP (wp_censys.py cert <sha256>) also returns the cert's own full "
+               "`names` list — available on a free Censys plan, no search entitlement needed.")
         # Co-SAN: SANs on a DIFFERENT registrable domain than the seed are a strong
         # cross-brand operator link (one cert covering many apexes). Same-site
         # subdomains are just this domain's own hosts — not a pivot.
@@ -239,8 +243,7 @@ def build_pivots(art: dict, base_host: str):
         co_apexes = uniq([r for s in cert.get("sans", [])
                           if (r := _registrable(s)) and r != seed_reg])
         if co_apexes:
-            queries = [{"service": "Censys", "query":
-                        f"services.tls.certificates.leaf_data.fingerprint_sha256:{fp}"}] if fp else []
+            queries = censys_queries("tls_cert:fingerprint_sha256", fp) if fp else []
             for apex in co_apexes[:20]:
                 queries += [
                     {"service": "crt.sh", "query": f"%.{apex}"},
@@ -248,6 +251,20 @@ def build_pivots(art: dict, base_host: str):
                 ]
             add("tls_cert:co_san", ", ".join(co_apexes[:20]), "high", queries,
                 "Distinct registrable domains sharing one TLS certificate = same operator.")
+
+    jarm = art.get("jarm")
+    if jarm and isinstance(jarm, dict) and jarm.get("jarm") and not jarm.get("empty") \
+            and not jarm.get("error") and not jarm.get("skipped"):
+        h = jarm["jarm"]
+        add("jarm:hash", h, "medium", [
+            {"service": "Shodan", "query": f"ssl.jarm:{h}"},
+            {"service": "ZoomEye", "query": f'jarm="{h}"'},
+            # Censys indexes JARM but only makes it SEARCHABLE with the Adversary Investigation
+            # module — on free/starter/core this query returns nothing. Shodan is the free path.
+            *censys_queries("jarm:hash", h, ui=False),
+        ], "Identical JARM = same TLS server stack + config — clusters an operator's "
+           "origin/backend hosts even across domain rotation and re-branding. Corroborate: "
+           "stock stacks (nginx/Cloudflare defaults) share a JARM, so pair with a 2nd artifact.")
 
     app = art.get("app_downloads") or {}
     for apk in app.get("apk_urls", []):
@@ -533,6 +550,218 @@ def build_pivots(art: dict, base_host: str):
         ], "DMARC rua/ruf reporting address NOT at a monitoring vendor — an operator-controlled "
            "mailbox/domain; a strong attribution + reverse-WHOIS pivot.")
 
+    # --- ASSET LAYER: JS bundles, source maps, build config, well-known/policy files ------
+    # (artifacts.assets — see wp_assets.py). These are the artifacts that survive a re-skin:
+    # the front end is rebuilt for every brand, the backend host / build tenant / developer
+    # machine / publisher account behind it are not.
+    assets = art.get("assets") or {}
+
+    api = assets.get("api") or {}
+    for base in (api.get("api_bases") or [])[:10]:
+        bh = strip_www(urlparse(base if "://" in base else "https:" + base).netloc).split(":")[0]
+        if not bh:
+            continue
+        add("api_endpoint", bh, "high", [
+            {"service": "crt.sh", "query": f"%.{_registrable(bh)}"},
+            {"service": "FOFA", "query": _fofa_host(bh)},
+            {"service": "urlscan.io", "query": f"page.domain:{bh}"},
+            {"service": "Shodan", "query": f'hostname:"{bh}"'},
+            {"service": "PublicWWW", "query": bh},
+        ], f"OFF-APEX backend the front end was compiled against ({base}). In a white-label "
+           f"kit every front rotates but the backend does not — the strongest same-operator "
+           f"link the front end can give you. Reverse it for the other fronts it serves.")
+
+    for base in (api.get("same_site_api") or [])[:6]:
+        bh = strip_www(urlparse(base if "://" in base else "https:" + base).netloc).split(":")[0]
+        if bh and bh != base_host:
+            add("api_endpoint:same_site", bh, "low", [
+                {"service": "crt.sh", "query": f"%.{_registrable(bh)}"},
+                {"service": "Shodan", "query": f'hostname:"{bh}"'},
+            ], "Backend host inside the seed's OWN domain — infrastructure context, not a "
+               "cross-site pivot on its own.")
+
+    for ws in (api.get("websockets") or [])[:6]:
+        wh = strip_www(urlparse(ws).netloc).split(":")[0]
+        if wh:
+            add("websocket_endpoint", wh, "medium", [
+                {"service": "crt.sh", "query": f"%.{_registrable(wh)}"},
+                {"service": "Shodan", "query": f'hostname:"{wh}"'},
+                {"service": "PublicWWW", "query": ws},
+            ], f"Live WebSocket the app streams from ({ws}) — real-time backend infra, rarely "
+               f"rotated with the front-end domain.")
+
+    for gq in (api.get("graphql") or [])[:4]:
+        add("graphql_endpoint", gq, "medium", [
+            {"service": "PublicWWW", "query": gq},
+            {"service": "urlscan.io", "query": f'page.url:"{gq}"'},
+        ], "GraphQL endpoint compiled into the bundle — backend surface shared across fronts.")
+
+    # Build-time env vars inlined by the bundler. A tenant/brand name compiled into the build
+    # (VUE_APP_BRAND, REACT_APP_TENANT, …) is the white-label platform naming its own customer.
+    _BRANDY = ("BRAND", "TENANT", "SITE", "NAME", "PROJECT", "CLIENT", "MERCHANT",
+               "PLATFORM", "COMPANY", "AGENT", "CHANNEL", "APP_ID", "APPID")
+    for key, vals in list((api.get("build_env") or {}).items())[:20]:
+        upper = key.upper()
+        if any(b in upper for b in _BRANDY):
+            conf, why = "high", ("Build-time tenant/brand token compiled into the bundle — a "
+                                 "white-label platform naming its own customer. The same value "
+                                 "on another domain is the SAME tenant; the same KEY with a "
+                                 "different value is the same PLATFORM, not the same operator.")
+        elif any(b in upper for b in ("API", "URL", "HOST", "ENDPOINT", "SERVER", "BASE")):
+            conf, why = "medium", ("Build-time backend/URL constant — infrastructure the front "
+                                   "end was compiled against.")
+        else:
+            conf, why = "low", "Build-time constant inlined by the bundler."
+        for v in vals[:3]:
+            add(f"build_env:{key}", v, conf, [
+                {"service": "PublicWWW", "query": v},
+                {"service": "FOFA", "query": _fofa_body(v)},
+                {"service": "Google/Yandex dork", "query": f'"{v}"'},
+            ], why)
+
+    # A compiled bundle's sha256 survives the rebrands that break favicon and DOM-skeleton
+    # hashes: identical digest on two domains = the same build artifact deployed twice.
+    for f in (assets.get("collected") or [])[:8]:
+        if f.get("sha256") and f.get("name"):
+            add("js_bundle_sha256", f["sha256"], "medium", [
+                {"service": "urlscan.io", "query": f'hash:"{f["sha256"]}"'},
+                {"service": "VirusTotal", "query": f["sha256"]},
+                {"service": "urlscan.io (filename)", "query": f'filename:"{f["name"]}"'},
+            ], f"SHA-256 of {f['name']} ({f['bytes']} bytes). Identical digest on another domain "
+               f"= the same compiled build, which survives a favicon/DOM re-skin. Note a stock "
+               f"vendor bundle can match innocently — corroborate before clustering.")
+
+    # Source maps: the operator's own build machine leaking through the bundler.
+    for sm in (assets.get("source_maps") or [])[:4]:
+        for user in (sm.get("usernames") or [])[:4]:
+            add("dev_username", user, "high", [
+                {"service": "GitHub", "query": f'"{user}"'},
+                {"service": "Google/Yandex dork", "query": f'"{user}" site:github.com OR site:gitlab.com'},
+                {"service": "PublicWWW", "query": f"/Users/{user}/"},
+            ], "Developer account name from a source-map path (the build machine's home "
+               "directory). Survives every front-end re-skin and is not copyable by a "
+               "stranger — one of the strongest passive attribution artifacts available.")
+        for root in (sm.get("project_roots") or [])[:5]:
+            add("dev_project", root, "high", [
+                {"service": "GitHub", "query": f'"{root}"'},
+                {"service": "PublicWWW", "query": f"webpack://{root}/"},
+                {"service": "Google/Yandex dork", "query": f'"webpack://{root}"'},
+            ], f"Internal project name '{root}' from the source map — the operator's own name "
+               f"for this kit, often the un-rebranded original. The same root under a different "
+               f"brand is the same codebase.")
+        for p in (sm.get("dev_paths") or [])[:6]:
+            add("dev_path", p, "medium", [
+                {"service": "PublicWWW", "query": p},
+                {"service": "Google/Yandex dork", "query": f'"{p}"'},
+            ], "Absolute build path from the source map — directory layout is a per-developer "
+               "fingerprint." + (" This map ships sourcesContent: the ORIGINAL un-minified "
+                                 "source (with the operator's own comments) is recoverable."
+                                 if sm.get("has_sources_content") else ""))
+
+    # --- SPA route table (recovered from the already-fetched bundle, zero extra requests) ---
+    routes = assets.get("routes") or {}
+    if routes.get("signature"):
+        add("spa_route_signature", routes["signature"], "medium", [
+            {"service": "KB", "query": f"spa_routes:{routes['signature'][:32]}"},
+            {"service": "urlscan.io", "query": "page.domain:<candidate>  (compare route inventory)"},
+        ], f"SHA-256 over this app's {routes['count']} sorted routes "
+           f"({routes.get('router') or 'unknown router'}). An IDENTICAL route inventory on another "
+           f"domain means the same compiled application — it survives a cosmetic re-skin (new "
+           f"brand, favicon and colours, same routing table). Like any kit fingerprint this proves "
+           f"same-KIT; corroborate with an owner-tied artifact before calling it same-OPERATOR.")
+
+    # The operator's own panel. Emitted as a LEAD, never fetched — deciding to visit a
+    # discovered admin path is the analyst's call (and a different authorization question).
+    for r in (routes.get("admin_routes") or [])[:12]:
+        add("spa_route:admin", r, "low", [
+            {"service": "Wayback CDX", "query":
+                f"http://web.archive.org/cdx/search/cdx?url={base_host}{r}*&output=json"
+                if base_host else r},
+            {"service": "urlscan.io", "query": f'page.url:"{r}"'},
+        ], "Operator/admin route declared in the app's own router — the panel the public funnel "
+           "never links to. NOT fetched by this tool: check the archive first, and treat visiting "
+           "it live as a separate authorization decision.")
+
+    # What the application DOES to a victim — deposit/withdraw/KYC/referral tells you the
+    # scam's mechanics without walking the funnel.
+    for r in (routes.get("funnel_routes") or [])[:12]:
+        add("spa_route:funnel", r, "low", [
+            {"service": "Wayback CDX", "query":
+                f"http://web.archive.org/cdx/search/cdx?url={base_host}{r}*&output=json"
+                if base_host else r},
+            {"service": "PublicWWW", "query": r},
+        ], "Money/identity route from the app's router (deposit, withdraw, KYC, referral…) — "
+           "reads out the funnel's mechanics without clicking through it.")
+
+    # A distinctive route NAME is the developer's own vocabulary for the app; the same
+    # unusual name under another brand is the same codebase.
+    for nm in (routes.get("route_names") or [])[:8]:
+        if len(nm) >= 6 and not nm.lower() in ("index", "home", "login", "layout", "default",
+                                               "notfound", "not-found", "error", "about"):
+            add("spa_route_name", nm, "low", [
+                {"service": "PublicWWW", "query": nm},
+                {"service": "Google/Yandex dork", "query": f'"{nm}"'},
+            ], "Named route from the app's router — the developer's own vocabulary. An unusual "
+               "name reused under another brand points at the same codebase.")
+
+    # --- well-known / policy files ---
+    wk = assets.get("well_known") or {}
+
+    # ads.txt / app-ads.txt publisher accounts. A `pub-…` id is an owner-registered Google
+    # AdSense/AdManager account — Tier-A, same strength class as a GA4 property or GSC token.
+    for _which in ("ads_txt", "app_ads_txt"):
+        for pub in ((wk.get(_which) or {}).get("publishers") or [])[:15]:
+            pid, exch = pub.get("publisher_id"), pub.get("exchange")
+            if not pid:
+                continue
+            is_google = "google" in (exch or "") and str(pid).startswith("pub-")
+            add("adstxt_publisher", pid, "high" if is_google else "medium", [
+                {"service": "PublicWWW", "query": pid},
+                {"service": "FOFA", "query": _fofa_body(pid)},
+                {"service": "Google dork", "query": f'"{pid}" filetype:txt'},
+                {"service": "urlscan.io", "query": f'page.url:"/ads.txt" AND "{pid}"'},
+            ], f"{'AdSense/AdManager publisher account' if is_google else 'Ad-exchange seller id'} "
+               f"declared in {_which.replace('_', '.')} for {exch} ({pub.get('relationship')}). "
+               f"An owner-registered monetization account — a stranger cannot declare yours. "
+               f"Reverse it for every other property the same operator monetizes.")
+
+    aasa = wk.get("apple_app_site_association") or {}
+    for team in (aasa.get("team_ids") or [])[:5]:
+        add("apple_team_id", team, "high", [
+            {"service": "Google dork", "query": f'"{team}" apple-app-site-association'},
+            {"service": "PublicWWW", "query": team},
+        ], "Apple Developer Program Team ID from apple-app-site-association — one paid, "
+           "identity-verified account signs every app this operator ships. The iOS twin of "
+           "the APK signing certificate.")
+    for bid in (aasa.get("bundle_ids") or [])[:6]:
+        add("ios_bundle_id", bid, "high", [
+            {"service": "Apple App Store", "query": bid},
+            {"service": "Google dork", "query": f'"{bid}"'},
+            {"service": "PublicWWW", "query": bid},
+        ], "iOS bundle identifier the site claims universal links for — hand the app to "
+           "BinaryPivot for its embedded backend/C2 hosts.")
+
+    for contact in ((wk.get("security_txt") or {}).get("contacts") or [])[:4]:
+        if "@" in contact:
+            add("security_contact", contact, "medium", [
+                {"service": "reverse-WHOIS (email)", "query": contact},
+                {"service": "crt.sh", "query": f"%.{_registrable(contact.split('@')[-1])}"},
+                {"service": "breach search / Chainabuse", "query": contact},
+            ], "Contact address published in security.txt — an operator-controlled mailbox; "
+               "reverse-WHOIS it.")
+
+    # robots.txt Disallow entries are LEADS (paths the operator chose to hide), not pivots —
+    # emitted low so they rank below real cross-site artifacts.
+    _robots = wk.get("robots_txt") or {}
+    for path in (_robots.get("disallow") or [])[:10]:
+        if path not in ("/", "") and len(path) > 2:
+            add("robots_disallow", path, "low", [
+                {"service": "direct", "query": f"https://{base_host}{path}" if base_host else path},
+                {"service": "Wayback CDX", "query":
+                    f"http://web.archive.org/cdx/search/cdx?url={base_host}{path}*&output=json"},
+            ], "Path the operator asked crawlers not to index — an admin/staging/panel URL "
+               "worth checking in the archive before touching it live.")
+
     for host in art.get("third_party_hosts", [])[:15]:
         add("third_party_host", host, "low", [
             {"service": "crt.sh", "query": f"%.{host}"},
@@ -556,12 +785,17 @@ def build_pivots(art: dict, base_host: str):
                 {"service": "FOFA", "query": _fofa_host(sub)},
                 {"service": "crt.sh", "query": f"https://crt.sh/?q={sub}.%25"},
                 {"service": "Shodan (CT)", "query": f'ssl.cert.subject.CN:"{sub}" OR hostname:"{sub}"'},
-                {"service": "Shodan CTL / Censys", "query": f"names: {sub}.*"},
+                # tokenised `:` match, not `=` — the value is a LABEL, not a whole hostname
+                *censys_queries("subdomain", sub),
             ], f"Distinctive subdomain label '{sub}' — an operator's naming convention. The same "
                f"label under other apexes (FOFA host / crt.sh label search / Shodan CT logs) is a "
                f"same-operator lead; corroborate with a second artifact before clustering.")
 
-    return sort_pivots(pivots)
+    # One pass adds the Censys CenQL (+ web-UI URL) to every remaining kind Censys can reverse —
+    # see references/censys_queries.json -> pivot_kind_map. A second pass adds the IntelX selector
+    # (+ its UI URL) to every kind IntelX searches — emails, phones, domains, IPs, wallets — so the
+    # leak/paste/darknet corpus is reachable from the same pivot list even with no key at all.
+    return sort_pivots(attach_intelx_queries(attach_censys_queries(pivots)))
 
 
 __all__ = [_n for _n in dir() if not _n.startswith("__")]

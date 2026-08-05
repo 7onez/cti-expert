@@ -1,4 +1,5 @@
 {
+ "_comment": "GENERATED CACHE \u2014 do not hand-edit; rerun `python3 cdn_ranges.py --refresh` to rebuild from each provider's published ip-ranges endpoint. Unlike the other references/*.json files this one is NOT an analyst-tunable list. It answers one question: is this IP a shared CDN/cloud EDGE (noise \u2014 thousands of unrelated tenants) or a plausible ORIGIN (signal \u2014 worth clustering on)? Providers that publish no CIDR list are recorded under `no_public_list` and must be classified by ASN instead (see WebPivot/references/asn_registry.json).",
  "updated": "2026-07-08T10:00:10.144994+00:00",
  "count": 2597,
  "per_provider": {

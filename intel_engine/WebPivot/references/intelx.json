@@ -1,0 +1,197 @@
+{
+  "_comment": "INTELLIGENCE X (intelx.io) — the SELECTOR search layer. IntelX indexes leaks, stealer logs, pastes, darknet mirrors, WHOIS snapshots and a web crawl, and it is queried by STRONG SELECTOR only (an email, a domain, a URL, an IP/CIDR, a phone number, a wallet, a MAC/UUID/IBAN/credit-card). It does not do keyword search, so 'find me the scam' is not a query it can answer — 'what else is attached to registrant@example.com' is. This file holds everything about IntelX that changes without our code changing: the API paths, the selector patterns, the bucket catalogue and how much each bucket is worth as evidence, the free-vs-paid entitlements, the spend guard, and the web-UI templates the KEYLESS path emits. Edit this file, not wp_intelx.py. Nothing here is case data — these are public product facts and generic patterns.",
+
+  "endpoints": {
+    "_comment": "IntelX API paths, relative to the account's API root (https://2.intelx.io for a normal API key; a free/public key is issued against a different instance — set INTELX_BASE_URL to whatever the Developer tab shows for your account, the paths are the same). Auth is the `x-key` HTTP header on every call. The search endpoints are TWO-STEP by design: POST starts a search and returns an `id`, then you GET the result repeatedly until `status` says stop (0 = results, 1 = no more, 2 = id unknown, 3 = nothing yet, keep polling). HTTP 402 means the account is out of credits.",
+    "entries": {
+      "search_start": "/intelligent/search",
+      "search_result": "/intelligent/search/result",
+      "search_terminate": "/intelligent/search/terminate",
+      "search_export": "/intelligent/search/export",
+      "phonebook_start": "/phonebook/search",
+      "phonebook_result": "/phonebook/search/result",
+      "capabilities": "/authenticate/info",
+      "file_preview": "/file/preview",
+      "file_read": "/file/read",
+      "file_view": "/file/view",
+      "item_selectors": "/item/selector/list/human"
+    }
+  },
+
+  "search_status": {
+    "_comment": "The `status` field returned by both result endpoints. The poll loop MUST honour these: 3 means the backend is still aggregating and an empty page is NOT an empty result — treating 3 as 'nothing found' is the single easiest way to write a false negative into an assessment.",
+    "entries": {
+      "0": "results in this page — keep polling",
+      "1": "no more results — the search is complete",
+      "2": "search id not found (expired or terminated)",
+      "3": "no results YET — the backend is still aggregating, poll again"
+    }
+  },
+
+  "selector_types": {
+    "_comment": "IntelX accepts STRONG selectors only; a soft/generic term is rejected outright. Each entry maps a selector class to the pattern that recognises it, whether IntelX can search it, and what it is worth as a pivot. `regex` is matched case-insensitively against the whole trimmed value. Order matters — the first match wins, so the specific patterns (email, url) come before the loose ones (domain, phone). Tune a pattern here when a real-world value is being misclassified; do not add a pattern for a SOFT term (a brand name, a person's name) — IntelX will refuse it and the run wastes a credit.",
+    "entries": {
+      "email": {
+        "regex": "^[^@\\s]+@[a-z0-9.-]+\\.[a-z]{2,}$",
+        "strong": true,
+        "value": "highest-yield IntelX selector — leak/stealer-log membership, pastes, and (via phonebook) the domains the address appears under"
+      },
+      "url": {
+        "regex": "^https?://\\S+$",
+        "strong": true,
+        "value": "exact-URL sightings: archived copies, paste mentions, stealer-log entries naming the login page"
+      },
+      "ipv4": {
+        "regex": "^(?:\\d{1,3}\\.){3}\\d{1,3}$",
+        "strong": true,
+        "value": "sightings of the origin IP in leaks/logs/pastes — corroborates a co-tenancy claim from an independent corpus"
+      },
+      "cidr4": {
+        "regex": "^(?:\\d{1,3}\\.){3}\\d{1,3}/\\d{1,2}$",
+        "strong": true,
+        "value": "range sweep — use only on a small operator-owned block, never on a provider /16"
+      },
+      "ipv6": {
+        "regex": "^[0-9a-f:]+:[0-9a-f:]*$",
+        "strong": true,
+        "value": "as ipv4, for v6-fronted infrastructure"
+      },
+      "bitcoin": {
+        "regex": "^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,62})$",
+        "strong": true,
+        "value": "payout address sightings — pastes and forum posts that name the wallet, often with the campaign's own advertising copy"
+      },
+      "iban": {
+        "regex": "^[a-z]{2}\\d{2}[a-z0-9]{10,30}$",
+        "strong": true,
+        "value": "mule bank account sightings"
+      },
+      "mac": {
+        "regex": "^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$",
+        "strong": true,
+        "value": "device-level selector; rare in web cases, common in stealer-log work"
+      },
+      "uuid": {
+        "regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "strong": true,
+        "value": "SaaS tenant / project / device identifiers lifted from a page or an app"
+      },
+      "phone": {
+        "regex": "^\\+?[0-9][0-9 ().-]{6,20}$",
+        "strong": true,
+        "value": "contact-number sightings — ties a support/Zalo/WhatsApp number to leaks, pastes and other listings carrying the same number"
+      },
+      "domain": {
+        "regex": "^(?:\\*\\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$",
+        "strong": true,
+        "value": "the workhorse — accepts a `*.example.com` wildcard, and is the only selector the PHONEBOOK endpoint turns into an inventory of every email/subdomain/URL IntelX has seen under that apex"
+      }
+    }
+  },
+
+  "pivot_kind_map": {
+    "_comment": "WebPivot pivot `kind` -> the selector class above, i.e. which extracted artifacts are worth reversing on IntelX. Every key here is a kind the collector actually emits (grep `add(\"` in WebPivot/tools/wp_pivots.py and `\"kind\":` in whois_enrich.py before adding one). A kind that is absent gets NO IntelX query, which is the correct outcome for things IntelX does not index — favicon hashes, GA4 IDs, JARM, ETags. Prefix entries ending in `:` match any kind starting with that prefix; the VALUE is still classified before anything is emitted, so a mapped kind carrying an unsearchable value simply produces nothing. Do not add a kind hoping it works: a soft selector is refused by the API and still costs a search.",
+    "entries": {
+      "email": "email",
+      "whois:registrant_email": "email",
+      "security_contact": "email",
+      "dmarc_contact": "email",
+      "phone": "phone",
+      "whois:registrant_phone": "phone",
+      "domain": "domain",
+      "ip": "ipv4",
+      "mail_sender_ip": "ipv4",
+      "crypto:btc": "bitcoin",
+      "qr:url": "url",
+      "url": "url",
+      "iban": "iban"
+    }
+  },
+
+  "buckets": {
+    "_comment": "The IntelX bucket catalogue, with what a hit in each one actually PROVES. `rank` orders them by INVESTIGATIVE VALUE (1 = read this first) and results are sorted by it, because the buckets are not interchangeable and the difference is large. THE KEY DISTINCTION — a STEALER LOG beats a BREACH DUMP, and not by a little: a breach dump is one site's user table, so a hit says only 'this address had an account somewhere, some year' — recycled, endlessly re-shared, usually years stale by the time it is public. A stealer log is a snapshot of ONE infected machine at ONE moment: the URL + username + password triple WITH its session context, plus cookies, autofill and the host's own identity. That is a different class of fact. It gives a date anchor tied to a machine, it exposes ADMIN/PANEL URLs the public site never links (feed those to the victim/access-vector layer), its credentials are comparatively fresh — and, the case-making one, OPERATORS GET INFECTED TOO: a log whose machine holds the scam infrastructure's own panel URL and credentials is direct attribution, not exposure. So rank the logs first and read them item by item; skim the breach dumps for dates only. `grade` is the evidential weight of a hit: strong = the record is about the target specifically; context = it places the target in a corpus; weak = presence tells you almost nothing on its own. `access` records which entitlement is needed to READ the item's content (metadata is usually visible to any key). Bucket names vary a little by account tier; an unknown bucket is reported ungraded and ranked last, never dropped.",
+    "entries": {
+      "leaks.logs": {"rank": 1, "grade": "strong", "kind": "stealer log", "access": "api", "note": "INFOSTEALER LOGS — the highest-value bucket in IntelX. One hit = one infected machine at one moment, with the URL/user/password triple and its session context. Read it per ITEM, not as a corpus: check whether the machine is a VICTIM of this campaign (credentials for the scam's own front-end) or the OPERATOR's own box (the panel URL, the CMS/registrar/exchange logins behind the campaign) — the second is direct attribution. Also the strictest handling: real victim credentials, so quote metadata and never paste secrets into a case file"},
+      "pastes": {"rank": 2, "grade": "strong", "kind": "paste", "access": "public", "note": "pastebin-class documents — operators publish their own advertising, panels and configs here, so a hit is often the operator's OWN text"},
+      "whois": {"rank": 3, "grade": "strong", "kind": "whois", "access": "api", "note": "historical WHOIS snapshots — an independent second source for a registrant selector when WhoisXML history is unavailable"},
+      "darknet.tor": {"rank": 4, "grade": "strong", "kind": "darknet", "access": "api", "note": "onion mirrors — market/forum listings naming the selector"},
+      "darknet.i2p": {"rank": 5, "grade": "strong", "kind": "darknet", "access": "api"},
+      "leaks.private.general": {"rank": 6, "grade": "context", "kind": "breach", "access": "api", "note": "non-public breach corpora — better provenance than the public ones, still a user table: a date and an exposure fact, not a link"},
+      "web.public": {"rank": 7, "grade": "context", "kind": "web crawl", "access": "public", "note": "IntelX's own crawl, split per TLD as web.public.<tld> — a snapshot of the page as IntelX saw it, useful when the site is dead and Wayback missed it"},
+      "leaks.public.general": {"rank": 8, "grade": "context", "kind": "breach", "access": "api", "note": "public breach corpora — the LOWEST-yield 'leak' hit. Presence dates the address's exposure and nothing more; these dumps are recycled across dozens of combolists, so the same address reappears for years with no new information"},
+      "leaks.public.wikileaks": {"rank": 9, "grade": "context", "kind": "leak", "access": "api"},
+      "usenet": {"rank": 10, "grade": "weak", "kind": "usenet", "access": "api"},
+      "documents.public.scihub": {"rank": 11, "grade": "weak", "kind": "document", "access": "public"},
+      "dumpster": {"rank": 12, "grade": "weak", "kind": "misc", "access": "api", "note": "unsorted intake — treat every hit as unverified"}
+    }
+  },
+
+  "media_types": {
+    "_comment": "The `media` code on each record — what KIND of document matched. Used to label results and to filter a search (media=0 means all). Codes 10-12 are reserved by IntelX and must not be sent.",
+    "entries": {
+      "0": "any", "1": "paste document", "2": "paste user", "3": "forum", "4": "forum board",
+      "5": "forum thread", "6": "forum post", "7": "forum user", "8": "website screenshot",
+      "9": "website HTML copy", "13": "tweet", "14": "URL", "15": "PDF", "16": "Word",
+      "17": "Excel", "18": "PowerPoint", "19": "picture", "20": "audio", "21": "video",
+      "22": "archive (zip/rar/tar)", "23": "HTML file", "24": "text file"
+    }
+  },
+
+  "phonebook_targets": {
+    "_comment": "The `target` value for a PHONEBOOK search — the endpoint that turns ONE domain into an inventory of the selectors IntelX has seen under it. This is the highest-value call in the whole layer for web casework: point it at an apex and it returns the email addresses, the subdomains and the URLs, which are exactly the artifacts the rest of WebPivot pivots on. It is a PAID endpoint (see plan_capabilities) — a free key gets the web UI instead.",
+    "entries": {"all": 0, "domains": 1, "emails": 2, "urls": 3}
+  },
+
+  "selector_result_types": {
+    "_comment": "The `selectortype` code on each phonebook/selector result, so output can be grouped by artifact class rather than dumped as one list.",
+    "entries": {"1": "email", "2": "domain", "3": "url", "23": "url query"}
+  },
+
+  "plan_capabilities": {
+    "_comment": "What each IntelX entitlement can do, so the tool degrades with an accurate sentence instead of an opaque HTTP error. `phonebook` is the one that matters most: it is PAID-ONLY, so on a free key the domain->emails/subdomains inventory must be reported as NOT RUN rather than as empty. `file_read` gates reading a leak item's actual content (metadata is still returned without it).",
+    "entries": {
+      "none": {"search": false, "phonebook": false, "file_read": false, "note": "no key — the query BUILDER and the web-UI links still work; nothing is queried from here"},
+      "free": {"search": true, "phonebook": false, "file_read": false, "note": "free/public key: metadata search over the public buckets; phonebook and item content are refused (HTTP 402/403)"},
+      "api": {"search": true, "phonebook": true, "file_read": true, "note": "paid API key: search + phonebook + item content, metered in credits"},
+      "enterprise": {"search": true, "phonebook": true, "file_read": true, "note": "as api, with the private buckets and higher limits"}
+    }
+  },
+
+  "search_budget": {
+    "_comment": "THE SPEND GUARD. IntelX meters searches (a free key gets a small daily allowance; a paid key spends credits), and — unlike a rate limit — running out is silent from the analyst's side: the search simply returns nothing and an empty result reads as 'the operator is not in any leak'. So spend is counted from MEMORY/api_usage.jsonl before the call and capped per run and per month, exactly like the Censys guard. `phonebook_costs` reflects that a phonebook search is the expensive call and should not be fired at every domain in a 200-host batch. Override per run with INTELX_MAX_SEARCHES_PER_RUN / INTELX_MONTHLY_SEARCHES.",
+    "monthly_searches": 500,
+    "max_searches_per_run": 25,
+    "warn_at_remaining": 50,
+    "phonebook_costs": 5,
+    "search_costs": 1,
+    "block_when_exhausted": true
+  },
+
+  "result_limits": {
+    "_comment": "Per-call ceilings the tool applies so one selector cannot dominate a case file or a poll loop. `max_records` is what is kept from a search, `poll_*` bound the two-step result fetch, and `preview_lines` is how much of an item's content is pulled when previewing.",
+    "max_records": 200,
+    "max_selectors": 500,
+    "poll_attempts": 8,
+    "poll_sleep_seconds": 1,
+    "search_timeout_seconds": 5,
+    "preview_lines": 8
+  },
+
+  "ui_templates": {
+    "_comment": "The KEYLESS deliverable. Every IntelX pivot emits these URLs so an analyst with only a free web account can run the identical selector by hand — the same degradation path as the Censys CenQL builder. `{term}` is URL-encoded by the caller.",
+    "entries": {
+      "search": "https://intelx.io/?s={term}",
+      "phonebook": "https://phonebook.cz/?q={term}",
+      "signup": "https://intelx.io/signup",
+      "developer_tab": "https://intelx.io/account?tab=developer"
+    }
+  },
+
+  "clustering_policy": {
+    "_comment": "FALSE-POSITIVE CONTROL — read this before turning an IntelX hit into a same-operator edge. IntelX answers 'where has this selector been seen', which is a question about EXPOSURE, not about ownership. Co-membership in a corpus is the textbook false cluster: two addresses in the same combolist share a victim population, not an operator, so `never_cluster_on` is about the CORPUS, not about the value of its items. STEALER LOGS ARE THE ONE PLACE THAT DISTINCTION BITES: `leaks.logs` is listed here because 'both selectors appear in the log corpus' proves nothing (millions of machines), but a SINGLE log item can be first-class attribution — if that machine holds the campaign's panel URL and credentials, the operator's own box is in the dump, and that is per-ITEM evidence read by hand, not an automatic edge. See `item_evidence` below. Everything in `cluster_on` may support an edge, and even there the rule is the repo's usual one: corroborate with a second, independent artifact class before committing it.",
+    "cluster_on": ["whois", "pastes", "darknet.tor", "darknet.i2p"],
+    "never_cluster_on": ["leaks.public.general", "leaks.private.general", "leaks.public.wikileaks", "leaks.logs", "dumpster", "documents.public.scihub", "usenet"],
+    "item_evidence": ["leaks.logs"],
+    "note": "Corpus co-membership is never a link. But a stealer-log ITEM is worth opening: read whether the infected machine is a VICTIM of this campaign (holds credentials for the scam's front-end) or the OPERATOR (holds the admin panel, the registrar/CMS/exchange logins behind it). The second is attribution; the first feeds the victim/access-vector layer. A breach-dump item is worth opening for its DATE and nothing else."
+  }
+}

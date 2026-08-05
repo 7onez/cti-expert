@@ -32,6 +32,9 @@ import os
 import sys
 from typing import Optional
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # importable from anywhere
+from wp_refs import ref_path, load_ref    # noqa: E402 — reference DATA in references/*.json
+
 # Standardized analyst Domain Summary table (domains/status/WHOIS/attribution) —
 # auto-prepended to every assessment. Lives at the project-root tools/ dir.
 try:
@@ -325,17 +328,17 @@ def render_cia_report(result: dict,
 # =========================================================================== 1b. Cluster report
 # Registrant/contact emails that are registrar-privacy or abuse boilerplate, NOT the operator.
 # A shared value from this set is noise — it must never drive a same-operator judgment.
-_NOISE_EMAIL_SUBSTR = (
-    "contact.gandi.net", "@gandi.net", "whoisguard", "whoisprivacy", "privacyprotect",
-    "domainsbyproxy", "withheldforprivacy", "perfectprivacy", "privacy-protect",
-    "redacted", "abuse@", "tucows.com", "namecheap", "proxy@", "identity-protect",
-    "data-protected", "privacydotlink", "privacyservice",
-)
 # Registrant-name placeholders that registrar privacy proxies emit — not real people.
-_NOISE_NAME_SUBSTR = (
-    "redacted", "privacy", "domain admin", "whois", "proxy", "not disclosed",
-    "withheld", "reactivation period", "c/o id#", "data protected", "statutory masking",
-)
+# DATA: references/registrant_noise.json (shared with whois_enrich.py).
+_RN_FALLBACK = {
+    "noise_email_substrings": ("whoisguard", "whoisprivacy", "privacyprotect", "domainsbyproxy",
+                               "withheldforprivacy", "redacted", "abuse@", "proxy@"),
+    "noise_name_substrings": ("redacted", "privacy", "domain admin", "whois", "proxy",
+                              "not disclosed", "withheld", "data protected"),
+}
+_RN_REF = load_ref(ref_path(__file__, "registrant_noise.json"), _RN_FALLBACK)
+_NOISE_EMAIL_SUBSTR = tuple(_RN_REF["noise_email_substrings"])
+_NOISE_NAME_SUBSTR = tuple(_RN_REF["noise_name_substrings"])
 
 
 def _norm(v) -> str:
@@ -344,9 +347,12 @@ def _norm(v) -> str:
 
 # Managed-DNS nameserver domains + verification-token shapes that appear in passive DNS
 # but are NOT operator infrastructure — keep them out of Discovered Infrastructure.
-_NS_NOISE = ("ns.cloudflare.com", "dns.cloudflare.com", "awsdns", "domaincontrol.com",
-             "registrar-servers.com", "nsone.net", "dnspod.net", "googledomains.com",
-             "azure-dns.", "ns.buddyns.com", "name.com", "dnsowl.com", "he.net")
+# DATA: references/third_party_noise.json -> managed_ns_substrings
+_NS_NOISE = tuple(load_ref(ref_path(__file__, "third_party_noise.json"),
+                           {"managed_ns_substrings": ("ns.cloudflare.com", "awsdns",
+                                                      "domaincontrol.com",
+                                                      "registrar-servers.com")}
+                           )["managed_ns_substrings"])
 
 
 def _is_infra_noise_host(h: str) -> bool:

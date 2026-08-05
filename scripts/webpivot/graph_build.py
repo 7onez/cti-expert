@@ -20,7 +20,7 @@ Edges are typed and evidence-graded per investigative convention:
 
 Usage:
   graph_build.py out/*.json -o graph.json
-  graph_build.py a.json b.json --operator "anhquoc" --operator-links lambang247.shop,lambangxinviec.shop -o graph.json
+  graph_build.py a.json b.json --operator "operator-a" --operator-links site-a.example,site-b.example -o graph.json
 
 Feed graph.json to cti-expert's network renderer (the interactive HTML report;
 see output/visuals/render-engine.md) or any force-directed graph viewer.
@@ -456,8 +456,8 @@ def betweenness(adj):
                 bc[w] += delta[w]
     n = len(nodes)
     scale = 1.0 / ((n - 1) * (n - 2)) if n > 2 else 1.0
-    mx = (max(bc.values()) if bc else 1.0) or 1.0
-    return {k: v * scale / (max(bc.values()) * scale or 1) if False else v / mx for k, v in bc.items()}
+    mx = (max(bc.values()) if bc else 0.0) or 1.0   # tiny/edgeless graph → no crash
+    return {k: v / mx for k, v in bc.items()}
 
 
 def assemble(g, algo="louvain"):

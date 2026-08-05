@@ -1,0 +1,184 @@
+{
+  "_comment": "CENSYS PLATFORM (api.platform.censys.io / platform.censys.io) — the query language, the credit prices, and what each subscription tier is allowed to do. Censys retired the Legacy Search query language (`services.http.response.favicons.md5_hash`) in favour of CenQL, which namespaces every field under host. / web. / cert., so an old Censys query copied from a 2023 blog post will simply not run. Edit this file when Censys renames a field, changes a credit price, or when YOUR plan changes — the code holds only the matching logic, never the field names or the prices. Nothing here is case data: these are public product constants.",
+
+  "cenql_templates": {
+    "_comment": "CenQL query templates, keyed by the ARTIFACT the query pivots on. `{value}` is substituted with the artifact value (already quoted where the template needs quotes). Several templates list more than one query because Censys splits the same fact across datasets: `web.` is the per-hostname:port web-property view, `host.` is the per-IP view, `cert.` is the certificate view. Run the `web.` form first for scam/phishing infrastructure (it is keyed on the hostname the victim sees); fall back to the `host.` form when you want every IP serving it. Verified against docs.censys.com (host / web-property / certificate datasets) 2026-08-04. OPERATOR CHOICE MATTERS: `=` is an exact, case-sensitive match (use it for hashes, fingerprints and whole hostnames) while `:` is a tokenised, case-insensitive match (use it for a bare subdomain LABEL or a body keyword, where an exact match on the whole field would find nothing). `=~` is regex and is Starter+ only, which is why no template here uses it.",
+    "entries": {
+      "favicon_md5": [
+        "web.endpoints.http.favicons.hash_md5={value}",
+        "host.services.endpoints.http.favicons.hash_md5={value}"
+      ],
+      "favicon_sha256": [
+        "web.endpoints.http.favicons.hash_sha256={value}",
+        "host.services.endpoints.http.favicons.hash_sha256={value}"
+      ],
+      "tls_fingerprint_sha256": [
+        "cert.fingerprint_sha256={value}",
+        "web.cert.fingerprint_sha256={value}",
+        "host.services.cert.fingerprint_sha256={value}"
+      ],
+      "cert_name": [
+        "cert.names=\"{value}\""
+      ],
+      "cert_subject_org": [
+        "cert.parsed.subject.organization:\"{value}\""
+      ],
+      "cert_subject_cn": [
+        "cert.parsed.subject.common_name:\"{value}\""
+      ],
+      "jarm": [
+        "web.jarm.fingerprint={value}",
+        "host.services.jarm.fingerprint={value}"
+      ],
+      "ip": [
+        "host.ip={value}"
+      ],
+      "asn": [
+        "host.autonomous_system.asn={value}"
+      ],
+      "hostname": [
+        "web.hostname=\"{value}\""
+      ],
+      "dns_name": [
+        "host.dns.names=\"{value}\""
+      ],
+      "dns_label": [
+        "host.dns.names:\"{value}\"",
+        "web.hostname:\"{value}\""
+      ],
+      "redirect_hostname": [
+        "web.endpoints.http.redirect_chain.hostname=\"{value}\""
+      ],
+      "body_keyword": [
+        "web.endpoints.http.body:\"{value}\"",
+        "host.services.endpoints.http.body:\"{value}\""
+      ],
+      "body_hash_sha256": [
+        "web.endpoints.http.body_hash_sha256={value}",
+        "host.services.endpoints.http.body_hash_sha256={value}"
+      ],
+      "banner_hash_sha256": [
+        "host.services.banner_hash_sha256={value}"
+      ],
+      "software": [
+        "web.software.product=\"{value}\"",
+        "host.services.software.product=\"{value}\""
+      ],
+      "whois_org": [
+        "host.whois.organization.name:\"{value}\""
+      ],
+      "http_header_value": [
+        "web.endpoints.http.headers: (key: \"{key}\" and value: \"{value}\")"
+      ]
+    }
+  },
+
+  "pivot_kind_map": {
+    "_comment": "WebPivot pivot `kind` -> the cenql_templates key that reverses it on Censys. A kind absent from this map simply gets no Censys query emitted — that is the correct outcome for artifacts Censys does not index (wallets, Telegram handles, phone numbers: use FOFA body= / PublicWWW / a search engine instead). Prefix keys ending in `:` match any kind starting with that prefix, so `tracker:` covers tracker:ga4, tracker:gtm and every future tracker subtype without editing this file.",
+    "entries": {
+      "favicon_hash": "favicon_md5",
+      "tls_cert:fingerprint_sha256": "tls_fingerprint_sha256",
+      "tls_cert:co_san": "cert_name",
+      "jarm:hash": "jarm",
+      "ip": "ip",
+      "ip:asn": "asn",
+      "domain": "hostname",
+      "subdomain": "dns_label",
+      "third_party_host": "hostname",
+      "cors_allowed_origin": "hostname",
+      "api_endpoint": "hostname",
+      "websocket_endpoint": "hostname",
+      "mail_server": "dns_name",
+      "tracker:": "body_keyword",
+      "verification:": "body_keyword",
+      "saas:": "body_keyword",
+      "keyword": "body_keyword",
+      "build_env:": "body_keyword",
+      "adstxt_publisher": "body_keyword"
+    }
+  },
+
+  "credit_costs": {
+    "_comment": "Censys Credits consumed per action on the Free and Starter tiers (docs.censys.com 'Credits for Free and Starter Users'). A Censys FREE account is granted `free_monthly_credits` per month and they DO NOT roll over. This is why WebPivot treats Censys as a metered API and skips it under --free-only: an entity lookup is cheap but a search is 5x the price, and 20 careless searches burn a whole month. `advanced_query` is any query using a regex (`=~`), which is Starter+ only anyway.",
+    "entity_lookup": 1,
+    "standard_query": 5,
+    "advanced_query": 8,
+    "extra_page_standard": 5,
+    "extra_page_advanced": 8,
+    "free_monthly_credits": 100
+  },
+
+  "credit_budget": {
+    "_comment": "THE SPEND GUARD. Censys is the tightest budget in the toolkit: 100 credits a MONTH on the free plan, no rollover, and a single careless sweep of 20 searches burns the entire month in one run — after which every Censys pivot in every other case is dead until the 1st. So `wp_censys` tracks what this month has already cost (summed from MEMORY/api_usage.jsonl, provider=censys) and refuses to spend past the budget instead of discovering the ceiling as an HTTP 402 mid-case. `monthly_credits` is the plan's grant — RAISE IT if you buy credits or upgrade (or set CENSYS_MONTHLY_CREDITS). `warn_at_remaining` is when the run starts printing the balance on every call, so the ceiling is visible before it is hit. `max_credits_per_run` is the per-process cap — a batch of 200 domains must not be able to spend a whole month on lookups nobody asked for; raise it deliberately for a run that genuinely needs it (CENSYS_MAX_CREDITS_PER_RUN), it is not a rate limit but a blast radius. `reserve_for_lookups` keeps a floor of credits that ONLY the 1-credit lookups may use, so an expensive search cannot consume the last of the month and leave the cheap cert-lookup — the highest-value free-plan call there is — unaffordable. Set `block_when_exhausted` false only if you would rather Censys answer 402 than skip.",
+    "monthly_credits": 100,
+    "warn_at_remaining": 30,
+    "max_credits_per_run": 20,
+    "reserve_for_lookups": 10,
+    "block_when_exhausted": true
+  },
+
+  "plan_capabilities": {
+    "_comment": "What each Censys subscription tier can actually do, so the tooling can degrade with an accurate message instead of an opaque 403. `api_search` is the one that matters most: on a FREE plan the Platform API exposes ONLY the lookup endpoints (host / web property / certificate, single + bulk) — POST /v3/global/search/query returns 403. A free analyst can still run any CenQL query by hand in the web UI (1 page of 100 results, 5 credits), which is why every Censys pivot also emits a platform.censys.io/search URL. Update these when Censys changes entitlements or when you upgrade.",
+    "entries": {
+      "free": {
+        "api_lookup": true,
+        "api_search": false,
+        "ui_search_pages": 1,
+        "regex_query": false,
+        "jarm_searchable": false,
+        "host_history_days": 0,
+        "note": "API = lookup endpoints only (host / web property / certificate). Search via the web UI only."
+      },
+      "starter": {
+        "api_lookup": true,
+        "api_search": true,
+        "ui_search_pages": 5,
+        "regex_query": true,
+        "jarm_searchable": false,
+        "host_history_days": 7,
+        "note": "Reached by purchasing any amount of credits on a Free account. Unlocks the search API + regex."
+      },
+      "search": {
+        "api_lookup": true,
+        "api_search": true,
+        "ui_search_pages": 0,
+        "regex_query": true,
+        "jarm_searchable": false,
+        "host_history_days": 31,
+        "note": "Enterprise. ui_search_pages 0 = unlimited."
+      },
+      "core": {
+        "api_lookup": true,
+        "api_search": true,
+        "ui_search_pages": 0,
+        "regex_query": true,
+        "jarm_searchable": false,
+        "host_history_days": 31,
+        "note": "Enterprise. JARM / JA4X / CensEye need the Adversary Investigation module on top."
+      },
+      "adversary_investigation": {
+        "api_lookup": true,
+        "api_search": true,
+        "ui_search_pages": 0,
+        "regex_query": true,
+        "jarm_searchable": true,
+        "host_history_days": 31,
+        "note": "Add-on module. The ONLY tier where JARM fingerprints and context hashes are searchable."
+      }
+    }
+  },
+
+  "endpoints": {
+    "_comment": "Censys Platform API v3 paths, relative to https://api.platform.censys.io. `lookup_*` are the FREE-tier endpoints (1 credit each; the bulk forms charge 1 credit per RESULT returned). `search_query` costs 5 credits and is Starter+. Authentication on all of them is `Authorization: Bearer <Personal Access Token>`, optionally scoped with the `X-Organization-ID` header. Verified live 2026-08-04.",
+    "entries": {
+      "lookup_host": "/v3/global/asset/host/{id}",
+      "lookup_host_bulk": "/v3/global/asset/host",
+      "lookup_webproperty": "/v3/global/asset/webproperty/{id}",
+      "lookup_webproperty_bulk": "/v3/global/asset/webproperty",
+      "lookup_certificate": "/v3/global/asset/certificate/{id}",
+      "lookup_certificate_bulk": "/v3/global/asset/certificate",
+      "search_query": "/v3/global/search/query",
+      "ui_search": "https://platform.censys.io/search?q={q}"
+    }
+  }
+}

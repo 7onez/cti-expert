@@ -1,0 +1,85 @@
+{
+  "_comment": "HOW MUCH A PIVOT ARTIFACT IS WORTH. These tables carry analyst JUDGMENT, not facts: the confidence WebPivot stamps on a SaaS-token pivot, and which URL params count as affiliate attribution. Edit them when tradecraft changes — e.g. a SaaS starts sharing a tenant id across customers (drop it to null) or a new affiliate network appears.",
+  "saas_pivots": {
+    "_comment": "SaaS/automation token kind -> [confidence, analyst note]. confidence is 'high' when the token identifies an OPERATOR-CONTROLLED account (a GoHighLevel sub-account, a backend Google Sheet, a Zapier hook) so a shared value means a shared operator. Use null for a token that only signals a funnel TYPE and must not drive clustering. The note is printed next to the pivot, so write it for the analyst who has to act on it.",
+    "entries": {
+      "gohighlevel_location": [
+        "high",
+        "GoHighLevel sub-account (location) ID. Same GHL tenant = same operator; find its whole portfolio."
+      ],
+      "google_sheet": [
+        "high",
+        "Backend Google Sheet ID embedded in the page. Same sheet = same operator — and it may be publicly readable (check for exposed leads/PII)."
+      ],
+      "google_doc": [
+        "high",
+        "Backend Google Doc ID embedded in the page. Same doc = same operator — and it may be publicly readable."
+      ],
+      "google_slides": [
+        "high",
+        "Backend Google Slides ID embedded in the page. Same deck = same operator."
+      ],
+      "google_form": [
+        "high",
+        "Google Form the page collects leads with — operator-controlled. Same form = same operator (responses may be readable)."
+      ],
+      "google_drive": [
+        "high",
+        "Google Drive folder/file ID referenced by the page — operator asset store. Same ID = same operator."
+      ],
+      "make_webhook": [
+        "high",
+        "Make.com automation webhook — operator-controlled endpoint. Same token = same operator."
+      ],
+      "integromat_webhook": [
+        "high",
+        "Integromat/Make automation webhook — operator-controlled. Same token = same operator."
+      ],
+      "zapier_webhook": [
+        "high",
+        "Zapier catch hook — operator-controlled automation endpoint. Same token = same operator."
+      ],
+      "apps_script": [
+        "high",
+        "Google Apps Script web-app the form posts to — operator-controlled. Same deployment = same operator."
+      ],
+      "trustedform": [
+        null,
+        "TrustedForm (TCPA lead certification) — signals a lead-generation funnel; not an operator pivot."
+      ]
+    }
+  },
+  "affiliate_params": {
+    "_comment": "Query-parameter NAMES that carry affiliate / referral / campaign attribution. When a redirector's destination stamps one of these, the VALUE is the real pivot — source-search it to find everywhere that promoter advertises. Matched lowercase, exact.",
+    "values": [
+      "8c",
+      "a_aid",
+      "a_bid",
+      "aff",
+      "aff_id",
+      "affid",
+      "affiliate",
+      "affiliateid",
+      "agent",
+      "agentid",
+      "btag",
+      "click_id",
+      "clickid",
+      "ib",
+      "invite",
+      "invitecode",
+      "partner",
+      "partnerid",
+      "pid",
+      "promo",
+      "promocode",
+      "ref",
+      "ref_id",
+      "referral",
+      "referralcode",
+      "refid",
+      "sub_id",
+      "subid"
+    ]
+  }
+}

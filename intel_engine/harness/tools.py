@@ -237,6 +237,175 @@ async def fallback_probe(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "impersonation_hunt",
+    "Hunt IMPERSONATION / typosquat / lookalike domains of a seed — not the one page, but the "
+    "domains an operator would register to mimic it. Three moves: (1) TYPOSQUAT permutations of "
+    "the brand label (omission/insertion/adjacent-key/transposition/homoglyph/hyphenation/"
+    "combosquat), (2) a TLD SWEEP of the exact label across a curated scam-heavy TLD list, (3) a "
+    "KEYWORD HUNT for every domain whose NAME contains the label via certificate transparency "
+    "(crt.sh identity LIKE). Candidates are then existence-checked with live DNS, so the output "
+    "SEPARATES confirmed/registered lookalikes (with DNS/CT evidence — each an "
+    "impersonation:candidate pivot: run pivot_extract on it and compare) from an unregistered "
+    "monitoring watchlist. FREE by default (crt.sh + DNS, zero credits); pass fofa=true / "
+    "urlscan=true for the metered cert=/page.domain keyword sweeps. Does NOT live-fetch the "
+    "lookalike infra (opsec). Writes the result into the case's raw/ so kb_ingest clusters "
+    "lookalikes with the rest of the case's web infrastructure.",
+    {"domain": str, "case": str},  # fofa/urlscan:bool, max:int optional -> args.get()
+)
+async def impersonation_hunt(args: dict[str, Any]) -> dict[str, Any]:
+    host = _host(args["domain"])
+    case = args["case"]
+    raw_dir = os.path.join(ROOT, "cases", case, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    out = os.path.join(raw_dir, host + ".impersonation.json")
+    cmd = [PY, os.path.join("WebPivot", "tools", "pivot_extract.py"), host,
+           "--hunt-impersonation", "--pretty", "-o", out, "--case", case]
+    if args.get("fofa"):
+        cmd += ["--hunt-fofa"]
+    if args.get("urlscan"):
+        cmd += ["--hunt-urlscan"]
+    if args.get("max"):
+        cmd += ["--hunt-max", str(int(args["max"]))]
+    r = _run(cmd, timeout=240)
+    data = _load_json(out)
+    if data is None:
+        return _err(f"impersonation_hunt failed for {host}: {(r.stderr or '')[-500:]}")
+    art = (data.get("artifacts") or {}).get("impersonation") or {}
+    blob = json.dumps(data, ensure_ascii=False)
+    return _ok(f"ImpersonationHunt on {host}: generated {art.get('generated', 0)} candidates → "
+               f"{art.get('existing_count', 0)} confirmed lookalikes (DNS/CT), "
+               f"{art.get('candidate_count', 0)} on the monitoring watchlist. "
+               f"Written to {os.path.relpath(out, ROOT)} for kb_ingest.\n{blob[:6000]}")
+
+
+@tool(
+    "search_pivot",
+    "Multi-engine SEARCH-ENGINE pivot for an indicator — the general-web complement to FOFA/"
+    "PublicWWW (which only see served HTML). Takes ANY indicator (domain, distinctive slogan, "
+    "tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded results URLs "
+    "+ raw OSINT dork queries across a switchable engine set (Google / Yandex / DuckDuckGo / Bing / "
+    "Brave) — off-site mentions, bilingual scam/fraud context, chat handles, paste/code leaks, "
+    "related: sites. It does NOT scrape (SERPs are bot-walled) — FIRE the queries with Claude "
+    "Code's WebSearch (single-engine but free) and/or WebFetch the duckduckgo html URL (the one a "
+    "plain fetch can read; Google/Yandex bot-wall WebFetch), extract candidate hosts from the "
+    "results, and feed the NEW ones back into pivot_extract to close the keyword→search→"
+    "infrastructure loop. Pass engines='google,yandex,duckduckgo' to pick engines; kind='domain'|"
+    "'keyword' to override auto-detection.",
+    {"indicator": str},  # engines:str (comma list), kind:str optional -> args.get()
+    annotations=READONLY,
+)
+async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "search_pivot.py"), args["indicator"]]
+    if args.get("engines"):
+        cmd += ["--engines", str(args["engines"])]
+    if args.get("kind"):
+        cmd += ["--kind", str(args["kind"])]
+    r = _run(cmd, timeout=30)
+    if r.returncode != 0:
+        return _err(r.stderr or "search_pivot failed")
+    return _ok(r.stdout or "search_pivot produced no output")
+
+
+@tool(
+    "intelx_search",
+    "Intelligence X — search ONE STRONG SELECTOR across a corpus nothing else here indexes: breach "
+    "dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS and IntelX's own web crawl. "
+    "`selector` must be an email, domain (a `*.apex` wildcard is allowed), URL, IP/CIDR, phone "
+    "number, wallet, MAC/UUID/IBAN — never a brand or person name (a soft term is refused and still "
+    "costs a unit). Use it on the artifacts that carry ATTRIBUTION: a registrant email, a support "
+    "phone, a payout wallet. mode='phonebook' instead turns ONE domain into an inventory of every "
+    "email address, subdomain and URL IntelX has seen under it — the highest-value call for web "
+    "casework, and PAID-only. Every record comes back graded: a hit in a breach corpus or a stealer "
+    "log is EXPOSURE evidence and is flagged NOT clusterable (two addresses in one combolist share "
+    "victims, not an operator); only whois/pastes/darknet hits may support a same-operator edge. "
+    "METERED and capped per run. With no INTELX_KEY the layer still runs at ~50%: it classifies the "
+    "selector and returns the intelx.io / phonebook.cz URL to run by hand — say so rather than "
+    "reporting an empty result as 'not in any leak'.",
+    {"selector": str},  # mode:'search'|'phonebook', buckets:str, max:int optional -> args.get()
+    annotations=READONLY,
+)
+async def intelx_search(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_intelx.py")
+    mode = str(args.get("mode") or "search").lower()
+    sel = str(args["selector"])
+    if mode == "phonebook":
+        cmd = [PY, script, "phonebook", sel]
+        if args.get("target"):
+            cmd += ["--target", str(args["target"])]
+    else:
+        cmd = [PY, script, "search", sel]
+        if args.get("buckets"):
+            cmd += ["--buckets", str(args["buckets"])]
+    if args.get("max"):
+        cmd += ["--max", str(int(args["max"]))]
+    r = _run(cmd, timeout=180)
+    if r.returncode != 0 and not r.stdout:
+        # rc=2 is the documented KEYLESS path: the stderr block explains what was not queried and
+        # gives the UI URL. That is information, not a failure — surfacing it as an error would
+        # teach the model to stop asking.
+        return _ok((r.stderr or "intelx produced no output") +
+                   "\n\n(Keyless/limited IntelX: nothing was queried. Do NOT report this as "
+                   "'the selector appears in no leak' — run the URL above by hand.)")
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "anyrun_lookup",
+    "ANY.RUN Threat Intelligence Lookup — what samples carrying this indicator actually DID when "
+    "OTHER people detonated them: the domains, IPs, URLs and ports they contacted, the family "
+    "label, Suricata context and public sandbox tasks. The file half's counterpart to a reverse "
+    "search: run it after analyze_artifact on the sample's sha256, its backend host or its C2 "
+    "`ip:port`. It is the ONLY way to recover a PACKED sample's real endpoints — those exist only "
+    "at runtime, so a thin static string sweep plus a `binary:protection` finding is exactly the "
+    "cue to call this. `indicator` is auto-typed (sha256/md5/domain/ip[:port]/url); pass "
+    "query='field:\"value\"' for a raw TI Lookup query. Contacted hosts may support an operator "
+    "edge once corroborated; a shared threat FAMILY is same-KIT only and never attribution on its "
+    "own.\n"
+    "OPSEC — THIS TOOL NEVER SUBMITS A SAMPLE, AND YOU MUST NOT ARRANGE FOR ONE TO BE SUBMITTED. "
+    "It is lookup-only: it reads detonations that already happened. Uploading the case's own APK / "
+    "installer to ANY.RUN is an OUTBOUND, IRREVERSIBLE act — on a public plan the task, the file "
+    "and its hash become world-readable, so the operator can watch their own sample being analysed "
+    "and burn the infrastructure before the case closes. If detonation is genuinely needed, STOP "
+    "and put the decision to the analyst in plain terms (what gets exposed, that a public task is "
+    "permanent) and let THEM do it in the sandbox UI on a private plan. Never submit as a side "
+    "effect of a pivot, and never infer standing permission from an earlier approval.\n"
+    "METERED (needs a TI Lookup licence, separate from a sandbox subscription) and capped per run. "
+    "With no ANYRUN_API_KEY the layer still runs at ~50%: it composes the correct query and returns "
+    "the UI address — say so rather than reporting silence as 'unknown sample'.",
+    {"indicator": str},  # query:str, days:int optional -> args.get()
+    annotations=READONLY,
+)
+async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
+    import re
+    script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
+    cmd = [PY, script, "lookup"]
+    if args.get("query"):
+        cmd += ["--query", str(args["query"])]
+    else:
+        ind = str(args["indicator"]).strip()
+        host = ind.split(":")[0]
+        if re.fullmatch(r"[0-9a-fA-F]{64}", ind):
+            flag = "--sha256"
+        elif re.fullmatch(r"[0-9a-fA-F]{32}", ind):
+            flag = "--md5"
+        elif ind.startswith(("http://", "https://")):
+            flag = "--url"
+        elif re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
+            flag = "--ip"
+        else:
+            flag = "--domain"
+        cmd += [flag, ind]
+    if args.get("days"):
+        cmd += ["--days", str(int(args["days"]))]
+    r = _run(cmd, timeout=180)
+    if r.returncode != 0 and not r.stdout:
+        return _ok((r.stderr or "anyrun produced no output") +
+                   "\n\n(Keyless/limited ANY.RUN: nothing was queried. Do NOT report this as "
+                   "'the sample is unknown to the sandbox world' — paste the query into the UI.)")
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
     "kb_ingest",
     "Ingest a case's raw pivot JSON into the knowledge base so it becomes correlatable. "
     "Run this after pivot_extract; a run that isn't ingested is invisible to correlation.",
@@ -483,6 +652,87 @@ async def cert_overlap(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "censys",
+    "Censys Platform — the SERVER-side view of a target, complementing FOFA/urlscan (which index "
+    "what the page looks like). Six modes via `mode`:\n"
+    "  mode='cert' + value=<leaf SHA-256> — THE high-value one, and it works on a FREE Censys "
+    "plan: returns the certificate's own `names` list, i.e. EVERY hostname on that exact "
+    "certificate. crt.sh gives fuzzy name overlap; this is the cert stating its own coverage, so a "
+    "multi-apex name list is near-decisive same-operator evidence across brands.\n"
+    "  mode='host' + value=<IP> — ASN/WHOIS org, forward+reverse DNS names, open ports, per-service "
+    "banners and cert fingerprints. Free plan OK.\n"
+    "  mode='webproperty' + value=<hostname[:port]> (default :443) — the cert, favicon hashes, body "
+    "hash, software stack and threat labels Censys recorded for that hostname. Free plan OK.\n"
+    "  mode='search' + value=<CenQL query> — reverse ANY indexed artifact (favicon MD5, body "
+    "keyword, cert fingerprint). NEEDS a Censys Starter plan or above; on a FREE plan Censys 403s "
+    "and this returns `skipped` together with a platform.censys.io UI link that runs the identical "
+    "query by hand — use that link, do not report it as a failure.\n"
+    "  mode='query' + value=<pivot value> + kind=<WebPivot pivot kind> — OFFLINE: build the CenQL "
+    "for an artifact without a key and without spending anything.\n"
+    "  mode='budget' (no value needed) — OFFLINE: how many of this month's Censys credits are left. "
+    "Check it before a batch.\n"
+    "COST — READ THIS BEFORE CALLING: Censys bills CREDITS, a FREE account gets only 100 per MONTH, "
+    "they do NOT roll over, and the quota is per ACCOUNT, so overspending here removes Censys from "
+    "every later case too. A lookup is 1 credit, a search 5 (and running the emitted CenQL in the "
+    "web UI costs the same 5 — the UI link is not free). Use it deliberately, on the artifact that "
+    "decides the question, not as a default enrichment on every host: prefer 'cert'/'host'/"
+    "'webproperty' lookups over 'search', and prefer handing the analyst the 'query' CenQL over "
+    "spending a search yourself. The tool refuses to exceed the monthly/per-run budget and returns "
+    "`skipped` with the balance instead. Needs CENSYS_PAT; without it every mode except 'query' and "
+    "'budget' returns nothing — which is a missing CREDENTIAL, never evidence about the target. "
+    "Read-only.",
+    {"mode": str, "value": str},  # kind:str (mode='query'), port:int (mode='webproperty') optional
+    annotations=READONLY,
+)
+async def censys(args: dict[str, Any]) -> dict[str, Any]:
+    mode, value = str(args.get("mode", "")).strip().lower(), str(args.get("value", "")).strip()
+    if not value and mode != "budget":       # budget is a balance check — it has no target
+        return _err("censys needs a `value` (an IP, hostname, cert SHA-256, or CenQL query).")
+    script = os.path.join("WebPivot", "tools", "wp_censys.py")
+    if mode == "cert":
+        cmd = [PY, script, "cert", value]
+    elif mode == "host":
+        cmd = [PY, script, "host", value]
+    elif mode == "webproperty":
+        cmd = [PY, script, "webproperty", value, "--port", str(args.get("port", 443))]
+    elif mode == "search":
+        cmd = [PY, script, "search", value]
+    elif mode == "query":
+        cmd = [PY, script, "query", str(args.get("kind", "")), value]
+    elif mode == "budget":
+        cmd = [PY, script, "budget"]
+    else:
+        return _err("censys `mode` must be one of: "
+                    "cert | host | webproperty | search | query | budget.")
+    r = _run(cmd, timeout=120)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "capability_check",
+    "What can this machine actually collect? Reports which optional API keys are configured and — "
+    "for each one that is NOT — the exact evidence class that is unavailable and the free path that "
+    "substitutes. Call it at the START of a case, and whenever a collection comes back thin. "
+    "WebPivot always runs keyless, so a missing key is never an error, but it changes what a NULL "
+    "result means: with no FOFA/urlscan credential the favicon and tracker reverse-lookups never "
+    "ran, so 'no sibling domains' is a fact about the credentials, not about the operator. TELL THE "
+    "USER when the mode is keyless/partial and say which indexes went unqueried before presenting "
+    "any 'nothing found' conclusion. Optional `free_only=true` reports it as the convergence loop "
+    "sees it (keys present but forbidden to spend). Offline, free, read-only.",
+    {},  # free_only:bool optional
+    annotations=READONLY,
+)
+async def capability_check(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_capabilities.py")]
+    if args.get("free_only"):
+        cmd.append("--free-only")
+    r = _run(cmd, timeout=30)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
     "reference_check",
     "Check a hash/keyword against the curated fingerprint reference BEFORE trusting it as a "
     "same-operator link. Returns BENIGN (a globally common logo/CDN/CSS-framework artifact — a "
@@ -645,18 +895,24 @@ async def render_report(args: dict[str, Any]) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- servers + names
 COLLECT_SERVER = create_sdk_mcp_server(
-    "collect", tools=[pivot_extract, analyze_artifact, fallback_probe, kb_ingest])
+    "collect", tools=[pivot_extract, analyze_artifact, fallback_probe,
+                      impersonation_hunt, search_pivot, intelx_search, anyrun_lookup,
+                      kb_ingest])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
-                      reverse_whois, cert_overlap, reference_check, reference_add,
+                      reverse_whois, cert_overlap, censys, capability_check,
+                      reference_check, reference_add,
                       which_cases, domain_verdict, api_usage,
                       render_diagram, render_report])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__analyze_artifact",
-                 "mcp__collect__fallback_probe", "mcp__collect__kb_ingest"]
+                 "mcp__collect__fallback_probe", "mcp__collect__impersonation_hunt",
+                 "mcp__collect__search_pivot", "mcp__collect__intelx_search",
+                 "mcp__collect__anyrun_lookup", "mcp__collect__kb_ingest"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
                  "mcp__analyze__reverse_whois", "mcp__analyze__cert_overlap",
+                 "mcp__analyze__censys", "mcp__analyze__capability_check",
                  "mcp__analyze__reference_check", "mcp__analyze__reference_add",
                  "mcp__analyze__which_cases", "mcp__analyze__domain_verdict",
                  "mcp__analyze__api_usage",

@@ -50,6 +50,29 @@ import tempfile
 import zipfile
 from urllib.parse import urlparse
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bp_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
+import bp_anyrun  # noqa: E402 — ANY.RUN TI Lookup: query builder (keyless) + live lookups (--anyrun)
+
+# ---------------------------------------------------------------- reference data (RULE 3)
+# The host-token denylists and the packer/installer/protector signature tables are DATA, in
+# references/binary_indicators.json — they change far faster than the code that matches them,
+# so an analyst extends the JSON and reruns. The fallback below is deliberately minimal: if the
+# file is unreadable the tool still runs, visibly weaker, with a stderr warning.
+_BP_FALLBACK = {
+    "fake_tlds": ["json", "xml", "html", "css", "js", "png", "jpg", "so", "dll", "exe", "dex",
+                  "jar", "apk", "txt", "md", "yml", "php", "asp", "jsp"],
+    "package_prefixes": ["com", "org", "net", "io", "android", "androidx", "java", "javax",
+                         "kotlin", "dalvik"],
+    "pe_section_packers": {"upx0": "UPX", "upx1": "UPX", ".aspack": "ASPack",
+                           ".vmp0": "VMProtect", ".themida": "Themida/WinLicense"},
+    "installer_signatures": {"NSIS": ["Nullsoft.NSIS.exehead"], "Inno Setup": ["Inno Setup"],
+                             "InstallShield": ["InstallShield"]},
+    "android_protectors": {"Bangcle / SecNeo": [r"libsecexe\.so$", r"libsecmain\.so$"],
+                           "Qihoo 360 Jiagu": [r"libjiagu.*\.so$"]},
+}
+_BP_REF = bp_refs.load_ref(bp_refs.ref_path(__file__, "binary_indicators.json"), _BP_FALLBACK)
+
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 MAX_DOWNLOAD = 400 * 1024 * 1024      # 400 MB cap — scam APKs/installers are well under this
@@ -235,23 +258,10 @@ def _decode_matches(matches):
 
 # File extensions / code tokens that look like a TLD but never are one. A bare host token
 # ending in these is a filename or identifier, not a domain (config.json, libapp.so, R.attr).
-_FAKE_TLD = {
-    "json", "xml", "html", "htm", "css", "js", "mjs", "ts", "jsx", "tsx", "png", "jpg", "jpeg",
-    "gif", "svg", "webp", "bmp", "ico", "ttf", "otf", "woff", "woff2", "eot", "mp3", "mp4",
-    "wav", "ogg", "properties", "java", "kt", "kts", "scala", "class", "dex", "smali", "so",
-    "dll", "exe", "dylib", "plist", "txt", "md", "yml", "yaml", "ini", "cfg", "conf", "gradle",
-    "pro", "aar", "jar", "apk", "aab", "bin", "dat", "pak", "obb", "db", "sqlite", "log", "tmp",
-    "bak", "gz", "tar", "pdf", "csv", "ttc", "nib", "storyboard", "xib", "R", "id", "attr",
-    "layout", "drawable", "mipmap", "string", "style", "color", "dimen", "anim", "raw", "menu",
-    "xmlns", "permission", "action", "category", "extra", "intent", "provider",
-    # server-side script extensions (not real TLDs) — index.php, login.aspx, panel.jsp
-    "php", "phtml", "asp", "aspx", "ashx", "asmx", "jsp", "jspx", "cgi",
-}
 # Leading label of a reverse-DNS package/class name — real hostnames never start with these.
-_PKG_PREFIX = {
-    "com", "org", "net", "io", "gov", "edu", "android", "androidx", "java", "javax", "kotlin",
-    "kotlinx", "dalvik", "junit", "sun", "apple", "google", "androidhive", "squareup",
-}
+# DATA: references/binary_indicators.json (RULE 3) — extend it there, not here.
+_FAKE_TLD = frozenset(_BP_REF["fake_tlds"])
+_PKG_PREFIX = frozenset(_BP_REF["package_prefixes"])
 
 
 def _valid_host(h, from_url=False):
@@ -734,58 +744,22 @@ def _sample(data, cap=4_000_000):
 
 
 # PE section names that are packer / protector tells (lower-cased exact match).
-_PE_SECTION_PACKERS = {
-    "upx0": "UPX", "upx1": "UPX", "upx2": "UPX", "upx!": "UPX", ".upx": "UPX",
-    ".aspack": "ASPack", ".adata": "ASPack",
-    ".vmp0": "VMProtect", ".vmp1": "VMProtect", ".vmp2": "VMProtect",
-    ".themida": "Themida/WinLicense", ".winlice": "Themida/WinLicense",
-    ".enigma1": "Enigma Protector", ".enigma2": "Enigma Protector",
-    ".petite": "Petite", ".pec2": "PECompact", "pec1": "PECompact",
-    ".mpress1": "MPRESS", ".mpress2": "MPRESS",
-    ".nsp0": "NsPack", ".nsp1": "NsPack", ".nsp2": "NsPack",
-    "fsg!": "FSG", ".fsg": "FSG",
-    ".mew": "MEW", ".taz": "PESpin",
-    ".y0da": "Yoda's Protector", ".yoda": "Yoda's Protector",
-    ".upack": "Upack", ".bydwing": "Upack",
-    ".neolite": "NeoLite", ".boom": "The Boomerang",
-    ".sforce3": "StarForce", ".vprotect": "VProtect",
-    ".packed": "generic packer", ".perplex": "Perplex", ".dyamar": "DYAMAR",
-}
+# DATA: references/binary_indicators.json -> pe_section_packers
+_PE_SECTION_PACKERS = dict(_BP_REF["pe_section_packers"])
 
 # Byte strings that mark a self-extracting installer / wrapper (the real payload is inside it).
-_INSTALLER_SIGS = [
-    (b"Nullsoft.NSIS.exehead", "NSIS"), (b"Nullsoft Install System", "NSIS"),
-    (b"NSIS Error", "NSIS"),
-    (b"Inno Setup", "Inno Setup"), (b"InnoSetupLdr", "Inno Setup"),
-    (b"InstallShield", "InstallShield"),
-    (b"Wise Installation", "Wise Installer"),
-    (b"Setup Factory", "Setup Factory"),
-    (b";!@Install@!UTF-8!", "7-Zip SFX"), (b"7zSFX", "7-Zip SFX"),
-    (b"WinRAR SFX", "WinRAR SFX"),
-    (b"app.asar", "Electron (asar)"), (b"Squirrel", "Squirrel/Electron"),
-]
+# DATA: references/binary_indicators.json -> installer_signatures {label: [ascii signatures]}.
+# Flattened back to the (signature, label) scan order the matcher expects — first hit wins.
+_INSTALLER_SIGS = [(sig.encode("ascii", "ignore"), label)
+                   for label, sigs in _BP_REF["installer_signatures"].items()
+                   for sig in sigs]
 
 # Known Android app-protectors / DEX packers, matched purely on file NAMES inside the APK — fast
 # and reliable. Each wraps/encrypts the real classes.dex, which is why a protected APK's string
 # sweep is thin. (label, [member-name regexes])
-_ANDROID_PROTECTORS = [
-    ("Bangcle / SecNeo", [r"libsecexe\.so$", r"libsecmain\.so$", r"libSecShell.*\.so$",
-                          r"libDexHelper.*\.so$", r"bangcle_classes\.jar$", r"secData0\.jar$"]),
-    ("Qihoo 360 Jiagu", [r"libjiagu.*\.so$", r"libprotectClass\.so$", r"libqihoo.*\.so$"]),
-    ("Tencent Legu", [r"libshell.*\.so$", r"libtup\.so$", r"libtosprotection.*",
-                      r"libtxsafemode\.so$"]),
-    ("Ijiami", [r"ijiami\.dat$", r"ijiami\.ajm$", r"libexec\.so$", r"libexecmain\.so$",
-                r"libixgja\.so$"]),
-    ("Baidu Protect", [r"libbaiduprotect.*\.so$", r"baiduprotect.*\.jar$"]),
-    ("NetEase Yidun", [r"libnesec\.so$"]),
-    ("DexProtector", [r"dexprotect.*", r"classes\.dex\.dat$", r"assets/dp\..*\.so.*"]),
-    ("Alibaba / Mobile Security SDK", [r"libmobisec\.so$", r"libpreverify1\.so$",
-                                       r"libsgmain\.so$", r"libsgsecuritybody\.so$"]),
-    ("AppSuit / CoVault", [r"libAppSuit\.so$", r"libcovault.*\.so$"]),
-    ("Promon SHIELD", [r"libshield\.so$"]),
-    ("Virbox Protector", [r"libvbox.*\.so$"]),
-    ("Nagain / APKProtect", [r"libnagain.*\.so$", r"libapkprotect.*\.so$"]),
-]
+# DATA: references/binary_indicators.json -> android_protectors
+_ANDROID_PROTECTORS = [(label, list(pats))
+                       for label, pats in _BP_REF["android_protectors"].items()]
 
 
 def _pe_sections(raw):
@@ -1113,7 +1087,10 @@ def build_pivots(kind, hashes, art, iocs, meta):
           "execution, so route it to dynamic analysis. A shared *named* protector is a WEAK, "
           "kit-level link (same builder/protection service), not proof of a shared operator alone.")
 
-    return pivots
+    # One pass adds the ANY.RUN TI Lookup query (+ the UI link) to every kind the sandbox indexes —
+    # hashes, contacted hosts, C2 endpoints, URLs. Built offline and keyless, so even a no-key run
+    # hands the analyst the exact query for the observation index; see references/anyrun.json.
+    return bp_anyrun.attach_anyrun_queries(pivots)
 
 
 # ----------------------------------------------------------------------------- KB-shaped output
@@ -1160,7 +1137,7 @@ def to_trackers(art, iocs):
 
 
 # ----------------------------------------------------------------------------- main analyze
-def analyze(target, keep_dir=None, timeout=60):
+def analyze(target, keep_dir=None, timeout=60, anyrun=False):
     raw, meta = acquire(target, keep_dir=keep_dir, timeout=timeout)
     if not raw:
         return {"meta": meta, "artifacts": {}, "pivots": [],
@@ -1215,6 +1192,11 @@ def analyze(target, keep_dir=None, timeout=60):
         },
         "pivots": pivots,
     }
+    # ANY.RUN is consulted (never fed): it reports what OTHER people's detonations of these
+    # artifacts recorded. Most valuable exactly when `protection` says the string sweep is thin —
+    # a packed sample's real endpoints only exist at runtime.
+    if anyrun:
+        bp_anyrun.enrich_result(result)
     return result
 
 
@@ -1290,9 +1272,19 @@ def main():
     ap.add_argument("--keep", metavar="DIR", help="save the downloaded artifact into DIR")
     ap.add_argument("--case", help="case name (recorded in meta only)")
     ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument("--anyrun", action="store_true",
+                    help="RUN ANY.RUN Threat Intelligence Lookup live on this artifact's hashes "
+                         "and endpoints — the domains/IPs samples like it actually contacted when "
+                         "detonated, the family label, and the public sandbox tasks. This is how a "
+                         "PACKED sample's real backend is recovered. METERED (needs ANYRUN_API_KEY "
+                         "with a TI Lookup licence) and bounded by the per-run cap in "
+                         "references/anyrun.json. Nothing is ever SUBMITTED — read-only. Without "
+                         "this flag every pivot still carries its TI Lookup query, built offline.")
     args = ap.parse_args()
 
-    result = analyze(args.target, keep_dir=args.keep, timeout=args.timeout)
+    for _line in bp_anyrun.banner_lines():
+        sys.stderr.write(_line + "\n")
+    result = analyze(args.target, keep_dir=args.keep, timeout=args.timeout, anyrun=args.anyrun)
     if args.case:
         result["meta"]["case"] = args.case
 
