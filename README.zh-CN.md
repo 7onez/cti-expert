@@ -16,7 +16,7 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.6-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.6"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.7-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.7"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#命令参考"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
   <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
@@ -160,6 +160,26 @@
 
 <br>
 
+## v2.7 新功能
+
+> **这是深度流水线正式落地的版本。** v2.6 打磨的是采集端；v2.7 让 cti-expert 成为一套**双层系统** —— 广度采集器**加上**一条自带持久化知识库、完全自包含的情报流水线 —— 冷启动下一条命令即可触达，并由一道在每次 push 时用仓库自身规则检查仓库的关卡守着。
+
+| 类别 | 新增内容 | 详情 |
+|----------|-----------|---------|
+| **一个技能，两个层次** | 深度流水线现已**内置** —— 无需另行搭建后端 | `intel_engine/` 完整内置了 **Collect → Correlate → Assess** 流水线：持久化**知识库**、带版本的案件、跨案关联、经校准的研判与渲染（WebPivot · IntelAnalysis · IntelGraph · IntelReport · BinaryPivot）。`/backend` 解析为 **SELF** —— 无需配置，无需托管。深度层依赖只需安装一次：`uv venv && uv pip install -r requirements.txt`。目录树从 **22 个顶层目录收敛到 14 个**，统一收束在单一 `SKILL.md` 之后。参见 [STRUCTURE.md](STRUCTURE.md) |
+| **8 条已注册命令** | `/cti` 可**在任意项目中冷启动直接使用** | 以往每条命令都需要先加载技能。[`scripts/register.sh`](scripts/register.sh) 会把技能与 `commands/*.md` 软链接进 `~/.claude/`，并写入本机专属的 `.mcp.json`，因此 `/cti`、`/cti-recall`、`/cti-case`、`/cti-pivot`、`/cti-cluster`、`/cti-check`、`/cti-report` 与 `/cti-status` 立即可用。**现在只需记住一条命令 —— `/cti <目标>`** —— 它按目标类型（域名 · IP · 邮箱 · 用户名 · 电话 · 钱包 · 哈希 · APK）自动路由并跑通对应链路。其余命令仍为约定命令 |
+| **`--deep` 是真正的并行** | 采集**与**研判**两端**都做子代理扇出 | `/cti --deep` 会为每个发现的前沿种子派生一个子代理 —— 先经回溯与误报控制剪枝，**并发上限 6，深度上限 2 跳**，`--passive` 向所有子代理传递 —— 随后统一收敛回同一个案件。本版新增：当收敛产生**2 个及以上聚类**时，*Assess* 阶段同样扇出，每个聚类一个代理（ACH、置信度、风险，均限定在该聚类内），而**跨聚类判断仍集中**在编排器手中。广度并行，综合归一 |
+| **IntelX + ANY.RUN** | 泄露/暗网选择符检索与沙箱实测 C2 —— 证据**分级，而非合并** | `intelx_search` 覆盖粘贴站、窃取器日志、暗网与历史 WHOIS。关键在于命中会被**分级**：泄露库或窃取器日志中的出现属于**暴露面证据，明确不可用于聚类** —— 同一个 combolist 里的两个地址共享的是*受害者群体*，而不是同一个操作者。过于宽泛的选择符会在本地直接拒绝，以免一个泛泛的名字白白消耗一次查询额度。`anyrun_lookup` 回答的是携带该指标的样本究竟*做了什么* —— 加壳程序真正连往的端点 —— 且为**只读：本技能从不提交样本**，由 [`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py) 强制保障 |
+| **证据归档此前一直静默失效** | 包装层丢弃了 **22 个参数**，其中包括 `--archive-missing` | 内置引擎此前处于半迁移状态 —— 模块化的 `wp_*` 层已就位，但实际运行的采集器仍是拆分前那份 2,274 行的单体，于是 harness 的 `--help` 探测把采集器不再声明的参数统统过滤掉了。**因此证据归档根本没有运行。** `collect_core` 现在零丢弃，支持面从 **19 提升到 42**。被丢弃的参数仍会有意地在工具结果中显示：静默丢弃正是这类缺陷赖以藏身的失效模式 |
+| **无密钥的回答依然诚实** | 能力核算 —— 缺少密钥绝不会被当成结论 | `wp_capabilities` 会明确指出**每个缺失的密钥让你损失了哪一类证据**，因此无密钥运行下未发现同源站点时，报告写的是*"未查询"*，而不是*"不存在同源站点"*。同期上线：**Censys**（无密钥 CenQL 构造器、免费额度查询、月度额度守卫）、**资产发现**（JS 包、source map、SPA 路由、well-known 文件）、**仿冒域名狩猎**、**JARM** TLS 栈指纹，以及多引擎 `search_pivot`。所有拒绝名单、供应商registry与置换表都已从代码移出，变成分析师可自行调整的 `references/*.json` |
+| **不再有死胡同** | 六种标识符虽被识别，却没有任何枢轴 | 蛛网地图能识别 `document`、`image`、`youtube_channel`、`coordinates`、`vin` 与 `ipv6` —— 然后就在那里悄然中断。现已接上：**文档** → exiftool + oletools 溯源作者 → 人物/邮箱/组织；**图片** → EXIF GPS → 坐标，反向图搜与人脸检索一律标为**低置信并挂起待旁证，绝不自动合并**；YouTube 频道 → 简介面板链接；**坐标与 VIN 仅做富化，刻意不产生新种子**，因此它们无法凭空造出错误归因；IPv6 → 反向/被动 DNS + ASN，与 IPv4 对齐。并由一条不变式测试守住：*每一种可分类的类型都必须至少有一个枢轴* |
+| **仓库自我校验** | `audit.sh` + CI + 提交前泄露扫描 | [`scripts/audit.sh`](scripts/audit.sh) 就是那道关卡：每个 `DISPATCH` op 必须指向真实存在的脚本，五个共享采集器必须是一份正本加一个再导出 shim，`@tool` 数量必须与贡献规则一致，模块可字节编译，测试全绿。它在**每次 push 与 PR 时于 GitHub Actions 运行**，且只扫描 PR *新增*的行，因此精心挑选的示例值不会被反复误报。[`scripts/install-hooks.sh`](scripts/install-hooks.sh) 将标识符泄露扫描挂成 **pre-commit 钩子**。随附四套零依赖测试 —— 采集核心、指标分类、误报账本、以及不提交样本 |
+| **每个采集回合都以表格开场** | 一眼看清产出，再看叙述 | 此前采集只在叙述文字和持久化导出文件中呈现结果，没有任何机制保证对话里出现按域名归纳的摘要。新的输出规则要求每个采集回合**先给出** markdown 表格 —— **解析情况 · 首要枢轴 · 风险 · 聚类 · 是否曾见** —— 让你一眼看到收获，而不必逐字去找 |
+| **可移植、不绑定框架** | 技能中已不存在任何助手框架耦合 | 移除了强制的语音通知代码块，并把自定义目录从框架专属路径改为中立的 `~/.config/cti-expert/`（仓库/当前目录的 `.env` 仍然优先）。本版还包括：**赞助与支持方**板块 —— Rexxfield · Hudson Rock · ParanoidLab · ANY.RUN · ZETAlytics · IntelX —— 以及以 **SVG** 重建的工作流程图，其中包含一张全新的端到端工具与技能时序图 |
+
+<details>
+<summary><b>v2.6 新功能</b></summary>
+
 ## v2.6 新功能
 
 | 类别 | 新增内容 | 详情 |
@@ -170,6 +190,8 @@
 | **可分享报告** | `/redact` —— 可逆的 PII 脱敏 | [`redact.py`](scripts/redact.py) 用**稳定的编号占位符**替换 PII（`[EMAIL_1]` 在整个案件中始终指向同一个地址），并写出一份**可逆的 JSON 映射**，因此报告可以流出组织之外，之后仍能还原为证据。支持 `.md`/`.json`/`.csv`；往返逐字节一致。基础设施默认*不*脱敏 —— 在 CTI 报告里，行为体的域名本身就是分析内容，而非附带的 PII |
 | **分析严谨性** | 概率锚定的可能性表述 + 5W1H + ACH | 判断现在都附带**带概率区间的可能性表述**（*几乎不可能* → *几乎确定*），并与证据置信度并列呈现，因为单说一句"MODERATE"，写的人和读的人心里差着 30 个百分点。`/coverage` 增加 **5W1H 复核** —— 技术矩阵衡量的是投入，所以一个案件可以拿到 96% 却仍未回答任何**为什么**或**如何做到**。`/threat-model` 现在要求为归因提供 **ACH 矩阵**：按*不一致项*为竞争假设打分、点名次优假设，并写明哪些证据会改变排序。参见 [`handbook/analytic-standards.md`](handbook/analytic-standards.md) |
 | **哈希定型** | `/hash-id` —— 在任何哈希查询之前 | 32 位十六进制既可能是 MD5 **也可能是 NTLM** —— 前者是文件哈希，后者是凭据材料，查错服务会返回一句自信的"未知样本"，读起来像是脱罪证据。它把文件哈希路由到 MalwareBazaar/VT，把凭据哈希路由到 `/breach-deep`，绝不送往公开的破解服务 |
+
+</details>
 
 <details>
 <summary><b>v2.5 新功能</b></summary>
