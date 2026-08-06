@@ -893,6 +893,47 @@ async def render_report(args: dict[str, Any]) -> dict[str, Any]:
             "is_error": r.returncode != 0}
 
 
+@tool(
+    "email_permute",
+    "Generate email CANDIDATES from a person name or a username. Call this when a case yields a "
+    "real name or a handle AND you already hold a domain that matters to the case — an operator's "
+    "mailbox is rarely published but is usually derivable from the local-part conventions mail "
+    "hosts actually use. Pass subject (the name, e.g. 'Nguyen Van Hieu', or the handle) plus "
+    "domains (comma-separated). Set username=true if the subject is a handle rather than a name. "
+    "Handles family-name-first VN/CN/KR names and folds Latin letters Unicode does not decompose "
+    "(Vietnamese d-stroke, Polish l-stroke, o-slash, sharp-s, dotless-i) — a generic permutator "
+    "inverts first.last on a Vietnamese name and mangles the diacritics, producing addresses that "
+    "look right and do not exist. CRITICAL — the output is HYPOTHESES, not findings: every row "
+    "returns status='candidate' with confidence 0. Do NOT ingest them into the KB, cite them in a "
+    "report, feed them to the spider-map as seeds, or contact them. Only addresses in the "
+    "'promote' list have been corroborated by independent evidence and may be treated as a real "
+    "email seed. verify=true adds keyless corroboration: an MX gate that drops whole domains that "
+    "cannot receive mail (RFC 7505 null MX included) plus a Gravatar registration check. It NEVER "
+    "probes the target's mail server over SMTP — that touches hostile infrastructure and a "
+    "catch-all domain answers 250 for everything. Default domain set is what you pass; free=true "
+    "adds free-mail providers and is high-noise. Read-only, no API key, no credits.",
+    {"subject": str, "domains": str},  # username/verify/free:bool, max:int optional -> args.get()
+    annotations=READONLY,
+)
+async def email_permute(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "email_permute.py"), str(args["subject"])]
+    for d in str(args.get("domains") or "").split(","):
+        if d.strip():
+            cmd += ["--domain", d.strip()]
+    if args.get("username"):
+        cmd += ["--username"]
+    if args.get("verify"):
+        cmd += ["--verify"]
+    if args.get("free"):
+        cmd += ["--free"]
+    if args.get("order"):
+        cmd += ["--order", str(args["order"])]
+    if args.get("max"):
+        cmd += ["--max", str(args["max"])]
+    r = _run(cmd)
+    return _ok(r.stdout or r.stderr or "no output")
+
+
 # ---------------------------------------------------------------- servers + names
 COLLECT_SERVER = create_sdk_mcp_server(
     "collect", tools=[pivot_extract, analyze_artifact, fallback_probe,
@@ -902,7 +943,7 @@ ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
                       reverse_whois, cert_overlap, censys, capability_check,
                       reference_check, reference_add,
-                      which_cases, domain_verdict, api_usage,
+                      which_cases, domain_verdict, api_usage, email_permute,
                       render_diagram, render_report])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__analyze_artifact",
@@ -915,5 +956,5 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__censys", "mcp__analyze__capability_check",
                  "mcp__analyze__reference_check", "mcp__analyze__reference_add",
                  "mcp__analyze__which_cases", "mcp__analyze__domain_verdict",
-                 "mcp__analyze__api_usage",
+                 "mcp__analyze__api_usage", "mcp__analyze__email_permute",
                  "mcp__analyze__render_diagram", "mcp__analyze__render_report"]

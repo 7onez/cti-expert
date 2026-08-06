@@ -173,7 +173,7 @@
 | **证据归档此前一直静默失效** | 包装层丢弃了 **22 个参数**，其中包括 `--archive-missing` | 内置引擎此前处于半迁移状态 —— 模块化的 `wp_*` 层已就位，但实际运行的采集器仍是拆分前那份 2,274 行的单体，于是 harness 的 `--help` 探测把采集器不再声明的参数统统过滤掉了。**因此证据归档根本没有运行。** `collect_core` 现在零丢弃，支持面从 **19 提升到 42**。被丢弃的参数仍会有意地在工具结果中显示：静默丢弃正是这类缺陷赖以藏身的失效模式 |
 | **无密钥的回答依然诚实** | 能力核算 —— 缺少密钥绝不会被当成结论 | `wp_capabilities` 会明确指出**每个缺失的密钥让你损失了哪一类证据**，因此无密钥运行下未发现同源站点时，报告写的是*"未查询"*，而不是*"不存在同源站点"*。同期上线：**Censys**（无密钥 CenQL 构造器、免费额度查询、月度额度守卫）、**资产发现**（JS 包、source map、SPA 路由、well-known 文件）、**仿冒域名狩猎**、**JARM** TLS 栈指纹，以及多引擎 `search_pivot`。所有拒绝名单、供应商registry与置换表都已从代码移出，变成分析师可自行调整的 `references/*.json` |
 | **不再有死胡同** | 六种标识符虽被识别，却没有任何枢轴 | 蛛网地图能识别 `document`、`image`、`youtube_channel`、`coordinates`、`vin` 与 `ipv6` —— 然后就在那里悄然中断。现已接上：**文档** → exiftool + oletools 溯源作者 → 人物/邮箱/组织；**图片** → EXIF GPS → 坐标，反向图搜与人脸检索一律标为**低置信并挂起待旁证，绝不自动合并**；YouTube 频道 → 简介面板链接；**坐标与 VIN 仅做富化，刻意不产生新种子**，因此它们无法凭空造出错误归因；IPv6 → 反向/被动 DNS + ASN，与 IPv4 对齐。并由一条不变式测试守住：*每一种可分类的类型都必须至少有一个枢轴* |
-| **仓库自我校验** | `audit.sh` + CI + 提交前泄露扫描 | [`scripts/audit.sh`](scripts/audit.sh) 就是那道关卡：每个 `DISPATCH` op 必须指向真实存在的脚本，五个共享采集器必须是一份正本加一个再导出 shim，`@tool` 数量必须与贡献规则一致，模块可字节编译，测试全绿。它在**每次 push 与 PR 时于 GitHub Actions 运行**，且只扫描 PR *新增*的行，因此精心挑选的示例值不会被反复误报。[`scripts/install-hooks.sh`](scripts/install-hooks.sh) 将标识符泄露扫描挂成 **pre-commit 钩子**。随附四套零依赖测试 —— 采集核心、指标分类、误报账本、以及不提交样本 |
+| **仓库自我校验** | `audit.sh` + CI + 提交前泄露扫描 | [`scripts/audit.sh`](scripts/audit.sh) 就是那道关卡：每个 `DISPATCH` op 必须指向真实存在的脚本，五个共享采集器必须是一份正本加一个再导出 shim，`@tool` 数量必须与贡献规则一致，模块可字节编译，测试全绿。它在**每次 push 与 PR 时于 GitHub Actions 运行**，且只扫描 PR *新增*的行，因此精心挑选的示例值不会被反复误报。[`scripts/install-hooks.sh`](scripts/install-hooks.sh) 将标识符泄露扫描挂成 **pre-commit 钩子**。随附五套零依赖测试 —— 采集核心、指标分类、误报账本、不提交样本，以及邮箱候选噪声控制 |
 | **每个采集回合都以表格开场** | 一眼看清产出，再看叙述 | 此前采集只在叙述文字和持久化导出文件中呈现结果，没有任何机制保证对话里出现按域名归纳的摘要。新的输出规则要求每个采集回合**先给出** markdown 表格 —— **解析情况 · 首要枢轴 · 风险 · 聚类 · 是否曾见** —— 让你一眼看到收获，而不必逐字去找 |
 | **可移植、不绑定框架** | 技能中已不存在任何助手框架耦合 | 移除了强制的语音通知代码块，并把自定义目录从框架专属路径改为中立的 `~/.config/cti-expert/`（仓库/当前目录的 `.env` 仍然优先）。本版还包括：**赞助与支持方**板块 —— Rexxfield · Hudson Rock · ParanoidLab · ANY.RUN · ZETAlytics · IntelX —— 以及以 **SVG** 重建的工作流程图，其中包含一张全新的端到端工具与技能时序图 |
 
@@ -757,7 +757,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 49 项技术与 23 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
+**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 49 项技术与 24 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -1140,7 +1140,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（18 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（24 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· kb/（KB + 关联）· cert_overlap
     ├── WebPivot/               引擎侧采集器助手 + 去重再导出的 shim
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）

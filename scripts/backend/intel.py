@@ -84,6 +84,7 @@ DISPATCH = {
     "censys":        ("WebPivot/tools/wp_censys.py",  []),     # CenQL build + free-plan lookups
     "capabilities":  ("WebPivot/tools/wp_capabilities.py", []),# which keys exist, what's unqueried
     "jarm":          ("WebPivot/tools/jarm.py",       []),     # JARM TLS-stack fingerprint
+    "email-permute": ("WebPivot/tools/email_permute.py", []),  # name/handle -> email CANDIDATES
     "intelx":        ("WebPivot/tools/wp_intelx.py",  []),     # leak/paste/darknet selector search
     "anyrun":        ("BinaryPivot/tools/bp_anyrun.py", []),   # TI Lookup — READ-ONLY, never submits
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
@@ -142,6 +143,7 @@ BLURB = {
     "censys": "Censys: cert/host/webproperty lookup, CenQL build, budget",
     "capabilities": "which API keys exist and what each absence costs",
     "jarm": "JARM TLS-stack fingerprint of a host",
+    "email-permute": "name/username -> ranked email CANDIDATES (hypotheses, never findings)",
     "intelx": "IntelX: search a strong selector in leaks/pastes/darknet",
     "anyrun": "ANY.RUN TI Lookup (read-only — never submits a sample)",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",

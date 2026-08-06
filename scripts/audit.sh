@@ -74,7 +74,8 @@ if python3 -m py_compile intel_engine/tools/collect_core.py intel_engine/tools/i
 
 echo "== 6. zero-dep test runners =="
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
-         tests/test_references.py tests/test_no_sample_submission.py; do
+         tests/test_references.py tests/test_no_sample_submission.py \
+         tests/test_email_permute.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 

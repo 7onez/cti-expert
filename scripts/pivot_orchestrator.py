@@ -207,11 +207,17 @@ EDGE_MATRIX = {
         {"method": "platform-enum", "tool": "/username <handle>", "yields": ["social_handle", "domain", "email", "person"], "rel": "ALSO_KNOWN_AS", "confidence": 88, "active": True},
         {"method": "variant-suggest", "tool": "pivot_suggest.py --usernames <handle>", "yields": ["username"], "rel": "ALSO_KNOWN_AS", "confidence": 75, "active": False},
         {"method": "github", "tool": "/github-osint <handle>", "yields": ["email", "domain", "person"], "rel": "ALSO_KNOWN_AS", "confidence": 82, "active": False},
+        # yields [] ON PURPOSE: permutations are hypotheses, so they must never enter the frontier
+        # as seeds. Only a corroborated address (email_permute's "promote" list) is re-injected,
+        # and that happens by analyst action, not by the spider.
+        {"method": "email-permute(+case domains)", "tool": "email_permute.py <handle> --username --domain <case domain>", "yields": [], "rel": "OTHER", "confidence": 35, "active": False},
     ],
     "person": [
         {"method": "username-guess+enum", "tool": "/username <name>", "yields": ["username", "social_handle"], "rel": "ALSO_KNOWN_AS", "confidence": 65, "active": True},
         {"method": "people-search+dork", "tool": "/dork-sweep <name>", "yields": ["email", "phone", "username", "org"], "rel": "REACHES", "confidence": 60, "active": False},
         {"method": "docleak-authorship", "tool": "/docleak <name>", "yields": ["email", "org", "domain"], "rel": "WORKS_AT", "confidence": 62, "active": False},
+        # See the username note: candidates are hypotheses, never seeds.
+        {"method": "email-permute(+case domains)", "tool": "email_permute.py \"<name>\" --domain <case domain>", "yields": [], "rel": "OTHER", "confidence": 35, "active": False},
     ],
     "org": [
         {"method": "primary+brand-domains", "tool": "/sweep <org>", "yields": ["domain"], "rel": "CONTROLS", "confidence": 80, "active": False},
