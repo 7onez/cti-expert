@@ -1,5 +1,5 @@
 @startuml
-title cti-expert — /case full pipeline (AEAD) and where /webpivot + API keys fit
+title cti-expert v2.6 — /cti and /case: the recursive spider-map pipeline (AEAD)
 skinparam shadowing false
 skinparam dpi 150
 skinparam defaultFontName "Segoe UI"
@@ -14,47 +14,97 @@ skinparam activity {
 }
 
 start
-:**/case TARGET**;
-:detect target type;
+:**/cti TARGET**   (single entry point)\n//or// **/case TARGET**  ·  **/cti-case CASE-ID seed…**;
+:**route by target type**\ndomain · URL · IP · email · username\nphone · wallet · hash · APK / binary;
+
+partition "**STEP 0 — RECALL**  (cheapest call in the toolkit)" {
+  :**/cti-recall SEED**   →   which_cases · kb_entity;
+  note right
+    "Have I seen this before?"
+    Checks the seed against **every prior case**
+    before a single credit is spent.
+    Already attributed  ->  reuse, don't re-collect.
+  end note
+}
 
 partition "**ACQUIRE**  (collect raw data)" {
   if (target is a domain / URL?) then (yes)
-    :/sweep · /query · /subdomain;
-    :**/webpivot**  — web-infra pivoting\n(+ /cert-pivot · /sensitive-paths · /email-hygiene);
+    :/sweep · /query · /subdomain · /github-osint\n/threat-check · /scam-check · /dork-sweep;
+    :**/webpivot**  — web-infra pivoting\nfavicon mmh3 · GA/GTM/AdSense · wallets\nemails · phones · Telegram · SaaS tokens · WHOIS\n(+ /cert-pivot · /sensitive-paths · /email-hygiene);
+    :**/webpivot ~--harvest**\nfull Wayback history  ->  first-seen / last-seen selectors;
+    :**/icp**   ICP filing (工信部备案)  ->  PRC entity + licence serial\n//licence serial reverses to every sibling domain//;
     note right
       Runs **keyless by default**
-      (crt.sh · passive DNS · anonymous urlscan).
-      **Auto-upgrades** when premium keys are set
-      via /apikeys (Shodan · Censys · FOFA · DNSLytics ·
-      SecurityTrails · urlscan-PRO · WhoisXML · Blockchair).
-      For hostile infra it prefers passive capture.
+      (crt.sh CT · passive DNS · anonymous urlscan).
+      **Auto-upgrades** when premium keys are set via
+      /apikeys — see workflow-apikeys.
+      Hostile infra  ->  **~--passive**, no live contact.
     end note
+  elseif (target is a file / APK / exe?) then (yes)
+    :**/binary**  — BinaryPivot static IOC extraction\nAPK signing-cert SHA-256 · package name · permissions\nembedded C2 / backend hosts · Firebase · S3 · wallets;
+    :**/hash-id**  ->  file hash or credential material?\nthen ANY.RUN TI Lookup //(read-only, never submits)//;
   else (username / email / phone / person)
-    :/username · /email-deep · /phone · /breach-deep;
+    :/username · /email-deep · /phone · /breach-deep\n/stealer-log · /saas-map · /msft-recon;
     note right: **/webpivot is NOT run**\nfor non-web targets
   endif
+
+  :**/cn-corp**  on any company name / USCC found\nGSXT -> TianYanCha / QCC / Aiqicha -> 信用中国;
+  :**/iban**  on any payment detail found\nISO 7064 mod-97 · BBAN split · jurisdiction mismatch;
 }
 
-partition "**ENRICH**  (expand leads)" {
-  :/branch · /crossref · /rank-relations · /pivot-suggest\n· /crypto-balance · /link-subjects · /signatures;
+partition "**ENRICH**  (expand leads — recursive)" {
+  :/branch · /crossref · /rank-relations · /pivot-suggest\n/crypto-balance · /link-subjects · /signatures;
+  :**/cti-check INDICATOR**  — false-positive control\nBENIGN (shared noise) vs SIGNAL (operator link);
+  note right
+    A false **merge** names an innocent party.
+    A false **split** loses the case.
+    Screen every indicator *before* clustering.
+  end note
+  :**kb_ingest**  ->  shared knowledge base;
+  :**/cti-cluster**  — peers · shared indicators\nTLS/SAN overlap · reverse-WHOIS;
 }
+
+repeat :**spider-map**  — every new identifier becomes a seed;
+  :confidence gate  —  exact-match links auto-pursue,\nweak / PII links held;
+  :dedup + depth cap  ·  per-depth checkpoint;
+repeat while (frontier exhausted?) is (no — new seeds) not (yes)
+note right
+  **autonomy = auto** (v2.6 default).
+  Expands **to closure with no approval prompts** —
+  the confidence gate, not a human, keeps it tight.
+  Narrow with ~--checkpoint · ~--depth N · ~--reach focused
+end note
 
 partition "**ASSESS**  (score + verify)" {
-  :/exposure · /threat-model · /validate · /coverage;
+  :/risk  — NRD · bulletproof hosting · money-trail flags;
+  :/exposure · /validate · /coverage //(+ 5W1H pass)//;
+  :**/threat-model**  — requires an **ACH matrix**:\nrival hypotheses scored by //inconsistency//, runner-up named;
+  :**ICD-203 judgment**  — likelihood band + evidence confidence\n//almost no chance// … //almost certain//;
 }
 
 partition "**DELIVER**  (package output)" {
+  :**/cti-report CASE-ID**\n~--graph  ->  IntelGraph relationship render (PNG/SVG/Mermaid)\n~--pdf    ->  IntelReport pandoc PDF/DOCX;
   :/report · /brief · /render;
-  :auto-save   .md + .html + .json + .csv + IOC bundle;
+  if (sharing outside the org?) then (yes — **opt-in**)
+    :**/redact**  ->  stable [EMAIL_1] placeholders\n+ reversible JSON map;
+  else (no)
+  endif
+  :auto-save   .md + .html + .json + .csv + IOC bundle (STIX 2.1);
 }
 stop
 
 legend right
   **Keyless / free by default**
   ====
-  Every phase works with no API keys.
+  Every phase works with **no API keys**.
   Premium keys (/apikeys) only *upgrade*
-  the Acquire + Enrich steps — they never
-  gate the pipeline.
+  Acquire + Enrich — they never gate the pipeline.
+  ----
+  **Two separate cost ledgers**
+  Anthropic model spend  ->  /cost
+  Third-party API credits ->  api_usage
+  //They are never the same number.//
+  ----
+  **/cti-status** — backend tier · MCP tools · credit balances
 endlegend
 @enduml

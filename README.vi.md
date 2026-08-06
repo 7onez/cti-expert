@@ -52,6 +52,45 @@
 
 <br>
 
+## 🤝 Nhà tài trợ &amp; Đơn vị hỗ trợ
+
+<div align="center">
+
+**CTI Expert được xây dựng công khai. Các tổ chức dưới đây hậu thuẫn dự án — bằng dữ liệu, công cụ và kinh nghiệm điều tra thực chiến.**
+
+<p>
+  <a href="https://rexxfield.com"><img src="https://img.shields.io/badge/Rexxfield-Điều_tra_tội_phạm_mạng-B3272D?style=for-the-badge" alt="Rexxfield"></a>&nbsp;
+  <a href="https://www.hudsonrock.com"><img src="https://img.shields.io/badge/Hudson_Rock-Tình_báo_Infostealer-1B2A4A?style=for-the-badge" alt="Hudson Rock"></a>&nbsp;
+  <a href="https://paranoidlab.com"><img src="https://img.shields.io/badge/ParanoidLab-Dark_Web_%26_IAB-0F172A?style=for-the-badge" alt="ParanoidLab"></a>
+</p>
+<p>
+  <a href="https://any.run"><img src="https://img.shields.io/badge/ANY.RUN-Sandbox_%26_TI_Lookup-FF6A2B?style=for-the-badge" alt="ANY.RUN"></a>&nbsp;
+  <a href="https://zetalytics.com"><img src="https://img.shields.io/badge/ZETAlytics-Passive_DNS-0B7285?style=for-the-badge" alt="ZETAlytics"></a>&nbsp;
+  <a href="https://intelx.io"><img src="https://img.shields.io/badge/IntelX-Tìm_kiếm_rò_rỉ_%26_darknet-2B6E6B?style=for-the-badge" alt="Intelligence X"></a>
+</p>
+
+</div>
+
+| Đơn vị hỗ trợ | Họ đóng góp gì | Trong bộ công cụ |
+|---------------|----------------|------------------|
+| [**Rexxfield**](https://rexxfield.com) | Điều tra tội phạm mạng và hỗ trợ nạn nhân từ năm 2008 — nghiệp vụ thực chiến mà quy trình điều tra và chuẩn quy kết của skill này mô phỏng theo | Nghiệp vụ &amp; phương pháp luận |
+| [**Hudson Rock**](https://www.hudsonrock.com) | Tình báo về máy nhiễm infostealer — máy nào rò rỉ thông tin đăng nhập nào, và vào lúc nào | `/breach-deep` · `/stealer-log` |
+| [**ParanoidLab**](https://paranoidlab.com) | Giám sát dark web, Initial Access Broker và log infostealer trên diễn đàn, chợ đen và Telegram kín | Thu thập &amp; rà soát dark web |
+| [**ANY.RUN**](https://any.run) | Sandbox mã độc tương tác + **TI Lookup** — C2 và endpoint thật quan sát được từ mẫu đã đóng gói | `/binary` · `/hash-id` |
+| [**ZETAlytics**](https://zetalytics.com) | Passive DNS toàn cầu với độ đa dạng địa lý hiếm có — pivot theo lịch sử phân giải và đồng trú | `/webpivot` · `/cti-pivot` |
+| [**IntelX**](https://intelx.io) | Intelligence X — tìm kiếm selector trên paste site, dữ liệu rò rỉ, darknet và phonebook | `/webpivot` · `/email-deep` |
+
+> [!IMPORTANT]
+> **ANY.RUN chỉ được dùng ở chế độ chỉ-đọc.** `anyrun_lookup` tra cứu TI Lookup cho các hash **đã** được kích nổ từ trước. Skill này **không bao giờ nộp mẫu lên sandbox** — một task công khai là ai cũng đọc được và không thể thu hồi. Ranh giới đó được bảo vệ bằng một bài kiểm thử hồi quy ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), chứ không chỉ bằng quy ước.
+
+<sub>Việc liệt kê ở đây thể hiện sự hỗ trợ dành cho dự án và <b>không</b> hàm ý liên kết, chứng thực hay bất kỳ sự kiểm định nào của các tổ chức được nêu đối với công cụ này. Các tích hợp đánh dấu ở trên đều là tùy chọn và cần API key — <b>mọi kỹ thuật cốt lõi vẫn chạy được mà không cần key nào</b>. Luôn tôn trọng điều khoản dịch vụ của từng nhà cung cấp. Danh sách đầy đủ các dự án mã nguồn mở và dịch vụ công cộng miễn phí mà skill này dựa vào nằm ở phần <a href="#-lời-cảm-ơn--ghi-nhận">Lời cảm ơn &amp; Ghi nhận</a>.</sub>
+
+<br>
+
+---
+
+<br>
+
 ## CTI Expert là gì?
 
 Một **kỹ năng (skill) của Claude Code** biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở lành nghề. Nó chạy thu thập tình báo có cấu trúc với **74+ lệnh** trải trên **49 kỹ thuật** — không cần API key cho chức năng cốt lõi. Để khai thác tối đa, hãy thêm API key **miễn phí *hoặc* trả phí** của riêng bạn vào tệp `.env` của skill — mỗi key được **tự động phát hiện** và mở khóa quyền truy cập cấp cao hơn (VD: Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
@@ -696,19 +735,32 @@ Mọi cuộc điều tra đều đi qua bốn pha tự động:
 
 ### Sơ đồ quy trình
 
-**Pipeline `/case` đầy đủ (AEAD)** — nơi `/webpivot`, tương quan và key premium khớp vào:
+**Luồng công cụ &amp; skill đầu-cuối** — toàn hệ thống trong một sơ đồ tuần tự: mục tiêu đi vào từ `/cti`, băng qua 49 kỹ thuật của Lớp 1 và bề mặt MCP 23 công cụ, qua WebPivot / BinaryPivot / cơ sở tri thức / IntelAnalysis, rồi đi ra dưới dạng đồ thị đã render và một file PDF:
 
 <div align="center">
-<img src="assets/workflow-case.png" alt="Pipeline /case của cti-expert (AEAD)" width="820">
+<img src="assets/workflow-skills.svg" alt="Luồng công cụ và skill đầu-cuối của cti-expert — sơ đồ tuần tự qua cả hai lớp" width="900">
+</div>
+
+**Pipeline `/cti` · `/case` đầy đủ (AEAD)** — spider-map đệ quy, và nơi `/webpivot`, `/icp`, `/iban` cùng bước tương quan khớp vào:
+
+<div align="center">
+<img src="assets/workflow-case.svg" alt="Pipeline /case của cti-expert (AEAD)" width="820">
 </div>
 
 **Luồng `/webpivot` + tương quan + API key premium:**
 
 <div align="center">
-<img src="assets/workflow-apikeys.png" alt="Quy trình /webpivot + tương quan + API key của cti-expert" width="820">
+<img src="assets/workflow-apikeys.svg" alt="Quy trình /webpivot + tương quan + API key của cti-expert" width="820">
 </div>
 
-<sub>Nguồn: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — xem <a href="handbook/api-keys.md">hướng dẫn API key &amp; webpivot</a>.</sub>
+<sub>Nguồn: <a href="workflow-skills.puml"><code>workflow-skills.puml</code></a> · <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — render bằng <a href="https://plantuml.com">PlantUML</a> ra <b>SVG</b> trong <a href="assets/"><code>assets/</code></a> (vector, nét ở mọi mức phóng to và không cần Git-LFS). Render lại sau khi sửa nguồn:</sub>
+
+```bash
+plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skills.puml
+# thêm -tpng nếu cần bản raster cho slide — lưu ý assets/*.png được Git-LFS quản lý
+```
+
+<sub>Xem thêm <a href="handbook/api-keys.md">hướng dẫn API key &amp; webpivot</a>.</sub>
 
 <br>
 
@@ -1066,7 +1118,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (18 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (23 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · kb/ (KB + correlation) · cert_overlap
     ├── WebPivot/               Engine collector helpers + de-dup re-export shims
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
