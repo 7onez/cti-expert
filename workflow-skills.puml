@@ -29,7 +29,7 @@ box "LAYER 1 · broad collector" #F4F8FD
 end box
 
 box "typed surface" #FBFCFE
-  participant "**harness/tools.py**\n<size:10>23 @tool · MCP + SDK</size>" as MCP
+  participant "**harness/tools.py**\n<size:10>24 @tool · MCP + SDK</size>" as MCP
 end box
 
 box "LAYER 2 · intel_engine (vendored deep pipeline)" #F4F8FD
@@ -71,6 +71,8 @@ group #FFF3D6 ACQUIRE  //collect raw data//
 end
 
 group #FFF3D6 ENRICH  //expand leads — recursive spider-map//
+  CTI -> L1 : **/email-permute** //name or handle x case domains//
+  L1 --> CTI : candidates //HYPOTHESES — never seeds, never ingested//
   CTI -> MCP : **reference_check**  //false-positive control//
   MCP --> CTI : **BENIGN** shared noise  ·or·  **SIGNAL** operator link
   CTI -> MCP : kb_ingest

@@ -499,3 +499,65 @@ These tools provide valuable intelligence but require manual browser interaction
 *Email OSINT Module v1.1.0*
 *Part of CTI Expert Skill*
 *For authorized investigation and educational purposes only*
+
+---
+
+## Email Permutation — deriving an address you were never given
+
+An operator's mailbox is rarely published. It is usually **derivable**: mail hosts use a small,
+stable set of local-part conventions, so a name or handle plus a domain that matters to the case
+narrows the address space from "unknowable" to a couple of dozen testable guesses.
+
+Run it via `/email-permute`, `intel.py email-permute`, or the `email_permute` MCP tool.
+
+### When to fire it
+
+A **real person's name** or a **username** enters the case **and** you already hold a case-relevant
+domain. That second condition is the whole discipline: name × the operator's own domain is a narrow,
+high-prior question; name × `gmail.com` is volume with no prior behind it.
+
+### Pattern priors
+
+`prior` grades how often a convention appears in the wild (0-100). It is a property of the
+**pattern**, never confidence in the address:
+
+| Prior | Patterns |
+|---|---|
+| 95-80 | `first.last` · `flast` · `first` |
+| 72-50 | `firstlast` · `first_last` · `f.last` · `firstl` · `last` |
+| 44-24 | `first-last` · `last.first` · `lastfirst` · `first.l` · `lastf` · `last_first` |
+| 22-12 | `l.first` · `lfirst` · initials · the middle-name forms |
+
+### Locale — where generic permutators break
+
+Two failures, both silent, both producing addresses that *look* correct:
+
+1. **Letters Unicode will not decompose.** NFKD strips accents, but a handful of Latin letters are
+   atomic codepoints with no decomposition and survive folding unchanged — Vietnamese/Croatian
+   `đ`, Polish `ł`, Nordic `ø`, `æ`/`œ`, German `ß`, thorn/eth, Turkish dotless `ı`. Each is folded
+   explicitly.
+2. **Family-name-first order.** Vietnamese, Chinese and Korean names put the surname first. Read
+   left-to-right, `first.last` inverts: *Nguyễn Văn Hiếu* yields `nguyen.hieu@` instead of
+   `hieu.nguyen@`. Detected from a surname table; override with `--order`.
+
+### Verification — `--verify`
+
+| Check | What it proves | Who it touches |
+|---|---|---|
+| **MX gate** (DNS-over-HTTPS) | The domain can receive mail at all. **RFC 7505 null MX (`0 .`) is a present record meaning the domain accepts NO mail** — treated as a hard drop, not a pass | A public resolver |
+| **Gravatar** `?d=404` | A `200` means *that exact address* is registered with Gravatar — genuine existence evidence | Gravatar |
+| ~~SMTP `RCPT TO`~~ | **Refused.** It connects to the target's mail server, which the egress posture exists to prevent; and a catch-all domain answers `250` for every address ever tried, so it fabricates confidence rather than measuring it | — |
+
+The MX gate is the cheapest noise reduction available: one DNS lookup kills every candidate under a
+domain that cannot receive mail.
+
+### The invariant
+
+A permuted address is a **hypothesis**, and stays one. It never enters the knowledge base, never
+becomes a spider-map seed, and never appears in a report as a discovered address. A fabricated
+address that reaches `kb_ingest` becomes a shared indicator, and a shared indicator merges two
+operator clusters — the tool would stop enriching the case and start naming innocent people.
+
+Only entries in the tool's `promote` list — corroborated by *independent* evidence — may be treated
+as a real email seed, and promoting one is an analyst decision. Report the split honestly:
+*"12 candidates, 0 corroborated"* is a result; presenting those 12 as findings is not.

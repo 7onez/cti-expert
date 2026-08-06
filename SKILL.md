@@ -161,6 +161,35 @@ becomes public, and that it is permanent — and let them do it themselves in th
 from an earlier approval. The same reasoning governs `--submit` (urlscan/Wayback): a public
 urlscan scan of a live scam funnel is visible to the operator too.
 
+### A permuted email is a hypothesis, never a finding (CRITICAL)
+
+When a case yields a **real person's name** or a **username**, and you already hold a domain that
+matters to the case, run **`/email-permute`**. An operator's mailbox is almost never published, but
+it is usually *derivable* — mail hosts use a small set of local-part conventions, and the operator's
+own domain is the highest-yield thing to permute against.
+
+That value comes with a matching hazard, so this rule is absolute:
+
+- **Permute against the case's own domains.** Name × the operator's domain is a narrow, high-prior
+  question. Name × `gmail.com` is volume with no prior behind it — `--free` exists, is capped, and
+  should be a deliberate choice, not a reflex.
+- **Never ingest a candidate into the KB, cite one in a report, or contact one.** A fabricated
+  address that reaches `kb_ingest` becomes a shared indicator, and a shared indicator merges two
+  operator clusters. A permutator wired straight into correlation does not enrich a case — it
+  silently names an innocent party. This is the same failure RULE 5 exists to prevent.
+- **Candidates are not seeds.** They never enter the spider-map frontier. Only an address in the
+  tool's `promote` list — corroborated by *independent* evidence (Gravatar registration, breach
+  corpus, a GitHub commit, a page/DOM hit, a dork) — may be treated as a real email seed, and that
+  promotion is an analyst decision.
+- **Never validate over SMTP.** `RCPT TO` probing connects to the *target's* mail server, which the
+  egress posture exists to prevent on a hostile case; and a catch-all domain answers `250` for
+  every address ever tried, so it manufactures confidence instead of measuring it. Use `--verify`,
+  which gates on MX (RFC 7505 null MX included) and checks Gravatar — both keyless, neither
+  touching the target.
+
+State the status in the turn. *"12 candidates, 0 corroborated"* is an honest result; presenting
+those 12 as discovered addresses is not.
+
 ### Dead seed? Do not stop
 
 Zero pivots, a parked page, or NXDOMAIN is not an answer. Run **`/fallback <domain>`** — crt.sh,
@@ -276,6 +305,7 @@ Commands grouped by AEAD phase.
 |---------|-------------|---------|
 | `/branch [data]` | Expand a discovered identifier laterally | `/branch john@mail.com` |
 | `/pivot-suggest` | Rank "what to pivot on next" from findings — leet/variant/reuse/temporal/domain clusters | `/pivot-suggest` |
+| `/email-permute [name\|handle]` | Derive email **candidates** from a person name or username against case domains. VN/CN/KR family-name-first aware; folds diacritics Unicode won't. `--verify` = MX gate + Gravatar. **Output is hypotheses — see the rule below** | `/email-permute "Nguyen Van A" --domain example.com --verify` |
 | `/rank-relations` | Score + rank same-operator relations across analyzed pages (noise-filtered, clustered) | `/rank-relations` |
 | `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot | `/crypto-balance 1A1z…` |
 | `/timeline [subject]` | Assemble dated event sequence | `/timeline Company Inc` |
