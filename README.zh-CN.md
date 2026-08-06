@@ -52,6 +52,45 @@
 
 <br>
 
+## 🤝 赞助与支持方
+
+<div align="center">
+
+**CTI Expert 完全开放构建。以下机构以数据、工具和一线调查经验支持本项目。**
+
+<p>
+  <a href="https://rexxfield.com"><img src="https://img.shields.io/badge/Rexxfield-网络犯罪调查-B3272D?style=for-the-badge" alt="Rexxfield"></a>&nbsp;
+  <a href="https://www.hudsonrock.com"><img src="https://img.shields.io/badge/Hudson_Rock-信息窃取器情报-1B2A4A?style=for-the-badge" alt="Hudson Rock"></a>&nbsp;
+  <a href="https://paranoidlab.com"><img src="https://img.shields.io/badge/ParanoidLab-暗网_%26_IAB-0F172A?style=for-the-badge" alt="ParanoidLab"></a>
+</p>
+<p>
+  <a href="https://any.run"><img src="https://img.shields.io/badge/ANY.RUN-沙箱_%26_TI_Lookup-FF6A2B?style=for-the-badge" alt="ANY.RUN"></a>&nbsp;
+  <a href="https://zetalytics.com"><img src="https://img.shields.io/badge/ZETAlytics-被动_DNS-0B7285?style=for-the-badge" alt="ZETAlytics"></a>&nbsp;
+  <a href="https://intelx.io"><img src="https://img.shields.io/badge/IntelX-泄露与暗网检索-2B6E6B?style=for-the-badge" alt="Intelligence X"></a>
+</p>
+
+</div>
+
+| 支持方 | 他们带来什么 | 在工具链中的位置 |
+|--------|--------------|------------------|
+| [**Rexxfield**](https://rexxfield.com) | 自 2008 年起从事网络犯罪调查与受害者侧办案——本技能的办案流程与归因标准正是以其实战方法论为蓝本 | 调查方法论 |
+| [**Hudson Rock**](https://www.hudsonrock.com) | 信息窃取器感染情报——哪台主机泄露了哪些凭据、在什么时间 | `/breach-deep` · `/stealer-log` |
+| [**ParanoidLab**](https://paranoidlab.com) | 覆盖论坛、交易市场与私密 Telegram 的暗网、初始访问代理（IAB）与窃取器日志监控 | 暗网采集与研判 |
+| [**ANY.RUN**](https://any.run) | 交互式恶意软件沙箱 + **TI Lookup**——从加壳样本中获取沙箱实测的 C2 与真实端点 | `/binary` · `/hash-id` |
+| [**ZETAlytics**](https://zetalytics.com) | 具备罕见地理多样性的全球被动 DNS——历史解析与同址共存枢轴 | `/webpivot` · `/cti-pivot` |
+| [**IntelX**](https://intelx.io) | Intelligence X——粘贴站、泄露库、暗网与 phonebook 选择符检索 | `/webpivot` · `/email-deep` |
+
+> [!IMPORTANT]
+> **ANY.RUN 仅以只读方式使用。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。本技能**从不提交样本**——公开沙箱任务全网可读且不可撤回。该边界由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
+
+<sub>此处列出仅表示对本项目的支持，<b>不</b>意味着上述机构与本工具存在任何隶属、背书或认证关系。上表标注的集成均为可选且需要 API 密钥——<b>所有核心技术在零密钥情况下依然可用</b>。请始终遵守各提供方的服务条款。本技能所依赖的开源项目与免费公益服务的完整清单见<a href="#-致谢与鸣谢">致谢与鸣谢</a>。</sub>
+
+<br>
+
+---
+
+<br>
+
 ## 什么是 CTI Expert？
 
 一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **74+ 条命令**、**49 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
@@ -696,19 +735,32 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 ### 工作流程图
 
-**完整 `/case` 流水线（AEAD）** —— `/webpivot`、关联分析与付费密钥各自的位置：
+**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 49 项技术与 23 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
 
 <div align="center">
-<img src="assets/workflow-case.png" alt="cti-expert /case 流水线（AEAD）" width="820">
+<img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
+</div>
+
+**完整 `/cti` · `/case` 流水线（AEAD）** —— 递归蛛网扩展，以及 `/webpivot`、`/icp`、`/iban` 与关联分析各自的位置：
+
+<div align="center">
+<img src="assets/workflow-case.svg" alt="cti-expert /case 流水线（AEAD）" width="820">
 </div>
 
 **`/webpivot` + 关联 + 付费 API 密钥流程：**
 
 <div align="center">
-<img src="assets/workflow-apikeys.png" alt="cti-expert /webpivot + 关联 + API 密钥工作流" width="820">
+<img src="assets/workflow-apikeys.svg" alt="cti-expert /webpivot + 关联 + API 密钥工作流" width="820">
 </div>
 
-<sub>来源：<a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> —— 参见 <a href="handbook/api-keys.md">API 密钥与 webpivot 指南</a>。</sub>
+<sub>来源：<a href="workflow-skills.puml"><code>workflow-skills.puml</code></a> · <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> —— 由 <a href="https://plantuml.com">PlantUML</a> 渲染为 <b>SVG</b> 存放于 <a href="assets/"><code>assets/</code></a>（矢量图，任意缩放都清晰，且无需 Git-LFS）。修改源文件后重新渲染：</sub>
+
+```bash
+plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skills.puml
+# 需要用于幻灯片的位图时追加 -tpng —— 注意 assets/*.png 由 Git-LFS 管理
+```
+
+<sub>参见 <a href="handbook/api-keys.md">API 密钥与 webpivot 指南</a>。</sub>
 
 <br>
 

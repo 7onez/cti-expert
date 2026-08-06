@@ -52,6 +52,45 @@
 
 <br>
 
+## 🤝 Sponsors &amp; Supporters
+
+<div align="center">
+
+**CTI Expert is built in the open. These organisations back the work — with data, tooling, and hard-won investigative tradecraft.**
+
+<p>
+  <a href="https://rexxfield.com"><img src="https://img.shields.io/badge/Rexxfield-Cybercrime_Investigations-B3272D?style=for-the-badge" alt="Rexxfield"></a>&nbsp;
+  <a href="https://www.hudsonrock.com"><img src="https://img.shields.io/badge/Hudson_Rock-Infostealer_Intel-1B2A4A?style=for-the-badge" alt="Hudson Rock"></a>&nbsp;
+  <a href="https://paranoidlab.com"><img src="https://img.shields.io/badge/ParanoidLab-Dark_Web_%26_IAB-0F172A?style=for-the-badge" alt="ParanoidLab"></a>
+</p>
+<p>
+  <a href="https://any.run"><img src="https://img.shields.io/badge/ANY.RUN-Sandbox_%26_TI_Lookup-FF6A2B?style=for-the-badge" alt="ANY.RUN"></a>&nbsp;
+  <a href="https://zetalytics.com"><img src="https://img.shields.io/badge/ZETAlytics-Passive_DNS-0B7285?style=for-the-badge" alt="ZETAlytics"></a>&nbsp;
+  <a href="https://intelx.io"><img src="https://img.shields.io/badge/IntelX-Leak_%26_Darknet_Search-2B6E6B?style=for-the-badge" alt="Intelligence X"></a>
+</p>
+
+</div>
+
+| Supporter | What they bring | In the toolkit |
+|-----------|-----------------|----------------|
+| [**Rexxfield**](https://rexxfield.com) | Cybercrime investigation and victim-side casework since 2008 — the real-world tradecraft the case workflow and attribution standards are modelled on | Tradecraft &amp; methodology |
+| [**Hudson Rock**](https://www.hudsonrock.com) | Infostealer-infection intelligence — which machines leaked which credentials, and when | `/breach-deep` · `/stealer-log` |
+| [**ParanoidLab**](https://paranoidlab.com) | Dark-web, Initial-Access-Broker and infostealer-log monitoring across forums, markets and private Telegram | Dark-web collection &amp; review |
+| [**ANY.RUN**](https://any.run) | Interactive malware sandbox + **TI Lookup** — sandbox-observed C2 and real endpoints from packed samples | `/binary` · `/hash-id` |
+| [**ZETAlytics**](https://zetalytics.com) | Global passive DNS with rare geographic diversity — historical resolution and co-tenancy pivots | `/webpivot` · `/cti-pivot` |
+| [**IntelX**](https://intelx.io) | Intelligence X — paste sites, leaks, darknet and phonebook selector search | `/webpivot` · `/email-deep` |
+
+> [!IMPORTANT]
+> **ANY.RUN is used read-only.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. This skill **never submits a sample** — a public sandbox task is world-readable and irreversible. That boundary is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.
+
+<sub>Listing here reflects support for the project and does <b>not</b> imply affiliation, endorsement, or any verification of this tool by the organisations named. Integrations marked above are optional and key-gated — <b>every core technique still runs with zero API keys</b>. Always respect each provider's terms of service. The full list of open-source projects and free public-interest services this skill depends on is in <a href="#-acknowledgments--credits">Acknowledgments &amp; Credits</a>.</sub>
+
+<br>
+
+---
+
+<br>
+
 ## What is CTI Expert?
 
 A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **49 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
@@ -696,19 +735,32 @@ Every investigation follows four automated phases:
 
 ### Workflow diagrams
 
-**Full `/case` pipeline (AEAD)** — where `/webpivot`, correlation, and premium keys fit:
+**End-to-end tool &amp; skill flow** — the whole system as one sequence: your target enters at `/cti`, crosses Layer 1's 49 techniques and the 23-tool MCP surface, through WebPivot / BinaryPivot / the knowledge base / IntelAnalysis, and leaves as a rendered graph and a PDF:
 
 <div align="center">
-<img src="assets/workflow-case.png" alt="cti-expert /case pipeline (AEAD)" width="820">
+<img src="assets/workflow-skills.svg" alt="cti-expert end-to-end tool and skill flow — sequence diagram across both layers" width="900">
+</div>
+
+**Full `/cti` · `/case` pipeline (AEAD)** — the recursive spider-map, and where `/webpivot`, `/icp`, `/iban` and correlation fit:
+
+<div align="center">
+<img src="assets/workflow-case.svg" alt="cti-expert /case pipeline (AEAD)" width="820">
 </div>
 
 **`/webpivot` + correlation + premium API-key flow:**
 
 <div align="center">
-<img src="assets/workflow-apikeys.png" alt="cti-expert /webpivot + correlation + API-key workflow" width="820">
+<img src="assets/workflow-apikeys.svg" alt="cti-expert /webpivot + correlation + API-key workflow" width="820">
 </div>
 
-<sub>Sources: <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — see the <a href="handbook/api-keys.md">API-keys &amp; webpivot guide</a>.</sub>
+<sub>Sources: <a href="workflow-skills.puml"><code>workflow-skills.puml</code></a> · <a href="workflow-case.puml"><code>workflow-case.puml</code></a> · <a href="workflow-apikeys.puml"><code>workflow-apikeys.puml</code></a> — rendered with <a href="https://plantuml.com">PlantUML</a> to <b>SVG</b> in <a href="assets/"><code>assets/</code></a> (vector, so it stays sharp at any zoom and needs no Git-LFS). Re-render after editing a source:</sub>
+
+```bash
+plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skills.puml
+# add -tpng if you need raster copies for slides — note assets/*.png is Git-LFS tracked
+```
+
+<sub>See also the <a href="handbook/api-keys.md">API-keys &amp; webpivot guide</a>.</sub>
 
 <br>
 
@@ -1066,7 +1118,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (18 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (23 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · kb/ (KB + correlation) · cert_overlap
     ├── WebPivot/               Engine collector helpers + de-dup re-export shims
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
