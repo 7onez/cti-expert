@@ -57,8 +57,39 @@ swap. If you move a directory, fix the shims' relative depth.
 The pipeline (`intel_engine/tools/intel.py`) drives cti-expert's own
 `scripts/webpivot/pivot_extract.py` collector (resolved one level up from `intel_engine/`).
 
-## Re-syncing from the archive
+## Re-syncing from the upstream engine
 
-To pull engine updates from `intel_engine`: copy into `intel_engine/` (code only, never
-`knowledge/`/`cases/`), then re-apply the 5 shims so no duplicate collector is reintroduced.
-Verify with `bash scripts/smoke-test.sh` + `python3 scripts/backend/intel.py pipeline open …`.
+Upstream is the `intelligence_assist` working tree (GitHub `0xdefh/Intelligence-AS`). The sync is
+**one-way** — cti-expert never writes back.
+
+**It is a three-way merge, not a copy.** "Copy, then re-apply the 5 shims" is not enough: the
+vendored tree also carries a dozen files cti-expert has patched on purpose, and overwriting them
+fails *silently* — the collectors still run, they just stop finding things. Known examples:
+`wp_common` walks one extra level up for `.env` (cti-expert nests deeper; upstream's version
+resolves every API key to empty), and `pivot_extract` has reverse-WHOIS ON with
+`--no-whois-reverse` as the opt-out (upstream made it opt-in).
+
+Find the divergence mechanically rather than from memory — **blob identity against all upstream
+history**. Index every `(blob, path)` pair upstream has ever committed, plus its current working
+tree; then hash each vendored file. Three outcomes:
+
+| vendored blob | meaning | action |
+|---|---|---|
+| matches some upstream blob for that path | pure vendored copy | safe to overwrite |
+| path exists upstream, blob matches none | **cti-expert local patch** | 3-way merge |
+| path does not exist upstream | **cti-expert-only** | must survive; never `rsync --delete` |
+
+For each local patch, pick the merge base by minimum diff distance over that path's historical
+blobs, then `git merge-file <ours> <base> <theirs>`. Expect duplicate `@tool`/`def` blocks where
+the base predates a tool that both sides then added — check with
+`grep -oE '^async def [a-z_]+' … | sort | uniq -d`.
+
+Also: exclude `.venv`, `__pycache__`, `cases/`, `knowledge/`, `MEMORY/`, `.env`; rename each
+component's `SKILL.md` to `SKILL.reference.md` (the repo has exactly one `SKILL.md`); and note that
+**zsh does not word-split unquoted parameters** — an `rsync $EXCLUDES` built as one string silently
+excludes nothing and will drag a 500 MB `.venv` into the tree.
+
+Then wire per RULE 3 (new `@tool`s → `DISPATCH` + the CLAUDE.md count) and verify with
+`bash scripts/audit.sh`, the repo-root `tests/`, the vendored `intel_engine/tests/`, a
+`tools/list` against `intel_engine/harness/mcp_server.py`, and
+`python3 scripts/backend/intel.py pipeline open …`.
