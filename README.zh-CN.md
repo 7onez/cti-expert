@@ -16,7 +16,7 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.7-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.7"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.8-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.8"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#命令参考"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
   <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
@@ -160,6 +160,26 @@
 
 <br>
 
+## v2.8 新功能
+
+> **这是引擎追上上游、并把安全护栏挪到 harness 真正看得见的位置的版本。** v2.7 让深度流水线落了地；v2.8 把 vendor 进来的引擎**向前推进了约 30 个 commit** —— **24 → 46 个 MCP 工具**、一项全新的交互技能，以及一个跑到收敛为止的案件循环 —— 然后修好了它底下那一层：有两项安全属性此前被执行在 Claude Code 根本触及不到的时刻。现在两者都在真正干活的地方生效。
+
+| 类别 | 新增内容 | 详情 |
+|------|---------|------|
+| **引擎同步 —— 24 → 46 个 MCP 工具** | 这是一次三方合并，不是一次复制 —— 而这个区别就是全部故事 | vendor 进来的 `intel_engine/` 落后了约 30 个 commit。与其相信脑子里记着的一份本地补丁清单，不如把每个 vendor 文件都按**对照上游全部历史的 blob 同一性**做分类：114 个纯拷贝、**15 个刻意打过补丁的**、**6 个只属于 cti-expert 的**。一次直来直去的 `rsync` 会悄悄回退三处真实行为 —— `wp_common` 多出的那一层 `.env` 深度（cti-expert 比上游多嵌套一级，因此上游版本会把**每一个 API key 都解析成空**，而无密钥的一轮采集随后就会把*"没有兄弟域名"*当成关于对象的事实报出来）、`pivot_extract` 默认开启的反向 WHOIS，以及 `collect_core` 的单一来源化 —— 还会顺手删掉 `email_permute`，并把三个 RULE 4 的 shim 变回真实拷贝。CLI op 从 **48 → 69**，全部可解析 |
+| **Engage —— 认证面** | 先找到登录入口；然后，只在明确确认之后，**进到里面去** | 探测是被动且免费的：定位登录表单、密码字段和注册页，并按**字段**而不是按标签分类 —— 出现确认密码就意味着*注册*，邀请码是一个**枢轴，而不是 OTP**。再往前一步，`engage_account` 用**合成身份**注册账号，读取公开页面藏起来的会员区（后台面板、充值/提现流程、推广层级、客服账号）。它拒绝非合成身份、拒绝直连出网，并在 CAPTCHA 前停下。注册账号是向外的、可被归因的、无法撤销的 —— **其闸门与向沙箱提交样本完全同级** |
+| **案件循环** | 判断的单位是**聚类**而不是案件 —— 而且跑到收敛为止，不是跑到某个随意的深度 | `/clusters` 在做出任何判断*之前*先把一个案件切分成同一运营者的连通分量，并显示每个绑定指标**在全库范围内的普遍度** —— 于是一个在这里连起 3 个域名、却在全库出现在 400 个域名上的指标，一眼就是噪声而不是归属线索。`/frontier` 报告尚未解决的缺口：已经发现的免费下一批种子，加上**被暂缓、等待批准的计费线索**。`/loop` 反复执行采集 → 评估直到案件收敛；`/reopen` 在出现新种子时重开一个已收敛的案件；`/scope` 在开工时就推导出接案信息 —— 禁触类别、受害方归属、出网闸门 —— 而不是跑到一半再去假设 |
+| **六个全新采集层** | 每一个都堵上了旧答案出错的一种具体方式 | **`/liveness`** —— 返回 200 的停放页/默认页/停用页/软 404 **不算**活着，而 404/403/机器人墙**不算**死了；只有 NXDOMAIN 才报死亡，而每一个仍被对方控制的名字都会被标上 `reuse_watch`。**`/pssl`** —— 被动 SSL 走的是历史上的**证书 → IP** 方向，用来还原躲在 CDN 后面的源站，并带一道基础率护栏，把共享的 CDN 证书（实测覆盖 915 个地址）挡在聚类之外。**`/paths`** —— 把 URL *路径*当作指标（`path_kit:`），针对那种轮换主机、靠目录来决定给受害者看哪套模板的运营者；通用路径不会产出任何东西。**`/serp`** —— 广告透明度中心指出**谁付了钱**（一个经过验证、真实扣费的广告主），并配有带证伪对照的 cloaking 探测。**`/docmeta`** —— PDF 的 `/Info` 与 XMP、含 GPS 的 EXIF、PNG 数据块。**`/victims`** —— 从受害者集合反推**入侵向量** |
+| **RULE 1 现在在写入那一刻生效** | 防泄露关卡此前执行在一个代理 harness 很少走到的时刻 | `leakcheck.sh` 只作为 *git* 的 pre-commit hook 运行。Claude Code 持续写文件、却很少提交，因此一条泄露出去的指标可能整场会话都躺在工作区里 —— 而 `git commit --no-verify` 干脆直接跳过这道关卡。[`hooks/leakguard.py`](hooks/leakguard.py) 把检查挪到了 **`Write`/`Edit` 上的 PreToolUse**，那里根本不存在这个开关。它**没有重新实现那些匹配规则** —— 而是调用 `leakcheck.sh`，因为第二份拷贝一定会漂移，而漂移过的护栏只会报"干净"。作用范围是刻意收窄的：只在 cti-expert 的检出目录内、且 git 不忽略的路径上才拒绝，所以把案件数据写进 `intel_engine/cases/` —— 那本来就是正确做法 —— 永远不会被拦 |
+| **向外动作的闸门挪到了 vendor 代码之上** | 一道只隔着"一次糟糕合并"的闸门，不算闸门 | `submit()` 在缺少 `confirm=True` 时会拒绝；Engage 的工具会拒绝非合成身份。这些闸门都是真的 —— 而它们住在 `intel_engine/` 里，也就是 **vendor** 的那部分。重新同步它是一次跨约 150 个文件的三方合并，其中一处刻意的本地行为会被*悄无声息地*回退；就在本次发布里，就有三处这样的回退是靠人工抓出来的。[`hooks/actionguard.py`](hooks/actionguard.py) 位于工具之上、在 cti-expert 自己的代码树里，并按工具**名称**触发。它返回**询问**并附上风险简报，绝不硬性拦截 —— 一道你必须关掉才能干活的护栏，就是一道终将被关掉的护栏。双模式工具按**参数**而不是按工具设闸：常规采集全程静默，只有 `--submit` 才会询问 |
+| **MCP 列表过期这个故障终于有了名字** | 一场会话正驱动着四周前的工具面，而任何地方都没有报错 | Claude Code 在 MCP server **连接时**解析它的工具列表，并在整场会话里沿用。我们发现有一场会话握着 **17** 个工具，而磁盘上的引擎提供着 **46** 个 —— 并且没有任何提示；模型只是从头到尾没看见那些新工具，然后绕开它们的缺席去干活。[`hooks/sessionguard.py`](hooks/sessionguard.py) 在 SessionStart 时报告已解析出的 backend 层级，并在 `@tool` 数量**相对上一场会话发生变化**时发出提醒 —— 而那正是缓存下来的注册信息变旧的时刻 |
+| **可以作为 Claude Code 插件安装** | 技能 + 命令 + MCP + hook 打成**一个**整体 | `register.sh` 为技能、命令和 MCP server 建立符号链接 —— 但它装不了 **hook**，而上面那两道护栏恰恰住在那里。[`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) 把四者打包在一起：`/plugin marketplace add <clone>`，然后 `/plugin install cti-expert`。hook 路径采用带 `${CLAUDE_PLUGIN_ROOT}` 的 exec 形式，因此没有任何东西被写死到某一台机器上，也没有任何路径会被 shell 解析。两个 PreToolUse hook 都**向开放方向失败** —— 一个 hook 的 bug 绝不能把你的仓库搞瘫；`audit.sh` 与 git 的 pre-commit hook 仍然是兜底 |
+| **OPSEC 关卡是被满足的，不是被放宽的** | 上游长出了一条提交样本的通路，所以这项测试必须被诚实地满足 | ANY.RUN 的 API 大半是一套*提交*用的 API，而上游引擎为它加了一条带闸门的通路 —— 这按设计就会让 [`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py) 失败。修法不是削弱断言：`REQUIRES_ANALYST_CONFIRMATION` 标记被放在 `submit()` 函数本身上，四个属于提交生命周期的 endpoint 被**逐一列出**（一个未经审阅的新 key 仍然会让测试变红），并且测试现在同时要求这个标记**以及它所声称的那次拒绝** —— 于是标记无法退化成一句咒语式的魔法字符串。已通过逐项植入故障验证：拿掉标记 → 红；拿掉拒绝逻辑 → 红；恢复 → 绿 |
+| **真正会把仓库搞坏的，正是那份重新同步流程** | 写下来却会*悄悄*失败的指引，比没有指引更糟 | [STRUCTURE.md](STRUCTURE.md) 曾告诉下一个人"复制进 `intel_engine/`，然后把 5 个 shim 重新贴回去"。这是错的，而且它的失败没有任何报错：采集器照样在跑，只是什么都找不到了。现在它记录的是站得住的流程 —— 按 **blob 同一性**分类、以距离最小的基线做三方合并、检查旧基线会造出的重复 `@tool` 块 —— 外加 `zsh` 的分词陷阱：一份没加引号的 `rsync` 排除列表会变成**什么都不排除**。vendor 引擎自带的 **17 道关卡**现在也随包提供，并与 cti-expert 自己的 6 道一起运行；`audit.sh` 还新增了一项检查：`hooks.json` 注册的每条路径都必须仍然可解析，因为一个被改名的脚本会在沉默中让它的 hook 失效 |
+
+<details>
+<summary><b>v2.7 新功能</b></summary>
+
 ## v2.7 新功能
 
 > **这是深度流水线正式落地的版本。** v2.6 打磨的是采集端；v2.7 让 cti-expert 成为一套**双层系统** —— 广度采集器**加上**一条自带持久化知识库、完全自包含的情报流水线 —— 冷启动下一条命令即可触达，并由一道在每次 push 时用仓库自身规则检查仓库的关卡守着。
@@ -176,6 +196,8 @@
 | **仓库自我校验** | `audit.sh` + CI + 提交前泄露扫描 | [`scripts/audit.sh`](scripts/audit.sh) 就是那道关卡：每个 `DISPATCH` op 必须指向真实存在的脚本，五个共享采集器必须是一份正本加一个再导出 shim，`@tool` 数量必须与贡献规则一致，模块可字节编译，测试全绿。它在**每次 push 与 PR 时于 GitHub Actions 运行**，且只扫描 PR *新增*的行，因此精心挑选的示例值不会被反复误报。[`scripts/install-hooks.sh`](scripts/install-hooks.sh) 将标识符泄露扫描挂成 **pre-commit 钩子**。随附五套零依赖测试 —— 采集核心、指标分类、误报账本、不提交样本，以及邮箱候选噪声控制 |
 | **每个采集回合都以表格开场** | 一眼看清产出，再看叙述 | 此前采集只在叙述文字和持久化导出文件中呈现结果，没有任何机制保证对话里出现按域名归纳的摘要。新的输出规则要求每个采集回合**先给出** markdown 表格 —— **解析情况 · 首要枢轴 · 风险 · 聚类 · 是否曾见** —— 让你一眼看到收获，而不必逐字去找 |
 | **可移植、不绑定框架** | 技能中已不存在任何助手框架耦合 | 移除了强制的语音通知代码块，并把自定义目录从框架专属路径改为中立的 `~/.config/cti-expert/`（仓库/当前目录的 `.env` 仍然优先）。本版还包括：**赞助与支持方**板块 —— Rexxfield · Hudson Rock · ParanoidLab · ANY.RUN · ZETAlytics · IntelX —— 以及以 **SVG** 重建的工作流程图，其中包含一张全新的端到端工具与技能时序图 |
+
+</details>
 
 <details>
 <summary><b>v2.6 新功能</b></summary>
