@@ -63,9 +63,12 @@
       "timeline": {"en": "Timeline", "vi": "Dòng thời gian"},
       "collection_limitations": {"en": "Collection Limitations", "vi": "Giới hạn thu thập"},
       "alternative_hypotheses": {"en": "Alternative Hypotheses", "vi": "Giả thuyết thay thế"},
+      "rejected_links": {"en": "Rejected Links", "vi": "Liên kết đã bác bỏ"},
       "recommendations": {"en": "Recommendations", "vi": "Khuyến nghị"},
       "artifact_register": {"en": "Artifact Register", "vi": "Danh mục chỉ dấu"},
-      "domain_profiles": {"en": "Domain Profiles", "vi": "Hồ sơ từng tên miền"}
+      "evidence_ledger": {"en": "Evidence Ledger", "vi": "Sổ chứng cứ"},
+      "domain_profiles": {"en": "Domain Profiles", "vi": "Hồ sơ từng tên miền"},
+      "cluster_members": {"en": "Cluster Members", "vi": "Thành viên cụm"}
     }
   }
 }

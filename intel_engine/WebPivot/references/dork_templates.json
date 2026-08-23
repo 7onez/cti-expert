@@ -1,0 +1,35 @@
+{
+  "_comment": "Dork + directory templates for search_pivot.py's HANDLE and DISCORD_ID pivots — the general-web / social complement to the infrastructure pivots. An analyst tunes these WITHOUT editing Python: add a search-engine dork template, a Telegram/Discord/paste directory, or a dox-index site here and search_pivot emits it. Placeholders: {h} = bare handle (no leading @, lower-cased), {id} = numeric Discord snowflake. RULE 1 applies — these are GENERIC templates only; never paste a case value (a real handle, channel id or person) into this file. RULE 3 — code holds the matching/emit logic, this file holds the values it emits.",
+  "handle_dorks": {
+    "_comment": "Search-engine dork templates fired across the engine set for a username/handle (Telegram, Discord, forum, marketplace alias). Each is {label, q}; {h} is substituted with the bare handle and the query is URL-encoded per engine. Keep them operator-agnostic — a handle plus a CONTEXT term (dox/market/staff) is what separates a real mention from noise.",
+    "values": [
+      {"label": "exact handle", "q": "\"{h}\""},
+      {"label": "as @mention", "q": "\"@{h}\""},
+      {"label": "cross-platform presence", "q": "\"{h}\" (telegram OR t.me OR discord OR twitter OR github OR instagram OR tiktok OR youtube OR steam)"},
+      {"label": "dox / leak context", "q": "\"{h}\" (doxbin OR dox OR leak OR breach OR pastebin OR ghostbin OR scribd)"},
+      {"label": "market / staff context", "q": "\"{h}\" (seller OR vendor OR shop OR market OR admin OR manager OR staff OR owner)"},
+      {"label": "telegram analytics mirrors", "q": "(site:telemetr.io OR site:tgstat.com OR site:telegram.im OR site:telemetree.io) \"{h}\""},
+      {"label": "paste / code / dox sites", "q": "(site:t.me OR site:pastebin.com OR site:github.com OR site:scribd.com OR site:doxbin.org OR site:doxbin.net) \"{h}\""}
+    ]
+  },
+  "telegram_directories": {
+    "_comment": "Direct profile and third-party ANALYTICS-MIRROR URLs for a Telegram handle. The mirrors index what the app hides or shows only in-client — channel bio, the admin/management list, subscriber-count history, first-seen date — so a handle pulled from one channel's bio resolves to the operator's other channels. {h} = bare handle. Best-effort: a mirror may not have indexed a given handle, so pair with the 'telegram analytics mirrors' dork above.",
+    "values": [
+      {"label": "t.me profile (canonical)", "url": "https://t.me/{h}"},
+      {"label": "telegram.im mirror", "url": "https://telegram.im/@{h}"},
+      {"label": "tgstat search", "url": "https://tgstat.com/en/search?q={h}"},
+      {"label": "telemetr.io search", "url": "https://telemetr.io/en/search?query={h}"}
+    ]
+  },
+  "discord_lookup": {
+    "_comment": "Discord resolution. A numeric SNOWFLAKE id resolves to an account-creation timestamp (decoded locally by the tool, no network) plus username/avatar via these mirror sites; a bare username is NOT resolvable to an id, so for a username the tool falls back to the by_name dorks. by_id URLs take {id}; by_name dorks take {h}.",
+    "by_id": [
+      {"label": "discord user (official)", "url": "https://discord.com/users/{id}"},
+      {"label": "discordlookup.com", "url": "https://discordlookup.com/user/{id}"},
+      {"label": "lookup.guru", "url": "https://lookup.guru/{id}"}
+    ],
+    "by_name": [
+      {"label": "discord username mention", "q": "\"{h}\" (discord OR discord.gg OR discord.com)"}
+    ]
+  }
+}

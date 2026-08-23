@@ -23,9 +23,25 @@ copy a reviewer can redline.
 These are the standing rules for the assessment markdown you hand to the renderer. The template
 enforces the typography (Roman numbering, compact tables, wrapped code); YOU enforce the structure.
 
+0. **Open with the DECISION this report supports — one sentence, before anything else.** The first
+   line of Section I is a purpose statement naming the question the report answers *and* what the
+   consumer is expected to do with the answer: *"This report assesses whether `site-a.example` and
+   `site-b.example` are operated by a single party, and whether a named registrant can be linked to
+   that operation, to support a registrar abuse referral and a platform enforcement decision."*
+   Without it the reader cannot know **what threshold of proof applies** — a prosecutor, a platform
+   trust-and-safety queue, a registrar abuse desk and a newsroom read the same evidence against
+   different bars, and an unstated bar silently defaults to the reader's rather than the analyst's.
+   - **Ask if it was not stated.** Bundle it with the audience and TLP questions (below) — the three
+     are one decision, and they are asked BEFORE the report is written, not after it renders.
+   - **A case with no external consumer still has a threshold.** Write it: *"…to support internal
+     analytic reference; no external action is requested"* — that is Rule 18's consumer note, and it
+     belongs in the purpose statement too.
+   - **Restate the threshold in Methodology**, in one line, as the standard the judgments were
+     written against (e.g. "findings are graded for an abuse-referral decision: an assessed
+     same-operator link is actionable, a named individual is not asserted below *high confidence*").
 1. **Important-first, detail-later.** Lead the document with the conclusion. Section **I** is always
-   the **Executive Summary — Key Judgments (BLUF)**: a table of findings + attribution + confidence,
-   before any narrative.
+   the **Executive Summary — Key Judgments (BLUF)**: the purpose statement (Rule 0), then a table of
+   findings + attribution + confidence, before any narrative.
 1a. **Write in IC / CIA estimative language.** The analyst voice is *"We assess…"*, *"We judge with
    high confidence…"*, *"…almost certainly…"*. Use the **ICD-203 / Sherman-Kent** probability words
    (almost certain / very likely / likely / roughly even chance / unlikely / very unlikely / almost
@@ -41,6 +57,26 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
      were registered on the same day through the same registrar. Because a shared private server and a
      same-day registration are things unrelated operators do not share by accident, we assess the two
      sites are run by one operator."*
+1c. **Plain language, and a HUMAN voice the reader can defend.** The person who receives this report
+   has to explain it — to a manager, an abuse desk, a court — often without you in the room. If a
+   sentence needs you present to be understood, rewrite it. Two standing requirements:
+   - **Define every technical term at first use, in plain words, then keep using the term.** The first
+     time a report says JARM, favicon hash, passive DNS, RDAP, stealer log, snowflake, mmh3, write a
+     short gloss in parentheses — *"a JARM fingerprint (a hash of how a server answers a TLS handshake;
+     two servers set up the same way share it)"* — and add the term to the Glossary (Rule 23). A reader
+     should never meet an unexplained acronym. Prefer the plain word where one exists (say "web address"
+     once beside "URL", "the site's hosting" beside "origin IP").
+   - **Write like a working analyst, not a model.** Short declarative sentences. Concrete nouns and
+     verbs. This is what "no AI-generated feel" means in practice — and it matters because AI-sounding
+     text reads as padded and evasive, which is the opposite of defensible. BANNED tells, because a
+     reader trips on them: the "it's not just X, it's Y" and "not only … but also" constructions; the
+     rule-of-three flourish ("clear, concise, and compelling"); throat-clearing ("it is important to
+     note that", "it is worth mentioning"); inflated verbs ("delve", "underscore", "leverage",
+     "navigate the landscape", "showcase", "testament to", "plays a pivotal/crucial role"); chained
+     connectors ("moreover", "furthermore", "additionally" stacked); and hedging everything to the same
+     mush. Say the thing plainly, once. When you mean "shows", write "shows".
+   - **Test:** read a paragraph aloud. If it sounds like a brochure or a chatbot, it is wrong; if it
+     sounds like a colleague explaining what they found and why they believe it, it is right.
 2. **Table → info → context, in that order.** In every finding section, put the structured table
    first, then the tight bullet/number facts, then the prose context. Never open with a paragraph.
 3. **Overview → Details in every long section.** If a section runs long, split it: a `## Overview`
@@ -78,7 +114,7 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
 
    ICD-203 bands: *almost no chance* (01–05%) · *very unlikely* (05–20) · *unlikely* (20–45) ·
    *roughly even chance* (45–55) · *likely* (55–80) · *very likely* (80–95) · *almost certain* (95–99%).
-7. **Appendix — artifact register (required).** The last section is an appendix table with ONE ROW
+7. **Appendix — artifact register (required).** The FIRST appendix is a table with ONE ROW
    PER ARTIFACT, columns: **Artifact · Value · Source (public class) · Admiralty grade** — this is the
    authoritative schema (Rule 13 restates it). "Source" is the PUBLIC source CLASS only — WHOIS,
    passive DNS / IP, certificate transparency, public web-scan data, live page — never a specific
@@ -131,9 +167,11 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
     - Vague (fails): *"Two members share a favicon; the seed imitates a broker."*
     - Named (passes): *"`site-a.example` and `site-b.example` both serve favicon mmh3 `123456789`;
       the seed `site-a.example` imitates Example Brokerage Ltd."*
-13. **Appendix = collected EVIDENCE only.** The final appendix is the evidence table: **Artifact ·
-    Value · Source (public class) · Admiralty grade**. No "how we found it", no file paths, no
-    reproduction/credit-log appendix. It is what we observed, not how our harness observed it.
+13. **Appendices = collected EVIDENCE only.** They carry the artifact register (**Artifact · Value ·
+    Source (public class) · Admiralty grade**), the evidence ledger (Rule 21), the per-domain
+    profiles (Rule 17) and the cluster enumeration (Rule 12b) — and nothing else. No "how we found
+    it", no file paths, no reproduction/credit-log appendix. What we observed, not how our harness
+    observed it.
 14. **Methodology overview = general OSINT tradecraft, not our process.** Describe the *method*
     (start from seeds → **pivot** outward → form a **hypothesis** → **prove or disprove** it against
     independent data sources → weight owner-controlled evidence, state the alternative ruled out),
@@ -152,6 +190,27 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
       **rejected links dotted and struck through with the reason** (`✗ parking IP — co-tenancy
       noise`). A figure that shows only what survived hides the analysis; showing the discarded
       branch is what makes the attribution credible.
+15a. **Place each figure INLINE, beside the claim it proves — never silo evidence in an appendix.**
+    A screenshot of the operator's channel, a crew card, a leaked-record panel is *the proof of a
+    specific sentence*; it belongs in the paragraph that makes that sentence, so the reader sees the
+    claim and its picture together and can digest the argument without cross-referencing. A findings
+    section that is a wall of text with its images parked pages away at the back has FAILED this rule
+    even though the images exist — a reader hits the claim, has nothing to look at, and the evidence
+    they needed is 8 pages later divorced from what it supports.
+    - **The narrative order and the figure order are the same order.** Put the figure immediately
+      after the paragraph whose finding it evidences (admin-handle screenshot under the admin-handle
+      subsection, timeline figure under the timeline section). If one subsection makes three claims
+      each with its own screenshot, all three figures go in that subsection, in the order the claims
+      are made.
+    - **There is no separate "Visual evidence" appendix.** Screenshots are findings evidence, so they
+      render inline; the *evidence ledger* (Rule 21) is what carries the one-line-per-capture index
+      (URL, capture time, full hash) — the picture proves the point in the body, the ledger lets a
+      reader re-verify and re-fetch it. Do not embed the same image twice (inline AND in an appendix).
+    - **Screenshots are captured, hashed, timestamped evidence**, not decoration: caption each with
+      what it shows, when it was captured (UTC), and — if it was taken after an interaction (a splash
+      gate, a tab) — say so, because a capture that clicked through a gate must disclose it. A capture
+      tool that records a per-capture manifest (url, captured_at, sha256, actions) is the source for
+      both the caption and the ledger row.
 16. **Two figure kinds — use both.** `figures.json` (sibling of the markdown) takes a *list*, and
     `render_report.py` rebuilds every entry through IntelGraph immediately before rendering, so no
     chart is ever stale. Opt out only with `--no-figures`.
@@ -192,24 +251,194 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
     site (favicon mmh3, TLS SHA-256, analytics/telemetry ids, tech stack, contact handles, notable
     sub-sites). This is the WHOIS + unique-findings dossier a reader expects for every domain in scope.
 
+18. **Close with what the reader should DO — recommendations scoped to the DECISION in Rule 0.** An
+    assessment that stops at attribution leaves the consumer holding facts with no action. Include a
+    short **Recommendations** section covering, as they apply: the **reporting / referral pathways**
+    (which registrar, host, telemetry vendor or constituency to notify — mirror the victim-side
+    provider list from IntelAnalysis VictimProfile when there is one), the **preservation targets**
+    that decay (a live page, a cert, a WHOIS record about to be re-privatised), and the pivots the
+    consumer's own access could close that ours could not. If the report is purely for an internal
+    analytical audience with no action expected, say so explicitly in a one-line **Consumer note**
+    ("intended use: analytic reference; no external action requested") — a reader of a TLP:AMBER
+    product should never have to guess what they may act on.
+
+18a. **Defensive content is a SEPARATE product — do not bulk it into an investigation report.**
+    An IOC block, detection/hunt rules, YARA/Sigma, and ATT&CK technique mappings belong in a report
+    only when the named consumer (Rule 0) is a **security-operations / IR team**. In an attribution
+    report written for enforcement, referral, or publication they are three kinds of wrong at once:
+    **noise** (they push the attribution argument down the page), **premature** (a hunt rule implies
+    operational confidence the case may not carry), and **misleading** (they frame the product as
+    defence when its purpose is understanding). The *artifacts themselves* still appear — in the
+    findings, the per-domain profiles (Rule 17) and the artifact register (Rule 7), because those are
+    evidence. What is excluded is the packaging of them as a detection deliverable.
+    - When defenders also need serving, produce a **derivative one-page tactical bulletin**: a
+      separate render (`<report>_bulletin`) carrying the hunt-ready artifacts (favicon mmh3, TLS
+      SHA-256 / JARM, cookie and kit-path patterns, backend IPs/ASNs), its own TLP marking, and a
+      one-line pointer to the report reference it derives from. Never overwrite the investigation
+      report with it.
+
+19. **The technical report is the FULL build — every finding, no sampling, no truncation.** The
+    Technical profile carries the whole case: every surviving finding, every cluster member by name,
+    every artifact that supports or was rejected. **"…and 12 other domains", "representative
+    examples", "selected indicators" are defects**, not concision — a reader auditing the argument
+    cannot re-check a finding that was summarised away, and a finding worth omitting was worth
+    stating as weak. Length is not a cost here; an unverifiable claim is.
+    - **Weak and negative findings are reported, not dropped.** A pivot that returned nothing is a
+      line in the report ("reverse-WHOIS on the registrant email returned no other domains"), because
+      absence of a result and absence of a search look identical to the reader otherwise — and on a
+      keyless / passive / blocked run the difference is the whole meaning of the result.
+    - **Only two things may shorten a report**: a TLP downgrade (Rule: *Downgrading is a redaction
+      job*) and victim-identifier redaction. Both must be stated where the cut was made
+      (*"three compromised third-party hosts are withheld at this marking"*), never done silently.
+    - The Executive and Law-Enforcement profiles re-emphasise; they do not re-scope. If a shorter cut
+      is wanted, render it as an ADDITIONAL output stem — the full technical build always exists.
+
+20. **Timeline section (required) — the case's lifecycle, with the figure and the contemporaneity
+    judgment.** A findings section devoted to WHEN: registration cohorts, registrant eras, hosting
+    windows, certificate issuance batches, archive visibility, campaign start and (if it lapsed) end.
+    Its job is to answer a question every attribution rests on and most reports skip: **were the
+    linked facts contemporaneous?** A shared registrant that predates the current operator by three
+    years, or a co-tenancy window that closed before the second domain existed, is not a link — and
+    only a timeline shows it. State it explicitly per link ("the joint SANs are 103 days apart, well
+    inside the operator's observed re-issue cadence" / "the shared IP windows do not overlap").
+    - Build it from the case's collected JSON rather than by hand — one command emits the figure,
+      the dated-event ledger (Rule 21) and the derived cohorts from the SAME source, so the picture
+      and the table cannot disagree:
+
+      ```bash
+      python3 ~/.claude/skills/IntelGraph/scripts/case_timeline.py cases/CASE-0001/out/*.json \
+          --stem cases/CASE-0001/fig_timeline --markdown --title "Infrastructure lifecycle"
+      ```
+
+      Its *Temporal correlations* block (registration cohorts, expiry/renewal cohorts, same-day
+      WHOIS updates, certificate batches, IP tenancy overlap, shared-artifact windows, abandonment
+      cohorts) is the raw material for this section — write the judgment, cite the rows.
+      **Read its empty-set caveat literally**: "nothing found" there is a finding only if the inputs
+      carried the dates to find it in.
+    - This section carries its own figure under Rule 15; a `timeline` / `gantt` Mermaid source is the
+      alternative when the argument is a sequence rather than a set of spans.
+
+21. **Evidence ledger appendix (required) — every dated fact, cited to a link that resolves for
+    someone who has never seen our disk.** Distinct from the artifact register (Rule 7), and both
+    appear: the register answers *what we hold*, the ledger answers *when it was true and where
+    anyone can re-check it*. One row per dated claim, in the columns the timeline tool emits:
+
+    | When (UTC) | Host | What | Source (Admiralty) | Evidence link |
+    |---|---|---|---|---|
+    | 2026-01-02 → 2026-04-01 | `site-a.example` | hosted at `198.51.100.10` | passive DNS (B2) | https://bgp.he.net/ip/198.51.100.10 |
+
+    - **Do not retype it.** `case_timeline.py --markdown` (Rule 20) writes this table from the
+      collected JSON with the links already resolved; paste it under the appendix heading and add
+      only the rows the tool could not know about (a manual archive capture, a regulator register,
+      a corporate filing) — each with its own link.
+
+    - **Online, frozen links only** — an archive snapshot, an archived scan result, a CT log entry, an
+      RDAP record, a routing lookup, a block explorer. A path inside our case store is collection
+      provenance, never a citation (Rule 12), and a live *search* URL changes under the reader.
+    - **A claim with no link is labelled as inference**, in its own row and graded as such — never
+      smuggled in beside sourced rows.
+    - **Timestamp the observation, not the write-up** ("observed 2026-03-04", not "as of this report")
+      so the next reader can age the claim.
+    - **A hash is quoted in FULL, never truncated.** A sha256 is an integrity anchor: `bcc4…dedb`
+      re-verifies nothing, so a captured screenshot / DOM / file is cited with its complete 64-char
+      digest in the ledger (wrap it in backticks so the mono column `seqsplit`-wraps it inside the
+      cell). Put the full hash in the ledger row; keep it OUT of the prose caption (a 64-char string
+      breaks a caption's line) — the caption says what and when, the ledger row carries the hash.
+    - If a public copy did not exist, create one before asserting the fact, then cite what you created.
+
+22. **Alternative analysis section (required, explicit) — the benign explanations you considered and
+    what killed them.** Do not leave this implicit in the rejected-links narrative: a reader auditing
+    an attribution needs to see that the obvious innocent readings were put to the evidence and lost.
+    Give it its own table — hypothesis · status · the specific evidence that decided it:
+
+    | Alternative explanation | Status | Why |
+    |---|---|---|
+    | Shared hosting panel batching the certificates | Rejected | joint SANs re-issued 103 days apart — inconsistent with panel batch cadence |
+    | A prior, unrelated owner of `site-b.example` | Rejected | the 2023-era stack, contact handle and registrant all differ from the observed operator |
+    | Registrant name collision (a common name) | **Cannot be ruled out** | no independent record ties the name to the infrastructure; the link rests on the email, not the name |
+
+    - **"Cannot be ruled out" is a required outcome, not a failure.** An alternatives table where every
+      row is *Rejected* is not analysis, it is advocacy — and it is the tell that the hypothesis was
+      the frame rather than the subject. Anything unrejected must be reflected in the confidence level
+      of the judgment it threatens, and echoed in Gaps.
+    - This is structured analytic technique (ACH), not house decoration; it applies to every profile
+      and every audience.
+    - It pairs with the figure rule: the rejected branch is drawn dotted and struck through with its
+      reason (Rule 15), so the picture and this table tell the same story.
+
+23. **Glossary appendix (required) — dictate every term the report uses.** The last appendix is a
+    two-column **Term · Plain-English meaning** table defining every acronym and piece of tradecraft
+    jargon in the document: the collection terms (JARM, favicon hash / mmh3, passive DNS, RDAP/WHOIS,
+    certificate transparency, TLS, origin IP, ASN, stealer / infostealer log, Discord snowflake), the
+    grading scales (NATO Admiralty A–F / 1–6, ICD-203 estimative words, confidence vs probability),
+    and the marking (the TLP level used). One plain sentence each, written for a reader who has never
+    done OSINT — a manager, an abuse-desk clerk, a lawyer.
+    - **The gloss in the body (Rule 1c) and the Glossary agree.** A term defined in parentheses at
+      first use is also in this table; the table is the reader's fallback, the inline gloss keeps them
+      moving. Neither replaces the other.
+    - **Only terms actually in THIS report.** Do not paste a generic dictionary — if the report never
+      mentions JARM, JARM is not in its glossary. Add a term the moment you use it.
+
 Note: top-level sections are Roman (I, II); sub-sections number as **arabic `1.1`, `2.1`** (not I.1).
+
+### The canonical section order
+
+The rules above are numbered by topic, not by page. This is the order they land in the document —
+follow it unless the case genuinely has nothing for a section, in which case the section still
+appears and says so (Rule 19: an absent finding and an absent search look identical otherwise).
+
+| # | Section | Carries | Rule |
+|:-:|:---------------------|:-------------------------------------------------|:----|
+| I | Executive Summary — Key Judgments | **the purpose statement first**, then the BLUF table: judgment · attribution level · confidence | 0, 1 |
+| II | Methodology & confidence | the tradecraft (not our tools), the threshold of proof this report was written against, NATO Admiralty + ICD-203 tables | 0, 5, 6, 14 |
+| III | The seed and what it is | the seed **named**, what it impersonates or sells, its liveness state | 12a/12b |
+| IV | Lifecycle timeline | registration cohorts, registrant eras, hosting windows, cert batches — and the contemporaneity verdict per link | 20 |
+| V… | Findings — one section per cluster / entity / link | table → facts → prose, each with its figure | 2, 15 |
+| … | Attribution — who, and at what rung | same-kit / same-operator / same-actor / a named persona / unattributed + why, with the identity gap | — |
+| … | Alternative analysis | every benign explanation considered, its status, and the evidence that decided it | 22 |
+| … | Rejected links | what was tested and did NOT survive, with the prevalence/benign reason | 15, 22 |
+| … | Gaps & limitations | what could not be verified; what a keyless / passive / blocked collection could not have seen | 19 |
+| … | Recommendations / consumer note | referral pathways, preservation targets — scoped to the Rule 0 decision | 18 |
+| A | Artifact register | Artifact · Value · Source class · Admiralty grade | 7, 13 |
+| B | Evidence ledger | When (UTC) · Indicator · Claim · Source (Admiralty) · Evidence link | 21 |
+| C | Domain & infrastructure profiles | one Field·Value dossier per domain in scope | 17 |
+| D | Cluster enumeration | all N members by name, when a finding counts them | 12b |
+| E | Glossary | Term · plain-English meaning, for every acronym / jargon term the report uses | 23 |
+
+Appendices follow the raw-LaTeX `\appendix` marker (see below) and number as `Appendix A`, `B`, …
 
 ## Audience — ASK first, then tailor the report
 
 A report has a reader, and different readers need different reports. When the user asks to "produce
 / output / render a report" **without naming the audience, ASK before writing** — use
-`AskUserQuestion` with these options (add "All three" — render one file per profile):
+`AskUserQuestion` with these options (add "All three" — render one file per profile). **Ask for the
+DECISION (Rule 0) in the same breath**: audience, decision and TLP are one question with three
+parts, and all three must be answered before the first section is written.
 
 | Profile | Reader | Tone & length | Lead with | Include | Cut / push to appendix |
 |---|---|---|---|---|---|
-| **Technical** | analyst, IR, threat-intel | precise, dense, jargon OK | the two-layer finding + evidence tables | every artifact, exact IOCs, Admiralty/ICD grades, config dumps, methodology depth | nothing — this is the full build |
+| **Technical** | analyst, IR, threat-intel | precise, dense, jargon OK | the two-layer finding + evidence tables | every artifact and every finding — this is the FULL build (Rule 19), Admiralty/ICD grades, config dumps, methodology depth | nothing |
 | **Executive** | leadership, decision-maker | plain business language, short (≤2 pp body) | 3–5 bullet BLUF: what it is, our exposure, the ONE recommendation | risk/impact framing, cost, "what it means for us", a single clear action | raw indicators, tool names, hashes → appendix only |
 | **Law Enforcement** | investigator, prosecutor | neutral, factual, court-mindful; separate *confirmed* from *assessed* | the actors/infrastructure + the evidence chain | provenance (source/where/how) up front, UTC timestamps, jurisdictions (registrar, hosting country, offshore), preservation targets, and the concrete legal-process leads (who to subpoena: registrar, NS/anonymity provider, host, telemetry vendor, scanner submitter) | speculation and analyst labels unless clearly marked as assessment |
 
-All three still obey the house rules above (Exec Summary first, Methodology second, NATO+ICD,
-artifact appendix, explanatory tone). The audience changes *emphasis, depth, and vocabulary* — not
-the underlying facts. Carry the choice into the render with `--audience {technical|executive|le}`
-(it stamps the audience on the cover subtitle and sets a sensible TOC depth).
+All three still obey the house rules above (purpose statement, Exec Summary first, Methodology
+second, NATO+ICD, timeline, alternatives, artifact register + evidence ledger, explanatory tone).
+The audience changes *emphasis, depth, and vocabulary* — **never the underlying facts and never the
+completeness** (Rule 19: a shorter cut is an additional output, not a smaller investigation).
+Carry the choice into the render with `--audience {technical|executive|le}` (it stamps the audience
+on the cover subtitle and sets a sensible TOC depth).
+
+**Reader → decision → threshold of proof.** The audience implies the bar the judgments are written
+against; state the pairing in the purpose statement and again in Methodology (Rule 0):
+
+| Reader | Typical decision the report supports | Threshold that applies |
+|---|---|---|
+| Analyst / threat-intel | whether to keep pursuing, and what to pivot on next | assessed links are usable; uncertainty is the product, not a defect |
+| Platform trust & safety | suspend an account / listing / campaign | an assessed same-operator link on owner-controlled artifacts is normally enough |
+| Registrar / host abuse desk | suspend a domain or an origin | the abuse itself must be evidenced on the named host, independent of attribution |
+| Investigator / prosecutor | open a matter, seek process, charge | *confirmed* separated from *assessed*; provenance, UTC, jurisdiction and preservation targets explicit |
+| Journalist / publication | publish, and name a person or not | a named individual needs corroboration from an independent record, not one artifact |
+| Security operations / IR | deploy detection, hunt, block | the tactical bulletin (Rule 18a), not this report |
 
 ## Handling marking (TLP) — ASK first, never assume
 
@@ -321,6 +550,10 @@ python3 <WebPivot>/tools/graph_build.py cases/CASE-0001/raw/*.json \
 # 2) editable diagram -> PNG/SVG (IntelGraph); the .mmd is hand-editable
 python3 <IntelGraph>/scripts/graph_to_diagram.py cases/CASE-0001/case_graph.json \
     cases/CASE-0001/case_diagram --title "One operator, N sites" --legend
+
+# 2b) the lifecycle timeline + the evidence ledger, from the SAME collected JSON (Rules 20/21)
+python3 <IntelGraph>/scripts/case_timeline.py cases/CASE-0001/out/*.json \
+    --stem cases/CASE-0001/fig_timeline --markdown --title "Infrastructure lifecycle"
 
 # 3) reference the figure in the assessment markdown, then render the document
 python3 <IntelReport>/scripts/render_report.py cases/CASE-0001/assessment.md \
@@ -457,6 +690,28 @@ Word/LibreOffice, and keep it case-data-free.
 
 ## Quality checklist before presenting
 
+- **The first sentence names the decision this report supports (Rule 0)**, and Methodology restates
+  the threshold of proof that decision implies. A report that opens on a finding has failed this.
+- **Section IV is the lifecycle timeline (Rule 20)** with its figure, and every attribution link in
+  the report has an explicit contemporaneity verdict — overlapping, or not.
+- **An Alternative analysis table exists (Rule 22)** with at least one honestly unrejected row where
+  one exists, and its rejections are echoed by the dotted/struck edges in the figures.
+- **Both appendices are present (Rules 7 and 21)**: the artifact register AND the evidence ledger.
+  Every ledger row has a link that resolves for someone who has never seen our disk; inference rows
+  are labelled as inference.
+- **A Glossary appendix exists (Rule 23)** and every acronym / jargon term used in the body appears
+  in it; every such term was also glossed in plain words at its first use in the body (Rule 1c).
+- **Plain, human voice (Rule 1c):** read a section aloud — it must sound like a colleague explaining
+  what they found, not a brochure. No banned AI tells ("delve", "underscore", "not just X but Y",
+  rule-of-three flourishes, "it is important to note", stacked "moreover/furthermore"). Every hash is
+  quoted in FULL in the ledger, never truncated (Rule 21).
+- **Figures sit inline with their explanation (Rules 15a, 16):** each figure is in the paragraph/
+  subsection whose claim it proves, not floated to a page top or an appendix; captions are not garbled
+  or overlapping (the template forces `[H]` placement — check the rendered pages, not just the log).
+- **Completeness (Rule 19):** every cluster member is named somewhere in the document, no "and N
+  others", negative and weak results are stated, and any redaction says where the cut was made.
+- **No IOC block / detection rules / ATT&CK mapping (Rule 18a)** unless the named consumer is a
+  security-operations team — if defenders also need serving, a separate `_bulletin` render exists.
 - Both requested files exist (PDF and/or DOCX).
 - **Figures rendered and embedded (Rule 15) — check this FIRST, it is the most-skipped step.**
   `figures.json` exists, the render log printed `figure refreshed:` for every entry, every findings

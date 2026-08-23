@@ -225,6 +225,24 @@
       342030173
     ]
   },
+  "prose_selectors": {
+    "_comment": "Controls the copy-pasted-PROSE harvester (wp_extract.extract_prose_selectors): distinctive disclaimer / risk-warning / T&C sentences that survive a front-end rebuild and reverse-search verbatim on PublicWWW / FOFA body= / NerdyData. `trigger_keywords` are lowercased substrings a candidate sentence must contain to be a legal/risk blurb (matched with `in`, so `regulat` catches regulated/regulation, `licen` catches licence/license). `min_chars`/`max_chars` bound the sentence length — too short is a universal standard warning that identifies nobody, too long is a whole scraped block. `max_phrases` caps how many of the longest candidates are emitted. Tune UP the min length if standard warnings still cluster; a shared phrase is only a MEDIUM lead and never clusters without a tier-1 corroborator.",
+    "trigger_keywords": [
+      "risk",
+      "deposit",
+      "invest",
+      "withdraw",
+      "guarantee",
+      "regulat",
+      "licen",
+      "disclaimer",
+      "liabilit",
+      "terms"
+    ],
+    "min_chars": 60,
+    "max_chars": 240,
+    "max_phrases": 5
+  },
   "noise_tracker_ids": {
     "_comment": "Analytics / tag-manager IDs that belong to a PLATFORM, TEMPLATE or AGENCY rather than to the site owner, so they must never become a same-owner clustering hub. Two kinds, both observed: (a) a host injects its own ID into its parking/default/error pages, so every tenant carries it; (b) a site-builder TEMPLATE ships with the template author's container in the custom-code slot, so every buyer's site carries it — note this one still sits in the OWNER's editable slot, so 'the owner pasted it' does NOT prove it is theirs. A shared analytics ID is normally strong same-owner evidence, which is exactly why a wrong entry here is costly in both directions. VERIFY BEFORE ADDING: reverse the id and check the hits are unrelated businesses (different sectors/countries), then fetch two of them directly and confirm they serve the same id. The platform's own domains showing up in the reverse is the giveaway. Matched EXACTLY against the tracker value. A site's OWN second tracker stays clusterable — a site commonly carries a shared template container and its own private measurement id side by side, and only the shared one belongs here. MIRROR: tools/kb/references/noise_filters.json -> noise_tracker_ids holds the same values for the ingest side. Both copies must stay identical (tests/test_references.py enforces it); edit either and run tools/kb/sync_mirrors.py.",
     "values": [

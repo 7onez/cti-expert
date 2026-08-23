@@ -11,6 +11,17 @@
 \usepackage{array}
 \usepackage{graphicx}
 \usepackage{caption}
+% Keep figures INLINE where written — a screenshot is evidence for the paragraph beside it, so it
+% must not float to a page top or its own page (that also stacked captions and garbled them). Force
+% every figure to [H] "exactly here" regardless of the placement pandoc emits.
+\usepackage{float}
+\let\origfigure\figure
+\let\endorigfigure\endfigure
+\renewenvironment{figure}[1][]{\origfigure[H]}{\endorigfigure}
+% Cap every embedded image so a TALL (portrait) figure cannot overrun the page and push its caption
+% into the footer (that collision garbled a caption). width fills the text block; height is bounded so
+% image + caption always clear the running footer; keepaspectratio prevents any distortion.
+\setkeys{Gin}{width=\linewidth,height=0.78\textheight,keepaspectratio}
 \usepackage{enumitem}
 \usepackage{parskip}
 \usepackage{etoolbox}

@@ -831,6 +831,11 @@ the conflict in the assessment**; don't silently pick one. A conflict is often t
 
 ## 7. Assessment write-up standard  ▢ TUNE
 
+- **Purpose — the decision this assessment supports**, in one sentence, BEFORE the BLUF: the question
+  it answers and what the consumer is expected to decide with it (abuse referral, platform
+  enforcement, law-enforcement matter, publication, internal analytic reference). It is what tells
+  the reader **which threshold of proof applies** — a prosecutor and a trust-and-safety queue read
+  the same evidence against different bars, and an unstated bar defaults to the reader's, not yours.
 - **BLUF** — the finding in one sentence, with a confidence word (assessed / likely / possible).
 - **Cluster** — domains + the shared artifacts that bind them (a table, each row cited).
 - **Timeline** — the case's lifecycle: registration cohorts, registrant eras, hosting windows,
@@ -844,7 +849,17 @@ the conflict in the assessment**; don't silently pick one. A conflict is often t
   jurisdiction, language, hosting habits, working hours, kit provenance and payment rails. If no
   rung is reachable, write **"unattributed"** and why — never omit the section. Then the
   **identity gap**: the single pivot most likely to produce a name, and what it costs.
-- **Gaps & alternatives** — what you couldn't verify, and the competing explanation you ruled out.
+- **Alternatives — the benign explanations, put to the evidence, in their own table.** Not a clause
+  inside Gaps: a reader auditing an attribution has to see WHICH innocent readings were tested and
+  what decided each. Rows are *explanation · status · the specific observation that decided it* —
+  the shared-provider/CDN/co-tenancy reading, a hosting panel batching certs, a prior unrelated owner
+  of the domain, a name or email collision, a compromised host whose artifacts are the VICTIM's.
+  **"Cannot be ruled out" is a required outcome, not a failure**: a table where every row is
+  *rejected* is advocacy, and any surviving alternative caps the confidence of the judgment it
+  threatens and reappears in Gaps.
+- **Gaps** — what you couldn't verify, and what a keyless / passive / blocked collection could not
+  have seen. Report the pivots that returned NOTHING as well: absence of a result and absence of a
+  search are indistinguishable to the reader unless you say which one it was.
 - **Next steps** — the prioritised open pivots, identity-closing ones first.
 
 ### Evidence citation standard (non-negotiable)

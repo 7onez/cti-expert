@@ -98,6 +98,8 @@ DISPATCH = {
     "docmeta":       ("WebPivot/tools/wp_docmeta.py", []),     # PDF/EXIF/PNG author+GPS metadata
     "paths":         ("WebPivot/tools/wp_paths.py",   []),     # URL-path kit extraction (path_kit:)
     "capture":       ("WebPivot/tools/wp_capture.py", []),     # raw-evidence capture + manifest hash
+    "screenshot":    ("WebPivot/tools/wp_screenshot.py", []),  # rendered full-page PNG as
+                                                               # timestamped, hashed evidence
     "serp":          ("WebPivot/tools/wp_serp.py",    []),     # Ads Transparency + cloaking probe
     "pssl":          ("WebPivot/tools/wp_pssl.py",    []),     # passive SSL: historic cert -> IP
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
@@ -181,6 +183,7 @@ BLURB = {
     "docmeta": "document/image metadata: PDF /Info + XMP, EXIF incl. GPS",
     "paths": "URL-path kit extraction — path_kit: when hosts rotate",
     "capture": "raw-evidence capture + tamper-evident manifest hashing",
+    "screenshot": "rendered full-page PNG as timestamped, hashed evidence",
     "serp": "Ads Transparency (who PAID) + the cloaking probe",
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",

@@ -1,0 +1,13 @@
+{
+  "_comment": "Config for wp_screenshot.py — the VISUAL-EVIDENCE capture: a rendered full-page PNG of a live page, hashed and timestamped so a screenshot can be cited in a report the same way a DOM capture is. Analyst-tunable without editing Python. RULE 1: never put a case value here. RULE 3: the code holds the capture logic, this file holds the knobs the code reads.",
+  "capture": {
+    "_comment": "How the page is rendered. timeout_seconds bounds the Playwright navigation (raise it for a slow or challenge-walled target). user_agent is the browser UA string sent to the target — change it to a plain desktop Chrome, or to match the client a campaign expects, so the page renders the way a victim would see it.",
+    "timeout_seconds": 45,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+  },
+  "layout": {
+    "_comment": "Where evidence screenshots and their manifest are written under a case: cases/<case>/evidence/<dir>/<host>/<UTC-timestamp>.png, with one manifest per case listing every capture (url, final_url, captured_at, sha256, pixel dimensions, page title). Captures are timestamped and never overwritten, so two captures of the same page date any change between them.",
+    "dir": "screenshots",
+    "manifest_filename": "manifest.json"
+  }
+}
