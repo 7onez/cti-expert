@@ -15,8 +15,27 @@ the map, and the rules that keep the two from drifting.
 - `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
   indicator classification + the shared collector core (`collect_core`)
 - `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports,
-  `@tool` count matches CLAUDE.md, compile, tests); `scripts/install-hooks.sh` wires
-  `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via `.github/workflows/audit.yml`
+  `@tool` count matches CLAUDE.md, compile, tests, every registered hook resolves);
+  `scripts/install-hooks.sh` wires `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via
+  `.github/workflows/audit.yml`
+- `hooks/` + `.claude-plugin/plugin.json` — the **Claude Code harness layer**. `plugin.json`
+  bundles the skill, `commands/`, the `intel` MCP server and `hooks/hooks.json` into one
+  installable plugin, so a machine gets all four by installing one thing instead of running
+  `register.sh` and hand-writing `.mcp.json`. The three hooks are safety rails that deliberately
+  do **not** live in the vendored engine:
+  - `leakguard.py` (PreToolUse · Write/Edit) — RULE 1 at *write* time. The git pre-commit hook
+    fires only at commit and `--no-verify` skips it; an agent harness writes constantly and
+    commits rarely. Delegates to `scripts/leakcheck.sh` rather than re-implementing the patterns,
+    and only denies inside a cti-expert checkout on a path git does not ignore.
+  - `actionguard.py` (PreToolUse · Bash + `mcp__*`) — `ask` on outbound, irreversible actions.
+    The in-code gates are real but live in `intel_engine/`, which is vendored; this one is in
+    cti-expert's own tree so an engine sync cannot revert it. Denylist is DATA
+    (`hooks/references/outbound_actions.json`).
+  - `sessionguard.py` (SessionStart) — backend tier, plus a warning when the `@tool` count changed,
+    because Claude Code caches an MCP tool list at connect time and a stale one fails silently.
+
+  Both PreToolUse hooks **fail open**: a hook bug must never brick the repo. Covered by
+  `tests/test_hooks.py` in both directions (fires on the target / silent on the neighbour).
 - `requirements.txt` — deps for the vendored deep layer (installed into `.venv`)
 
 **Vendored engine — one subtree** (`intel_engine/`, copied one-way from the `intel_engine`

@@ -75,9 +75,32 @@ if python3 -m py_compile intel_engine/tools/collect_core.py intel_engine/tools/i
 echo "== 6. zero-dep test runners =="
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
-         tests/test_email_permute.py; do
+         tests/test_email_permute.py tests/test_hooks.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
+
+echo "== 7. every hook the plugin registers exists on disk (RULE 3, hook layer) =="
+# A hooks.json entry pointing at a script that was moved or renamed fails SILENTLY: Claude Code
+# logs it and carries on, so the rail is gone and nothing says so. Resolve each registered path.
+if [ -f hooks/hooks.json ]; then
+  miss=0
+  for p in $(python3 - <<'PY'
+import json
+d = json.load(open("hooks/hooks.json"))
+for groups in d.get("hooks", {}).values():
+    for g in groups:
+        for h in g.get("hooks", []):
+            for a in h.get("args", []):
+                if a.startswith("${CLAUDE_PLUGIN_ROOT}/"):
+                    print(a.replace("${CLAUDE_PLUGIN_ROOT}/", ""))
+PY
+  ); do
+    if [ -f "$p" ]; then note "hook resolves: $p"; else bad "hooks.json registers a missing script: $p"; miss=1; fi
+  done
+  [ "$miss" = 0 ] && note "all registered hooks resolve"
+else
+  bad "hooks/hooks.json missing — the RULE 1 write-time gate and the outbound gate are not wired"
+fi
 
 echo
 if [ "$fail" = 0 ]; then echo "AUDIT: clean"; else echo "AUDIT: failures above"; exit 1; fi

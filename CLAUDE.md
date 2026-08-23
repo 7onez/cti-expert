@@ -114,6 +114,34 @@ provider and one self-hosted nameserver.
 
 ---
 
+## RULE 6 — the harness layer is part of the skill, not decoration
+
+`hooks/` + `.claude-plugin/plugin.json` are where two safety properties are actually enforced when
+this runs under Claude Code. Treat them as load-bearing.
+
+- **RULE 1 is enforced twice, on purpose.** `scripts/leakcheck.sh` at `git commit`, and
+  `hooks/leakguard.py` at `Write`/`Edit`. The git hook fires only at commit and `--no-verify`
+  skips it; an agent harness writes constantly and commits rarely, so the write-time gate is the
+  one that catches a real session. **`leakguard.py` must never re-implement the patterns** — it
+  shells out to `leakcheck.sh`. A second copy would drift, and a drifted guard reports clean.
+- **Outbound gates are enforced twice, on purpose.** In the tool (`submit(confirm=…)`, the Engage
+  preflight) *and* in `hooks/actionguard.py`. The in-code gate lives in `intel_engine/`, which is
+  **vendored** — a three-way merge can revert it without failing a test (it nearly did on
+  2026-08-23). The hook lives in cti-expert's own tree and fires on the tool NAME, so a sync
+  cannot reach it. **Adding an outbound capability means adding a row to
+  `hooks/references/outbound_actions.json`,** not just a confirmation flag in the Python.
+- **Both PreToolUse hooks fail OPEN.** A hook that dies must not brick every write in the repo.
+  Keep it that way: `audit.sh` and the git pre-commit hook are the backstop.
+- **Never widen a gate to stop a prompt.** Prefer narrowing `flag_required`, or an exact match, to
+  deleting a row. A rail you have to switch off to work is a rail that gets switched off — the
+  `intel.py engage ` trailing space (which spares `engage-report`) is the shape to copy.
+- **`tests/test_hooks.py` asserts both directions** — fires on the target, silent on the
+  neighbouring safe case. A guard proven in one direction only is not proven. `audit.sh` §7 also
+  checks that every path `hooks.json` registers still resolves: a renamed script disables its hook
+  **silently**.
+
+---
+
 ## Cost visibility — two separate ledgers
 
 - **Anthropic model cost** (the agent's reasoning). In interactive Claude Code the model cannot

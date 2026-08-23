@@ -1,0 +1,23 @@
+{
+  "name": "cti-expert",
+  "description": "Cyber threat intelligence and OSINT toolkit — structured investigations with sourced, trust-scored findings. Bundles the skill, the /cti command set, the typed intel MCP surface, and the RULE 1 / outbound-action safety hooks as one installable unit.",
+  "version": "2.7.0",
+  "author": {
+    "name": "Hieu Ngo",
+    "url": "https://github.com/7onez/cti-expert"
+  },
+  "homepage": "https://github.com/7onez/cti-expert",
+  "license": "See LICENSE",
+  "keywords": ["osint", "cti", "threat-intelligence", "investigation", "dfir"],
+
+  "commands": "./commands",
+  "skills": "./",
+  "hooks": "./hooks/hooks.json",
+
+  "mcpServers": {
+    "intel": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/intel_engine/harness/mcp-server",
+      "args": []
+    }
+  }
+}
