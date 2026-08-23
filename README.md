@@ -421,6 +421,30 @@ cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
 
 > **Windows (native PowerShell):** run `register.sh` from **Git Bash or WSL** — it uses symlinks. Then, on every platform, **restart Claude Code** so the skill and commands load at startup.
 
+<details>
+<summary><b>Alternative — install as a Claude Code plugin (skill + commands + MCP + safety hooks in one unit)</b></summary>
+
+`register.sh` wires the skill, the commands and the MCP server, but it cannot install **hooks** — and two of cti-expert's safety properties are enforced there:
+
+| Hook | What it does |
+|---|---|
+| `hooks/leakguard.py` | **PreToolUse** on `Write`/`Edit` — scans the pending payload with `scripts/leakcheck.sh` and **denies** a write that would put case data into a *tracked* file. The git pre-commit hook only fires at commit time and `git commit --no-verify` skips it; this fires at write time, where that flag does not exist. Writes into the git-ignored case stores, and writes outside a cti-expert checkout, are untouched. |
+| `hooks/actionguard.py` | **PreToolUse** on the outbound actions — `engage_account`, `harvest_authenticated`, `anyrun_submit`, any `--submit` — returns **ask** with a risk briefing. The tools already refuse without confirmation, but that code is *vendored*; this gate lives in cti-expert's own tree, so a bad engine sync cannot delete it. Detection (`detect_login`, `url_paths`, `passive_ssl`) and ordinary collection are **not** gated. |
+| `hooks/sessionguard.py` | **SessionStart** — reports the resolved backend tier, and warns when the engine's `@tool` count has changed since the last session. Claude Code caches an MCP server's tool list at *connect* time, so a stale registration silently drives an old surface with no error. |
+
+```bash
+# from a local clone
+claude
+/plugin marketplace add ~/.claude/skills/cti-expert
+/plugin install cti-expert
+```
+
+Then restart Claude Code. Verify with `/hooks` (three entries) and `/mcp` (the `intel` server).
+
+Everything is behaviour-preserving: both `PreToolUse` hooks **fail open** on an internal error, so a hook bug can never brick your repo — `scripts/audit.sh` and the git pre-commit hook remain the backstop.
+
+</details>
+
 ---
 
 ### Verify Installation

@@ -1,0 +1,44 @@
+{
+  "_comment": "Actions that reach OUT to infrastructure that is not ours, in a way that is attributable and cannot be undone. hooks/actionguard.py turns each match into a confirmation prompt with the briefing below. RULE 1: capability names and flags only — never a case target. Tuning: adding an entry costs one prompt; removing one silently removes a safety rail, so prefer narrowing `flag_required` over deleting a row. An entry with `flag_required` only fires when that flag is present, which is how a tool whose DEFAULT path is safe (pivot_extract collects passively; only --submit publishes) stays unprompted for ordinary use.",
+
+  "mcp_tools": {
+    "_comment": "Matched against the PreToolUse tool_name for MCP tools, i.e. mcp__<server>__<tool>. The server segment is ignored so a differently-named registration is still covered.",
+    "entries": {
+      "engage_account": {
+        "why": "Creates an account on the TARGET's platform and logs in. The operator sees a new registration, its timing, and whatever egress path it came from. It cannot be un-registered.",
+        "before": "Confirm the persona is synthetic, that egress is not your own address, and that you are authorized to interact with this target."
+      },
+      "harvest_authenticated": {
+        "why": "Drives an authenticated session inside the target's members area — every page it touches is a logged request tied to the account you created.",
+        "before": "Only run this on a session you deliberately opened. Each fetch adds to the operator's picture of the account."
+      },
+      "anyrun_submit": {
+        "why": "Detonates a sample in a PUBLIC sandbox. Operators watch for their own samples; the standard response is to rotate the backend, revoke the signing key and re-skin the front — destroying the infrastructure the case rests on.",
+        "before": "A public task is world-readable and irreversible. Detonation is the analyst's decision on a private plan, never a side effect of a pivot."
+      },
+      "capture_evidence": {
+        "why": "With --submit this asks a third-party archive to fetch the target, which tells that archive — and anyone reading it — that the URL is under investigation.",
+        "before": "Archiving is usually right for evidence. Confirm you want the request attributed now rather than after collection.",
+        "flag_required": ["--submit"]
+      },
+      "pivot_extract": {
+        "why": "Ordinary collection is passive, but --submit asks urlscan/Wayback to fetch the target, publishing the URL and the timing.",
+        "before": "Only the --submit path is gated; plain collection and --archive-missing are not.",
+        "flag_required": ["--submit"]
+      }
+    }
+  },
+
+  "bash_patterns": {
+    "_comment": "Substrings matched against a Bash tool_input.command. The engine is reachable from the shell as well as over MCP, and a gate that only covers one of the two front-ends is not a gate.",
+    "entries": [
+      {"match": "en_engage.py", "why": "Engage: registers/logs in on the target (outbound, attributable, irreversible)."},
+      {"match": "en_harvest.py", "why": "Engage: drives the authenticated session inside the target's members area."},
+      {"match": "intel.py engage ", "why": "Engage via the T2 dispatcher — registers/logs in on the target. The trailing space is load-bearing: it keeps `intel.py engage-report`, which only renders a local write-up, from prompting. Over-prompting is how a safety rail gets switched off."},
+      {"match": "intel.py engage-harvest", "why": "Engage via the T2 dispatcher — drives the authenticated session."},
+      {"match": "--confirm-submission", "why": "ANY.RUN: this is the flag that actually detonates the sample in the public sandbox."},
+      {"match": "bp_anyrun.py submit", "why": "ANY.RUN submission path."},
+      {"match": "--submit", "why": "Asks a third-party archive/scanner to fetch the target, publishing the URL and the timing."}
+    ]
+  }
+}
