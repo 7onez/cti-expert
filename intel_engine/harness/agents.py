@@ -24,8 +24,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _skill(name: str) -> str:
-    with open(os.path.join(ROOT, name, "SKILL.md"), encoding="utf-8") as f:
-        return f.read()
+    """Read a component's skill body.
+
+    cti-expert vendors these components, and the vendoring convention renames each `SKILL.md` to
+    `SKILL.reference.md` — the repo must contain exactly ONE `SKILL.md` (the root entrypoint), or
+    Claude Code registers duplicate skills. Upstream has no such constraint and ships `SKILL.md`.
+
+    So try the vendored name first, then the upstream one. Before this, the module raised
+    FileNotFoundError at IMPORT time in a cti-expert checkout: `AGENTS` is built at module scope,
+    so merely importing it blew up. Nothing in the shipped path imports it today
+    (`orchestrator.collect_fanout` reimplements the collector persona), which is exactly why the
+    breakage survived — a dormant module that cannot be imported is a landmine for whoever wires
+    `analyst`/`grapher` up next, and no test would have caught it.
+    """
+    for fname in ("SKILL.reference.md", "SKILL.md"):
+        p = os.path.join(ROOT, name, fname)
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8") as f:
+                return f.read()
+    raise FileNotFoundError(
+        f"no SKILL.reference.md or SKILL.md for component {name!r} under {ROOT} — "
+        "the vendored engine is incomplete; re-sync per STRUCTURE.md")
 
 
 AGENTS: dict[str, AgentDefinition] = {

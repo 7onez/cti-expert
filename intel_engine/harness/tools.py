@@ -15,6 +15,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextvars
 import datetime
+import glob          # case_timeline expands a glob pattern when `inputs` arrives as one string
 import json
 import os
 import subprocess

@@ -166,7 +166,7 @@ h8mail -t targets.txt
 ghunt login
 
 # Email investigation
-ghunt email user@gmail.com
+ghunt email user@example.com
 
 # Profile enrichment
 ghunt gaia <GAIA_ID>

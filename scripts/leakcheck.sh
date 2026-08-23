@@ -13,9 +13,22 @@
 set -uo pipefail
 
 if [ "$#" -gt 0 ]; then
+  # File mode scans WHOLE files — used for a full-tree audit and by the PreToolUse hook, which
+  # hands over the payload a write is about to produce.
   SRC="$(cat "$@")"
 else
-  SRC="$(git diff --cached)"
+  # Diff mode scans only ADDED lines. The `+++ b/path` header is dropped so a filename can never
+  # masquerade as content.
+  #
+  # This is not a loosening. The check exists to stop case data ENTERING a tracked file, and a `-`
+  # line is data LEAVING one. Scanning deletions made the gate self-locking: a commit whose entire
+  # purpose is to remove a leaked value contains that value on its `-` lines, so the cleanup was
+  # refused and the only way through was --no-verify — i.e. the gate pushed you toward the exact
+  # bypass it exists to prevent. Found the hard way, by trying to remove four of them.
+  #
+  # Pre-existing leaks in untouched lines are still caught: run the file mode over the tree
+  # (`bash scripts/leakcheck.sh $(git ls-files)`), which is what scripts/audit.sh and CI use.
+  SRC="$(git diff --cached | grep '^+' | grep -v '^+++ ')"
 fi
 [ -n "$SRC" ] && printf '%s' "$SRC" > /tmp/.leakcheck.$$ || : > /tmp/.leakcheck.$$
 F=/tmp/.leakcheck.$$
