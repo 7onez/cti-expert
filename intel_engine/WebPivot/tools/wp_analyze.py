@@ -36,7 +36,11 @@ from wp_pivots import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 import wp_extract  # for the QR_DECODE_IMAGES toggle main() sets
 import wp_assets   # asset layer: JS bundles, source maps, well-known files, API endpoints
+import wp_docmeta  # document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF
 from wp_censys import censys_configured, censys_webproperty, censys_certificate
+import wp_pssl     # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
+# NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
+# classify_ip back out of this module, so a top-level import is circular.
 try:
     import whois_enrich  # WhoisXML registration pivots (optional, same tools/ dir)
     HAVE_WHOIS = True
@@ -109,6 +113,15 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
                 _tg_seen.add(h)
                 telegram.append(t)
         emails = uniq(list(emails) + list(jd.get("emails") or []))[:40]
+
+    # --- DOCUMENT / IMAGE METADATA: the files the site HOSTS, not the page itself. A page is
+    # cheap to re-skin; the PDF "licence" and the operator's own photographs are not re-made when
+    # the brand changes, so /Info, XMP and EXIF outlive every cosmetic rotation. Same gate as the
+    # asset layer (live primary page only, routed through fetch() so --proxy is honored) because
+    # it likewise DOWNLOADS FILES FROM THE TARGET.
+    docmeta = None
+    if probe_http and effective_url and not is_archived and base_url:
+        docmeta = wp_docmeta.collect(html, base_url, self_host, ua=ua, proxy=proxy)
 
     third_party = []
     for u in script_srcs + all_hrefs:
@@ -261,6 +274,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "app_downloads": app_downloads,
         "qr_codes": qr_codes,
         "assets": assets,
+        "docmeta": docmeta,
         "trackers": trackers,
         "saas_ids": saas_ids,
         "crypto": crypto,
@@ -549,11 +563,23 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # gated exactly like FOFA. Only the two LOOKUP endpoints are used here — they work on the free
     # plan, unlike /search/query, which needs Starter.
     have_censys = censys_configured() and not free_only
+    # Passive SSL rides the SAME CIRCL credential pair as passive DNS. The two are the historical
+    # name->IP and cert->IP halves of one question, so a run that has pDNS should always have
+    # pSSL as well — before this layer existed the cert->IP direction was simply never asked.
+    have_pssl = wp_pssl.pssl_configured() and wp_pssl.ENABLED and not free_only
+    # IPinfo answers "where is this address and whose is it" — country, ASN/org, abuse contact,
+    # hosting/proxy/VPN flags. It runs keyless too (rate-limited), so the gate is --free-only
+    # rather than the token: without a token it still returns country + org for the live IP.
+    have_ipinfo = not free_only
     sources = ["crtsh", "passivedns", "urlscan"]  # keyless domain enrichment
     if have_fofa:
         sources.append("fofa-full" if fofa_full else "fofa")
     if have_pdns:
         sources.append("pdns")
+    if have_pssl:
+        sources.append("pssl")
+    if have_ipinfo:
+        sources.append("ipinfo")
     if have_censys:
         sources.append("censys")
     result.setdefault("meta", {})["enriched_with"] = sources
@@ -590,6 +616,15 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 # tenants. Only an origin-candidate IP is worth a FOFA reverse.
                 classified = [classify_ip(ip) for ip in live_ips]
                 lr["dns"]["ip_classification"] = classified
+                # IPinfo on the DOMAIN path. It was previously reachable only when a bare IP was
+                # the input (IPPivot), so analysing a domain never produced a country, an ASN, an
+                # abuse contact or a hosting/VPN flag for the address it actually resolves to —
+                # the assessment fell back to keyless ip-api for an ASN string and nothing else.
+                # Memoised per process (the same CDN pair recurs on every host in a case), and
+                # skipped under --free-only like every other metered call.
+                if have_ipinfo:
+                    from wp_ippivot import ipinfo_lookup   # lazy: circular at module level
+                    lr["ipinfo"] = {ip: ipinfo_lookup(ip) for ip in live_ips}
                 origin_ips = [c["ip"] for c in classified if c.get("cdn") is False]
                 cdn_ips = [c for c in classified if c.get("cdn") is True]
                 if cdn_ips:
@@ -609,8 +644,30 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     # PDNS reverse on the SAME origin candidate — co-hosted domains from
                     # passive DNS independently corroborate the FOFA IP-reverse.
                     lr["pdns_ip_reverse"] = pdns_search(fofa_ip)
+                if have_pssl:
+                    # PASSIVE SSL — the cert->IP direction, which is the one that recovers an
+                    # ORIGIN from behind a CDN: the operator served this same leaf certificate
+                    # on their own box before (or while) fronting it. Any address here that is
+                    # not in the live answer is an origin candidate. The live sha1 comes from
+                    # the certificate this run already read off the 443 handshake, so this adds
+                    # NO extra connection to the target.
+                    _leaf = ((result.get("artifacts") or {}).get("tls_cert") or {})
+                    _sha1 = _leaf.get("fingerprint_sha1") or ""
+                    lr["pssl"] = wp_pssl.origin_candidates(
+                        val, sha1=_sha1, known_ips=live_ips)
                 passive_ips = set((lr.get("passivedns") or {}).get("ips", []) or [])
                 passive_ips |= set((lr.get("pdns") or {}).get("ips", []) or [])   # historical PDNS IPs
+                # An origin candidate corroborated by BOTH passive halves (a name seen there, and
+                # the certificate seen there) is the strongest lead this pair produces.
+                _pssl_ips = set((lr.get("pssl") or {}).get("origin_candidates", []) or [])
+                if _pssl_ips:
+                    both = sorted(_pssl_ips & passive_ips)
+                    if both:
+                        lr["origin_corroborated"] = {
+                            "ips": both,
+                            "note": "seen by BOTH passive DNS (a name resolved there) and passive "
+                                    "SSL (this leaf certificate was served there) — the strongest "
+                                    "origin lead the passive pair produces; verify directly."}
                 stale = sorted(passive_ips - set(live_ips))
                 if stale:
                     lr["dns"]["stale_passive_ips"] = stale
@@ -746,9 +803,17 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                     piv.setdefault("live_results", {})[f"reverse_whois_{st}"] = r
         result["pivots"].append(piv)
 
+    # A phone or address sitting in a PRIVACY-PROXIED record belongs to the proxy, whatever the
+    # digits: Domains By Proxy publishes one switchboard and one Tempe address across every domain
+    # it fronts, and neither string carries a privacy marker of its own to catch. So judge the
+    # RECORD, not the value — this covers proxies no denylist has enumerated.
+    _proxied = any(whois_enrich.is_privacy(v) for v in
+                   (w.get("registrant_email"), w.get("registrant_org"), w.get("registrant_name"))
+                   if v)
+
     # registrant phone → reverse-WHOIS-by-phone pivot (current + historical numbers)
     for ph in _whois_registrant_vals(w, hist, "phone"):
-        if whois_enrich.is_privacy(ph):
+        if _proxied or whois_enrich.is_privacy(ph):
             continue  # registrar/privacy-proxy phone (e.g. Dynadot's) — not the owner
         result["pivots"].append({
             "kind": "whois:registrant_phone", "value": ph, "confidence": "medium",
@@ -762,7 +827,7 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
 
     # registrant address → reverse-WHOIS-by-address pivot (a distinctive address ties siblings)
     for ad in _whois_registrant_vals(w, hist, "address"):
-        if whois_enrich.is_privacy(ad):
+        if _proxied or whois_enrich.is_privacy(ad):
             continue
         result["pivots"].append({
             "kind": "whois:registrant_address", "value": ad, "confidence": "medium",

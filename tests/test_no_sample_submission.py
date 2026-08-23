@@ -64,11 +64,24 @@ READ_ONLY_ENDPOINT_KEYS = {
     "user_limits", "environment",
 }
 
+# The submission LIFECYCLE keys. These are not read-only — `submit_analysis` detonates, and
+# task_status/stop_task/delete_task only mean anything once something has been submitted. They are
+# listed separately, and permitted ONLY while the confirmation gate below is present, so that:
+#   * a genuinely new, unreviewed endpoint key still fails the "no unrecognised keys" check, and
+#   * removing the gate re-fails every one of them rather than silently leaving a submit path open.
+# Reviewed 2026-08-23 when the upstream engine grew the gated submission layer.
+GATED_SUBMISSION_ENDPOINT_KEYS = {"submit_analysis", "task_status", "stop_task", "delete_task"}
+
 # Words that betray a submission/detonation capability in an endpoint name or path.
 SUBMIT_TOKENS = ("submit", "upload", "detonate", "/analysis/run", "putfile", "sendfile")
 
 # The marker a future submit path MUST carry (see docstring point 4).
 CONFIRM_MARKER = "REQUIRES_ANALYST_CONFIRMATION"
+
+# The marker is only worth anything if the code it labels actually refuses. This is the refusal:
+# `submit()` hands back the preflight briefing instead of sending, unless confirm=True. Asserted
+# separately so the marker can never degrade into a magic string that unlocks the gate on its own.
+GATE_ENFORCEMENT = r"if not confirm:\s*\n\s*return submit_preflight\("
 
 # Upload machinery. These are deliberately BROAD: this module consumes JSON over HTTP and has no
 # legitimate reason to touch a file in binary mode or to build a multipart body, so any hit is
@@ -104,7 +117,18 @@ def check():
 
     src = open(ANYRUN_PY, encoding="utf-8").read()
     doc = json.load(open(ANYRUN_JSON, encoding="utf-8"))
-    has_confirm_gate = CONFIRM_MARKER in src
+    # A gate is the MARKER plus the refusal it claims. Either alone is not a gate.
+    has_marker = CONFIRM_MARKER in src
+    enforces = re.search(GATE_ENFORCEMENT, src) is not None
+    has_confirm_gate = has_marker and enforces
+    if has_marker or enforces:
+        ok(has_confirm_gate,
+           "the confirmation gate is both marked and enforced"
+           + ("" if has_confirm_gate else
+              f" — marker={has_marker}, submit() refuses without confirm={enforces}"))
+
+    allowed_keys = READ_ONLY_ENDPOINT_KEYS | (GATED_SUBMISSION_ENDPOINT_KEYS if has_confirm_gate
+                                              else set())
 
     # --- 1. no submission endpoint in the reference DATA -------------------------------------
     # Reference-layer groups are {_comment, entries|values}; unwrap to the payload so a submission
@@ -119,25 +143,33 @@ def check():
     for key, path in endpoints.items():
         blob = f"{key} {path}".lower()
         hit = next((t for t in SUBMIT_TOKENS if t in blob), None)
-        ok(hit is None or has_confirm_gate,
-           f"endpoint {key!r} is read-only"
-           + (f" — SUBMIT TOKEN {hit!r} with no {CONFIRM_MARKER} gate" if hit else ""))
-    unknown = sorted(set(endpoints) - READ_ONLY_ENDPOINT_KEYS)
+        if hit is None:
+            ok(True, f"endpoint {key!r} is read-only")
+        else:
+            ok(has_confirm_gate,
+               f"endpoint {key!r} carries SUBMIT TOKEN {hit!r} — "
+               + (f"allowed, behind the {CONFIRM_MARKER} gate" if has_confirm_gate
+                  else f"and there is no {CONFIRM_MARKER} gate"))
+    unknown = sorted(set(endpoints) - allowed_keys)
     ok(not unknown,
        "no unrecognised endpoint keys" + (f" (new: {unknown} — review before allowing)" if unknown else ""))
 
-    # --- 2. the module builds no URL outside the read-only set --------------------------------
+    # --- 2. the module builds no URL outside the allowed set ----------------------------------
     used = set(re.findall(r'ENDPOINTS\.get\(\s*["\']([a-z_]+)["\']', src))
-    stray = sorted(used - READ_ONLY_ENDPOINT_KEYS)
-    ok(not stray, "every URL the module builds is a read-only endpoint"
+    stray = sorted(used - allowed_keys)
+    ok(not stray, "every URL the module builds is read-only or gated"
                   + (f" (stray: {stray})" if stray else ""))
 
     # --- 3. no file-upload machinery ----------------------------------------------------------
     for pat, desc in UPLOAD_PATTERNS:
         found = re.search(pat, src, re.M)
-        ok(found is None or has_confirm_gate,
-           f"no {desc} in bp_anyrun.py"
-           + (f" — found at offset {found.start()} with no {CONFIRM_MARKER} gate" if found else ""))
+        if found is None:
+            ok(True, f"no {desc} in bp_anyrun.py")
+        else:
+            ok(has_confirm_gate,
+               f"{desc} present in bp_anyrun.py at offset {found.start()} — "
+               + (f"allowed, behind the {CONFIRM_MARKER} gate" if has_confirm_gate
+                  else f"and there is no {CONFIRM_MARKER} gate"))
 
     # --- 4. the read-only contract is stated where an analyst will meet it ---------------------
     # A guarantee nobody can see is a guarantee nobody can rely on.
@@ -167,5 +199,6 @@ if __name__ == "__main__":
     if _FAILED:
         print(f"FAIL — {_FAILED} OPSEC check(s) failed: a sample-submission path may have appeared.")
         sys.exit(1)
-    print(f"PASS — no sample-submission path ({_PASSED} checks: endpoints read-only, "
-          f"no upload machinery, contract stated to the analyst)")
+    print(f"PASS — no UNGATED sample-submission path ({_PASSED} checks: every endpoint either "
+          f"read-only or behind the marked-and-enforced confirmation gate, contract stated to "
+          f"the analyst)")

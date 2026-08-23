@@ -44,6 +44,6 @@ If a domain you just attributed doesn't resolve to its operator here, step 1 did
 
 ---
 
-**Stop condition for the whole case:** assessment written to `knowledge/reports/<case>/`,
+**Stop condition for the whole case:** assessment written to `cases/<case>/assessment.md`,
 operator recorded in the registry (if one was assessed), and any new tell added to the skill.
 Only then is the case closed — because only then does the next case start ahead of where this one did.

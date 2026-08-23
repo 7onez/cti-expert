@@ -1,18 +1,24 @@
-"""OPTIONAL: the same skills as SDK subagents, for parallel fan-out.
+"""The same skills as SDK subagents — the declarative catalog of the harness's agent personas.
 
 orchestrator.py runs one linear case (phase = a query() with a pinned skill prompt).
 When you want to fan a fleet of collectors across N seeds concurrently (your
-WebPivot/Workflows/ParallelBatch.md pattern), define them as subagents and let a
-thin orchestrator agent dispatch them. AgentDefinition fields are camelCase.
+WebPivot/Workflows/ParallelBatch.md pattern), define them as subagents. AgentDefinition
+fields are camelCase.
 
-This module is illustrative scaffolding — wire it into a driver query() that has
-the `Agent`/dispatch tool available. Kept separate so the linear path stays simple.
+The `collector` persona below is now WIRED: `orchestrator.collect_fanout` instantiates exactly
+this persona (WebPivot skill body + COLLECT_TOOLS + cheap model) once per seed and runs them
+concurrently — reached via `run_case(..., collect_conc>1)` / the CLI `--fanout` flag. This module
+stays the single declarative source for the persona definitions; `analyst`/`grapher` remain
+available for a dispatch-driver query() that has the `Agent` tool. Kept separate so the linear
+path stays simple.
 """
 from __future__ import annotations
 
 import os
+import sys
 
-from claude_agent_sdk import AgentDefinition
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # harness/ on path for sdk_compat
+from sdk_compat import AgentDefinition  # real SDK or OpenAI-compat shim (HARNESS_BACKEND)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

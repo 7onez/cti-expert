@@ -126,6 +126,14 @@
     }
   },
 
+  "search_plan": {
+    "_comment": "HOW A SELECTOR IS SEARCHED — the order of the passes and the order of the selectors. Two decisions live here, and both exist because IntelX returns a BOUNDED page: what you ask for first is what you actually get. (1) LOGS FIRST. A general search on a long-exposed address comes back overwhelmingly recycled combolist rows; `max_records` fills with them and the one infostealer-log entry that would have made the case is truncated away before the analyst ever sees it — sorting the page afterwards cannot recover a record that was never returned. So an unscoped search runs as TWO passes: a bucket-scoped pass over `first_pass_buckets` (the stealer logs), then the general pass for everything else. Each pass costs its own unit, which is the price of not letting the public breach corpora crowd out the logs; when the budget only allows one, the logs pass is the one that runs. Set `general_pass` false on a tight allowance to buy logs coverage on twice as many selectors. An explicit `--buckets` from the analyst always overrides the plan. (2) SELECTOR PRIORITY. When a bounded allowance is spread across a result's artifacts, this is the order they are spent in. DOMAIN AND EMAIL LEAD, and the domain is first on purpose: a stealer-log record is indexed by the URL it captured, so searching the CASE DOMAIN returns the machines that held credentials FOR that domain — the campaign's victims and, when the operator logged into their own panel from an infected box, the operator's machine. That is the single highest-yield IntelX move on a web case, and no other layer in this toolkit can reach it. The email is next because it is the selector that carries identity across corpora.",
+    "logs_first": true,
+    "first_pass_buckets": ["leaks.logs"],
+    "general_pass": true,
+    "selector_priority": ["domain", "email", "url", "phone", "bitcoin", "iban", "ipv4", "cidr4", "ipv6", "mac", "uuid"]
+  },
+
   "media_types": {
     "_comment": "The `media` code on each record — what KIND of document matched. Used to label results and to filter a search (media=0 means all). Codes 10-12 are reserved by IntelX and must not be sent.",
     "entries": {

@@ -195,6 +195,60 @@ def check():
         if was_ar is not None:
             os.environ["ANYRUN_API_KEY"] = was_ar
 
+    # --- 7b. THE SUBMISSION GATE -------------------------------------------------------------
+    # A submission is outbound, attributable and irreversible: it hands case material to a third
+    # party and tells the target it is being sandboxed. Every one of these assertions is a case
+    # that has burned real investigations, so the gate must hold even when the reference data is
+    # unreadable and even when a caller passes confirm-adjacent arguments by accident.
+    was_ar = os.environ.pop("ANYRUN_API_KEY", None)
+    os.environ["ANYRUN_API_KEY"] = "test-key-not-a-real-credential"
+    try:
+        pf = ar.submit("./sample.bin", "file")                       # no confirm at all
+        ok(pf.get("action", "").startswith("CONFIRMATION REQUIRED"),
+           "submit() WITHOUT confirm returns the briefing and sends nothing")
+        ok(pf.get("irreversible") is True and len(pf.get("risks") or []) >= 3,
+           "the briefing states irreversibility and enumerates the OPSEC risks")
+        ok(any("EXISTING detonation" in c or "static" in c for c in (pf.get("try_first") or [])),
+           "the briefing points at the cheaper alternatives before detonating")
+        ok(pf["would_use"]["privacy"] == "owner",
+           "the default privacy is `owner` (only you), NOT the SDK's shareable `bylink`")
+        ok(any("case ID" in n for n in (pf.get("never_send") or [])),
+           "the briefing forbids sending case identifiers to a third party (RULE 1 over an API)")
+        ok(ar.submit("http://site-a.example", "url", confirm=False).get("action", "")
+           .startswith("CONFIRMATION REQUIRED"),
+           "an explicit confirm=False is still a refusal, not a default-through")
+        pub = ar.submit("./sample.bin", "file", confirm=True, privacy="public")
+        ok("refused" in pub and "public feed" in pub["refused"],
+           "confirm=True is NOT enough for a PUBLIC task — that needs allow_public as well")
+        ok("preflight" in pub, "the public refusal hands back the briefing rather than a bare error")
+    finally:
+        os.environ.pop("ANYRUN_API_KEY", None)
+        if was_ar is not None:
+            os.environ["ANYRUN_API_KEY"] = was_ar
+    # With no key nothing can be submitted regardless of what the caller passes.
+    was_ar2 = os.environ.pop("ANYRUN_API_KEY", None)
+    try:
+        r = ar.submit("./sample.bin", "file", confirm=True)
+        ok("skipped" in r, "keyless: even a confirmed submit sends nothing")
+    finally:
+        if was_ar2 is not None:
+            os.environ["ANYRUN_API_KEY"] = was_ar2
+    # The gate is enforced in the SIGNATURE, not read from the JSON — a config edit (or a stale
+    # copy of the reference file) must never be able to switch it off.
+    saved_policy = dict(ar.SUBMISSION_POLICY)
+    try:
+        ar.SUBMISSION_POLICY["require_explicit_confirmation"] = False
+        ar.SUBMISSION_POLICY["forbidden_privacy"] = []
+        os.environ["ANYRUN_API_KEY"] = "test-key-not-a-real-credential"
+        ok(ar.submit("./sample.bin", "file").get("action", "").startswith("CONFIRMATION REQUIRED"),
+           "flipping require_explicit_confirmation in the DATA cannot disable the gate")
+    finally:
+        ar.SUBMISSION_POLICY.clear()
+        ar.SUBMISSION_POLICY.update(saved_policy)
+        os.environ.pop("ANYRUN_API_KEY", None)
+        if was_ar is not None:
+            os.environ["ANYRUN_API_KEY"] = was_ar
+
     # --- 8. ANY.RUN clustering policy fails closed ---------------------------------------------
     ok(ar.grade_field("domainName") == "cluster", "a contacted domain may support an operator edge")
     ok(ar.grade_field("threatName") == "context",

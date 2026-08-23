@@ -1,0 +1,23 @@
+{
+  "description": "Phone extraction must read what a page DECLARES, not what its machinery happens to look like. A subsetted @font-face unicode-range and an inline build string both produce hyphen-separated digit runs that satisfy the phone regex AND its punctuation guard — on a Framer/Wix/Squarespace site that is a dozen phantom contact numbers, and a phone is a reverse-WHOIS pivot, so each one spends credits chasing a font. The fix drops <script>/<style> BODIES before scanning visible text; this case also guards the regression that fix can cause, since schema.org JSON-LD lives inside a <script> and is often the only place a real number appears as text.",
+  "input": "input.html",
+  "expect_pivots": [
+    {"kind": "phone", "value": "+15550100199"},
+    {"kind": "phone", "value": "+15550100288"},
+    {"kind": "phone", "value": "+15550100377"}
+  ],
+  "expect_artifacts": {
+    "phones": ["+15550100199", "+15550100288", "+15550100377"]
+  },
+  "forbid_pivots": [
+    {"kind": "phone", "value": "01520153"},
+    {"kind": "phone", "value": "03040311"},
+    {"kind": "phone", "value": "202409181130"},
+    {"kind": "phone", "value": "17304455"},
+    {"kind": "phone", "value": "100200300"},
+    {"kind": "phone", "value": "123456"}
+  ],
+  "forbid_artifacts": {
+    "phones": ["01520153", "03040311", "202409181130", "17304455"]
+  }
+}

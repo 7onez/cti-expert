@@ -1,0 +1,45 @@
+{
+  "_comment": "RAW EVIDENCE CAPTURE — the bytes the host actually served, kept as an immutable, hash-manifested bundle. Everything else WebPivot produces is DERIVED: a favicon hash, a template fingerprint, an extracted wallet. Derived data is an assertion about a page that no longer exists — scam infrastructure is torn down in days, and once it is gone the assertion cannot be checked by anyone, including us. The capture is the primary source: the DOM as fetched, every JavaScript and stylesheet the page loaded, each with its own sha256, plus a bundle-level hash over the sorted per-file digests so any later alteration is detectable. This file holds the budgets and the classification rules that decide what a capture pulls and where it stops. Nothing here is case data.",
+
+  "budgets": {
+    "_comment": "Byte and count ceilings, so one heavy SPA cannot fill a case folder and a large batch stays finishable. SAME-SITE assets are the operator's own code and get the generous budget — that is the evidence. THIRD-PARTY assets (CDN libraries, analytics, fonts) get a small one: they describe the library, not the operator, and are captured only so the manifest can state what the page loaded rather than leaving a silent hole. Anything dropped is recorded in `skipped_for_budget` on the manifest — a capture must never imply a completeness it does not have. `max_asset_bytes` caps a single file, so one 80 MB source map cannot consume the whole budget on its own.",
+    "same_site_total_bytes": 41943040,
+    "third_party_total_bytes": 8388608,
+    "max_asset_bytes": 8388608,
+    "max_assets": 300,
+    "max_third_party_assets": 60,
+    "timeout_seconds": 20,
+    "dom_max_bytes": 16777216
+  },
+
+  "capture_kinds": {
+    "_comment": "Which referenced resources a capture fetches, by role. `js` and `css` are the operator's application and theme — the two that survive a re-skin and the two an analyst re-reads months later. `sourcemap` is included because a `.map` carries the developer's own directory paths and usernames. Images and fonts are NOT fetched by default: they are bulky, rarely dispositive, and the favicon (the one image that clusters) is already captured by the pivot layer as a hash. Set `fetch` true on a kind to include it.",
+    "entries": {
+      "dom": {"fetch": true, "note": "the served HTML, exactly as received (or as rendered, when --render is used — the manifest records which)"},
+      "js": {"fetch": true, "note": "every <script src> the page references"},
+      "css": {"fetch": true, "note": "every stylesheet link — a shared theme is same-kit evidence and CSS is otherwise never retained"},
+      "sourcemap": {"fetch": true, "note": "a .map beside a captured bundle: developer paths, usernames, original filenames"},
+      "image": {"fetch": false, "note": "bulky, rarely dispositive; the favicon already clusters as a hash"},
+      "font": {"fetch": false, "note": "bulky and near-universally third-party"}
+    }
+  },
+
+  "manifest": {
+    "_comment": "The evidence contract — the fields every captured file carries, and why. `sha256` is what makes the file quotable in a report; `fetched_at` (UTC) and `http_status` are what make it a dated observation rather than an undated copy; `final_url` records a redirect the analyst would otherwise never see; `content_type` is the SERVER's claim, kept even when it disagrees with the extension, because that disagreement is itself a finding. `capture_sha256` at the bundle level is computed over the sorted `sha256  relative_path` lines, so the whole capture has one citable digest and any later edit to any file changes it.",
+    "entries": {
+      "per_file": ["url", "final_url", "http_status", "content_type", "sha256", "bytes", "fetched_at", "role", "same_site", "stored_as"],
+      "per_capture": ["case", "seed_url", "host", "url_path", "path_template", "kit", "captured_at", "capture_sha256", "collector_version", "fetched_with", "rendered", "files", "skipped_for_budget", "errors"]
+    }
+  },
+
+  "layout": {
+    "_comment": "Where a capture lands. One directory per (host, kit, UTC timestamp) — timestamped because a re-collection of the same page later is a NEW observation, not a correction of the old one, and overwriting it would destroy the change-over-time evidence that dates a re-skin. The kit segment is in the path so a host serving several branded templates produces one directory per template rather than a single mixed pile; `_root` is used when the path carries no distinctive segment.",
+    "root": "evidence/captures",
+    "dir_template": "{host}/{kit}/{timestamp}",
+    "root_kit_label": "_root",
+    "dom_filename": "dom.html",
+    "assets_dir": "assets",
+    "third_party_dir": "third_party",
+    "manifest_filename": "manifest.json"
+  }
+}

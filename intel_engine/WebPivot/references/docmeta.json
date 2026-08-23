@@ -1,0 +1,67 @@
+{
+  "_comment": "The DOCUMENT + IMAGE metadata layer (WebPivot/tools/wp_docmeta.py). A scam site's hosted PDFs (the 'licence', 'certificate', 'prospectus', 'whitepaper') and its own photographs are usually produced on the operator's machine and uploaded untouched — so they carry an Author, a Creator tool, an XMP DocumentID, a camera model, sometimes GPS. Those survive every re-skin of the site itself, because nobody re-exports the PDF when they change the brand. This file decides WHICH files are worth downloading, HOW MUCH bandwidth that may cost, and — most importantly — which metadata values are too GENERIC to cluster on. That last part is the base-rate discipline: 'Microsoft Word' as a Producer is shared by half the internet and is noise; a Producer nobody else uses is a fingerprint. Add a value to a generic_* list and it stops producing same-operator edges (it is still recorded, just demoted to context).",
+
+  "document_extensions": {
+    "_comment": "File types downloaded and parsed for embedded document metadata. PDFs are the highest-value target by far: /Info and the XMP packet routinely name the author, the machine's software stack and a per-document UUID. Office formats are listed because they are equally rich (docProps/core.xml), and are parsed when the optional accelerator is available.",
+    "values": ["pdf", "docx", "xlsx", "pptx", "doc", "xls", "ppt", "odt", "rtf"]
+  },
+
+  "image_extensions": {
+    "_comment": "Image types downloaded and parsed for EXIF / XMP / PNG-text metadata. A photograph the operator took themselves (an 'office' shot, a team page, a fake KYC prop) can carry camera Make/Model, Artist, Copyright and GPS coordinates. Screenshots and exported graphics instead carry the editing Software, which clusters the shop that made them.",
+    "values": ["jpg", "jpeg", "png", "tif", "tiff", "webp", "heic"]
+  },
+
+  "generic_producers": {
+    "_comment": "PDF /Producer and /Creator values so common they identify a TOOL, not an operator — the base-rate trap. Matched case-insensitively as a substring, so 'Microsoft' catches every Word build number. A value matching here is still recorded in the artifacts (it is real context: a browser-printed PDF tells you the document was made from a web page) but it will NOT emit a same-operator pivot. Add anything you see across unrelated cases.",
+    "values": [
+      "microsoft", "word", "excel", "powerpoint", "libreoffice", "openoffice",
+      "acrobat", "adobe pdf library", "distiller", "indesign", "illustrator",
+      "skia/pdf", "chromium", "chrome", "quartz", "cairo", "ghostscript",
+      "wkhtmltopdf", "tcpdf", "fpdf", "dompdf", "mpdf", "itext", "pdfkit",
+      "reportlab", "pandoc", "latex", "pdftex", "xetex", "canva", "google",
+      "apple", "preview", "printer", "scanner", "pdf24", "ilovepdf", "smallpdf"
+    ]
+  },
+
+  "generic_software": {
+    "_comment": "Image EXIF `Software` / XMP `CreatorTool` values that name a common editor rather than an operator. Same rule as generic_producers: recorded, but never clustered on alone. A NON-generic value here is worth a look — an obscure or CJK-localised editor build narrows the shop considerably.",
+    "values": [
+      "adobe photoshop", "lightroom", "gimp", "paint.net", "pixelmator",
+      "affinity", "figma", "sketch", "canva", "snagit", "greenshot",
+      "screenshot", "imagemagick", "graphicsmagick", "libpng", "libjpeg",
+      "mozjpeg", "optipng", "tinypng", "squoosh", "sharp", "pillow",
+      "www.inkscape.org", "matplotlib", "picasa", "windows photo editor"
+    ]
+  },
+
+  "role_authors": {
+    "_comment": "Author / Artist / Creator values that are a DEFAULT rather than a person — the OS account name of a stock image, a shared workstation, or a placeholder the operator never changed. Clustering on these fuses unrelated cases: thousands of documents worldwide are authored by 'Windows User'. Matched case-insensitively against the whole trimmed value, not as a substring, so a real person named e.g. 'Admin Nguyen' is not lost.",
+    "values": [
+      "user", "users", "admin", "administrator", "windows user", "default",
+      "owner", "guest", "pc", "unknown", "author", "test", "temp", "asus",
+      "hp", "dell", "lenovo", "acer", "toshiba", "msi", "root", "localadmin",
+      "utilisateur", "usuario", "benutzer", "用户", "ユーザー"
+    ]
+  },
+
+  "skip_path_hints": {
+    "_comment": "URL path fragments whose files are framework/CDN/theme assets rather than the operator's own uploads — downloading them costs bandwidth and yields the theme vendor's metadata, which clusters the THEME and not the operator. Matched case-insensitively anywhere in the URL path.",
+    "values": [
+      "/wp-includes/", "/wp-content/themes/", "/wp-content/plugins/",
+      "/node_modules/", "/vendor/", "/assets/vendor/", "/bootstrap/",
+      "/jquery/", "/fontawesome/", "/font-awesome/", "/cdn-cgi/",
+      "/_next/static/media/", "/static/media/", "/dist/img/", "/swagger",
+      "/emoji/", "/flags/", "/icons/", "/favicon"
+    ]
+  },
+
+  "budget": {
+    "_comment": "Download limits. This layer FETCHES FILES FROM THE TARGET, so it is a real footprint on the operator's server and a real cost in time — these caps keep it proportionate. max_files is the total downloaded per page; max_bytes_per_file skips anything larger (checked via Content-Length before the body is read); max_total_bytes is the whole-run ceiling; min_image_bytes skips tracking pixels, spacers and icons, which never carry useful metadata. max_documents reserves part of max_files for PDFs/Office files, so a page full of images cannot starve the highest-value target.",
+    "max_files": 12,
+    "max_documents": 6,
+    "max_bytes_per_file": 5242880,
+    "max_total_bytes": 20971520,
+    "min_image_bytes": 8192,
+    "timeout_seconds": 15
+  }
+}

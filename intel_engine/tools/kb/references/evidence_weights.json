@@ -1,0 +1,105 @@
+{
+  "_comment": "How much a shared relationship is worth as evidence, for the KB reasoning layer (hypothesize.py), the graph projection (export_graph.py) and the calibration store (calibration.py). These are the SCORING WEIGHTS behind an attribution call, so an analyst must be able to retune them — promote a relation, demote one that keeps over-merging — without editing Python. NOTE THE DIVERGENCE, it is deliberate and load-bearing: `uses_favicon` is attribution-grade for the GRAPH projection (it draws an edge) but only CORROBORATING for hypothesis scoring, because a favicon is easy to copy and the graph is read by a human who can discount it while the scorer is not. Keep the groups separate; do not 'tidy' them into one list. RULE 1: relationship names only, never case data.",
+  "attribution_rels": {
+    "_comment": "Relations that carry attribution weight in hypothesis scoring — the top of the IntelAnalysis triage ladder. A shared value here is owner-tied: a registrant, an owner-verified token, an analytics property, a payout wallet.",
+    "values": [
+      "registered_by",
+      "uses_analytics",
+      "uses_pixel",
+      "uses_saas",
+      "uses_verification",
+      "uses_wallet"
+    ]
+  },
+  "identity_rels": {
+    "_comment": "Of the attribution relations, those an operator legitimately reuses across MANY of their OWN domains. They get the generous fan-out allowance.",
+    "values": [
+      "registered_by",
+      "uses_wallet"
+    ]
+  },
+  "service_rels": {
+    "_comment": "Third-party SERVICE tokens a shared SEO/marketing agency spreads across UNRELATED clients. Same tier as identity_rels but a much stricter fan-out cap, because they over-merge — this is the agency-suspect control.",
+    "values": [
+      "uses_analytics",
+      "uses_pixel",
+      "uses_saas",
+      "uses_verification"
+    ]
+  },
+  "corroborating_rels": {
+    "_comment": "Relations that SUPPORT an existing hypothesis but may never establish one alone — template, CSS, comment, theme, favicon, on-page contact. Same-kit evidence: two tenants of one builder share all of these and share no operator.",
+    "values": [
+      "same_comment",
+      "same_inline_css",
+      "same_template",
+      "shows_email",
+      "uses_contact",
+      "uses_favicon",
+      "uses_theme",
+      "uses_tracker"
+    ]
+  },
+  "noise_rels": {
+    "_comment": "Relations that must never contribute to a hypothesis at all. A managed nameserver is shared by millions of unrelated domains.",
+    "values": [
+      "uses_nameserver"
+    ]
+  },
+  "graph_strong_rels": {
+    "_comment": "Relations drawn as the BACKBONE of the domain projection — attribution-grade for a diagram.",
+    "values": [
+      "registered_by",
+      "uses_analytics",
+      "uses_favicon",
+      "uses_verification"
+    ]
+  },
+  "graph_bridge_rels": {
+    "_comment": "Drawn, but weaker: real cross-cluster bridges such as a shared contact handle. Enough to show a connection, not enough to assert one owner.",
+    "values": [
+      "uses_contact"
+    ]
+  },
+  "graph_kit_rels": {
+    "_comment": "Same-kit relations shown only as node context or weak edges, never the backbone of the graph.",
+    "values": [
+      "same_comment",
+      "same_inline_css",
+      "same_template",
+      "uses_contact",
+      "uses_nameserver",
+      "uses_theme",
+      "uses_tracker"
+    ]
+  },
+  "relation_labels": {
+    "_comment": "Short human labels for the shared-artifact classes, used on graph edges. Edit to change what a reader sees without touching the projection logic.",
+    "entries": {
+      "registered_by": "registrant",
+      "uses_analytics": "analytics-ID",
+      "uses_verification": "verif-token",
+      "uses_favicon": "favicon",
+      "uses_contact": "contact",
+      "uses_theme": "theme",
+      "same_template": "template",
+      "same_inline_css": "css",
+      "same_comment": "comment",
+      "uses_nameserver": "NS"
+    }
+  },
+  "confidence_probabilities": {
+    "_comment": "Confidence label -> the probability it asserts, ICD-203 flavoured. This is what turns a written judgement into a number for Brier scoring, so changing a value re-scores every past call: adjust it only deliberately, and prefer --prob per record for a finer scale.",
+    "entries": {
+      "high": 0.85,
+      "medium": 0.6,
+      "low": 0.35,
+      "almost_certain": 0.93,
+      "likely": 0.75,
+      "probable": 0.75,
+      "even": 0.5,
+      "unlikely": 0.25,
+      "remote": 0.08
+    }
+  }
+}

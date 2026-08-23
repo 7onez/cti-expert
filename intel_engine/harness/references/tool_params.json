@@ -1,0 +1,140 @@
+{
+  "_comment": "OPTIONAL TOOL PARAMETERS, declared as SCHEMA instead of only as prose. Every tool's `@tool(...)` third argument lists only its REQUIRED params, and both schema builders (harness/mcp_server.py and harness/openai_backend.py) therefore emitted `required: [everything declared]` plus `additionalProperties: true` — so the 48 optional arguments the handlers actually read (`args.get(\"passive\")`, `args.get(\"free_only\")`, `args.get(\"mode\")` …) existed NOWHERE in the schema. They were documented only inside the tool's description paragraph. A strong model infers them from that prose reliably; a mid-size open-weight model largely does not, and the failure is expensive rather than loud — on a hostile run it never passes `passive=true`, on a budget run it never passes `free_only=true`, so the tool-call gate correctly DENIES the call and the run burns turns looping instead of adapting. Declaring these here fixes it for every front-end at once, and the `enum` lists matter most: a model that cannot see that `mode` accepts exactly six values will invent a seventh. THIS FILE ADDS NO CAPABILITY — every parameter below is already read by its handler; it only makes the existing contract visible. When you add an optional `args.get(\"x\")` to a handler, add it here too, or it stays invisible to the model. Types must match how the handler parses the value: `seeds`, `victims` and `paths` are SPACE-OR-COMMA-SEPARATED STRINGS, not arrays, because that is what the handler splits.",
+
+  "optional_params": {
+    "_comment": "One entry per tool name, mapping optional parameter -> {type, description, enum?}. `type` is a JSON Schema primitive (string|integer|number|boolean). `description` is one line the model reads at call time — write it as an instruction, not a definition. `enum` pins the accepted values where the handler branches on a fixed set; omit it for free-form values. A tool absent from this map simply has no optional parameters.",
+    "entries": {
+      "pivot_extract": {
+        "passive": {"type": "boolean", "description": "Do NOT fetch the target directly; reconstruct from Wayback/urlscan instead. REQUIRED on hostile infrastructure — a direct fetch puts the analyst's own IP on attacker logs."},
+        "proxy": {"type": "string", "description": "Route the fetch through this proxy URL (e.g. http://127.0.0.1:8080). Use with, or instead of, passive on hostile targets."},
+        "force": {"type": "boolean", "description": "Re-collect even if a pivot JSON for this host already exists. Default false = reuse the cached collection."},
+        "no_assets": {"type": "boolean", "description": "Skip the JS/CSS asset layer (bundle hashes, sourcemap dev identity, well-known files). Cheaper, but drops the build-machine pivots."},
+        "no_well_known": {"type": "boolean", "description": "Skip robots.txt / sitemap.xml / ads.txt / security.txt retrieval only."},
+        "assets_max": {"type": "integer", "description": "Cap how many JS/CSS bundles are downloaded. Lower this when the target is slow or you are rate-limited."},
+        "no_docmeta": {"type": "boolean", "description": "Skip the document/image metadata layer. It costs extra requests TO THE TARGET, so disable it when minimising footprint."},
+        "docmeta_max": {"type": "integer", "description": "Cap how many hosted PDFs/images are downloaded for metadata extraction."}
+      },
+      "detect_login": {
+        "proxy": {"type": "string", "description": "Route the page fetch through this proxy (research egress). Use on hostile targets."},
+        "no_crawl": {"type": "boolean", "description": "Do not follow the one hop to the linked register/login page."},
+        "case": {"type": "string", "description": "Also write the result to cases/<case>/engage/forms.json (the fill plan engage_account reads)."}
+      },
+      "make_persona": {
+        "case": {"type": "string", "description": "Persist the persona under cases/<case>/engage/ (recommended for evidence + traceability)."},
+        "email_domain": {"type": "string", "description": "A disposable inbox domain YOU control, so an email-verifying signup can be confirmed. Without it the email is a non-deliverable .invalid placeholder."},
+        "with_phone": {"type": "boolean", "description": "Include a reserved non-routable placeholder phone. A real SMS-OTP still needs an analyst-provisioned number."},
+        "seed": {"type": "string", "description": "Deterministic persona for a reproducible re-run with the SAME identity (do not touch the operator twice with two identities)."},
+        "country": {"type": "string", "description": "Country for the persona's address block (default US)."}
+      },
+      "engage_account": {
+        "persona": {"type": "string", "description": "Path to a make_persona JSON. MUST be synthetic (kind starts with 'synthetic') or the call is refused."},
+        "detection": {"type": "string", "description": "Path to a detect_login JSON — the registration fill plan and the login form."},
+        "case": {"type": "string", "description": "cases/<case>/engage/ for screenshots, the authenticated DOM and the audit ledger."},
+        "proxy": {"type": "string", "description": "Research egress (VPS/VPN). Without this, and without allow_direct_egress, engagement is REFUSED — a signup from your own IP is a self-identifying beacon."},
+        "allow_direct_egress": {"type": "boolean", "description": "Proceed from your own IP anyway. Only when the analyst accepts the attribution."},
+        "await_confirm": {"type": "boolean", "description": "Email-gated signup: after registering, fetch the confirm link from the persona's puppet inbox (en_inbox) and click it before login. Needs a persona minted --from-pool."},
+        "target_domain": {"type": "string", "description": "Domain to match the confirmation email against, so an unrelated message in the puppet inbox is not mistaken for it."},
+        "no_login": {"type": "boolean", "description": "Register only; do not log in or harvest."},
+        "confirm": {"type": "boolean", "description": "Explicit per-engagement approval. WITHOUT it the tool returns only the risk briefing and creates NO account. The run must ALSO have INTEL_ENGAGE_CONFIRM=1 (an agent cannot set that for itself)."}
+      },
+      "harvest_authenticated": {
+        "base_url": {"type": "string", "description": "Resolve relative form actions (the harvester upload path) against this URL."},
+        "case": {"type": "string", "description": "Append the harvest findings to cases/<case>/engage/interactions.jsonl."}
+      },
+      "engage_report": {
+        "append_to": {"type": "string", "description": "Append the rendered Panel Engagement section to this markdown file (e.g. cases/<case>/assessment.md); omit to return it as text."}
+      },
+      "domain_liveness": {
+        "case": {"type": "string", "description": "Classify from this case's ALREADY-COLLECTED pivot JSON instead of probing. Sends no packet to the target — use this on hostile infrastructure."},
+        "offline": {"type": "boolean", "description": "Classify from any cached collection of this host, in any case, instead of probing live."},
+        "timeout": {"type": "integer", "description": "Per-request timeout in seconds for the live probe."}
+      },
+      "impersonation_hunt": {
+        "fofa": {"type": "boolean", "description": "Also validate candidates against FOFA. Spends FOFA credits; the default crt.sh + DNS sweep is free."},
+        "urlscan": {"type": "boolean", "description": "Also validate candidates against urlscan. Spends urlscan quota."},
+        "max": {"type": "integer", "description": "Cap the number of generated lookalike candidates."}
+      },
+      "analyze_artifact": {
+        "case": {"type": "string", "description": "Case to write the artifact analysis into."},
+        "keep": {"type": "string", "description": "Directory to retain the downloaded artifact in instead of discarding it after analysis."}
+      },
+      "reverse_whois": {
+        "kind": {"type": "string", "description": "Which selector to reverse.", "enum": ["email", "name", "phone"]},
+        "max_domains": {"type": "integer", "description": "Refuse the reverse if it would return more than this many domains — a huge result is a shared/bulk registrant, i.e. NOISE, not one operator. Default 150."},
+        "confirm": {"type": "boolean", "description": "Override the max_domains gate and run anyway. Only set this after judging that the large result really is one operator."}
+      },
+      "censys": {
+        "mode": {"type": "string", "description": "Which Censys operation to run. 'budget' is OFFLINE and free; 'cert'/'host'/'webproperty' are 1-credit lookups; 'search' costs 5 and needs Starter+; 'query' only BUILDS CenQL and spends nothing.", "enum": ["cert", "host", "webproperty", "search", "query", "budget"]},
+        "kind": {"type": "string", "description": "For mode='query': the pivot artifact kind to build a CenQL query for (favicon, jarm, cert, …)."},
+        "port": {"type": "integer", "description": "For mode='webproperty': the port of the web property to look up. Default 443."}
+      },
+      "capability_check": {
+        "free_only": {"type": "boolean", "description": "Report the capability of a run that spends NO API credits. Use this to see what a keyless/free collection can and cannot reach before you start."}
+      },
+      "reference_mirrors": {
+        "mode": {"type": "string", "description": "'check' reports drift between duplicated reference groups; 'repair' propagates the canonical copy over its mirrors.", "enum": ["check", "repair"]}
+      },
+      "intelx_search": {
+        "mode": {"type": "string", "description": "'search' runs the selector across leak/stealer-log/paste/darknet buckets; 'phonebook' inventories a domain's emails and subdomains; 'budget' is an OFFLINE quota check.", "enum": ["search", "phonebook", "budget"]},
+        "logs_only": {"type": "boolean", "description": "Query ONLY the stealer-log buckets. IntelX returns a bounded page, so recycled public-breach rows otherwise fill it and truncate the one log record away."}
+      },
+      "url_paths": {
+        "mode": {"type": "string", "description": "'analyze' extracts the kit/template identifiers from one URL; 'patterns' reports one kit seen on N DISTINCT hosts across the case.", "enum": ["analyze", "patterns"]},
+        "paths": {"type": "string", "description": "Space- or comma-separated URLs/paths to analyse together."}
+      },
+      "serp_ads": {
+        "mode": {"type": "string", "description": "'advertiser' looks up the Ads Transparency advertiser + funder; 'serp' reads the live ads block; 'params' classifies ad parameters in a URL; 'cloak' runs the FREE click-keyed cloaking probe (plain vs ad-click vs control).", "enum": ["advertiser", "serp", "params", "cloak", "cloaking"]},
+        "region": {"type": "string", "description": "Two-letter region code to scope the ads query to."}
+      },
+      "capture_evidence": {
+        "dir": {"type": "string", "description": "Re-hash and VERIFY an existing capture directory instead of capturing anew — this is the tamper check."},
+        "verify": {"type": "boolean", "description": "Verify the capture manifest's hashes rather than writing a new capture."},
+        "third_party": {"type": "boolean", "description": "Include third-party assets in the capture. They get a small byte allowance; anything dropped is listed in skipped_for_budget."}
+      },
+      "anyrun_lookup": {
+        "mode": {"type": "string", "description": "'lookup' queries TI Lookup for others' detonations; 'history' lists YOUR OWN past tasks; 'report' fetches one task's report. An empty TI result means 'not entitled or not seen', never 'nothing known'.", "enum": ["lookup", "history", "report"]},
+        "iocs": {"type": "string", "description": "Space- or comma-separated indicators to look up."},
+        "limit": {"type": "integer", "description": "Cap the number of returned records."}
+      },
+      "anyrun_submit": {
+        "kind": {"type": "string", "description": "Whether the target is a URL to visit or a file to detonate.", "enum": ["url", "file"]},
+        "confirm": {"type": "boolean", "description": "Explicit per-submission approval. WITHOUT this the tool only returns a risk briefing and sends NOTHING — submission is outbound, attributable and irreversible, and a URL detonation tells the operator they are being sandboxed."},
+        "allow_public": {"type": "boolean", "description": "Permit a submission whose result would be PUBLIC. Refused by policy in almost every case; a free plan makes the task public to everyone."}
+      },
+      "case_clusters": {
+        "min": {"type": "integer", "description": "Only report clusters with at least this many members."},
+        "max_prevalence": {"type": "integer", "description": "Ignore an indicator shared by more than this many domains — above it, the indicator is shared infrastructure, not an operator link. Default 8."},
+        "all": {"type": "boolean", "description": "Include clusters that the prevalence and noise filters would otherwise suppress."},
+        "json": {"type": "boolean", "description": "Return machine-readable JSON instead of the analyst-readable summary."}
+      },
+      "case_frontier": {
+        "max_new": {"type": "integer", "description": "Cap how many new seeds the frontier proposes."}
+      },
+      "case_loop": {
+        "max_rounds": {"type": "integer", "description": "Cap the collect→assess→expand rounds before handing back to the analyst."},
+        "max_new": {"type": "integer", "description": "Cap how many new seeds each round may add."}
+      },
+      "case_reopen": {
+        "seeds": {"type": "string", "description": "Space- or comma-separated additional seeds to reopen the case with."}
+      },
+      "victim_profile": {
+        "victims": {"type": "string", "description": "Space- or comma-separated victim hostnames to profile the access vector from."}
+      },
+      "case_timeline": {
+        "history": {"type": "string", "description": "Space-separated wayback_ga.py JSON paths to fold historical analytics into the timeline."},
+        "markdown": {"type": "boolean", "description": "Emit the timeline as markdown for direct inclusion in an assessment."},
+        "no_figure": {"type": "boolean", "description": "Skip rendering the swimlane figure; produce the evidence ledger only."}
+      },
+      "render_diagram": {
+        "legend": {"type": "boolean", "description": "Include the relationship legend in the rendered diagram."},
+        "no_render": {"type": "boolean", "description": "Emit the editable Mermaid source only, without rendering PNG/SVG."}
+      },
+      "render_report": {
+        "pdf": {"type": "boolean", "description": "Render a PDF."},
+        "docx": {"type": "boolean", "description": "Render an editable DOCX."},
+        "no_figures": {"type": "boolean", "description": "Skip embedding figures."},
+        "lang": {"type": "string", "description": "Language for the GENERATED furniture (cover, TOC, captions). The body is never machine-translated.", "enum": ["en", "vi"]}
+      }
+    }
+  }
+}

@@ -19,3 +19,9 @@ rich>=13.0                # harness console output
 # --- deliver / visualize (IntelGraph) ---
 matplotlib>=3.7           # charts, timelines, gantt (theme.py house style)
 graphviz>=0.20            # entity/infrastructure link graphs (also needs the `dot` binary)
+
+# --- authentication surface (Engage) — OPTIONAL, and deliberately not pinned above ---
+# Engage's detection half (en_forms) is stdlib+requests and needs nothing extra. Driving a real
+# browser to register/log in on a synthetic persona needs Playwright; without it en_engage falls
+# back to a manual runbook rather than failing, so this stays opt-in:
+#   uv pip install playwright && playwright install chromium

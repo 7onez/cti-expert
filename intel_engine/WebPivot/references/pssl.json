@@ -1,0 +1,52 @@
+{
+  "_comment": "PASSIVE SSL (CIRCL) — the HISTORICAL certificate view, and the one pivot that runs in the direction the others cannot: certificate -> the IPs that served it. Every other TLS source here reads the cert a host presents TODAY (the live 443 handshake) or the name overlap a CT log recorded at issuance (crt.sh, Censys). Passive SSL answers the retrospective question instead: which IP addresses have been observed serving this exact leaf certificate, over time. That is how an origin behind a CDN is recovered — the operator put the same certificate on the origin before (or alongside) fronting it, and the passive sensor saw it there. Pairs with passive DNS: pDNS gives the historical name->IP mapping, pSSL gives the historical cert->IP mapping, and an origin candidate that appears in BOTH is a strong lead. THE BASE RATE IS THE WHOLE PROBLEM WITH THIS DATA. A shared-CDN or default-hosting certificate is served by thousands of unrelated IPs — a single DigiCert/Cloudflare edge cert measured during development came back on several hundred addresses spanning a dozen countries and as many operators. Clustering on one of those would fabricate an estate out of the CDN's customer list, which is the most impressive-looking false positive this toolkit could produce. So `clustering_policy` below is not a tuning knob, it is the safety rail: past `max_ips_per_cert` a certificate is INFRASTRUCTURE, never an operator link, and a subject matching `shared_subject_markers` is rejected however few IPs it has. COVERAGE IS PARTIAL AND REGIONALLY SKEWED. CIRCL's sensors are Europe-weighted; an empty answer for a Vietnamese, Chinese or small-ISP address is routine and means the corpus never saw it. An empty result is therefore ABSENCE OF RECORD and must be reported as such — never as 'this IP served no certificate'. Auth is the same CIRCL account as passive DNS (`PDNS_USERNAME` / `PDNS_PASSWORD`); with no credentials the layer degrades to the UI/query URLs like every other WebPivot layer. Free with an account, but rate-limited rather than credit-metered, so `request_budget` bounds politeness, not spend.",
+
+  "endpoints": {
+    "_comment": "CIRCL Passive SSL v2 REST API. `ip_query` takes an IPv4/IPv6 address or a CIDR and returns the certificates seen on it plus their subjects; `cert_query` takes a certificate SHA-1 (NOT sha256 — this API is sha1-keyed, unlike Censys) and returns every IP observed serving it. `cert_fetch` returns the PEM and is deliberately unused: the assessment cites hashes and IPs, and pulling certificate bodies adds bytes without adding a pivot.",
+    "base_url": "https://www.circl.lu/v2pssl",
+    "ip_query": "/query/{ip}",
+    "cert_query": "/cquery/{sha1}",
+    "ui_url": "https://www.circl.lu/services/passive-ssl/",
+    "timeout_s": 25
+  },
+
+  "clustering_policy": {
+    "_comment": "THE SAFETY RAIL — read the top-level comment before changing a number here. `max_ips_per_cert`: a leaf certificate observed on more than this many addresses is a shared CDN / load-balanced / default-hosting certificate; it is recorded as infrastructure context and MUST NOT become a same-operator edge. Set it too high and a CDN's customer list becomes an 'estate'. `max_certs_per_ip`: an address presenting more than this many distinct certificates is shared hosting or a CDN edge — the certificates on it belong to its tenants, not to each other. `shared_subject_markers` is matched case-insensitively as a SUBSTRING against the certificate subject, and rejects a cert however few IPs carry it: these CNs are the CDN's own wildcard, never an operator's identity. `min_ips_for_edge` is 2 because a cert seen on exactly one IP links nothing to anything — it is still worth REPORTING (it names an origin candidate) but there is no second endpoint to join it to.",
+    "max_ips_per_cert": 12,
+    "max_certs_per_ip": 60,
+    "min_ips_for_edge": 2,
+    "shared_subject_markers": [
+      "sni.cloudflaressl.com",
+      "cloudflaressl.com",
+      "cloudflare",
+      "akamai",
+      "fastly",
+      "incapsula",
+      "sucuri.net",
+      "distilnetworks",
+      "azureedge.net",
+      "cloudfront.net",
+      "googleusercontent.com",
+      "amazonaws.com",
+      "parkingcrew",
+      "sedoparking",
+      "invalid",
+      "localhost",
+      "default"
+    ]
+  },
+
+  "request_budget": {
+    "_comment": "CIRCL passive SSL is free with an account and rate-limited rather than credit-metered, so this bounds POLITENESS and blast radius, not money: a batch that fans out over every historical IP of every host in a case can issue hundreds of requests and get the shared account throttled for everyone. Over budget the layer returns a `skipped` with the reason and the UI URL, exactly like the Censys guard — never a silent stop and never a mid-case 429. Override for one run with PSSL_MAX_REQUESTS_PER_RUN.",
+    "max_requests_per_run": 40,
+    "max_cert_lookups_per_ip": 6,
+    "max_ips_per_host": 8
+  },
+
+  "reporting": {
+    "_comment": "Wording the layer must use so an empty answer is never read as a negative finding. `empty_note` is emitted verbatim whenever CIRCL returns no record, and `no_creds_note` whenever the layer never ran at all — the difference between 'asked and the corpus had nothing' and 'never asked' is the difference between evidence and its absence.",
+    "empty_note": "CIRCL passive SSL holds NO RECORD for this value. Its sensor coverage is Europe-weighted and thin elsewhere, so this is a fact about the corpus, not about the host — it is not evidence that the address served no certificate.",
+    "no_creds_note": "Passive SSL did NOT run (no PDNS_USERNAME/PDNS_PASSWORD). The historical certificate->IP direction was never queried, so no origin-recovery conclusion may be drawn from its absence.",
+    "shared_cert_note": "Recorded as INFRASTRUCTURE, not as an operator link: this certificate is served by more addresses than clustering_policy.max_ips_per_cert allows, which is the signature of a shared CDN / hosting certificate."
+  }
+}

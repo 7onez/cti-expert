@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>intel · debug dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>intel <span class="dim">· debug</span></h1>
+  <nav id="tabs"></nav>
+  <div class="spacer"></div>
+  <label class="scan">scan
+    <select id="limit">
+      <option value="20">20</option>
+      <option value="40" selected>40</option>
+      <option value="100">100</option>
+      <option value="300">300</option>
+      <option value="1000">1000</option>
+    </select>
+    sessions
+  </label>
+  <button id="reload" title="re-read the ledgers">↻</button>
+</header>
+
+<main id="panel"><p class="loading">loading…</p></main>
+
+<footer id="foot">
+  <span class="dim">read-only · loopback only · costs are estimates at API list prices</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

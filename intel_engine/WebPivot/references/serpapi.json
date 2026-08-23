@@ -1,0 +1,195 @@
+{
+  "_comment": "The ADVERTISING layer (WebPivot/tools/wp_serp.py) — SerpApi's Google Ads Transparency Center + Google SERP ads block, plus the CLICK-KEYED CLOAKING probe that goes with them. Two facts drive this file. (1) To run Google ads an operator must pass Google's advertiser identity VERIFICATION, and the Ads Transparency Center publishes the result: a stable advertiser_id, the 'ad funded by' legal name, and every creative that account ran with the domain each one pointed at. That is a KYC'd, paying identity attached to the domain, and it survives the domain rotation that breaks favicon/TLS/registrant pivots, because the operator does not re-verify a new ad account for every throwaway host. (2) A kit that buys traffic can CLOAK on the arrival: it serves the real scam page only to a visitor carrying the ad-click parameters (a gclid, the campaign's utm set) and shows everyone else — including us and Google's own reviewer — a benign decoy. Collect the bare domain and you get the decoy plus a confident, wrong 'nothing found'. So this file holds WHICH parameters mark a paid arrival, WHAT a probe must send to look like one, HOW different two views must be before that counts as cloaking rather than an ordinary dynamic page, and WHAT an advertiser_id may and may not be clustered on. Nothing here is case data: SerpApi product constants, Google ValueTrack macro names, and public region codes.",
+
+  "endpoints": {
+    "_comment": "SerpApi request URLs plus the two Ads Transparency Center WEB addresses. The UI templates matter as much as the API: with no SERPAPI_KEY this layer still composes them, and an analyst opening adstransparency.google.com by hand gets the same advertiser identity for free — so a keyless run hands over a working address rather than an apology. `{region}` in a UI template takes a `regions.*.ui` value (ISO-2 or `anywhere`); the API takes the numeric `regions.*.api` value instead — they are NOT interchangeable.",
+    "entries": {
+      "search": "https://serpapi.com/search",
+      "account": "https://serpapi.com/account.json",
+      "ui_transparency_domain": "https://adstransparency.google.com/?region={region}&domain={domain}",
+      "ui_transparency_advertiser": "https://adstransparency.google.com/advertiser/{advertiser_id}?region={region}",
+      "ui_transparency_creative": "https://adstransparency.google.com/advertiser/{advertiser_id}/creative/{creative_id}?region={region}"
+    }
+  },
+
+  "engines": {
+    "_comment": "SerpApi `engine=` values this layer calls. `ads_transparency` searches the transparency archive by domain (`text=`) or by advertiser (`advertiser_id=`) and returns ad_creatives; `ad_details` opens ONE creative: it reliably returns `ad_funded_by` (the verified LEGAL ENTITY behind the account) and the per-region markets with per-market last-shown dates, and — when the archive stored one rather than a rendered image — the destination link carrying the operator's own utm/gclid tagging, i.e. the cloaking key. NOTE the live response nests the metadata under `search_information` and the creative under `ad_creatives[]`, which is NOT what SerpApi's schema documents; the parser reads both. `google` is a plain SERP whose `ads` block shows who is currently BUYING a keyword — BEST-EFFORT only, since Google serves that block inconsistently to automated clients, so an empty one is never the finding 'nobody advertises this keyword'.",
+    "entries": {
+      "ads_transparency": "google_ads_transparency_center",
+      "ad_details": "google_ads_transparency_center_ad_details",
+      "google": "google"
+    }
+  },
+
+  "ad_parameters": {
+    "_comment": "Query parameters that mark a visit as PAID-CLICK traffic, one entry per name. `class`: click_id = a per-click token the ad platform mints (proves the arrival came from an ad; the VALUE is unique per click and is therefore never a pivot); campaign = the advertiser's own utm tagging; valuetrack = a Google Ads macro the advertiser put in their final URL, which Google fills in at click time. `pivotable` marks the ones whose value is chosen by the OPERATOR and can be reversed — campaignid/adgroupid/creative are object IDs inside one Google Ads ACCOUNT, so two unrelated-looking domains carrying the same campaignid were bought by the same advertiser. `cloak_key` marks the ones a cloaker most often gates on. DELIBERATELY DISJOINT from pivot_tables.json:affiliate_params, which owns the affiliate/referral names (aff_id, subid, clickid, pid …) and already emits their value pivots via wp_pivots.build_affiliate_pivots — add an affiliate name THERE, an advertising name here, never both.",
+    "entries": {
+      "gclid":        {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "Google Ads click identifier — the canonical proof of a paid Google click."},
+      "gbraid":       {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "Google's privacy-preserving click id (web-to-app / iOS)."},
+      "wbraid":       {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "Google's privacy-preserving click id (app-to-web / iOS)."},
+      "dclid":        {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "Display & Video 360 / Campaign Manager click id."},
+      "gad_source":   {"class": "valuetrack", "pivotable": false, "cloak_key": true, "note": "Small enum naming the Google surface the click came from; carries no operator signal."},
+      "gclsrc":       {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "Click source (aw.ds = auto-tagged Search)."},
+      "msclkid":      {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "Microsoft Advertising (Bing) click id."},
+      "fbclid":       {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "Meta click id — the same cloaking technique is used on Facebook/Instagram ad traffic."},
+      "ttclid":       {"class": "click_id", "pivotable": false, "cloak_key": true,  "note": "TikTok Ads click id."},
+      "twclid":       {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "X/Twitter Ads click id."},
+      "li_fat_id":    {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "LinkedIn Ads click id."},
+      "yclid":        {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "Yandex Direct click id."},
+      "epik":         {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "Pinterest Ads click token."},
+      "rdt_cid":      {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "Reddit Ads click id."},
+      "igshid":       {"class": "click_id", "pivotable": false, "cloak_key": false, "note": "Instagram share/click id."},
+      "utm_source":   {"class": "campaign", "pivotable": false, "cloak_key": true,  "note": "Almost always a platform name — see generic_values; base-rate noise on its own."},
+      "utm_medium":   {"class": "campaign", "pivotable": false, "cloak_key": true,  "note": "cpc / ppc / paid — noise on its own."},
+      "utm_campaign": {"class": "campaign", "pivotable": true,  "cloak_key": true,  "note": "OPERATOR-CHOSEN string: the campaign's internal name. The single most useful advertising pivot after the advertiser id."},
+      "utm_term":     {"class": "campaign", "pivotable": true,  "cloak_key": false, "note": "The bid keyword — names the audience the operator paid to reach (targeting evidence)."},
+      "utm_content":  {"class": "campaign", "pivotable": true,  "cloak_key": false, "note": "Creative/variant label — operator-chosen, often the kit or landing-page name."},
+      "utm_id":       {"class": "campaign", "pivotable": true,  "cloak_key": false, "note": "The advertiser's own campaign identifier."},
+      "utm_source_platform":     {"class": "campaign", "pivotable": false, "cloak_key": false, "note": "GA4 platform tag (e.g. Google Ads)."},
+      "utm_creative_format":     {"class": "campaign", "pivotable": false, "cloak_key": false, "note": "GA4 creative-format tag."},
+      "utm_marketing_tactic":    {"class": "campaign", "pivotable": false, "cloak_key": false, "note": "GA4 tactic tag (remarketing, prospecting)."},
+      "campaignid":   {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Numeric campaign ID inside ONE Google Ads account — same value on two domains means one ad account paid for both."},
+      "adgroupid":    {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Numeric ad-group ID inside one account — same reasoning as campaignid, one level finer."},
+      "creative":     {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Numeric creative/ad ID inside one account."},
+      "targetid":     {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Keyword/audience criterion ID inside one account."},
+      "feeditemid":   {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Ad-extension feed item ID inside one account."},
+      "extensionid":  {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "Ad-extension ID inside one account."},
+      "keyword":      {"class": "valuetrack", "pivotable": true, "cloak_key": false, "note": "The matched keyword — targeting evidence, not identity."},
+      "matchtype":    {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "e / p / b — enum, no signal."},
+      "device":       {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "m / t / c — enum, no signal."},
+      "network":      {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "g / s / d — enum, no signal."},
+      "adposition":   {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "Serving position — enum, no signal."},
+      "placement":    {"class": "valuetrack", "pivotable": true,  "cloak_key": false, "note": "Display-network placement domain — names a site the operator bought space on."},
+      "loc_physical_ms": {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "Geo criterion ID of the click location — targeting evidence, high base rate."},
+      "loc_interest_ms": {"class": "valuetrack", "pivotable": false, "cloak_key": false, "note": "Geo criterion ID of the searched-for location."}
+    }
+  },
+
+  "generic_values": {
+    "_comment": "Parameter VALUES that name a platform or a channel rather than an operator. A `pivotable` parameter whose value matches here is recorded as context and NEVER emitted as a pivot: utm_campaign=google or utm_content=banner would otherwise fuse every advertiser on the internet into one cluster, which is the base-rate failure the KB's noise filters exist to prevent. Matched case-insensitively against the whole trimmed value. Add a value the moment you see it join two unrelated cases.",
+    "values": [
+      "google", "googleads", "google_ads", "google-ads", "adwords", "gads", "google ads",
+      "bing", "microsoft", "yandex", "baidu", "naver", "duckduckgo",
+      "facebook", "fb", "meta", "instagram", "ig", "tiktok", "twitter", "x", "linkedin",
+      "youtube", "yt", "reddit", "pinterest", "snapchat", "telegram", "whatsapp", "zalo",
+      "cpc", "ppc", "cpm", "cpa", "paid", "paidsearch", "paid_search", "paid-search",
+      "organic", "search", "display", "banner", "video", "social", "paidsocial", "paid_social",
+      "referral", "direct", "none", "(none)", "(not set)", "not set", "null", "undefined",
+      "email", "e-mail", "mail", "newsletter", "sms", "push", "affiliate", "partner",
+      "retargeting", "remarketing", "prospecting", "awareness", "conversion", "traffic",
+      "brand", "generic", "test", "default", "campaign", "ad", "ads", "landing", "main", "home"
+    ]
+  },
+
+  "probe_params": {
+    "_comment": "The query parameters the cloaking probe sends when it pretends to be a paid click, used ONLY when the operator's real ad parameters are unknown (no --ad-params, no SerpApi creative). Most cloakers test for PRESENCE — 'is there a gclid, does utm_source say google' — rather than validating the token against Google, so a synthetic set unlocks a large share of them; one that validates server-side will not be unlocked and the probe will correctly report no divergence rather than a false negative dressed as a fact. The gclid value is deliberately obvious nonsense rather than a real token lifted from a live campaign: replaying a real click id would charge a real advertiser and tie our probe to somebody else's click.",
+    "entries": {
+      "gclid": "EAIaIQobChMIsynthetic0probe0value0AAAYASAAEgJxxfD_BwE",
+      "gad_source": "1",
+      "utm_source": "google",
+      "utm_medium": "cpc"
+    }
+  },
+
+  "probe_headers": {
+    "_comment": "The request headers the probe sends alongside those parameters, and they matter as much: a real ad click arrives with a Google referrer and cross-site fetch metadata. A cloaker that checks only the referrer — one line of PHP, and common — is defeated by these headers with no parameters at all, which is why they are separated from probe_params rather than folded in. Sent ONLY on the click view; the plain and control views deliberately carry no referrer, because that is how a crawler or a reviewer arrives.",
+    "entries": {
+      "Referer": "https://www.google.com/",
+      "Sec-Fetch-Site": "cross-site",
+      "Sec-Fetch-Mode": "navigate",
+      "Sec-Fetch-Dest": "document"
+    }
+  },
+
+  "challenge_markers": {
+    "_comment": "Strings that mean a response is an ANTI-BOT INTERSTITIAL rather than the site's page — a Cloudflare/Akamai/DataDome challenge, a JS-proof-of-work wall, a CAPTCHA. Comparing two interstitials answers nothing: they differ from each other by design (per-request nonces, padded bodies) and neither is the content a victim sees, so a probe that scored them would report the bot wall as operator evasion. When both views look like this the verdict is `inconclusive`, with the instruction to re-probe through --proxy or --solve-cf. Matched case-insensitively as a substring of the body. Add a marker the moment a vendor's wall starts producing spurious `divergent` verdicts.",
+    "values": [
+      "__challenge", "challenge-platform", "cf-browser-verification", "cf_chl_opt",
+      "just a moment", "checking your browser", "enable javascript and cookies to continue",
+      "attention required! | cloudflare", "ddos protection by", "datadome", "captcha-delivery",
+      "px-captcha", "_incapsula_resource", "incapsula incident id", "akamai bot manager",
+      "please verify you are a human", "are you a robot", "hcaptcha", "g-recaptcha",
+      "perimeterx", "kasada", "queue-it", "request unsuccessful. incapsula"
+    ]
+  },
+
+  "cloaking_probe": {
+    "_comment": "How different two views of one URL must be before this layer calls it CLICK-KEYED CLOAKING. The thresholds exist because ordinary pages differ between any two fetches — CSRF tokens, session ids, timestamps, rotating hero images — and calling that cloaking would put a fabricated fraud indicator in an assessment. So: identical bytes = no cloaking; different bytes but similarity above `min_similarity` and length within `length_ratio_band` = an ordinary dynamic page; below either, or a changed <title>, or a landing on a different HOST = divergent. `control_refetch` is the falsification control and is the reason this probe is worth trusting: it fetches the PLAIN view a second time AFTER the ad-click view, so a difference caused by session state, first-visit-only behaviour or backend rotation shows up as plain-vs-plain drift and is reported as `inconclusive_unstable` instead of being sold as cloaking. Three requests to the target, one page — proportionate for a page whose real content is otherwise unobservable.",
+    "timeout_seconds": 20,
+    "max_body_bytes": 3000000,
+    "min_similarity": 0.9,
+    "length_ratio_band": 0.75,
+    "control_refetch": true,
+    "title_change_is_divergence": true,
+    "host_change_is_divergence": true,
+    "min_body_bytes_for_verdict": 200,
+    "challenge_statuses": [202, 403, 429, 503]
+  },
+
+  "clustering_policy": {
+    "_comment": "What an advertising artifact may be claimed to prove. The advertiser_id is the strongest thing here — it is a Google-VERIFIED, paying account, so two domains advertised by one advertiser_id share a payer, not merely a template — but it is not automatically one operator: a media buyer, affiliate network or marketing agency runs ads for many unrelated clients from a single account. `agency_domain_threshold` is the base-rate control: an advertiser whose creatives point at more distinct domains than this is treated as a BUYER OF TRAFFIC FOR OTHERS, its co-advertised domains drop to leads, and the same-payer claim needs an independent artifact class. Read `relation` as the edge the KB should create and `confidence` as the ceiling, never the floor. (No `entries` wrapper on purpose: the threshold is part of the policy and a wrapper would hide it from the loader.)",
+    "advertiser_id":   {"relation": "same_payer", "confidence": "high", "note": "One verified, billed Google Ads account paid for both domains. Strongest advertising link; still not attribution on its own when the advertiser looks like an agency (see agency_domain_threshold)."},
+    "ad_funded_by":    {"relation": "same_payer", "confidence": "high", "note": "The legal name Google verified for the account. Corroborates advertiser_id and is the string to run through corporate registries."},
+    "campaign_object_id": {"relation": "same_payer", "confidence": "medium", "note": "campaignid / adgroupid / creative are object IDs inside ONE Google Ads account, so a match means one account — but they are also short numbers, so require the parameter NAME to match too and treat a lone match as a lead."},
+    "utm_campaign":    {"relation": "same_campaign", "confidence": "medium", "note": "One operator-chosen campaign label across two domains. Same-CAMPAIGN evidence, in the same class as a shared kit directory: strong lead, operator claim only with a second artifact class."},
+    "serp_ad_coappearance": {"relation": "none", "confidence": "informational", "note": "Two domains bidding on the same keyword are COMPETITORS, not partners. Never an edge — it is target-selection evidence about the brand being abused."},
+    "cloaking_observed": {"relation": "none", "confidence": "high", "note": "Not a link between domains: a property of THIS page. A site that serves different content to paid-click traffic than to everyone else is deliberately evading review, which is a fraud indicator in its own right and belongs in the assessment."},
+    "agency_domain_threshold": 12,
+    "min_creatives_for_advertiser_claim": 1
+  },
+
+  "regions": {
+    "_comment": "Ads Transparency regions. The API and the web UI use DIFFERENT codes for the same country and mixing them silently returns nothing: SerpApi wants Google's numeric geotarget id (`api`), the browser wants the ISO-2 code (`ui`). The rule for any country not listed is `api = 2000 + the ISO 3166-1 NUMERIC code` (United States 840 -> 2840, Vietnam 704 -> 2704), so an analyst can derive a missing one without waiting for this file to be extended. Region matters analytically, not just technically — an ad archive is queried per region, and which markets a scam bought traffic in IS the targeting evidence. `anywhere` has no API code: it is UI-only, and the API call simply omits `region`. (No `entries` wrapper on purpose, so `default` loads alongside the regions.)",
+    "anywhere": {"api": null, "ui": "anywhere", "name": "All regions (UI only; the API omits region)"},
+    "VN": {"api": "2704", "ui": "VN", "name": "Vietnam"},
+    "US": {"api": "2840", "ui": "US", "name": "United States"},
+    "GB": {"api": "2826", "ui": "GB", "name": "United Kingdom"},
+    "CN": {"api": "2156", "ui": "CN", "name": "China"},
+    "HK": {"api": "2344", "ui": "HK", "name": "Hong Kong"},
+    "TW": {"api": "2158", "ui": "TW", "name": "Taiwan"},
+    "SG": {"api": "2702", "ui": "SG", "name": "Singapore"},
+    "TH": {"api": "2764", "ui": "TH", "name": "Thailand"},
+    "ID": {"api": "2360", "ui": "ID", "name": "Indonesia"},
+    "PH": {"api": "2608", "ui": "PH", "name": "Philippines"},
+    "MY": {"api": "2458", "ui": "MY", "name": "Malaysia"},
+    "KH": {"api": "2116", "ui": "KH", "name": "Cambodia"},
+    "IN": {"api": "2356", "ui": "IN", "name": "India"},
+    "JP": {"api": "2392", "ui": "JP", "name": "Japan"},
+    "KR": {"api": "2410", "ui": "KR", "name": "South Korea"},
+    "AU": {"api": "2036", "ui": "AU", "name": "Australia"},
+    "DE": {"api": "2276", "ui": "DE", "name": "Germany"},
+    "FR": {"api": "2250", "ui": "FR", "name": "France"},
+    "ES": {"api": "2724", "ui": "ES", "name": "Spain"},
+    "BR": {"api": "2076", "ui": "BR", "name": "Brazil"},
+    "RU": {"api": "2643", "ui": "RU", "name": "Russia"},
+    "TR": {"api": "2792", "ui": "TR", "name": "Turkiye"},
+    "NG": {"api": "2566", "ui": "NG", "name": "Nigeria"},
+    "AE": {"api": "2784", "ui": "AE", "name": "United Arab Emirates"},
+    "default": "anywhere"
+  },
+
+  "credit_costs": {
+    "_comment": "SerpApi bills one SEARCH per successful API call regardless of engine, so an advertiser lookup, a creative detail and a SERP pull cost the same unit. The account endpoint is free and does not count against the quota, which is why the budget guard is allowed to call it. `free_monthly_searches` is the free plan's grant at the time of writing (SerpApi has changed it before, and it is 250 as of this edit) — the AUTHORITATIVE number for a given account is what `wp_serp.py budget` reads back live from the free account endpoint, so trust that over this line and override `search_budget.monthly_searches` when they disagree.",
+    "search": 1,
+    "ad_details": 1,
+    "account": 0,
+    "free_monthly_searches": 250
+  },
+
+  "search_budget": {
+    "_comment": "The spend guard, same shape and same reasoning as the Censys one: a free SerpApi plan grants a fixed number of searches a MONTH, the quota is per ACCOUNT, and the ledger it is measured against (MEMORY/api_usage.jsonl) is shared by every case — so a careless fan-out does not just spoil its own run, it removes SerpApi from every later one. Spend is therefore checked BEFORE the call and refused as a `skipped` reason with the free UI address attached, never discovered as an HTTP 429 halfway through a batch. `max_searches_per_run` is the blast-radius cap on one case; `max_creative_details_per_run` bounds the follow-up calls that open individual creatives, which is where a wide advertiser can quietly cost a whole month. Override per run with SERPAPI_MONTHLY_SEARCHES / SERPAPI_MAX_SEARCHES_PER_RUN. `monthly_searches` here is what the GUARD enforces and it is a local assumption: the ledger only counts spend made through this toolkit, so a search spent in the SerpApi playground or by another script is invisible to it. `wp_serp.py budget` prints the account's own figure next to the ledger and flags a drift — believe the account.",
+    "monthly_searches": 250,
+    "max_searches_per_run": 8,
+    "max_creative_details_per_run": 3,
+    "block_when_exhausted": true,
+    "warn_at_remaining": 25
+  },
+
+  "result_limits": {
+    "_comment": "Caps on what is pulled back and kept. `max_creatives` bounds one transparency page (SerpApi allows up to 100; 40 is its default and is plenty to establish an advertiser). `max_target_domains` bounds how many co-advertised domains become pivots — past that the advertiser is agency-shaped anyway and the finding is the breadth, not the list. `max_creative_ids_kept` bounds how many creative IDs are carried in the result: they are only there so a follow-up call can OPEN one, and forty opaque `CR…` strings per advertiser drown the record for no analytic gain (`creative_count` already states how many exist). `max_serp_ads` bounds the SERP ads block.",
+    "max_creatives": 40,
+    "max_creative_ids_kept": 5,
+    "max_target_domains": 25,
+    "max_serp_ads": 12
+  }
+}

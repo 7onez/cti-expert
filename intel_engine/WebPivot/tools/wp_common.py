@@ -27,6 +27,16 @@ except Exception:
 
 import urllib.request
 import urllib.error
+from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA in references/*.json
+
+# DATA: how we present ourselves when fetching, and the public-suffix table. Both go stale on a
+# schedule nobody controls (browser releases; new ccTLD second levels), so both are tunable.
+_FP_FALLBACK = {"ua_pool": ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"],
+                "cloudflare_body_markers": ["just a moment", "cf_chl_", "attention required"]}
+_FP_REF = load_ref(ref_path(__file__, "fetch_profile.json"), _FP_FALLBACK)
+_GLC_FALLBACK = {"multi_part_tlds": ["co.uk", "com.au", "com.br", "com.vn", "com.cn"]}
+_GLC_REF = load_ref(ref_path(__file__, "generic_labels.json"), _GLC_FALLBACK)
 
 
 DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,20 +47,8 @@ DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
 # decodes them from pixels (needs pyzbar+PIL or OpenCV). Off by default — the zero-dep
 # generator-param decode always runs regardless.
 
-UA_POOL = [
-    DEFAULT_UA,
-    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
-     "(KHTML, like Gecko) Version/18.3 Safari/605.1.15"),
-    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0"),
-    ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-     "Chrome/140.0.0.0 Safari/537.36"),
-    ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 "
-     "(KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1"),
-    ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) "
-     "Chrome/140.0.0.0 Mobile Safari/537.36"),
-    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-     "Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0"),
-]
+# DATA: references/fetch_profile.json -> ua_pool
+UA_POOL = list(_FP_REF["ua_pool"])
 
 
 # Headers common to every real browser regardless of engine. Bare User-Agent alone trips
@@ -298,14 +296,8 @@ def unwrap_wayback(url: str) -> str:
     m = _WAYBACK_RE.match(url)
     return m.group(1) if m else url
 
-_MULTI_TLDS = {
-    "co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "net.au", "org.au", "co.nz",
-    "com.br", "com.cn", "com.hk", "com.sg", "com.tw", "co.jp", "co.kr", "co.in",
-    "com.vn", "com.mx", "co.za", "com.tr", "com.ua",
-    # second-level ccTLDs seen on multi-apex certs / scam infra
-    "com.ar", "com.co", "com.pe", "com.pk", "com.ph", "com.my", "com.eg",
-    "com.sa", "com.ng", "com.pl", "co.id", "co.th", "co.il", "co.ke",
-}
+# DATA: references/generic_labels.json -> multi_part_tlds
+_MULTI_TLDS = frozenset(_GLC_REF["multi_part_tlds"])
 
 @functools.lru_cache(maxsize=2048)
 def _registrable(host: str) -> str:

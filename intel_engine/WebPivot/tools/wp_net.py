@@ -215,12 +215,8 @@ def merge_cors(passive, active):
 # dedicated solver (FlareSolverr, --flaresolverr / --solve-cf).
 # ⚠️ Authorized OSINT only — see EthicalFramework.md. Use non-attributable egress.
 
-_CF_BODY_MARKERS = (
-    "challenges.cloudflare.com", "cf_chl_", "cf-chl", "__cf_chl", "just a moment",
-    "attention required", "cloudflare to restrict", "cf-mitigated", "ray id",
-    "enable javascript and cookies to continue", "checking your browser", "even geduld",
-    "cf_clearance", "turnstile",
-)
+# DATA: references/fetch_profile.json -> cloudflare_body_markers
+_CF_BODY_MARKERS = tuple(_FP_REF["cloudflare_body_markers"])
 
 def detect_cloudflare_challenge(status: int, headers: dict, body: str):
     """Return a short label if this response is a Cloudflare interstitial, else None."""

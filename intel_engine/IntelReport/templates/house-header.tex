@@ -15,6 +15,16 @@
 \usepackage{parskip}
 \usepackage{etoolbox}
 \usepackage{fvextra}  % line-wrapping for code / verbatim (no page overflow)
+\usepackage{tocloft}  % TOC entry widths — see the Roman-numeral note below
+
+% Roman top-level numbers reach four glyphs (VII, VIII), but LaTeX reserves only
+% 1.5em for a section number in the contents list, so the numeral collides with
+% the title ("VIIThe kit family"). Widen the box and indent sub-entries to match.
+\setlength{\cftsecnumwidth}{3.2em}
+\setlength{\cftsubsecnumwidth}{3.2em}
+\setlength{\cftsubsecindent}{3.2em}
+\setlength{\cftsubsubsecnumwidth}{3.6em}
+\setlength{\cftsubsubsecindent}{6.4em}
 
 % palette — from IntelGraph theme.py (slate / steel / ochre / brick)
 \definecolor{ink}{HTML}{1F1D1A}
@@ -50,6 +60,19 @@
 \fancyfoot[L]{\footnotesize\headingfont\color{muted}\CLSLINE}
 \fancyfoot[R]{\footnotesize\headingfont\color{muted}\thepage}
 
+% The contents list resets to the `plain` page style, which would drop the
+% classification banner from that page. A body page without its handling marking is a
+% marking failure, not a cosmetic one, so `plain` carries the same header/footer as
+% `fancy`. The cover is unaffected: it sets \thispagestyle{empty} explicitly.
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \renewcommand{\headrulewidth}{0.4pt}%
+  \renewcommand{\footrulewidth}{0.4pt}%
+  \fancyhead[L]{\footnotesize\headingfont\color{muted}\CLSLINE}%
+  \fancyhead[R]{\footnotesize\headingfont\color{muted}\CASEID}%
+  \fancyfoot[L]{\footnotesize\headingfont\color{muted}\CLSLINE}%
+  \fancyfoot[R]{\footnotesize\headingfont\color{muted}\thepage}}
+
 % links
 \usepackage{hyperref}
 \hypersetup{colorlinks=true,linkcolor=steel,urlcolor=steel,citecolor=steel,
@@ -73,8 +96,12 @@
 \renewcommand{\thesubsubsection}{\arabic{section}.\arabic{subsection}.\arabic{subsubsection}}
 % Appendices switch to letters (Appendix A, B, ...). Pandoc has no \appendix hook,
 % so a report emits a raw-LaTeX \appendix before its first appendix heading.
+% \APPENDIXNAME is written into the generated defs.tex by render_report.py in the
+% report's language (--lang), so a Vietnamese deliverable reads "Phụ lục A".
+% Guarded: defs.tex always defines it, but a hand-rolled pandoc call might not.
+\providecommand{\APPENDIXNAME}{Appendix}
 \gappto\appendix{\renewcommand{\thesection}{\Alph{section}}%
-  \titleformat{\section}{\headingfont\Large\bfseries\color{slate}}{Appendix~\thesection}{0.6em}{}[{\color{grid}\titlerule[0.8pt]}]}
+  \titleformat{\section}{\headingfont\Large\bfseries\color{slate}}{\APPENDIXNAME~\thesection}{0.6em}{}[{\color{grid}\titlerule[0.8pt]}]}
 
 % Text-heavy tables must stay compact — shrink the font + padding inside every
 % table environment (pandoc pipe/grid tables become longtable or tabular).
@@ -102,3 +129,59 @@
 % spins at 100% CPU and never terminates (no error, just a hang). \renewcommand replaces the
 % outer \texttt and leaves the inner \texttt␣ intact, so \oldtexttt stays valid.
 \robustify{\texttt}
+
+% Better justification: fewer overfull lines and less rivering in the narrow table
+% columns this house style uses. Purely optical — it changes no content.
+\usepackage{microtype}
+
+% --- ==highlight== (pandoc's `mark` extension emits \hl) -----------------------
+% Reserved for the few things a reader must not miss: a payee account, a verdict, a
+% rejected link. NOT for sentences — see the authoring rule in SKILL.md.
+%
+% This is a colour BOX, deliberately NOT the soul package's \hl. soul silently DROPS
+% stacked Vietnamese diacritics inside a highlight — "bị làm giả" renders as "b làm gi"
+% — which corrupts a Vietnamese deliverable while compiling cleanly, i.e. the worst
+% possible failure mode. Correctness beats line-wrapping here.
+%
+% CONSEQUENCE: a highlight cannot break across lines. render_report.py warns when a
+% span exceeds highlight.max_chars, because an over-long one runs into the margin.
+%
+% \hlmark is defined in the generated defs.tex from references/typography.json.
+\providecommand{\hlmark}{yellow}
+% Inside the box, \texttt must NOT be the \seqsplit form: \seqsplit is fragile and
+% dies with "Argument of \SQSPL@scani has an extra }" when scanned in this context.
+% Highlighted code is short by construction, so boxing it loses nothing.
+\newcommand{\hlttfont}[1]{\mbox{\oldtexttt{#1}}}
+\newcommand{\HLbox}[1]{{\let\texttt\hlttfont\setlength{\fboxsep}{1pt}\colorbox{hlmark}{#1}}}
+% Bind OUR box to \hl at begin-document, not with \newcommand in the preamble.
+% Pandoc's own LaTeX template already defines \hl when the `mark` extension is on
+% (via soul), so \newcommand dies with "Command \hl already defined" and \renewcommand
+% would break the day pandoc stops shipping one. \AtBeginDocument runs after the whole
+% preamble, so this wins whoever defined \hl and whenever — and it is specifically
+% soul's \hl we must displace, because soul eats Vietnamese diacritics.
+\AtBeginDocument{\let\hl\HLbox}
+
+% --- IC-style callout ----------------------------------------------------------
+% A blockquote becomes a tinted callout with a brick side rule — the "bottom line"
+% / "key judgment" box an intelligence product uses to stop the reader.
+%
+% Deliberately driven by MARKDOWN blockquote (`> **Bottom line:** ...`) rather than a
+% raw-LaTeX environment: the analyst gets the house callout with portable markdown, and
+% the DOCX export degrades to a normal quote block instead of leaking LaTeX source.
+% Use it once or twice per report; a page of callouts is a page with no emphasis.
+% mdframed, not tcolorbox: tcolorbox 2025 calls \NewStructureName, a kernel macro
+% absent from a TeX Live *basic* install, so it fails the whole render on exactly the
+% minimal boxes this skill is meant to run on. mdframed is lighter and works there.
+% Guarded so a box package missing degrades to an ordinary quote instead of failing —
+% a callout is styling, and styling must never cost you the deliverable.
+\definecolor{calloutbg}{HTML}{F7F4ED}
+\IfFileExists{mdframed.sty}{%
+  \usepackage[framemethod=default]{mdframed}%
+  \renewenvironment{quote}
+    {\begin{mdframed}[backgroundcolor=calloutbg,linecolor=brick,linewidth=2.2pt,
+       leftline=true,rightline=false,topline=false,bottomline=false,
+       innerleftmargin=10pt,innerrightmargin=10pt,
+       innertopmargin=7pt,innerbottommargin=7pt,
+       skipabove=9pt,skipbelow=9pt]}
+    {\end{mdframed}}%
+}{}

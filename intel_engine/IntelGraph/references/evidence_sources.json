@@ -1,0 +1,180 @@
+{
+  "_comment": "Evidence-citation data for the timeline layer (contributor RULE 3). Every temporal claim an analyst makes has to be re-checkable by a READER who has no access to our disk, so each dated fact is cited with an ONLINE permalink — never a local case-file path. This file holds (a) the URL templates used to mint those permalinks, (b) the NATO Admiralty source-reliability grade we attach to each source, and (c) the staleness thresholds that decide when a dated observation may still be written in the present tense. Edit it freely: adding a lookup service here makes it available to case_timeline.py and to anyone writing an evidence table by hand, with no code change. Generic public services only — never a case domain, IP or hash (RULE 1).",
+
+  "permalink_templates": {
+    "_comment": "source key -> {label, url, needs}. `url` is a Python format template; `needs` lists the placeholders the caller must supply. {url} and {query} are URL-quoted by the caller before substitution; {host}/{ip}/{cert_id}/{uuid}/{sha256}/{address}/{timestamp} are inserted literally. A template is a POINTER for the reader, not proof by itself: prefer a snapshot template (wayback_snapshot, urlscan_result, crtsh_cert) — a frozen copy — over a search template (crtsh_domain, urlscan_domain), whose result changes under the reader's feet. Add services here as you license them.",
+    "entries": {
+      "wayback_snapshot": {
+        "label": "Wayback Machine snapshot",
+        "url": "https://web.archive.org/web/{timestamp}/{url}",
+        "needs": ["timestamp", "url"],
+        "note": "The strongest web citation available: a frozen, third-party-hosted copy with a crawl time in the URL. Cite this, not the live page."
+      },
+      "wayback_snapshot_raw": {
+        "label": "Wayback Machine snapshot (unrewritten HTML)",
+        "url": "https://web.archive.org/web/{timestamp}id_/{url}",
+        "needs": ["timestamp", "url"],
+        "note": "The id_ modifier serves the ORIGINAL bytes (no Wayback banner/rewriting) — use when the claim is about page source: a tracker id, an inline hash, a comment."
+      },
+      "wayback_calendar": {
+        "label": "Wayback capture history",
+        "url": "https://web.archive.org/web/*/{host}/*",
+        "needs": ["host"],
+        "note": "Human-readable capture calendar. Cite it for the SPAN of archive visibility; cite an individual snapshot for a content claim."
+      },
+      "wayback_cdx": {
+        "label": "Wayback CDX index (machine-readable)",
+        "url": "https://web.archive.org/cdx/search/cdx?url={host}&output=json&collapse=timestamp:8",
+        "needs": ["host"],
+        "note": "The queryable capture index behind the calendar — a reviewer can reproduce a first-seen/last-seen span from it exactly."
+      },
+      "archive_today": {
+        "label": "archive.today snapshot",
+        "url": "https://archive.ph/newest/{url}",
+        "needs": ["url"],
+        "note": "Second archive, independent of the Internet Archive. Useful when a site blocks the IA crawler or when a page was removed from the Wayback Machine on request."
+      },
+      "urlscan_result": {
+        "label": "urlscan.io scan result",
+        "url": "https://urlscan.io/result/{uuid}/",
+        "needs": ["uuid"],
+        "note": "A dated capture of the page WITH its resolved IP, TLS chain, requests and screenshot — often the only public record of which IP served a host on a given day."
+      },
+      "urlscan_domain": {
+        "label": "urlscan.io domain history",
+        "url": "https://urlscan.io/domain/{host}",
+        "needs": ["host"],
+        "note": "Every public scan of a host over time. Read scan TIMES as observation events, never as activity levels — the cadence reflects who submitted, not what the site did."
+      },
+      "crtsh_cert": {
+        "label": "crt.sh certificate",
+        "url": "https://crt.sh/?id={cert_id}",
+        "needs": ["cert_id"],
+        "note": "One logged certificate: issuer, SANs and the not-before/not-after window. Certificate transparency is append-only, so this link is stable evidence of WHEN a hostname existed."
+      },
+      "crtsh_domain": {
+        "label": "crt.sh certificate log for a domain",
+        "url": "https://crt.sh/?q={query}",
+        "needs": ["query"],
+        "note": "All logged certs for a name (use %25 wildcards for subdomains). The FIRST cert usually predates the first web capture — it is the best public birth date for a hostname."
+      },
+      "crtsh_cert_sha256": {
+        "label": "crt.sh certificate by SHA-256 fingerprint",
+        "url": "https://crt.sh/?sha256={sha256}",
+        "needs": ["sha256"],
+        "note": "Resolves the fingerprint a live TLS handshake gave us back to the public CT entry, which supplies the issuance date we cannot get from the socket alone."
+      },
+      "censys_cert": {
+        "label": "Censys certificate",
+        "url": "https://search.censys.io/certificates/{sha256}",
+        "needs": ["sha256"],
+        "note": "Certificate view with the hosts Censys observed presenting it — a second opinion on a CT claim."
+      },
+      "censys_host": {
+        "label": "Censys host",
+        "url": "https://search.censys.io/hosts/{ip}",
+        "needs": ["ip"],
+        "note": "Service/banner history for an IP, with observation dates — corroborates a hosting window."
+      },
+      "shodan_host": {
+        "label": "Shodan host",
+        "url": "https://www.shodan.io/host/{ip}",
+        "needs": ["ip"],
+        "note": "Banner history for an IP with last-seen timestamps."
+      },
+      "bgp_he_ip": {
+        "label": "Hurricane Electric BGP — IP",
+        "url": "https://bgp.he.net/ip/{ip}",
+        "needs": ["ip"],
+        "note": "Announcing ASN + netblock for an IP. Keyless and stable; the citation of record for 'this IP sits in AS<n>'."
+      },
+      "bgp_he_asn": {
+        "label": "Hurricane Electric BGP — ASN",
+        "url": "https://bgp.he.net/{asn}",
+        "needs": ["asn"],
+        "note": "Use when the claim is about the network (bulletproof/abuse-tolerant hosting), not the single IP."
+      },
+      "rdap_domain": {
+        "label": "RDAP domain record",
+        "url": "https://rdap.org/domain/{host}",
+        "needs": ["host"],
+        "note": "Keyless, machine-readable registration record: creation/expiry/last-changed events straight from the registry. The citation of record for a registration date — a WHOIS screenshot is not."
+      },
+      "rdap_ip": {
+        "label": "RDAP IP allocation",
+        "url": "https://rdap.org/ip/{ip}",
+        "needs": ["ip"],
+        "note": "Who an IP range is allocated to, with its allocation dates."
+      },
+      "viewdns_iphistory": {
+        "label": "ViewDNS IP history",
+        "url": "https://viewdns.info/iphistory/?domain={host}",
+        "needs": ["host"],
+        "note": "Free historical A-record list with last-seen dates. Coarse and incomplete — corroborate a hosting window with it, do not build one on it alone."
+      },
+      "securitytrails_domain": {
+        "label": "SecurityTrails DNS history",
+        "url": "https://securitytrails.com/domain/{host}/history/a",
+        "needs": ["host"],
+        "note": "Historical A records with date ranges (login-gated). Cite when the reader can be expected to have access; otherwise cite the passive-DNS record we exported."
+      },
+      "publicwww_search": {
+        "label": "PublicWWW source-code search",
+        "url": "https://publicwww.com/websites/%22{query}%22/",
+        "needs": ["query"],
+        "note": "Which other sites carry a source-code string (tracker id, template comment). Live index — the count moves, so date every count you quote."
+      },
+      "chainabuse_address": {
+        "label": "Chainabuse wallet reports",
+        "url": "https://www.chainabuse.com/address/{address}",
+        "needs": ["address"],
+        "note": "Dated third-party scam reports against a wallet — independent corroboration of a money-trail claim."
+      },
+      "blockchair_address": {
+        "label": "Blockchair address explorer",
+        "url": "https://blockchair.com/search?q={address}",
+        "needs": ["address"],
+        "note": "Multi-chain explorer: first/last transaction dates bound the period a wallet was actually collecting."
+      },
+      "etherscan_address": {
+        "label": "Etherscan address",
+        "url": "https://etherscan.io/address/{address}",
+        "needs": ["address"],
+        "note": "EVM-chain transaction history with timestamps."
+      }
+    }
+  },
+
+  "source_grading": {
+    "_comment": "Default NATO Admiralty reliability grade per source, used to pre-fill the Source column of an evidence table. Letter = source reliability (A completely reliable … F cannot be judged); digit = information credibility (1 confirmed … 6 cannot be judged). These are DEFAULTS for the mechanism, not for the claim: a B2 source can still carry a wrong inference, and you may downgrade any row. Registry/CT/BGP data is machine-generated and append-only (A1/A2); anything self-declared by the registrant is C — the record is authentic, its CONTENT is an unverified assertion.",
+    "entries": {
+      "rdap": "A1",
+      "whois_registry": "A2",
+      "whois_registrar": "B2",
+      "whois_history": "B2",
+      "whois_registrant_contact": "C3",
+      "certificate_transparency": "A1",
+      "tls_handshake": "A2",
+      "bgp": "A1",
+      "passive_dns": "B2",
+      "live_dns": "A2",
+      "wayback": "B2",
+      "archive_today": "B3",
+      "urlscan": "B2",
+      "page_content": "C3",
+      "page_self_declared_date": "D4",
+      "fofa": "C3",
+      "shodan": "B2",
+      "censys": "B2",
+      "analyst_inference": "F6"
+    }
+  },
+
+  "staleness": {
+    "_comment": "How old a dated observation may be before it stops supporting a present-tense sentence. present_tense_max_age_days: beyond this, write 'as of <date>' instead of 'is hosted at'. recent_days: inside this window a fact is 'current' in the assessment's Timeline section. cohort_window_hours: how close two events must be to count as ONE provisioning batch (same registration sitting, same ACME run) — widen it for a sloppy operator, tighten it when a registrar's bulk promo makes same-day registration meaningless. min_overlap_days: the shortest co-tenancy overlap worth asserting on; below it, two hosts sharing an IP is more likely churn on a recycled address than co-residency.",
+    "present_tense_max_age_days": 30,
+    "recent_days": 90,
+    "cohort_window_hours": 24,
+    "min_overlap_days": 7
+  }
+}

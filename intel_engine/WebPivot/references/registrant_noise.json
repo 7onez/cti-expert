@@ -3,21 +3,21 @@
   "privacy_markers": {
     "_comment": "Substrings that mark a registrant NAME/ORG value as a privacy proxy or redaction. Matched as a case-insensitive substring of the whole value. Consumed by whois_enrich.is_privacy(), which gates whether a registrant is worth a reverse-WHOIS at all.",
     "values": [
-      "privacy",
-      "redacted",
-      "whoisguard",
+      "contact privacy",
       "data protected",
-      "withheld",
-      "not disclosed",
       "domains by proxy",
       "domainsbyproxy",
-      "registration private",
-      "private by design",
-      "identity protect",
-      "contact privacy",
-      "perfect privacy",
       "gdpr masked",
-      "statutory masking"
+      "identity protect",
+      "not disclosed",
+      "perfect privacy",
+      "privacy",
+      "private by design",
+      "redacted",
+      "registration private",
+      "statutory masking",
+      "whoisguard",
+      "withheld"
     ]
   },
   "role_email_prefixes": {
@@ -33,16 +33,16 @@
   "proxy_email_domains": {
     "_comment": "Email DOMAINS operated by a privacy/proxy service or a registrar. Any address at one of these fronts an unknown number of unrelated registrants. Consumed by whois_enrich.is_privacy().",
     "values": [
-      "porkbun.com",
-      "godaddy.com",
-      "namecheap.com",
-      "domainsbyproxy.com",
-      "withheldforprivacy.com",
-      "privacyprotect.org",
       "1and1.com",
       "contactprivacy.com",
+      "domainsbyproxy.com",
+      "godaddy.com",
+      "namecheap.com",
+      "porkbun.com",
+      "privacyguardian.org",
+      "privacyprotect.org",
       "whoisprivacyprotect.com",
-      "privacyguardian.org"
+      "withheldforprivacy.com"
     ]
   },
   "noise_email_substrings": {

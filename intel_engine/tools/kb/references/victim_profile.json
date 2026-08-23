@@ -1,0 +1,161 @@
+{
+  "_comment": "Tunable reference data for victim_profile.py — the VICTIM-SIDE analysis used when an operator serves their content from hostnames they do not own (hijacked subdomains, compromised CMS, dangling records). The question this layer answers is NOT 'who is the operator' but 'what capability did the operator need to obtain these hostnames'. The victim set is evidence: if the victims share a control panel, the operator has an exploit; if they share a provider, that provider is breached; if they share NOTHING technical, the operator is working from stolen or purchased credentials. GENERIC public knowledge only — panel/CMS/provider constants, thresholds. NEVER case data (contributor RULE 1). Edit freely; it is a STARTER set, not exhaustive.",
+
+  "panel_dns_signatures": {
+    "_comment": "Hosting control panels auto-create predictable subdomains in a customer's zone when the zone is provisioned. Their PRESENCE on a victim apex identifies the panel PASSIVELY, from DNS alone, with no probing of the victim (who is not our target and should not be scanned). Match is on the leftmost label of a subdomain of the victim apex. A victim whose panel cannot be identified is 'unknown', never 'none' — absence of the label is weak evidence.",
+    "entries": {
+      "cpanel": ["cpanel", "whm", "webdisk", "cpcalendars", "cpcontacts", "webmail", "autodiscover"],
+      "plesk": ["plesk", "pma"],
+      "directadmin": ["directadmin", "da"],
+      "ispconfig": ["ispconfig"],
+      "virtualmin": ["virtualmin", "webmin"],
+      "cyberpanel": ["cyberpanel"]
+    }
+  },
+
+  "panel_host_signatures": {
+    "_comment": "Reverse-DNS / default-vhost hostname suffixes that identify the panel on the SERVER side (i.e. on the attacker's box, or on a shared host). Substring match against a PTR record or a default certificate CN. Useful for confirming the panel the operator themselves runs, which is a separate question from the panel each victim runs.",
+    "entries": {
+      "cpanel": [".cprapid.com"],
+      "plesk": [".plesk.page"]
+    }
+  },
+
+  "managed_dns_operators": {
+    "_comment": "DNS operators large enough that two victims sharing one is NOT a link. Matched against the nameserver suffix of the victim apex. A victim set concentrated on one of THESE still tells you little; a victim set concentrated on a small regional host is far more meaningful. Keep in sync conceptually with tools/kb noise_filters managed_dns_suffixes — this list serves a different question (concentration weighting, not edge suppression), so it is deliberately separate.",
+    "values": [
+      "cloudflare.com",
+      "awsdns-",
+      "azure-dns.com",
+      "googledomains.com",
+      "google.com",
+      "domaincontrol.com",
+      "registrar-servers.com",
+      "dnsmadeeasy.com",
+      "nsone.net",
+      "ultradns.com",
+      "akam.net",
+      "dnsimple.com",
+      "name-services.com"
+    ]
+  },
+
+  "hypotheses": {
+    "_comment": "The access-vector hypotheses this layer discriminates between, in the order they are tested. Each names the victim-set SHAPE that supports it and the shape that refutes it, so an analyst can audit the call. 'concentration' is the largest share of victims sitting on one value of that dimension (0.0-1.0). These are DECISION AIDS with explicit thresholds, not verdicts — the tool reports the shape and the supported hypothesis; the analyst writes the judgment.",
+    "entries": {
+      "provider_breach": {
+        "_comment": "One hosting/DNS provider is itself compromised, or an insider is adding records. Supported when nearly all victims are customers of ONE provider that is NOT a hyperscale managed DNS operator. Refuted the moment a victim at an unrelated provider appears — which is why widening the victim sweep is the single highest-value move in this analysis.",
+        "dimension": "dns_operator",
+        "min_concentration": 0.85,
+        "min_victims": 4,
+        "exclude_managed": true
+      },
+      "panel_exploit": {
+        "_comment": "A vulnerability (or default/weak credential) in one control-panel product. Supported when one panel dominates the victim set ACROSS SEVERAL DIFFERENT PROVIDERS — provider diversity is what separates this from provider_breach. Chase the panel's version banner next; a version-locked victim set is close to proof. BASE-RATE WARNING: cPanel is the default panel on the large majority of the world's shared hosting, so a cPanel-dominated victim set is close to what you would get by drawing shared-hosting domains at random. Treat a cPanel concentration as SUPPORTED ONLY IF you can also show a version or a specific vulnerable component in common; without that it is a base-rate artifact, not a finding. A concentration on a MINORITY panel (Plesk, DirectAdmin, CyberPanel, ISPConfig) is far more informative than the same number on cPanel.",
+        "dimension": "panel",
+        "min_concentration": 0.8,
+        "min_victims": 4,
+        "min_distinct_providers": 3,
+        "high_base_rate_values": ["cpanel"]
+      },
+      "cms_exploit": {
+        "_comment": "A CMS or plugin vulnerability giving file/DNS write access. Supported when one CMS dominates across several providers. Weaker than it looks: a WordPress-dominated victim set may only reflect WordPress's ~40% share of the web, so compare the observed share against the sector's base rate before asserting.",
+        "dimension": "cms",
+        "min_concentration": 0.8,
+        "min_victims": 4,
+        "min_distinct_providers": 3
+      },
+      "reseller_or_agency": {
+        "_comment": "One web agency, reseller or IT contractor holds delegated access to all the victims and has been compromised. Supported when victims share a small non-managed DNS operator or a common technical contact while differing in registrar, country and panel. Often the explanation when victims are all in one country and one business sector.",
+        "dimension": "dns_operator",
+        "min_concentration": 0.6,
+        "min_victims": 3,
+        "exclude_managed": true,
+        "requires_sector_or_country_concentration": true
+      },
+      "regional_platform": {
+        "_comment": "A REGIONAL hosting provider or national reseller was compromised — the geographic form of reseller_or_agency, and the one that most often hides inside a set that otherwise looks dispersed. Supported when the victims sharing a small non-managed DNS operator are ALSO concentrated in one country. This can be true of a SUB-CLUSTER while the wider victim set is dispersed, so check it even when credential_supply is the overall verdict: the sub-cluster still deserves its own provider notification, and it is the shortest path to victims you have not found yet.",
+        "dimension": "country",
+        "min_concentration": 0.6,
+        "min_victims": 3,
+        "requires_nonmanaged_dns_concentration": 0.5
+      },
+      "credential_supply": {
+        "_comment": "The operator holds STOLEN or PURCHASED panel/DNS credentials for many unrelated victims — infostealer log corpora and initial-access-broker listings are the usual supply. This is the DEFAULT conclusion when every other hypothesis fails, and it is a positive finding, not a shrug: dispersion ACROSS providers, countries, panels and sectors is exactly the signature of a credential list, because a list has no technical common factor. Corroborate with onset clustering — a tight compromise window suggests one bulk dump was worked through; a spread suggests ongoing access or a drip-fed broker relationship.",
+        "dimension": "*",
+        "max_concentration": 0.6,
+        "min_victims": 4,
+        "min_distinct_providers": 3
+      }
+    }
+  },
+
+  "thresholds": {
+    "_comment": "Global tuning for the profiler. 'min_victims_for_any_call' guards against reading a pattern into two or three victims — with a tiny victim set every dimension looks concentrated by chance, and the honest output is 'insufficient victims'. 'onset_tight_days' is the window within which several victim compromises count as one campaign push (evidence of a bulk credential dump being worked through) rather than opportunistic drip.",
+    "min_victims_for_any_call": 4,
+    "onset_tight_days": 30,
+    "high_concentration": 0.8,
+    "moderate_concentration": 0.6
+  },
+
+  "victim_sectors": {
+    "_comment": "Coarse business-sector keywords, matched against the victim's DOMAIN NAME (all labels of the apex) and its WHOIS registrant organisation — both of which we already hold passively. The victim's own homepage is deliberately NOT fetched: victims are not the target. Used only to test whether the victim set is sector-CONCENTRATED (pointing at a shared agency, a vertical CMS, or a list bought by sector) or sector-RANDOM (pointing at an indiscriminate credential dump). Deliberately crude, and expected to leave many victims 'unknown' — it is a concentration test, not a business classifier. Coverage is reported so a weak sample is visible rather than silently assumed.",
+    "entries": {
+      "real_estate": ["realit", "reality", "estate", "imob", "nekret", "property", "reals", "realt", "nemovit", "prop"],
+      "health": ["clinic", "health", "medic", "pharma", "dental", "healing", "therap", "hospital", "care", "wellness", "diagnost"],
+      "education": ["school", "academ", "educa", "institut", "college", "univ", "learn", "training", "tutor"],
+      "media_news": ["news", "media", "press", "journal", "times", "post", "blog", "radio", "tv24", "daily"],
+      "travel": ["travel", "tour", "trip", "holiday", "hotel", "resort", "trek", "safari", "voyage"],
+      "industry": ["engineer", "electric", "constru", "refriger", "technic", "industr", "fuel", "steel", "cement", "machin", "biofuel"],
+      "retail": ["shop", "store", "market", "mall", "boutique", "trade", "supply"],
+      "ngo_religious": ["church", "shrine", "charity", "foundation", "ngo", "trust", "mission", "relief"],
+      "finance_legal": ["capital", "financ", "invest", "insur", "legal", "advocat", "account", "audit", "consult"],
+      "food_hosp": ["restaur", "cafe", "coffee", "food", "cater", "bakery", "kitchen"],
+      "beauty_fitness": ["salon", "beauty", "spa", "fitness", "gym", "yoga", "cosmet"],
+      "automotive": ["auto", "motor", "garage", "tyre", "tire", "vehicle", "rental"],
+      "agri": ["agri", "farm", "crop", "seed", "livestock", "dairy"],
+      "it_services": ["softw", "digital", "webdes", "hosting", "cloud", "systems", "solutions", "infotech"]
+    }
+  },
+
+  "generic_two_letter_tlds": {
+    "_comment": "Two-letter TLDs that are technically country codes but are marketed and used GENERICALLY worldwide. A domain under one of these tells you nothing about the registrant's country, so it must NOT be counted as a country signal — otherwise a set of .io startups reads as a Chagos Islands cluster. Every other two-letter TLD is treated as a country code, which avoids shipping (and having to maintain) a 250-row ccTLD table. Add to this list, do not remove: a false 'unknown' is safe, a false country concentration is not.",
+    "values": [
+      "co", "io", "ai", "tv", "me", "cc", "ws", "fm", "gg", "to", "ly", "sh",
+      "st", "am", "im", "is", "la", "in", "it", "at", "be", "eu", "vc", "ms",
+      "nu", "ag", "mn", "so", "bo", "ec", "cx", "ki", "pw"
+    ]
+  },
+
+  "country_names": {
+    "_comment": "WHOIS registrant-country strings -> ISO 3166 alpha-2, so a country reached via WHOIS ('SLOVAKIA') and the same country reached via ccTLD ('SK') COUNT AS ONE value instead of splitting the concentration in half. Unmapped names are kept verbatim and still cluster correctly with themselves, so this map is an improvement, never a dependency — extend it as you meet new registries. Never guess an ISO code from the first two letters: SLOVAKIA is SK, not SL (Sierra Leone).",
+    "entries": {
+      "SLOVAKIA": "SK", "SLOVAK REPUBLIC": "SK", "CZECHIA": "CZ", "CZECH REPUBLIC": "CZ",
+      "NEPAL": "NP", "INDIA": "IN", "EGYPT": "EG", "SOUTH AFRICA": "ZA", "GERMANY": "DE",
+      "UNITED STATES": "US", "UNITED STATES OF AMERICA": "US", "UNITED KINGDOM": "GB",
+      "GREAT BRITAIN": "GB", "FRANCE": "FR", "NETHERLANDS": "NL", "SPAIN": "ES", "ITALY": "IT",
+      "POLAND": "PL", "HUNGARY": "HU", "AUSTRIA": "AT", "SWITZERLAND": "CH", "BELGIUM": "BE",
+      "PORTUGAL": "PT", "ROMANIA": "RO", "BULGARIA": "BG", "GREECE": "GR", "TURKEY": "TR",
+      "UKRAINE": "UA", "RUSSIA": "RU", "RUSSIAN FEDERATION": "RU", "CHINA": "CN",
+      "HONG KONG": "HK", "SINGAPORE": "SG", "MALAYSIA": "MY", "INDONESIA": "ID",
+      "THAILAND": "TH", "VIET NAM": "VN", "VIETNAM": "VN", "PHILIPPINES": "PH", "JAPAN": "JP",
+      "KOREA": "KR", "AUSTRALIA": "AU", "NEW ZEALAND": "NZ", "CANADA": "CA", "MEXICO": "MX",
+      "BRAZIL": "BR", "ARGENTINA": "AR", "CHILE": "CL", "COLOMBIA": "CO", "NIGERIA": "NG",
+      "KENYA": "KE", "GHANA": "GH", "MOROCCO": "MA", "PAKISTAN": "PK", "BANGLADESH": "BD",
+      "SRI LANKA": "LK", "UNITED ARAB EMIRATES": "AE", "SAUDI ARABIA": "SA", "ISRAEL": "IL",
+      "IRELAND": "IE", "DENMARK": "DK", "SWEDEN": "SE", "NORWAY": "NO", "FINLAND": "FI"
+    }
+  },
+
+  "demographics": {
+    "_comment": "How the victim DEMOGRAPHY (country + business sector) is read. Country and sector answer a question the platform dimensions cannot: was this an INDISCRIMINATE credential dump, or a list selected for a region or a vertical? The four quadrants below are the reading. COUNTRY SOURCE PRIORITY, and it matters more than it looks: (1) WHOIS registrant country — where the BUSINESS is, the signal we actually want; (2) ccTLD, when the TLD is a real country code. HOSTING country is deliberately NOT counted, only shown as a hint, because it measures where the victim's HOSTING COMPANY is, not where the victim is — small businesses routinely host abroad, and a victim set behind Cloudflare would otherwise read as a US cluster while a set of Nepali businesses on a UK reseller would read as British. Both are wrong answers to the demographic question. Country also has an operational use beyond analysis: it names the national CERT/CSIRT to notify.",
+    "min_coverage": 0.5,
+    "concentration": 0.6,
+    "readings": {
+      "regional_platform": "country concentrated AND DNS operator concentrated — a regional hosting reseller or national provider was compromised; notify it directly, it is the shortest path to every remaining victim",
+      "geo_targeted_list": "country concentrated but providers dispersed — a region-selected credential list, or a campaign whose lure needs a specific language; check whether the lure brand is national",
+      "vertical_targeted": "sector concentrated across countries — vertical software (a sector-specific CMS or booking platform), or a list bought by industry",
+      "indiscriminate": "country AND sector both dispersed — an untargeted dump worked through in whatever order it arrived; the victims have nothing in common because the list never did"
+    }
+  }
+}

@@ -4,7 +4,8 @@ query.py — read the knowledge base (no web I/O). The cheap, cited substrate th
 IntelAnalysis skill and the reporter read from instead of re-querying the world.
 
   python3 query.py --kb knowledge --stats
-  python3 query.py --kb knowledge --shared --min 2      # cluster seeds
+  python3 query.py --kb knowledge --shared --min 2      # cluster seeds (whole KB)
+  python3 query.py --kb knowledge --shared --domains a.example,b.example   # scoped to ONE case
   python3 query.py --kb knowledge --entity example.com
   python3 query.py --kb knowledge --cluster example.com
   python3 query.py --kb knowledge --type person
@@ -38,11 +39,14 @@ def main():
                     help="partition domains into same-operator connected components over STRONG "
                          "shared indicators (boilerplate/benign/over-prevalent edges excluded)")
     ap.add_argument("--domains", default="",
-                    help="with --components: comma-separated domain set to restrict clustering to "
-                         "(e.g. one case's domains); default = the whole KB")
+                    help="comma-separated domain set to restrict to (e.g. ONE case's domains); "
+                         "default = the whole KB. With --components it restricts clustering; with "
+                         "--shared it scopes the cluster seeds to that set, so a case's shared.txt "
+                         "reports what is shared INSIDE the case instead of across every past case")
     ap.add_argument("--type", help="list entities of a type")
     args = ap.parse_args()
     kb = KB(args.kb)
+    restrict = {d.strip().lower() for d in args.domains.split(",") if d.strip()} or None
 
     if args.stats:
         ents = list(kb.all_entities())
@@ -52,10 +56,23 @@ def main():
         print("facts by source:", dict(Counter(f["source"] for e in ents for f in e["facts"])))
 
     if args.shared:
-        print(f"\n# Shared indicators (>= {args.min} domains) — cluster seeds\n")
-        for s in kb.shared_indicators(args.min):
-            print(f"[{s['domain_count']}] {s['indicator_type']}:{s['indicator']}  ({', '.join(s['rels'])})")
-            print(f"     {', '.join(s['domains'])}")
+        # SCOPE: with --domains, an indicator qualifies on how many of THOSE domains carry it —
+        # otherwise a case's cluster seeds are polluted by every unrelated past case in the KB.
+        # The KB-wide count is still printed alongside, because an indicator shared by 3 domains
+        # here but 47 KB-wide is prevalence noise, not an owner link.
+        scope = f" among the {len(restrict)} given domain(s)" if restrict else ""
+        print(f"\n# Shared indicators (>= {args.min} domains{scope}) — cluster seeds\n")
+        for s in kb.shared_indicators(1 if restrict else args.min):
+            doms = s["domains"]
+            if restrict is not None:
+                doms = [d for d in doms if d.lower() in restrict]
+                if len(doms) < args.min:
+                    continue
+            wide = (f"  [KB-wide: {s['domain_count']} domains]"
+                    if restrict is not None and s["domain_count"] > len(doms) else "")
+            print(f"[{len(doms)}] {s['indicator_type']}:{s['indicator']}  "
+                  f"({', '.join(s['rels'])}){wide}")
+            print(f"     {', '.join(doms)}")
 
     if args.type:
         print(f"\n# entities of type '{args.type}'")
@@ -113,7 +130,6 @@ def main():
             print(f"  {dom}   via {len(via)} shared: {', '.join(sorted(via)[:4])}{' …' if len(via) > 4 else ''}")
 
     if args.components:
-        restrict = {d.strip().lower() for d in args.domains.split(",") if d.strip()} or None
         comps = _components(kb, args.kb, args.max_prevalence, restrict)
         print(f"# Connected components (strong) — {len(comps)} component(s)\n")
         for i, doms in enumerate(comps, 1):

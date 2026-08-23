@@ -1,0 +1,72 @@
+{
+  "_comment": "URL PATHS AS A CAMPAIGN IDENTIFIER. Standard clustering assumes the operator's identity lives in the HOSTNAME — the domain, the subdomain, the certificate. A mature kit operator inverts that: they buy a pool of disposable, meaningless hosts (numeric labels on cheap TLDs) and select which branded scam template to serve using the URL PATH. `host-a/<kit-x>/`, `host-b/<kit-x>/`, `host-c/<kit-y>/` is one operator running two kits across three hosts — but every host-level artifact differs, so host-level clustering sees three unrelated sites and path-blind collection throws away the one field that ties them together. This file holds everything that layer matches against: how a path is normalised, which segments are VARIABLE (so two paths that differ only by a session id collapse to one template), which are GENERIC (so `/login` never becomes a fingerprint), and how much of a path is worth keeping. The unit of investigation becomes host+path, not host. Nothing here is case data — these are generic web conventions.",
+
+  "variable_patterns": {
+    "_comment": "Segment patterns that are VARIABLE — a session id, a build hash, a per-victim token, a date. Each is replaced by its placeholder when building a path TEMPLATE, so `/kit/9f3a1c/step2` and `/kit/44b0de/step2` collapse to one template instead of looking like two campaigns. Order matters: the first match wins, so the specific patterns come before the loose ones. `regex` is matched case-insensitively against ONE whole segment. Add a pattern when a case shows the operator randomising a segment you are otherwise clustering on; do NOT add one so loose it eats the kit name (a pattern matching any 6-letter word would erase exactly the segment this layer exists to keep).",
+    "entries": {
+      "uuid": {"regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", "placeholder": "{uuid}"},
+      "date": {"regex": "^(?:19|20)\\d{2}(?:[-_]?\\d{2}){0,2}$", "placeholder": "{date}"},
+      "hex": {"regex": "^[0-9a-f]{8,}$", "placeholder": "{hex}"},
+      "digits": {"regex": "^\\d{2,}$", "placeholder": "{n}"},
+      "base64ish": {"regex": "^[A-Za-z0-9_-]{16,}$", "placeholder": "{token}"},
+      "mixed_random": {"regex": "^(?=[a-z0-9]*\\d)(?=[a-z0-9]*[a-z])[a-z0-9]{10,}$", "placeholder": "{rand}"}
+    }
+  },
+
+  "generic_segments": {
+    "_comment": "THE BASE-RATE CONTROL, and the most important list in this file. These segments appear on millions of unrelated sites, so a shared one is worth nothing as a same-operator link — clustering on `/login` or `/assets` would fuse the entire internet into one operator. A path whose every meaningful segment is in this list emits NO kit pivot at all. This is the same discipline as the generic subdomain labels and the parked-favicon denylist: count the population before calling a value a fingerprint. Add a segment here the moment a run produces a cluster joined only by it.",
+    "values": [
+      "index", "index.php", "index.html", "index.htm", "home", "default", "main", "www",
+      "login", "signin", "sign-in", "log-in", "logon", "auth", "oauth", "sso", "register",
+      "signup", "sign-up", "account", "accounts", "user", "users", "profile", "dashboard",
+      "admin", "administrator", "wp-admin", "wp-content", "wp-includes", "wp-login.php",
+      "api", "api-docs", "v1", "v2", "v3", "graphql", "rest", "rpc", "ajax", "json", "xml",
+      "static", "assets", "asset", "public", "dist", "build", "bundle", "media", "uploads",
+      "upload", "files", "file", "img", "images", "image", "css", "js", "javascript",
+      "fonts", "font", "icons", "icon", "favicon.ico", "robots.txt", "sitemap.xml",
+      "cdn", "cdn-cgi", "s", "p", "c", "t", "e", "r", "u", "w", "x", "go", "l",
+      "app", "apps", "web", "site", "page", "pages", "view", "views", "template", "templates",
+      "content", "data", "src", "lib", "libs", "vendor", "vendors", "node_modules",
+      "about", "contact", "help", "support", "faq", "terms", "privacy", "policy", "legal",
+      "search", "download", "downloads", "download.html", "news", "blog", "post", "posts",
+      "cart", "checkout", "order", "orders", "payment", "pay", "shop", "store", "product",
+      "products", "category", "categories", "tag", "tags", "error", "404", "500",
+      "test", "demo", "tmp", "temp", "old", "new", "backup", "bak", "dev", "staging",
+      ".well-known", "cgi-bin", "phpmyadmin", "server-status"
+    ]
+  },
+
+  "locale_segments": {
+    "_comment": "Language / country segments. A kit operator localises one template per market, so `/<locale>/<kit>` and `/<kit>-<locale>` are both common shapes. These are normalised to `{locale}` in the TEMPLATE (so the same kit in five markets is recognised as one kit) but the concrete value is KEPT separately as the campaign's target-market evidence — which market a template was built for is a finding, not noise. Two-letter codes only here; a longer language name is treated as an ordinary segment.",
+    "values": [
+      "en", "en-us", "en-gb", "en-au", "vi", "vn", "vi-vn", "zh", "zh-cn", "zh-tw", "cn", "tw",
+      "th", "id", "ms", "my", "ph", "tl", "ko", "kr", "ja", "jp", "hi", "in", "bn", "ur",
+      "ru", "uk", "ua", "pl", "cs", "sk", "sl", "si", "hr", "sr", "rs", "bg", "ro", "hu",
+      "de", "at", "ch", "fr", "be", "nl", "es", "mx", "ar", "pt", "br", "it", "gr", "el",
+      "tr", "he", "il", "fa", "ir", "sv", "se", "no", "da", "dk", "fi", "is", "ee", "lv", "lt",
+      "au", "nz", "ca", "us", "gb", "ie", "za", "sg", "hk", "mo", "ae", "sa", "eg", "ng"
+    ]
+  },
+
+  "kit_thresholds": {
+    "_comment": "How much of a path is worth keeping, and when a segment is distinctive enough to be a KIT NAME. `min_kit_len` rejects one- and two-character segments (they are routing noise, not names). `max_segments` bounds the template so a deep CMS URL cannot become a unique 'fingerprint' that matches only itself. `max_kit_len` rejects an absurdly long segment (usually an encoded blob the variable patterns missed). `min_hosts_for_pattern` is the analyst-facing threshold quoted by the path-pattern report: below it, a repeated path is an observation, not yet a pattern — the same base-rate discipline applied to the operator's own estate.",
+    "min_kit_len": 3,
+    "max_kit_len": 48,
+    "max_segments": 6,
+    "min_hosts_for_pattern": 2
+  },
+
+  "asset_extensions": {
+    "_comment": "Extensions that make a segment a STATIC FILE rather than a template directory. Without this rule the last segment of `/assets/js/app.js` survives the generic-segment denylist (because `app.js` is not itself a common word) and gets emitted as a kit name — a fingerprint on a filename every bundler in the world produces. Page extensions (.php, .html, .aspx) are deliberately ABSENT: a kit's entry point is often exactly `/<brand>.html`, and dropping those would discard the artifact this layer exists to keep.",
+    "values": ["js", "mjs", "cjs", "css", "map", "json", "xml", "txt", "png", "jpg", "jpeg",
+               "gif", "svg", "webp", "avif", "ico", "bmp", "woff", "woff2", "ttf", "eot", "otf",
+               "mp4", "webm", "mp3", "wav", "pdf", "zip", "rar", "gz", "tgz", "7z", "apk", "exe",
+               "dmg", "msi", "wasm", "ts", "tsx", "jsx", "scss", "less"]
+  },
+
+  "index_files": {
+    "_comment": "Trailing filenames that mean 'the directory itself' and are stripped when normalising, so `/kit/`, `/kit/index.html` and `/kit/index.php` are recognised as ONE location rather than three. Only add a name that is genuinely a directory-index default; stripping a real page name would merge two distinct templates.",
+    "values": ["index.html", "index.htm", "index.php", "index.asp", "index.aspx", "index.jsp",
+               "default.html", "default.htm", "default.asp", "default.aspx", "home.html"]
+  }
+}

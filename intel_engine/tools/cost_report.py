@@ -22,20 +22,32 @@ import argparse
 import glob
 import json
 import os
+import sys
 
-# --- API list prices, USD per 1M tokens (input, output). Cache derived below. ---
-PRICING = {
-    "claude-fable-5":    (10.0, 50.0),
-    "claude-mythos-5":   (10.0, 50.0),
-    "claude-opus-4-8":   (5.0,  25.0),
-    "claude-opus-4-7":   (5.0,  25.0),
-    "claude-opus-4-6":   (5.0,  25.0),
-    "claude-opus-4-5":   (5.0,  25.0),
-    "claude-sonnet-5":   (3.0,  15.0),   # intro $2/$10 through 2026-08-31
-    "claude-sonnet-4-6": (3.0,  15.0),
-    "claude-sonnet-4-5": (3.0,  15.0),
-    "claude-haiku-4-5":  (1.0,  5.0),
-}
+
+# ---------------------------------------------------------------- reference data (RULE 3)
+# Prices change on the vendor's schedule, not ours, and a stale table does not fail — it silently
+# reports a wrong number for every case in the ledger. So the table is DATA.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+_WP = os.path.join(_ROOT, "WebPivot", "tools")
+if _WP not in sys.path:
+    sys.path.append(_WP)
+try:
+    from wp_refs import load_ref                              # the shared RULE 3 loader
+except Exception:                                             # noqa: BLE001 — degrade, never block
+    def load_ref(path, fallback):
+        print(f"[cost_report] WARNING: wp_refs unavailable; model_pricing.json not read — "
+              f"running on the minimal embedded price table.", file=sys.stderr)
+        return dict(fallback)
+_PRICING_JSON = os.path.join(_ROOT, "harness", "references", "model_pricing.json")
+
+_PRICE_FALLBACK = {"anthropic_models": {"claude-opus-5": [5.0, 25.0],
+                                          "claude-sonnet-5": [3.0, 15.0]}}
+_PRICE_REF = load_ref(_PRICING_JSON, _PRICE_FALLBACK)
+# DATA: harness/references/model_pricing.json -> anthropic_models
+# USD per 1M tokens (input, output). Cache rates are derived from the input rate below.
+PRICING = {k: tuple(v) for k, v in _PRICE_REF["anthropic_models"].items()}
 CACHE_READ = 0.10   # × input rate
 CACHE_5M   = 1.25   # × input rate (5-minute write)
 CACHE_1H   = 2.00   # × input rate (1-hour write)

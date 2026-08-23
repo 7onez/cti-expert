@@ -1,0 +1,216 @@
+{
+  "_comment": "WHOIS REGISTRANT NOISE, KB / ANALYST SIDE. Same purpose as WebPivot/references/registrant_noise.json but consumed by the INGEST + HYPOTHESIS layer, where a bad value is far more expensive: an unfiltered 'Domain Admin' becomes a high-confidence `registered_by -> person` edge and silently merges every domain whose registrar used that placeholder into one operator. Before this file the same lists were pasted into ingest_webpivot.py, clean_kb.py, hypothesize.py and ingest_report.py and had drifted apart. Companion file: noise_filters.json (shared INFRASTRUCTURE rather than registrant identity).",
+  "org_suffixes": {
+    "_comment": "Corporate suffixes that mean the registrant NAME is an organisation, not a natural person — the record is routed to entity type 'org' instead of 'person'. Matched as a substring of ' ' + lowercased name, so each entry carries its own leading space.",
+    "values": [
+      " ltd",
+      " ltd.",
+      " llc",
+      " inc",
+      " inc.",
+      " co.",
+      " corp",
+      " gmbh",
+      " pty",
+      " limited",
+      " group",
+      " s.r.o",
+      " pte",
+      " b.v",
+      " co ltd",
+      " company",
+      " technologies",
+      " technology",
+      " systems",
+      " media",
+      " holdings",
+      " sarl"
+    ]
+  },
+  "name_junk": {
+    "_comment": "WHOIS field-label and registry-status text that a parser mis-captures as a registrant name ('Registrant State', 'Redemption Period'). Matched as a case-insensitive substring; a hit means the name is discarded entirely, not reclassified.",
+    "values": [
+      "registrant state",
+      "registrant province",
+      "registrant country",
+      "registrant city",
+      "registrant_",
+      "state/province",
+      "reactivation period",
+      "pending delete",
+      "redemption period",
+      "pending renewal",
+      "on behalf of",
+      "domain buyer"
+    ]
+  },
+  "role_name_placeholders": {
+    "_comment": "Generic registrant ROLE placeholders. Distinct from privacy_markers, which matches privacy-SIGNALLING words; these strings contain no such word so that rule misses them. Matched on the NORMALISED name (lowercased, punctuation stripped, whitespace collapsed) and EXACTLY, never as a substring — a substring rule would eat real registrants like 'Admin Solutions GmbH'. Exactness is the safety property: over-filtering destroys real attribution, which is the costlier direction.",
+    "values": [
+      "admin",
+      "administrator",
+      "anonymous",
+      "client",
+      "customer",
+      "dns admin",
+      "dns administrator",
+      "domain admin",
+      "domain administrator",
+      "domain administrators",
+      "domain admins",
+      "domain manager",
+      "domain name administrator",
+      "domain owner",
+      "domain registrant",
+      "domainadmin",
+      "hostmaster",
+      "n a",
+      "na",
+      "no name",
+      "non public data",
+      "none",
+      "nonpublic data",
+      "not applicable",
+      "not available",
+      "null",
+      "owner",
+      "postmaster",
+      "registrant",
+      "registry",
+      "statutory masking enabled",
+      "unknown",
+      "webmaster"
+    ]
+  },
+  "privacy_markers": {
+    "_comment": "Substrings marking a registrant name/org as privacy-proxied or redacted. Consumed by ingest_webpivot when deciding whether a registrant is linkable.",
+    "values": [
+      "contact privacy",
+      "data protected",
+      "domains by proxy",
+      "domainsbyproxy",
+      "gdpr masked",
+      "identity protect",
+      "not disclosed",
+      "perfect privacy",
+      "privacy",
+      "private by design",
+      "redacted",
+      "registration private",
+      "statutory masking",
+      "whoisguard",
+      "withheld"
+    ]
+  },
+  "proxy_email_domains": {
+    "_comment": "Email domains run by a privacy proxy or registrar. Matched against the part after '@'.",
+    "values": [
+      "1and1.com",
+      "contactprivacy.com",
+      "domainsbyproxy.com",
+      "godaddy.com",
+      "namecheap.com",
+      "porkbun.com",
+      "privacyguardian.org",
+      "privacyprotect.org",
+      "whoisprivacyprotect.com",
+      "withheldforprivacy.com"
+    ]
+  },
+  "proxy_email_tokens": {
+    "_comment": "Substrings anywhere in an email that mark it as a proxy/registrar/role address. Broader and fuzzier than proxy_email_domains so it catches the long tail of providers nobody enumerated. Consumed by hypothesize._is_proxy — a hit means the indicator never drives a hypothesis.",
+    "values": [
+      "privacy",
+      "protect",
+      "proxy",
+      "whoisguard",
+      "redacted",
+      "data-protected",
+      "domain-contact",
+      "domainabuse",
+      "abuse@",
+      "yinsibaohu",
+      "gname.com",
+      "withheld",
+      "contactprivacy",
+      "not.disclosed",
+      "namecheap",
+      "tucows",
+      "domainsbyproxy",
+      "registrar",
+      "noreply",
+      "no-reply"
+    ]
+  },
+  "placeholder_person_markers": {
+    "_comment": "Substrings marking a registrant PERSON value as a placeholder rather than an owner. Consumed by hypothesize when scoring an attribution chain.",
+    "values": [
+      "domain admin",
+      "c/o id#",
+      "redacted",
+      "privacy",
+      "whois",
+      "not disclosed",
+      "registration private",
+      "domain expired",
+      "statutory masking",
+      "reactivation period",
+      "pending delete",
+      "redemption period",
+      "pending renewal"
+    ]
+  },
+  "junk_hash_prefixes": {
+    "_comment": "Hash prefixes that are parser artifacts, not fingerprints — sha1/sha256/md5 of the EMPTY string (an empty favicon or empty DOM), plus known mis-parses. A cluster built on one of these is a cluster of 'we failed to fetch anything', which is the single most common false-cluster source in the KB.",
+    "values": [
+      "da39a3ee5e6b4b0d",
+      "e3b0c44298fc1c14",
+      "d41d8cd98f00b204",
+      "g-recaptcha"
+    ]
+  },
+  "report_noise_domains": {
+    "_comment": "Domains that must never become an investigation TARGET when harvested out of a pasted report or PDF — the platforms every report mentions in passing. Matched exact-or-parent. Consumed by ingest_report.extract.",
+    "values": [
+      "example.com",
+      "example.org",
+      "example.net",
+      "google.com",
+      "gmail.com",
+      "googletagmanager.com",
+      "google-analytics.com",
+      "facebook.com",
+      "t.me",
+      "wa.me",
+      "whatsapp.com",
+      "cloudflare.com",
+      "github.com",
+      "youtube.com",
+      "instagram.com",
+      "twitter.com",
+      "x.com",
+      "linkedin.com",
+      "schema.org",
+      "w3.org",
+      "gstatic.com",
+      "gname.com",
+      "163.com",
+      "hotmail.com",
+      "outlook.com"
+    ]
+  },
+  "report_filename_suffixes": {
+    "_comment": "File extensions that make a token look like a domain but mean it is a FILENAME ('assessment.md', 'graph.png'). Consumed by ingest_report.extract to reject them before the domain regex claims them.",
+    "values": [
+      ".md",
+      ".txt",
+      ".json",
+      ".html",
+      ".png",
+      ".jpg",
+      ".py",
+      ".js",
+      ".css"
+    ]
+  }
+}

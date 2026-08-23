@@ -1,0 +1,65 @@
+{
+  "_comment": "Typography for the rendered PDF. render_report.py picks the FIRST family in each list that is actually installed on this machine (checked with fontconfig), so the skill stays portable instead of hardcoding one font. Put your preferred family first; leaving a name in the list costs nothing when it is absent. Serif and sans are additionally filtered to families that DECLARE Vietnamese coverage when --lang vi is used, because many otherwise-good faces lack the stacked diacritics (ộ, ừ, ả) and render tofu boxes. Mono is NOT filtered that way: inline code in these reports is domains, hashes and endpoints, i.e. ASCII.",
+
+  "serif_families": {
+    "_comment": "Body text. A serif is the house choice because these reports are read in print and at length. Every entry here covers Latin Extended Additional (ca phe, Ha Noi, lua dao).",
+    "values": [
+      "Noto Serif",
+      "Source Serif 4",
+      "Source Serif Pro",
+      "Georgia",
+      "Palatino",
+      "PT Serif",
+      "Charter",
+      "DejaVu Serif",
+      "Times New Roman",
+      "TeX Gyre Termes",
+      "Times"
+    ]
+  },
+
+  "sans_families": {
+    "_comment": "Headings, cover, running header/footer and figure captions - never body text. Kept visually distinct from the serif so a heading reads as furniture rather than as prose.",
+    "values": [
+      "Noto Sans",
+      "Source Sans 3",
+      "Source Sans Pro",
+      "Helvetica Neue",
+      "PT Sans",
+      "DejaVu Sans",
+      "Arial",
+      "TeX Gyre Heros",
+      "Helvetica"
+    ]
+  },
+
+  "mono_families": {
+    "_comment": "Inline code and code blocks: domains, IPs, hashes, certificate fingerprints, endpoints. This is the font an analyst reads a 64-character hash in, so pick one that disambiguates 0/O and 1/l/I. Source Code Pro is the house preference; Menlo is the usual macOS fallback and is also a good hash face. Courier is LAST on purpose - it is thin, wide and hard to read at footnote size in a table cell. Install the preferred family with: brew install --cask font-source-code-pro (macOS) or apt install fonts-source-code-pro (Debian/Ubuntu).",
+    "values": [
+      "Source Code Pro",
+      "JetBrains Mono",
+      "IBM Plex Mono",
+      "Fira Mono",
+      "Fira Code",
+      "Inconsolata",
+      "Noto Sans Mono",
+      "Menlo",
+      "DejaVu Sans Mono",
+      "PT Mono",
+      "Consolas",
+      "Andale Mono",
+      "Courier New"
+    ]
+  },
+
+  "mono_metrics": {
+    "_comment": "How monospace is sized against the body serif. Scale is applied via fontspec: 'MatchLowercase' matches x-heights so code does not tower over surrounding prose, and is the sane default. A NUMBER (e.g. 0.86) is used verbatim instead if you prefer explicit control - monospace faces are wide, and a 64-character hash in a narrow table cell fits better slightly reduced.",
+    "scale": "MatchLowercase"
+  },
+
+  "highlight": {
+    "_comment": "The ==highlighted== span (pandoc's `mark` extension). Reserve it for the few things a reader must not miss - a payee account, a verdict, a rejected link - never for whole sentences. IMPLEMENTATION NOTE: this is a colour BOX, not the soul package's \\hl. soul silently DROPS stacked Vietnamese diacritics inside a highlight (bi lam gia renders as b lam gi), which would corrupt a Vietnamese deliverable, so correctness was chosen over line-wrapping. Consequence: a highlight CANNOT break across lines. Keep it under max_chars; the renderer warns when a span is longer, because an over-long highlight silently runs into the margin.",
+    "color_hex": "F5E27A",
+    "max_chars": 90
+  }
+}

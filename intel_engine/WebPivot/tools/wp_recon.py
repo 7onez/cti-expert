@@ -12,6 +12,7 @@ import gzip
 import itertools
 import zlib
 import socket
+import ipaddress
 import ssl
 import datetime
 import shutil
@@ -74,6 +75,116 @@ def fofa_search(query: str, size: int = 100,
     if api_usage:
         api_usage.record("fofa", "search", credits=1, query=query, results=len(rows))
     return {"query": query, "total": data.get("size", len(rows)), "results": rows}
+
+
+# --------------------------------------------------------------------------- misconfig triage (passive)
+# Two tells that a FOFA/Shodan/Censys row exposes a MISCONFIGURED, operator-run box: an RFC-reserved
+# address leaking into a public result (a dual-homed box exposing its internal topology) and an FTP
+# banner that grants anonymous login (kit / victim-log / builder-config triage lead). Read straight
+# from the passive index — no packet is sent. The tunable markers/classes live in references, and the
+# analyst note carries the DON'T-AUTO-CONNECT rule (see misconfig_signals.json _comment + SKILL §).
+_MISCONFIG_FALLBACK = {
+    "anon_ftp_markers": ["230 anonymous", "230 login successful", "anonymous ftp", "anonymous login"],
+    "ftp_protocol_markers": ["ftp", "220 "],
+    "leak_classes": {"private": True, "loopback": True},
+}
+_MISCONFIG = load_ref(ref_path(__file__, "misconfig_signals.json"), _MISCONFIG_FALLBACK)
+ANON_FTP_MARKERS = tuple(str(m).lower() for m in _MISCONFIG["anon_ftp_markers"])
+FTP_PROTOCOL_MARKERS = tuple(str(m).lower() for m in _MISCONFIG["ftp_protocol_markers"])
+LEAK_CLASSES = _MISCONFIG["leak_classes"]
+_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
+_EXTRA_RESERVED = []
+for _c in _MISCONFIG.get("extra_reserved_cidrs", []):   # optional group; empty unless an analyst adds it
+    try:
+        _EXTRA_RESERVED.append(ipaddress.ip_network(str(_c), strict=False))
+    except ValueError:
+        pass
+# IPv4 literal embedded in free-text banner (redirect Location, cert SAN, config echo)
+_BANNER_IP_RX = re.compile(r'(?<![\w.])((?:\d{1,3}\.){3}\d{1,3})(?![\w.])')
+
+
+def _reserved_leak_class(addr: str):
+    """(leak_class, True) if `addr` is an RFC-reserved address whose class is ENABLED in
+    leak_classes (or falls in extra_reserved_cidrs); ('', False) for a public address or a
+    non-address. Loopback/link-local/CGNAT are tested before the generic private check so each
+    can be silenced independently (stdlib is_private is a superset of all of them)."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return "", False
+    if LEAK_CLASSES.get("loopback") and ip.is_loopback:
+        return "loopback", True
+    if LEAK_CLASSES.get("link_local") and ip.is_link_local:
+        return "link_local", True
+    if ip.version == 4 and ip in _CGNAT_NET:
+        return ("cgnat", True) if LEAK_CLASSES.get("cgnat") else ("", False)
+    if LEAK_CLASSES.get("private") and ip.is_private and not ip.is_loopback and not ip.is_link_local:
+        return "private", True
+    for net in _EXTRA_RESERVED:
+        if ip.version == net.version and ip in net:
+            return "extra_reserved", True
+    return "", False
+
+
+def _bare_host(v: str) -> str:
+    """Reduce an ip/host field ('http://10.0.0.1:8080/x', '[::1]:21') to the bare address."""
+    v = (v or "").strip().split("://")[-1].split("/")[0].strip("[]")
+    if v.count(":") == 1:                       # host:port — not a bracketless IPv6
+        v = v.split(":")[0]
+    return v
+
+
+def scan_misconfig(rows, self_ip: str = None) -> list:
+    """Passively flag misconfiguration tells in FOFA/Shodan-shaped result ROWS (no network I/O).
+
+    Each row is a dict that may carry ip / host / protocol / port / banner / server. Returns a
+    list of findings, each a dict:
+      {"type": "internal_ip_leak", "address": "192.168.1.10", "leak_class": "private",
+       "field": "banner", "port": "80", "excerpt": "...Location: http://192.168.1.10/..."}
+      {"type": "anon_ftp", "address": "<ip>", "port": "21", "protocol": "ftp",
+       "excerpt": "230 Anonymous access granted."}
+    self_ip, when the rows came from a fofa ip="<self_ip>" query, is never itself a leak — only a
+    DISTINCT reserved address that also appears is. Findings dedupe on (type, address, port)."""
+    findings, seen = [], set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        banner = str(row.get("banner") or "")
+        low_banner = banner.lower()
+        proto = str(row.get("protocol") or "").lower()
+        port = str(row.get("port") or "").strip()
+        row_ip = str(row.get("ip") or "").strip()
+
+        # (1) anonymous FTP — recognise the service, then look for an anon-login success banner
+        is_ftp = ("ftp" in proto) or (port == "21") or low_banner[:4] in ("220 ", "220-")
+        if is_ftp and any(m in low_banner for m in ANON_FTP_MARKERS):
+            key = ("anon_ftp", row_ip, port or "21")
+            if key not in seen:
+                seen.add(key)
+                findings.append({"type": "anon_ftp", "address": row_ip or None,
+                                 "port": port or "21", "protocol": proto or "ftp",
+                                 "excerpt": banner[:240]})
+
+        # (2) internal-IP leak — the explicit ip/host fields, plus any IPv4 literal in the banner
+        candidates = [("ip", _bare_host(row_ip)), ("host", _bare_host(str(row.get("host") or "")))]
+        candidates += [("banner", m) for m in _BANNER_IP_RX.findall(banner)]
+        for field, addr in candidates:
+            if not addr or (self_ip and addr == self_ip):
+                continue
+            klass, leaked = _reserved_leak_class(addr)
+            if not leaked:
+                continue
+            key = ("internal_ip_leak", addr, port)
+            if key in seen:
+                continue
+            seen.add(key)
+            f = {"type": "internal_ip_leak", "address": addr, "leak_class": klass,
+                 "field": field, "port": port}
+            if field == "banner":
+                f["excerpt"] = banner[:240]
+            findings.append(f)
+    return findings
+
 
 def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results: int = None):
     """Authenticated urlscan.io search for an arbitrary query (content/tracker/token).
@@ -269,8 +380,13 @@ def fetch_tls_cert(host: str, port: int = 443, timeout: int = 15):
             with ctx.wrap_socket(sock, server_hostname=host) as ss:
                 cert = ss.getpeercert()
                 der = ss.getpeercert(binary_form=True)
+        # sha1 alongside sha256, from the SAME DER bytes (no extra connection): Censys and CT are
+        # sha256-keyed, but CIRCL passive SSL indexes leaf certificates by SHA-1, and that is the
+        # only source that answers cert -> the IPs that served it. Without this the pSSL layer
+        # would have to open its own handshake to the target just to re-derive a hash we hold.
         res = {"host": host, "port": port, "validated": True,
-               "fingerprint_sha256": hashlib.sha256(der).hexdigest()}
+               "fingerprint_sha256": hashlib.sha256(der).hexdigest(),
+               "fingerprint_sha1": hashlib.sha1(der).hexdigest()}
         res.update(_dict_fields(cert or {}))
         return res
     except ssl.SSLCertVerificationError as e:
@@ -287,6 +403,7 @@ def fetch_tls_cert(host: str, port: int = 443, timeout: int = 15):
         return {"host": host, "port": port, "validated": False,
                 "validation_error": verr,
                 "fingerprint_sha256": hashlib.sha256(der).hexdigest(),
+                "fingerprint_sha1": hashlib.sha1(der).hexdigest(),   # CIRCL pSSL is sha1-keyed
                 "sans": _der_sans(der)}
     except Exception as e:                    # never propagate to the caller
         return {"host": host, "port": port, "error": str(e),

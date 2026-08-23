@@ -1,0 +1,73 @@
+{
+  "_comment": "Tool-call GATE policy for the harness (harness/audit.py). This file decides which tool calls are HIGH-RISK and what happens to them BEFORE the tool runs — independently of which front-end is driving (SDK orchestrator, DeepSeek/OpenAI shim, or the stdio MCP server used by Claude Code). Three risk classes are named here: OUTBOUND (the call touches target infrastructure from your IP, so a hostile operator can see you), METERED (the call spends third-party API credits that are per-account and do not roll over), and APPROVAL-REQUIRED (the call is outbound AND attributable AND irreversible — a sandbox submission tells the operator they are being analysed). Every call, allowed or denied, is written to the ledger at cases/<case>/tool_calls.jsonl. Edit the lists below to re-classify a tool; you do not need to touch Python. Tool names are matched on the BARE name, so both `pivot_extract` and the SDK's fully-qualified `mcp__collect__pivot_extract` match the same entry.",
+
+  "outbound_tools": {
+    "_comment": "Tools whose normal mode reaches the TARGET's infrastructure from the analyst's own IP (live HTTP fetch, DNS to attacker-controlled nameservers, screenshot, sandbox submission). Under hostile posture (--hostile, or HARNESS_HOSTILE=1) a call to one of these is DENIED unless it also carries one of `passive_args` below. This is the same rule pivot_extract already enforces internally; listing a tool here lifts the rule ABOVE the tool, so it covers every collector, not just the one that remembered to implement it. `doc_metadata` is listed because it CAN fetch a URL — under hostile posture, read a file you have already pulled out-of-band by running WebPivot/tools/wp_docmeta.py on the local path instead. `serp_ads` is listed for its cloak mode only: the archive lookups are pure SerpApi traffic, but the cloaking probe fetches the TARGET three times from your own IP and, by design, announces itself as an ad click — under hostile posture route it through --proxy or skip it.",
+    "values": [
+      "pivot_extract",
+      "doc_metadata",
+      "impersonation_hunt",
+      "analyze_artifact",
+      "fallback_probe",
+      "anyrun_submit",
+      "censys",
+      "serp_ads",
+      "detect_login",
+      "engage_account"
+    ]
+  },
+
+  "passive_args": {
+    "_comment": "Arguments that make an outbound call safe under hostile posture: the traffic either never leaves your machine or does not originate from your IP. If any of these is truthy in the call's arguments, the hostile denial does not apply. `passive` means archive/third-party sources only; `proxy` routes the fetch elsewhere; `free_only` implies the keyless/passive path.",
+    "values": ["passive", "proxy", "free_only"]
+  },
+
+  "metered_tools": {
+    "_comment": "Tools that CAN spend licensed third-party API credits (FOFA, urlscan, WhoisXML, IPinfo, Shodan, Censys, IntelX, ANY.RUN, SerpApi). These are never blocked outright — collection is the job — but they are counted against `budget.max_metered_calls_per_run` and every call lands in the ledger, so 'what did this run spend' is answerable after the fact rather than guessed. Censys is the tightest quota (100 credits per MONTH, per account, no rollover), which is why an over-budget run is stopped rather than warned.",
+    "values": [
+      "pivot_extract",
+      "reverse_whois",
+      "impersonation_hunt",
+      "cert_overlap",
+      "censys",
+      "intelx_search",
+      "anyrun_lookup",
+      "anyrun_submit",
+      "serp_ads"
+    ]
+  },
+
+  "free_only_args": {
+    "_comment": "Arguments that PROVE a call spends nothing, so it must not be counted against the metered budget. A run driven by the convergence loop passes free_only=true on every collection, which is why such a run can be long without touching a single credit. Note what is NOT here: `passive` and `proxy` protect your IP from the target, they do not protect your credits — a passive run still queries urlscan and WhoisXML. Keep the two concerns separate or a hostile-posture run will silently drain the month's Censys quota.",
+    "values": ["free_only"]
+  },
+
+  "metered_arg_triggers": {
+    "_comment": "Arguments that turn an otherwise-cheap call into an expensive one. A bare pivot_extract already costs a few credits; with these set it fans out into reverse-WHOIS or a full FOFA page and costs many more. Present here only so the ledger records WHY a call was scored expensive — they do not change the allow/deny decision on their own.",
+    "values": ["whois_reverse", "fofa_full", "fofa_keyword", "deep", "expand"]
+  },
+
+  "approval_required_tools": {
+    "_comment": "Tools that are outbound AND attributable AND irreversible, and therefore need a human 'yes' that a prompt cannot supply. Each maps to the environment variable that must be set to 1 for the call to be permitted; without it the call is DENIED before it reaches the tool. anyrun_submit detonates a sample or URL in a sandbox: a URL detonation tells the operator they are being analysed, the task may be PUBLIC on a free plan, and nothing can be recalled once sent. engage_account CREATES AN ACCOUNT on the operator's own backend and logs in: the operator sees a new member at a known time from your egress, and you cannot un-register. Each of these tools also has its OWN internal confirmation gate (a confirm flag in the signature) — this entry is the second lock, so an agent loop cannot reach the first one unattended.",
+    "entries": {
+      "anyrun_submit": "HARNESS_ALLOW_SUBMIT",
+      "engage_account": "INTEL_ENGAGE_CONFIRM"
+    }
+  },
+
+  "mutating_tools": {
+    "_comment": "Tools that write to shared, cross-case state (the knowledge base, the benign/signal reference, the operator registry). Never blocked, but flagged in the ledger: when a later case turns out to have clustered on a bad fingerprint, this is how you find the run and the round that introduced it.",
+    "values": ["kb_ingest", "reference_add", "case_reopen", "case_loop"]
+  },
+
+  "redact_args": {
+    "_comment": "Argument names whose VALUE is never written to the ledger verbatim (replaced with '<redacted>'). Ledger files live under cases/, which is git-ignored, but a credential pasted into a tool argument should still never be persisted to disk in cleartext. Add any argument that could carry a key, token or password.",
+    "values": ["key", "api_key", "token", "password", "secret", "authorization", "cookie"]
+  },
+
+  "budget": {
+    "_comment": "Per-run guard rails. max_metered_calls_per_run caps how many credit-spending calls ONE run may make before the gate starts denying them with an instruction to re-call free_only=true — the backstop against an agent loop that keeps re-querying FOFA on every round. Set generously: it exists to stop runaway loops, not to ration normal collection. Override at runtime with HARNESS_METERED_BUDGET. max_arg_chars truncates long argument values in the ledger so one HTML blob cannot bloat the audit trail.",
+    "max_metered_calls_per_run": 60,
+    "max_arg_chars": 200
+  }
+}

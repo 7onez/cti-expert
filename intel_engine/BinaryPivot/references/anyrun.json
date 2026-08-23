@@ -1,12 +1,16 @@
 {
-  "_comment": "ANY.RUN — the SANDBOX-OBSERVATION layer for BinaryPivot. analyze_artifact reads what a sample IS (hashes, signing cert, embedded hosts, packer); ANY.RUN's Threat Intelligence Lookup reports what samples like it DID when they were detonated by ~15k organisations: the domains and IPs they actually contacted, the threat/family label, the Suricata alerts, and the public sandbox tasks you can open and watch. That turns a static IOC into behaviour, and — the part that matters for casework — into MORE infrastructure, because a backend host the app only builds at runtime never appears in its strings. This file holds everything about ANY.RUN that changes without our code changing: API paths, the TI Lookup query grammar, which BinaryPivot pivot kinds map to which lookup field, the entitlement matrix, the request guard and the web-UI links the KEYLESS path emits. Edit this file, not bp_anyrun.py. Nothing here is case data — public product facts only.",
+  "_comment": "ANY.RUN for BinaryPivot. The ANY.RUN API is, in practice, a SANDBOX-SUBMISSION API: you send it a file or a URL, it detonates it in an interactive VM and gives you back a task with the network log, dropped files and a verdict. Threat Intelligence Lookup (searching other people's detonations without running your own) is a SEPARATE and comparatively LIMITED product — a distinct licence, a small request allowance, and absent entirely from a plain sandbox subscription — so treat TI Lookup as a bonus when the licence happens to exist, and the sandbox as the layer's real surface. That surface has an OPSEC cost the static tooling does not: submitting is an OUTBOUND, ATTRIBUTABLE, OFTEN-PUBLIC act performed against live case infrastructure, which is why `submission_policy` below requires the ANALYST'S EXPLICIT CONFIRMATION every time and the code refuses without it. This file holds everything about ANY.RUN that changes without our code changing: API paths, submission options and their privacy semantics, the TI Lookup query grammar, the pivot-kind map, the entitlement matrix, the request guard and the web-UI links the KEYLESS path emits. Edit this file, not bp_anyrun.py. Nothing here is case data — public product facts only.",
 
   "endpoints": {
-    "_comment": "ANY.RUN REST paths. `api_base` is the v1 API root, `report_base` serves the per-task report renderings, `content_base` the downloadable artifacts. Auth is `Authorization: API-KEY <key>` on every call (the client adds the prefix if you paste a bare key). NOTE what is deliberately ABSENT: the submission endpoint. BinaryPivot never detonates — submitting a scam-funnel sample is an outbound action that spends a run, can be seen by the operator on a public plan, and belongs to a decision the analyst makes explicitly in the sandbox UI, not to a collector.",
+    "_comment": "ANY.RUN REST paths. `api_base` is the v1 API root, `report_base` serves the per-task report renderings, `content_base` the downloadable artifacts. Auth is `Authorization: API-KEY <key>` on every call (the client adds the prefix if you paste a bare key). `submit_analysis` is a POST — `obj_type=file` as multipart, `obj_type=url` as form fields — and is the ONE endpoint here that changes the world outside this machine: it is gated by `submission_policy`, never called without explicit confirmation, and never called automatically by a collector. Everything else is read-only. `stop_task` / `delete_task` exist so a submission made in error can be pulled quickly — deletion removes it from YOUR history, it does not un-see anything the target already observed.",
     "entries": {
       "api_base": "https://api.any.run/v1",
       "report_base": "https://api.any.run/report",
       "content_base": "https://content.any.run/tasks",
+      "submit_analysis": "/analysis",
+      "task_status": "/analysis/monitor/{id}",
+      "stop_task": "/analysis/stop/{id}",
+      "delete_task": "/analysis/delete/{id}",
       "ti_search": "/intelligence/api/search",
       "ti_keycheck": "/intelligence/keycheck",
       "yara_search": "/intelligence/yara-lookup/search",
@@ -18,6 +22,44 @@
       "user_limits": "/user",
       "environment": "/environment"
     }
+  },
+
+  "privacy_types": {
+    "_comment": "`opt_privacy_type` on a submission — who can see the resulting task. This is the single most consequential option on the whole API and the SDK's own default (`bylink`) is NOT the safe one for investigative work. `public` puts the sample, the URL, the screenshots and the full network log into a feed that anyone — including the operator — can search; ANY.RUN's public feed is routinely monitored by the people who build these funnels. `owner` is the default this tool uses. On a FREE plan the private options are not available at all, which is precisely why a free-plan submission must be refused rather than quietly downgraded.",
+    "entries": {
+      "owner": "only you — the default this tool submits with, and the only one that is safe by construction",
+      "byteam": "your team — acceptable when the whole team is on the engagement",
+      "bylink": "anyone holding the URL: not indexed, but forwardable and guessable-adjacent; the SDK's default, NOT ours",
+      "public": "EVERYONE, in a searchable feed the operator can watch. Refused by this tool unless explicitly forced"
+    }
+  },
+
+  "submission_policy": {
+    "_comment": "THE CONFIRMATION GATE. A submission is not a lookup: it takes the analyst's case material and hands it to a third party, then reaches out and TOUCHES the target from a fingerprintable sandbox. Both halves can burn an investigation, and neither is reversible — deleting the task afterwards does not un-send the sample and does not un-notify the operator. So the rule is absolute: the code NEVER submits without the analyst saying yes to THIS submission, and the model must put the risks in front of the user and ask, not infer consent from 'analyze this sample'. `preflight_checks` is what to try FIRST — most triage questions are answered without detonating anything at all. `never_send` is RULE 1 crossing an API boundary: case identifiers must not travel in `user_tags` or a filename.",
+    "require_explicit_confirmation": true,
+    "default_privacy": "owner",
+    "forbidden_privacy": ["public"],
+    "refuse_on_free_plan": true,
+    "default_auto_delete_after": "week",
+    "risks": [
+      "PUBLIC EXPOSURE — on a free/public plan every submission is world-readable and searchable: the sample, the URL, the screenshots and the network log. Operators monitor the public feed for their own domains and hashes",
+      "TIPPING THE OPERATOR — a URL detonation FETCHES the live target. ANY.RUN's egress ranges are published, so the operator sees a known sandbox hit their funnel: they rotate the infrastructure, or start serving a decoy, and the case gets harder from that moment on",
+      "A POISONED VERDICT — the same filtering means a benign result may simply be the decoy these funnels serve to datacenter IPs. 'info' is not exoneration; without a residential-proxy option you may be grading the operator's cloaking, not their malware",
+      "THIRD-PARTY DATA HANDLING — the sample may carry victim PII, client data or material you are not licensed to redistribute. Uploading it is a disclosure decision, and it may be a legal one",
+      "ATTRIBUTION AND TIMING — a submission is a timestamped act tied to your account, and it places your interest in this target on someone else's record"
+    ],
+    "preflight_checks": [
+      "Run the static analysis first — analyze_artifact usually answers the triage question with zero outbound contact",
+      "Look for an EXISTING detonation before creating one: the file hash on TI Lookup (if licensed), VirusTotal, MalwareBazaar, Triage, Koodous, or a public ANY.RUN task. Somebody has often already run it",
+      "If it must be detonated, confirm the privacy setting is `owner`/`byteam` — never `public`",
+      "For a URL, remember the target LEARNS it was sandboxed. Decide whether that is acceptable at this stage of the case, and prefer detonating the downloaded FILE over the live URL where that answers the question",
+      "Strip case identifiers from filenames and tags before sending anything"
+    ],
+    "never_send": [
+      "case IDs or case-folder names in user_tags, filenames or any submitted metadata",
+      "the analyst's or the client's name",
+      "any sample containing victim PII that is not necessary to the question being asked"
+    ]
   },
 
   "query_fields": {
@@ -80,12 +122,13 @@
   },
 
   "plan_capabilities": {
-    "_comment": "What each ANY.RUN entitlement allows, so the tool degrades with an accurate sentence instead of an opaque 401/403. TI Lookup is a SEPARATE licence from the sandbox: a sandbox API key does not automatically answer /intelligence/*, which is why `ti_lookup` and `sandbox_api` are tracked apart. A trial TI Lookup licence is a small fixed number of requests, so the request guard below matters from the first call.",
+    "_comment": "What each ANY.RUN entitlement allows, so the tool degrades with an accurate sentence instead of an opaque 401/403. The important asymmetry: MOST keys are sandbox keys. TI Lookup is a separate, comparatively limited licence with its own small allowance, and a sandbox subscription does NOT include it — so `ti_lookup` and `sandbox_api` are tracked apart and the tool checks rather than assumes. `private_submission` records whether the plan can submit anything other than PUBLIC: on the free tier it cannot, and a submission there would expose the sample to a feed the operator can read, which is why the policy refuses instead of downgrading.",
     "entries": {
-      "none": {"ti_lookup": false, "sandbox_api": false, "note": "no key — the query BUILDER and the UI links still work; nothing is queried from here"},
-      "sandbox": {"ti_lookup": false, "sandbox_api": true, "note": "sandbox API key: task history and reports for YOUR OWN submissions only; /intelligence/* answers 401/403"},
-      "ti_trial": {"ti_lookup": true, "sandbox_api": false, "note": "TI Lookup trial: a small fixed request allowance — spend it on the two or three artifacts that actually decide the case"},
-      "ti_full": {"ti_lookup": true, "sandbox_api": true, "note": "full TI Lookup licence: lookup + YARA search + feeds"}
+      "none": {"ti_lookup": false, "sandbox_api": false, "private_submission": false, "note": "no key — the query BUILDER and the UI links still work; nothing is queried or submitted from here"},
+      "free": {"ti_lookup": false, "sandbox_api": true, "private_submission": false, "note": "FREE community plan: every submission is PUBLIC and searchable. Fine for reading other people's public tasks, unacceptable for submitting live case infrastructure — the policy refuses"},
+      "sandbox": {"ti_lookup": false, "sandbox_api": true, "private_submission": true, "note": "paid sandbox key: submit with owner/byteam privacy, plus task history and reports for YOUR OWN submissions; /intelligence/* still answers 401/403"},
+      "ti_trial": {"ti_lookup": true, "sandbox_api": false, "private_submission": false, "note": "TI Lookup trial: a small fixed request allowance — spend it on the two or three artifacts that actually decide the case"},
+      "ti_full": {"ti_lookup": true, "sandbox_api": true, "private_submission": true, "note": "full TI Lookup licence: lookup + YARA search + feeds, alongside the sandbox"}
     }
   },
 

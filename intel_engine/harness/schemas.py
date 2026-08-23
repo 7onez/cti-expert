@@ -43,3 +43,22 @@ class Assessment(BaseModel):
     next_pivots: list[str] = Field(
         default_factory=list, description="prioritised open leads, highest yield/cost first"
     )
+    # --- the intake premise, answered. See harness/case_scope.py and WebPivot §0 Intake.
+    # A case arrives with a claim attached ("this scam site", "their C2"); without these two
+    # fields the claim never gets answered and silently becomes the frame the whole assessment
+    # was written inside. Both default to the honest value for "nobody tested it", so an older
+    # caller or a model that omits them cannot accidentally assert that a premise was confirmed.
+    premise: str = Field(
+        default="",
+        description="the claim this run was given, verbatim if supplied — otherwise the target "
+        "class the run ASSUMED, marked as assumed",
+    )
+    premise_verdict: Literal[
+        "supported", "partially_supported", "not_supported", "contradicted", "inconclusive"
+    ] = Field(
+        default="inconclusive",
+        description="what the COLLECTION says about that claim. not_supported = found nothing "
+        "either way (on a keyless/passive/blocked run that is a fact about the collection, not "
+        "the target); inconclusive = the target was never observed, so the claim was not tested. "
+        "Neither means benign.",
+    )

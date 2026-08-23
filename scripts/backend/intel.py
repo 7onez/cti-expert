@@ -71,6 +71,13 @@ DISPATCH = {
     # ── whole-case pipelines (IntelHarness) ─────────────────────────────
     "pipeline":      ("tools/intel.py",               []),   # deterministic open/status
     "harness":       ("harness/cli.py",               []),   # LLM Collect→Correlate→Assess
+    "clusters":      ("tools/intel.py",               ["clusters"]),  # partition a case first —
+                                                                      # the unit of judgment is the
+                                                                      # CLUSTER, not the case
+    "loop":          ("tools/intel.py",               ["loop"]),      # collect→assess to convergence
+    "frontier":      ("tools/case_state.py",          ["frontier"]),  # unresolved free/metered gaps
+    "reopen":        ("tools/case_state.py",          ["reopen"]),    # re-open on new seeds
+    "scope":         ("harness/case_scope.py",        []),   # intake: no-touch class, victim owner
     # ── acquire / collect (WebPivot engine collectors) ──────────────────
     "pivot-extract": ("WebPivot/tools/pivot_extract.py", []),
     "fallback":      ("tools/fallback_probe.py",      ["--kb", "knowledge"]),
@@ -86,7 +93,14 @@ DISPATCH = {
     "jarm":          ("WebPivot/tools/jarm.py",       []),     # JARM TLS-stack fingerprint
     "email-permute": ("WebPivot/tools/email_permute.py", []),  # name/handle -> email CANDIDATES
     "intelx":        ("WebPivot/tools/wp_intelx.py",  []),     # leak/paste/darknet selector search
-    "anyrun":        ("BinaryPivot/tools/bp_anyrun.py", []),   # TI Lookup — READ-ONLY, never submits
+    "anyrun":        ("BinaryPivot/tools/bp_anyrun.py", []),   # TI Lookup — READ-ONLY by default;
+                                                               # --submit needs analyst confirmation
+    "docmeta":       ("WebPivot/tools/wp_docmeta.py", []),     # PDF/EXIF/PNG author+GPS metadata
+    "paths":         ("WebPivot/tools/wp_paths.py",   []),     # URL-path kit extraction (path_kit:)
+    "capture":       ("WebPivot/tools/wp_capture.py", []),     # raw-evidence capture + manifest hash
+    "serp":          ("WebPivot/tools/wp_serp.py",    []),     # Ads Transparency + cloaking probe
+    "pssl":          ("WebPivot/tools/wp_pssl.py",    []),     # passive SSL: historic cert -> IP
+    "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
     "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
@@ -100,6 +114,8 @@ DISPATCH = {
     "calibration":   ("tools/kb/calibration.py",      ["--kb", "knowledge"]),
     "convergence":   ("tools/kb/convergence.py",      []),
     "domains":       ("tools/domain_table.py",        ["--kb", "knowledge"]),
+    "victims":       ("tools/kb/victim_profile.py",   []),   # access vector from the victim set
+    "mirrors":       ("tools/kb/sync_mirrors.py",     []),   # keep duplicated denylists in step
     # ── ingest (feed the KB) ────────────────────────────────────────────
     "ingest":        ("tools/kb/ingest_webpivot.py",  ["--kb", "knowledge"]),
     "ingest-report": ("tools/kb/ingest_report.py",    []),
@@ -112,6 +128,8 @@ DISPATCH = {
     "case-index":    ("tools/case_index.py",          []),   # which case is an artifact in?
     "cost":          ("tools/cost_report.py",         []),
     "api-usage":     ("WebPivot/tools/api_usage.py",  []),
+    "tool-calls":    ("harness/audit.py",             []),   # what the model actually called
+    "dashboard":     ("harness/dashboard/serve.py",   []),   # loopback-only run inspector
     # ── deliver / render (IntelGraph / IntelReport + evidence) ──────────
     "graph-build":   ("WebPivot/tools/graph_build.py", []),  # → case_graph.json (render input)
     "graph":         ("IntelGraph/scripts/graph_to_diagram.py", []),
@@ -121,8 +139,17 @@ DISPATCH = {
     "mermaid":       ("IntelGraph/scripts/render_mermaid.py",  []),
     "report":        ("IntelReport/scripts/render_report.py",  []),
     "evidence-report": ("WebPivot/tools/evidence_report.py",   []),
+    "timeline":      ("IntelGraph/scripts/case_timeline.py",   []),  # infrastructure lifecycle
     # ── file half of the funnel (BinaryPivot) ───────────────────────────
     "binary":        ("BinaryPivot/tools/analyze_artifact.py",  []),
+    # ── authentication surface (Engage) ─────────────────────────────────
+    # Detection is passive and free. en_engage/en_harvest create and drive a SYNTHETIC-persona
+    # account: that is OUTBOUND, attributable and irreversible, and gated in the tool itself.
+    "login-detect":  ("Engage/tools/en_forms.py",     []),   # find the login/registration form
+    "persona":       ("Engage/tools/en_persona.py",   []),   # mint a synthetic research persona
+    "engage":        ("Engage/tools/en_engage.py",    []),   # GATED — register / log in
+    "engage-harvest": ("Engage/tools/en_harvest.py",  []),   # read the members area
+    "engage-report": ("Engage/tools/en_report.py",    []),   # shareable engagement write-up
     # ── eval / self-test ────────────────────────────────────────────────
     "eval":          ("tools/eval/run_eval.py",       []),
 }
@@ -131,6 +158,11 @@ DISPATCH = {
 BLURB = {
     "pipeline": "deterministic case pipeline: open <case> domains.txt | status",
     "harness": "LLM whole-case orchestration: open/continue/status",
+    "clusters": "partition a case into same-operator clusters BEFORE judging",
+    "loop": "collect → assess repeatedly until the case converges",
+    "frontier": "unresolved gaps: free next seeds + deferred metered leads",
+    "reopen": "re-open a converged case on newly discovered seeds",
+    "scope": "case intake: no-touch class, victim ownership, egress gate",
     "pivot-extract": "engine WebPivot collector → pivot JSON (--render/--leads)",
     "fallback": "fallback probe when a page won't render",
     "whois": "forward WHOIS enrich for a domain",
@@ -145,7 +177,13 @@ BLURB = {
     "jarm": "JARM TLS-stack fingerprint of a host",
     "email-permute": "name/username -> ranked email CANDIDATES (hypotheses, never findings)",
     "intelx": "IntelX: search a strong selector in leaks/pastes/darknet",
-    "anyrun": "ANY.RUN TI Lookup (read-only — never submits a sample)",
+    "anyrun": "ANY.RUN TI Lookup (read-only; --submit needs confirmation)",
+    "docmeta": "document/image metadata: PDF /Info + XMP, EXIF incl. GPS",
+    "paths": "URL-path kit extraction — path_kit: when hosts rotate",
+    "capture": "raw-evidence capture + tamper-evident manifest hashing",
+    "serp": "Ads Transparency (who PAID) + the cloaking probe",
+    "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
+    "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
     "kb-stats": "KB stats (positional root)",
@@ -158,6 +196,8 @@ BLURB = {
     "calibration": "confidence-calibration ledger (record/resolve/score/list)",
     "convergence": "case stop-condition (snapshot/status)",
     "domains": "per-domain attribution table for a case",
+    "victims": "infer the ACCESS VECTOR from the victim set (+demography)",
+    "mirrors": "keep the duplicated denylists in step (--write/--union)",
     "ingest": "ingest a pivot_extract JSON into the shared KB",
     "ingest-report": "harvest IOCs from a finished report into a case",
     "ingest-rwhois": "ingest reverse-WHOIS results into the KB",
@@ -167,6 +207,8 @@ BLURB = {
     "case-index": "which case(s) is an artifact recorded in?",
     "cost": "API/LLM cost report (--all/--session/--file)",
     "api-usage": "API credit/budget usage report",
+    "tool-calls": "audit what the model actually called (+ denied calls)",
+    "dashboard": "loopback-only run inspector (cost, trace, tool pairing)",
     "graph-build": "build case_graph.json (input to graph/network render)",
     "graph": "IntelGraph: case graph JSON → Mermaid → PNG/SVG",
     "network": "IntelGraph: interactive network diagram render",
@@ -175,7 +217,13 @@ BLURB = {
     "mermaid": "IntelGraph: render Mermaid → PNG/SVG",
     "report": "IntelReport: assessment .md → PDF/DOCX (house style)",
     "evidence-report": "build an evidence report / MISP export for a case",
+    "timeline": "infrastructure lifecycle timeline + dated evidence ledger",
     "binary": "BinaryPivot: static IOC extraction from APK/exe/zip",
+    "login-detect": "find the login / registration form (passive, free)",
+    "persona": "mint a SYNTHETIC research persona (never a real identity)",
+    "engage": "GATED: register / log in on a synthetic persona (outbound)",
+    "engage-harvest": "read the members area behind the login",
+    "engage-report": "shareable engagement write-up (no case store in it)",
     "eval": "run the engine's self-test / eval suite",
 }
 

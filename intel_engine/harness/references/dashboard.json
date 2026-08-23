@@ -1,0 +1,134 @@
+{
+  "_comment": "DEBUG DASHBOARD — what the local observability server reads, and the thresholds that turn raw ledger numbers into a FINDING an analyst should act on. The dashboard itself computes nothing clever: it joins five append-only sources (Claude Code session transcripts, the tool-call gate ledger, the third-party API-credit ledger, the harness per-phase cost ledger, and the pinned prompt files on disk) and then applies the rules below. Those rules are DATA because they are judgement calls that change with how you work — a cache-write share that is alarming on a long refactor session is normal on a fresh one, and a context ceiling that matters on a 200k window does not on a 1M one. TUNE `health_checks` when the dashboard cries wolf or stays quiet through a real problem; both failures make it furniture. TOKEN NUMBERS ARE TWO DIFFERENT KINDS: everything read out of a transcript's `usage` block is EXACT (the API reported it), while everything measured off a file on disk (`prompt_surface`) is an ESTIMATE from `chars_per_token` and must be labelled as such in the UI — presenting an estimate next to an exact figure with the same styling is how a rough number becomes a fact. COST IS ALSO AN ESTIMATE at pay-as-you-go list prices; on a Pro/Max subscription the real cost is the flat plan, and `tools/cost_report.py` owns that pricing logic — this file never re-states a price. OPSEC: the server binds loopback only and the transcripts it renders contain case data, so nothing here may be exposed on a routable interface (see `server.allow_nonlocal_bind`).",
+
+  "server": {
+    "_comment": "Bind + runtime settings for the stdlib HTTP server. It is a DEBUG tool reading investigation data, so the default bind is loopback and `allow_nonlocal_bind` must stay false: a dashboard on 0.0.0.0 publishes case names, target domains and operator artifacts to anyone on the network, with no auth in front of it. There is deliberately no authentication option — the answer to 'I want it remote' is an SSH tunnel, not a password box on a debug server.",
+    "host": "127.0.0.1",
+    "port": 7788,
+    "allow_nonlocal_bind": false,
+    "open_browser": true,
+    "request_timeout_s": 60
+  },
+
+  "sources": {
+    "_comment": "Where each panel's data comes from, relative to the repo root (or `~` for Claude Code's own store). A missing source is NEVER an error — the panel says 'no data' and names the path it looked at, because 'nothing happened' and 'the file is somewhere else' look identical in a dashboard and only one of them is worth investigating. `transcripts_env` is the override Claude Code itself honours.",
+    "transcripts_env": "CLAUDE_PROJECT_DIR",
+    "tool_calls_ledger": "MEMORY/tool_calls.jsonl",
+    "tool_calls_per_case": "cases/*/tool_calls.jsonl",
+    "api_usage_ledger": "MEMORY/api_usage.jsonl",
+    "run_cost_per_case": "cases/*/run_cost.jsonl",
+    "rounds_per_case": "cases/*/rounds.jsonl",
+    "scope_per_case": "cases/*/scope.json"
+  },
+
+  "scan": {
+    "_comment": "Bounds on how much history a request reads. There can be a thousand transcripts in a project and re-reading them all on every click makes the dashboard unusable, so the index scans the newest `default_sessions` by mtime and caches each file's summary keyed by (path, mtime, size) — a transcript never changes after it is written, so that cache is exact rather than a staleness risk. `max_sessions` is the ceiling for an explicit 'scan everything' request. When a scan is bounded, the UI MUST say so: a truncated total presented as a total is a wrong number, not a partial one.",
+    "default_sessions": 40,
+    "max_sessions": 2000,
+    "max_findings_per_check": 5,
+    "max_turns_per_session": 400,
+    "max_ledger_lines": 20000,
+    "cache_summaries": true
+  },
+
+  "prompt_surface": {
+    "_comment": "The files that occupy context before the conversation even starts, and are therefore the first place to look when a run is expensive for no visible reason. The harness pins whole SKILL.md bodies as phase system prompts, so a paragraph added to a skill is paid for on every phase of every case forever. Sizes are measured in bytes and converted with `chars_per_token` — an ESTIMATE (~4 chars/token for English prose; code and JSON run denser, so treat these as a floor). Add a path when a new always-loaded file appears; this list is what the Prompt panel reads.",
+    "chars_per_token": 4.0,
+    "paths": [
+      "WebPivot/SKILL.md",
+      "IntelAnalysis/SKILL.md",
+      "IntelGraph/SKILL.md",
+      "IntelReport/SKILL.md",
+      "BinaryPivot/SKILL.md",
+      "IntelHarness/SKILL.md",
+      "CLAUDE.md",
+      "harness/prompts/collect.md",
+      "harness/prompts/collect_one.md",
+      "harness/prompts/correlate.md",
+      "harness/prompts/verify.md",
+      "harness/prompts/assess.md"
+    ],
+    "phase_composition": {
+      "_comment": "Which pinned files each harness phase actually carries, so the panel can show a per-phase context floor instead of a pile of file sizes. Mirrors orchestrator._skill()/_prompt() — update it when a phase changes its system prompt.",
+      "collect": ["WebPivot/SKILL.md", "harness/prompts/collect.md"],
+      "collect_one": ["WebPivot/SKILL.md", "harness/prompts/collect_one.md"],
+      "correlate": ["IntelAnalysis/SKILL.md", "harness/prompts/correlate.md"],
+      "verify": ["IntelAnalysis/SKILL.md", "harness/prompts/verify.md"],
+      "assess": ["IntelAnalysis/SKILL.md", "harness/prompts/assess.md"]
+    }
+  },
+
+  "trace": {
+    "_comment": "THE TRACE PANEL — the replay of one session as it actually happened: the prompt that went in, the pinned context it carried, every tool call with its ARGUMENTS and the RAW RESULT that came back, the reply that came out, and what each turn cost. The other panels answer 'how much'; this one answers 'what did it DO', which is the question you have when an answer is wrong rather than expensive. Everything here is a DISPLAY bound, never a claim about the data: a blob longer than its cap is shown head-and-tail with a marker naming the exact number of characters omitted and an expand control that re-reads the full value from the transcript, because a silently shortened tool result reads as a tool that returned little. Raise `result_chars` when you are reading results in the page and expanding constantly; raise `max_steps` for a very long session, remembering the whole payload is built per request. `join_gate_ledger` annotates a call with the gate's decision ONLY on an exact (tool, arguments) match — a fuzzy match would attribute an ALLOW or a DENY to the wrong call, so an unmatched call shows no badge rather than an assumed one.",
+    "max_steps": 500,
+    "text_chars": 4000,
+    "args_chars": 900,
+    "result_chars": 1800,
+    "thinking_chars": 2000,
+    "expand_chars": 400000,
+    "head_fraction": 0.7,
+    "collapse_context_blocks": true,
+    "join_gate_ledger": true,
+    "inline_images": false,
+    "context_markers": ["<system-reminder>", "# claudeMd", "<command-name>", "<local-command"],
+    "_context_markers_comment": "A user record that OPENS with one of these is injected context (the pinned CLAUDE.md, a hook's system reminder, a slash-command echo), not something the operator typed. The panel keeps it — it is a large part of what the window holds — but folds it away by default so the human's actual prompt is not buried in it. Matched on the START of the text only: a reminder QUOTED inside a real prompt is still a real prompt."
+  },
+
+  "health_checks": {
+    "_comment": "The rules that turn numbers into FINDINGS on the Overview panel — the 'what is wrong' list. Each has a threshold you can tune and a `why` written for a human who has never read the code, because a finding nobody understands gets ignored. Raise a threshold when a check is noisy; do NOT delete the check, or the failure it watches for goes back to being invisible. Severity is `warn` or `info` only — this is a debug tool and must never imply an operational alarm.",
+    "cache_write_share": {
+      "why": "Share of input-side tokens spent WRITING the prompt cache rather than reading it. A long session should write once and read many times; a high write share means something near the FRONT of the context keeps changing (an edited system prompt, a re-ordered tool list, a timestamp in a pinned file), which invalidates the cached prefix and makes you pay the write premium every turn. This is usually the single largest recoverable token cost. `min_turns` exists because a SHORT session is 100% writes by definition — it wrote the cache once and ended before it could read it, which is normal and not a finding; only a session with enough turns to have amortised the write tells you anything.",
+      "warn_above": 0.45,
+      "min_turns": 6,
+      "severity": "warn"
+    },
+    "low_cache_reuse": {
+      "why": "Cache reads as a share of all input-side tokens. Low reuse on a session with many turns means the cache is barely being hit at all — the prefix is either changing constantly or expiring between turns.",
+      "warn_below": 0.35,
+      "min_turns": 6,
+      "severity": "warn"
+    },
+    "context_per_turn": {
+      "why": "Effective context carried into a single turn (input + cache read + cache write). Approaching the model's window is what precedes truncation, forgotten instructions and sudden quality drops. The number is exact; the window it is compared against depends on the model you ran.",
+      "warn_above": 400000,
+      "severity": "warn"
+    },
+    "big_tool_result": {
+      "why": "A single tool result large enough to displace the rest of the working context. The harness has a governor in front of tool output (harness/references/context_budget.json); a result at or near the cap means the panel is showing you a TRUNCATED view and the full copy is on disk — and a tool that repeatedly saturates the cap is a tool worth narrowing at the source.",
+      "warn_above_chars": 40000,
+      "severity": "warn"
+    },
+    "denied_tool_calls": {
+      "why": "Calls the gate BLOCKED. A handful is the system working — hostile egress refused, an unapproved sandbox submission stopped, a credit budget enforced. A pile of identical denials means an agent is retrying something it was told not to do, which burns turns and tokens without producing evidence.",
+      "warn_above": 5,
+      "severity": "warn"
+    },
+    "repeated_identical_call": {
+      "why": "The same tool called with the same arguments more than this many times in one case. Almost always a loop: the model did not register the result, or a denial was retried unchanged. Pure waste, and invisible in a cost total.",
+      "warn_above": 3,
+      "severity": "warn"
+    },
+    "unpriced_model": {
+      "why": "A model id appeared in a transcript that harness/references/model_pricing.json has no price for, so its tokens are counted but its cost is reported as zero — every total on this dashboard is then an UNDER-estimate. Fix the price table rather than the dashboard. `ignore` holds pseudo-models the client writes into a transcript that were never billed as a model call (Claude Code stamps `<synthetic>` on locally-generated assistant turns); listing one here suppresses the finding without pretending a price exists. Add an id ONLY when you have confirmed it is not a real model — an id ignored by mistake removes real spend from every total on this page.",
+      "ignore": ["<synthetic>", "unknown"],
+      "severity": "warn"
+    },
+    "error_turns": {
+      "why": "Turns whose stop_reason indicates a refusal, a max-tokens cut or an API error. A max-tokens stop mid-structure is a silent corruption: the output looks complete and is not.",
+      "warn_above": 0,
+      "severity": "info"
+    }
+  },
+
+  "panels": {
+    "_comment": "Panel order and labels in the UI. `overview` is deliberately first and carries the findings list: the point of the tool is that you learn something is wrong WITHOUT knowing which tab to open.",
+    "entries": {
+      "overview": "Overview — headline totals and what looks wrong",
+      "trace": "Trace — replay one session: prompt in, tool args and raw results, reply out",
+      "tokens": "Tokens & cache — per session and per turn, where the window went",
+      "prompts": "Prompt surface — what is loaded before you type anything",
+      "tools": "Tool calls — every gated call, allowed and denied",
+      "cost": "Cost & credits — Anthropic estimate next to third-party credits"
+    }
+  }
+}

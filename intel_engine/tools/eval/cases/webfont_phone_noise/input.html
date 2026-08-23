@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>site-a.example — contact</title>
+<meta name="description" content="Synthetic fixture: a subsetted webfont and an inline build string must not manufacture contact phone numbers, while a declared JSON-LD telephone must survive.">
+
+<!-- The false-positive source. A subsetted Google-Fonts-style @font-face declares its coverage as
+     hyphen-separated hex ranges; the all-digit ones look exactly like a punctuated phone number
+     once tags are stripped. Every site on Framer / Wix / Squarespace ships something like this. -->
+<style>
+@font-face {
+  font-family: 'Placeholder Sans';
+  font-style: normal;
+  font-weight: 400;
+  src: url(/fonts/placeholder-sans.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+0304-0311, U+2000-206F;
+}
+body { font-family: 'Placeholder Sans', sans-serif; }
+</style>
+
+<!-- The other false-positive source: build metadata inside an ordinary inline script. -->
+<script>
+  var build = "2024-0918-1130";
+  var ts = 1730-4455;
+</script>
+
+<!-- The TRUE positive that lives inside a script body: schema.org structured data. On many sites
+     this is the only place the number appears as text at all. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": "Placeholder Holdings Ltd",
+  "url": "https://site-a.example/",
+  "telephone": "+1 555 010 0288",
+  "contactPoint": {
+    "@type": "ContactPoint",
+    "contactType": "customer support",
+    "telephone": "+1 555 010 0288"
+  }
+}
+</script>
+</head>
+<body>
+  <h1>Contact</h1>
+
+  <!-- declared: a tel: href is trusted outright -->
+  <p>Sales: <a href="tel:+15550100199">+1 555 010 0199</a></p>
+
+  <!-- inferred: visible text carrying phone punctuation -->
+  <p>Support desk: +1 (555) 010-0377 (24/7)</p>
+
+  <!-- must NOT become phones: an order id and a price -->
+  <p>Order 100200300 — total 1234.56</p>
+</body>
+</html>

@@ -1,0 +1,189 @@
+/* Debug dashboard — dark, dense, no dependencies.
+   Two visual rules carry meaning and must not be "cleaned up":
+   - .est marks an ESTIMATE (a token count derived from file size, or a dollar figure at list
+     prices). It renders differently from an exact number on purpose; styling them alike is how
+     a rough number becomes a fact.
+   - .warn / .info are debug severities, never operational alarm colours. */
+
+:root {
+  --bg: #0e1116; --panel: #161b22; --line: #262d37; --ink: #d7dde5; --dim: #8b95a5;
+  --accent: #5aa9e6; --good: #4ec9a0; --warn: #e0a458; --bad: #e06c75; --est: #b58ee0;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 13px/1.5 var(--mono);
+}
+header {
+  display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+  position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+}
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .04em; }
+.spacer { flex: 1; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button, #reload, select {
+  background: #1c222c; color: var(--ink); border: 1px solid var(--line);
+  padding: 4px 10px; border-radius: 4px; font: inherit; cursor: pointer;
+}
+nav button:hover, #reload:hover { border-color: var(--accent); }
+nav button.on { background: var(--accent); color: #06121c; border-color: var(--accent); }
+.scan { color: var(--dim); font-size: 12px; }
+main { padding: 16px; max-width: 1500px; }
+footer { padding: 8px 16px; border-top: 1px solid var(--line); }
+
+h2 { font-size: 13px; margin: 22px 0 8px; color: var(--accent); font-weight: 600;
+     text-transform: uppercase; letter-spacing: .07em; }
+h2:first-child { margin-top: 0; }
+.dim { color: var(--dim); }
+.note { color: var(--dim); font-size: 12px; margin: 6px 0 12px; max-width: 105ch; }
+.loading { color: var(--dim); }
+
+/* headline numbers */
+.cards { display: flex; flex-wrap: wrap; gap: 10px; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 14px; min-width: 130px;
+}
+.card .k { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.card .v { font-size: 19px; margin-top: 3px; }
+.card .sub { color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+/* an estimate is styled differently from an exact figure, on purpose */
+.est { color: var(--est); }
+.est::after { content: "≈"; font-size: .75em; vertical-align: super; opacity: .8; margin-left: 1px; }
+
+table { border-collapse: collapse; width: 100%; margin: 6px 0 4px; font-size: 12px; }
+th, td { text-align: left; padding: 5px 9px; border-bottom: 1px solid var(--line);
+         vertical-align: top; }
+th { color: var(--dim); font-weight: 600; text-transform: uppercase; font-size: 10.5px;
+     letter-spacing: .06em; position: sticky; top: 47px; background: var(--bg); }
+tr:hover td { background: #131922; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.clip { max-width: 62ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: #1a2230; }
+
+.pill { padding: 1px 7px; border-radius: 10px; font-size: 11px; border: 1px solid; }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.pill.info { color: var(--dim); border-color: var(--line); }
+.pill.deny { color: var(--bad); border-color: var(--bad); }
+.pill.allow { color: var(--good); border-color: var(--good); }
+
+.finding {
+  background: var(--panel); border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 5px; padding: 9px 13px; margin-bottom: 7px;
+}
+.finding.warn { border-left-color: var(--warn); }
+.finding.info { border-left-color: var(--dim); }
+.finding .t { font-weight: 600; }
+.finding .where { color: var(--dim); font-size: 11px; }
+.finding .d { margin-top: 3px; }
+.finding .why { color: var(--dim); font-size: 11.5px; margin-top: 5px; max-width: 110ch; }
+
+/* cache read/write split — the token panel's whole point */
+.bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #10151c;
+       min-width: 90px; }
+.bar i { display: block; height: 100%; }
+.bar .rd { background: var(--good); }
+.bar .wr { background: var(--warn); }
+.bar .in { background: var(--accent); }
+.legend { display: flex; gap: 14px; color: var(--dim); font-size: 11px; margin: 4px 0 10px; }
+.legend b { font-weight: 400; }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; }
+
+/* ---------------------------------------------------------------- trace (the replay)
+   The one panel that is a CONVERSATION rather than a table: prompt in, tool arguments, raw
+   result, reply out. Three things carry meaning and must not be flattened:
+   - role colour (you / agent / tool / pinned context) — you scan the stream by it;
+   - .cut — the marker where a blob was shortened FOR DISPLAY. It is deliberately loud: a
+     silently shortened tool result reads as a tool that found nothing;
+   - .sub — a subagent's step, indented, because its tokens are billed to the same run but its
+     work is not the main thread. */
+
+.tracebar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; }
+.tracebar .lab { color: var(--dim); font-size: 11px; text-transform: uppercase;
+                 letter-spacing: .06em; }
+.sesspick { max-width: 52ch; }
+.toggle, .mini {
+  background: #1c222c; color: var(--dim); border: 1px solid var(--line);
+  padding: 3px 9px; border-radius: 4px; font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.toggle.on { color: var(--ink); border-color: var(--accent); background: #17222e; }
+.toggle:hover, .mini:hover { border-color: var(--accent); }
+.find { background: #10151c; color: var(--ink); border: 1px solid var(--line);
+        border-radius: 4px; padding: 3px 8px; font: inherit; min-width: 22ch; }
+
+/* the run at a glance — one chip per step */
+.flow { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px; }
+.flow .chip {
+  border: 1px solid var(--line); background: #141a23; color: var(--dim);
+  border-radius: 3px; padding: 2px 7px; font: inherit; font-size: 11px; cursor: pointer;
+  max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.flow .chip.user { color: var(--accent); border-color: #24445e; }
+.flow .chip.assistant { color: var(--ink); }
+.flow .chip.tool { color: var(--good); border-color: #24463c; }
+.flow .chip.err { color: var(--bad); border-color: var(--bad); }
+.flow .chip:hover { border-color: var(--accent); }
+
+.stream { display: flex; flex-direction: column; gap: 8px; }
+.step {
+  background: var(--panel); border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 5px; padding: 8px 12px;
+}
+.step.user { border-left-color: var(--accent); }
+.step.assistant { border-left-color: #4b5566; }
+.step.tool { border-left-color: var(--good); padding: 6px 10px; }
+.step.context { border-left-color: #3a3350; color: var(--dim); }
+.step.sub { margin-left: 26px; border-style: dashed; }
+.step.flash { outline: 1px solid var(--accent); }
+.step .head { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.step .who { text-transform: uppercase; font-size: 10.5px; letter-spacing: .07em;
+             color: var(--dim); font-weight: 600; }
+.step.user .who { color: var(--accent); }
+.step .right { margin-left: auto; display: flex; align-items: center; gap: 7px; }
+.step .tname { color: var(--good); font-weight: 600; }
+.step .argline { color: var(--dim); font-size: 11.5px; overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.step .body { margin-top: 7px; border-top: 1px solid var(--line); padding-top: 7px; }
+.step h4 { margin: 8px 0 4px; font-size: 10.5px; text-transform: uppercase; color: var(--dim);
+           letter-spacing: .06em; font-weight: 600; }
+.step h4:first-child { margin-top: 0; }
+.step pre {
+  margin: 0; padding: 8px 10px; background: #10151c; border: 1px solid var(--line);
+  border-radius: 4px; white-space: pre-wrap; word-break: break-word; max-height: 30em;
+  overflow: auto; font-size: 11.5px; line-height: 1.45;
+}
+.step pre.say { background: transparent; border: 0; padding: 4px 0; max-height: none;
+                font-size: 12.5px; color: var(--ink); }
+.step pre.stderr { color: var(--warn); }
+.step.event { display: flex; gap: 10px; align-items: baseline; padding: 3px 12px;
+              border-left-color: #2a303a; background: transparent; font-size: 11.5px; }
+.step.event .lab { color: var(--dim); }
+.step .thought { margin-top: 6px; }
+.step .thought summary { cursor: pointer; color: var(--dim); font-size: 11.5px; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.dot.err { background: var(--bad); }
+.dot.pending { background: var(--dim); }
+
+/* a display cut is loud on purpose — it is not the end of the output */
+.blob + .blob { margin-top: 4px; }
+.cut {
+  color: var(--warn); font-size: 11px; padding: 4px 2px; display: flex; gap: 8px;
+  align-items: center; flex-wrap: wrap;
+}
+.turnmeta {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 7px;
+  padding-top: 6px; border-top: 1px dotted var(--line); color: var(--dim); font-size: 11px;
+}
+.turnmeta .bar { width: 120px; }
+.turnmeta .tag { color: var(--ink); }
+.turnmeta .stop { color: var(--warn); }
+
+.empty { color: var(--dim); padding: 10px 0; }
+.err { color: var(--bad); }
+code { background: #10151c; padding: 1px 5px; border-radius: 3px; }
+button.back { margin-bottom: 10px; }

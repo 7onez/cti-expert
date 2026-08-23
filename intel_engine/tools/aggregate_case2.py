@@ -5,14 +5,16 @@
   3) app_downloads.txt    — every app-download URL found (feed to BinaryPivot)
 Privacy/registrar contact values are flagged as noise, not dropped.
 
-Usage: python3 aggregate_case2.py <CASE-ID>   (reads cases/<CASE-ID>/raw, writes knowledge/reports/<CASE-ID>)"""
+Usage: python3 aggregate_case2.py <CASE-ID>   (reads and writes cases/<CASE-ID>/)"""
 import json, os, csv, glob, re, sys
 from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root (tools/..)
 CASE = sys.argv[1] if len(sys.argv) > 1 else "CASE-0001"
 RAW = os.path.join(ROOT, "cases", CASE, "raw")          # resolve from repo root, not cwd
-OUTD = os.path.join(ROOT, "knowledge", "reports", CASE)
+# Case deliverables live with the case, never in the cross-case KB — `knowledge/` holds
+# entities/edges/cached payloads only.
+OUTD = os.path.join(ROOT, "cases", CASE)
 os.makedirs(OUTD, exist_ok=True)
 
 # Cloudflare edge ranges. 104.16.0.0/12 spans 104.16–104.31 (the old 1[6-9]|2[0-1] stopped at

@@ -34,6 +34,7 @@ relative to the script, then a **skill-local** `.env` next to `WebPivot/`. A rea
 variable always wins; among files, the earlier one wins. Recognized: `URLSCAN_API_KEY`, `FOFA_KEY` (or `FOFA_API_KEY`),
 `FOFA_EMAIL`, `WHOISXML_API_KEY`, `PDNS_USERNAME` + `PDNS_PASSWORD` (passive DNS, optional
 `PDNS_URL`), `CENSYS_PAT` (+ optional `CENSYS_ORG_ID`), `INTELX_KEY` (+ optional `INTELX_BASE_URL`),
+`SERPAPI_KEY`,
 and — for IPPivot — `IPINFO_TOKEN` (richer IPinfo ASN/abuse) and `SHODAN_KEY` (host ports/services).
 BinaryPivot additionally reads `ANYRUN_API_KEY`. All optional.
 
@@ -57,6 +58,44 @@ executing it is not. **`/phonebook/search` is PAID-only**: a free key gets HTTP 
 Spend is capped per run and per month (`references/intelx.json → search_budget`, or
 `INTELX_MAX_SEARCHES_PER_RUN` / `INTELX_MONTHLY_SEARCHES` for a single run). `--free-only` skips it.
 
+### `SERPAPI_KEY` — Google Ads Transparency Center + SERP ads (the advertising layer)
+
+Sign up at <https://serpapi.com/> and copy the private key from the dashboard. The free tier is currently
+**250 searches a month** (`wp_serp.py budget` reads the authoritative figure off your account and
+flags it when the local guard disagrees); the account endpoint is free and does not count against it.
+
+```bash
+printf 'SERPAPI_KEY=…\n' >> .env && chmod 600 .env
+python3 WebPivot/tools/wp_serp.py budget                       # ledger + live quota
+python3 WebPivot/tools/wp_serp.py advertiser site.example --region VN
+```
+
+What the key changes: with it, `pivot_extract --serp` resolves **who advertises a domain** — a
+Google-verified, paying advertiser account and the legal name its ads are *funded by* — reverses
+that `advertiser_id` to every other domain the account advertised, and opens a creative for
+`ad_funded_by` (the verified **legal entity**) plus the per-region markets the ad ran in, each with
+its own last-shown date. The creative's **destination link** — the operator's own `utm`/`gclid`
+tagging — comes back only sometimes, because the archive commonly stores a text ad as a rendered
+image; the tool says so instead of looking broken. Without it
+the layer still runs at **~55%**: every ad parameter is classified, the free
+`adstransparency.google.com` address for the domain and for any advertiser id is emitted (same data,
+by hand), and — most importantly — **the click-keyed cloaking probe runs in full**, because it is
+plain HTTP to the target and needs no credential. A keyless "no advertiser found" therefore means
+*the archive was never asked* and must not be reported as a finding.
+
+Two things to get right:
+
+- **Region is not cosmetic.** The archive is queried **per region**, and the API and the web UI use
+  different codes for the same country (SerpApi wants Google's numeric geotarget `2704`, the browser
+  wants `VN`). A domain that advertises only in its victims' market returns nothing from the default
+  `anywhere` — pass `--serp-region VN`. Codes and the `2000 + ISO-numeric` rule for anything
+  unlisted: `references/serpapi.json → regions`.
+- **Spend is capped** per run and per month from the same ledger every other metered layer uses
+  (`references/serpapi.json → search_budget`, or `SERPAPI_MAX_SEARCHES_PER_RUN` /
+  `SERPAPI_MONTHLY_SEARCHES` for one run). Opening creatives has its own smaller cap — a wide
+  advertiser would otherwise spend a month's quota on one domain. `--free-only` skips the layer
+  entirely; the cloaking probe is unaffected either way.
+
 ### `ANYRUN_API_KEY` — ANY.RUN TI Lookup (used by **BinaryPivot**, not by pivot_extract)
 
 Get it from your ANY.RUN profile → **API and Limits** tab (<https://app.any.run/profile>). Paste the
@@ -69,11 +108,14 @@ python3 BinaryPivot/tools/bp_anyrun.py keycheck   # entitled to TI Lookup?
 python3 BinaryPivot/tools/bp_anyrun.py budget     # this month's request spend (offline, free)
 ```
 
-Read-only by design: there is **no submit path** — BinaryPivot never detonates. Without the key the
-layer still composes the correct TI Lookup query for every artifact and gives the UI address to
-paste it into (**~50% capability**). Capped per run and per month
-(`references/anyrun.json → request_budget`, or `ANYRUN_MAX_REQUESTS_PER_RUN` /
-`ANYRUN_MONTHLY_REQUESTS`).
+**Submitting is gated on the analyst's explicit yes, every time.** `bp_anyrun.py submit <target>`
+prints the risk briefing and sends **nothing**; only `--confirm-submission` actually detonates.
+Privacy defaults to `owner` (only you), `public` is refused unless separately authorized, and a
+free-plan submission is refused rather than silently downgraded to a public task. Nothing in the
+collector path can submit — `analyze_artifact --anyrun` does lookups only. Without the key the layer
+still composes the correct TI Lookup query for every artifact and gives the UI address to paste it
+into (**~50% capability**). Capped per run and per month (`references/anyrun.json →
+request_budget`, or `ANYRUN_MAX_REQUESTS_PER_RUN` / `ANYRUN_MONTHLY_REQUESTS`).
 
 `URLSCAN_VISIBILITY` — set to `private` with a **urlscan Pro** key so submitted scans of hostile
 infra stay team-only (never in the public feed); defaults to `unlisted`. A Pro key also auto-enables

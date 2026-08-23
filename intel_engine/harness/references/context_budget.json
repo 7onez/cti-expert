@@ -1,0 +1,39 @@
+{
+  "_comment": "CONTEXT BUDGET — how much of a tool's output, and how much of a conversation's history, is allowed to occupy the model's context window. Two separate leaks motivated this file. (1) TOOL RESULTS: a pivot_extract over a large cluster, a reverse-WHOIS with hundreds of domains or an IntelX page can return hundreds of kilobytes of JSON as ONE text block. Four tools capped themselves with a hand-placed slice; the rest returned everything, so a single call could consume most of a phase's window and push the actual instructions out of it. (2) TRANSCRIPT: the OpenAI-compat backend appends an assistant message plus one tool message per call, every turn, with no trimming — a long collect grows the request until the provider rejects it outright, which reads as a mysterious API error rather than 'you ran out of room'. Both halves are bounded here. THE RULE THAT MATTERS: truncation is NEVER silent. Every cut carries a visible marker stating the original size, what was dropped and where the full copy lives, because a quietly shortened result is indistinguishable from a tool that found less — and 'found less' is how a false negative enters a case. Raise a budget when a phase genuinely needs more, lower it to cut cost; the markers stay either way.",
+
+  "result_budget": {
+    "_comment": "Per-tool-call output caps, in CHARACTERS of the text block handed to the model (roughly 4 chars ≈ 1 token, so 12000 ≈ 3k tokens). `default_chars` applies to every tool. `large_chars` applies to the tools named in `large_result_tools`, whose output IS the evidence and is worth more room. `head_fraction` is the share of the budget kept from the START of the result — JSON leads with `meta` (host, status, capability, collection time), which the model needs to reason at all; the remainder is kept from the END so the closing summary/tail of a list survives too. `min_tail_chars` guarantees the tail never collapses to nothing when head_fraction is high. `error_chars` bounds stderr dumps, which are frequently long stack traces whose first and last lines carry all the meaning.",
+    "default_chars": 12000,
+    "large_chars": 40000,
+    "head_fraction": 0.7,
+    "min_tail_chars": 800,
+    "error_chars": 4000
+  },
+
+  "large_result_tools": {
+    "_comment": "Tools granted `large_chars` instead of `default_chars`. These are the ones whose payload is the evidence itself rather than a status line — the collectors and the reverse/expansion queries. ADD a tool here when you find its output being cut in a way that loses findings; do NOT add read-only status tools, whose useful output is a few hundred characters and whose long tail is noise.",
+    "values": [
+      "pivot_extract",
+      "impersonation_hunt",
+      "fallback_probe",
+      "reverse_whois",
+      "cert_overlap",
+      "intelx_search",
+      "censys",
+      "serp_ads",
+      "kb_cluster",
+      "case_clusters",
+      "case_timeline",
+      "victim_profile",
+      "analyze_artifact",
+      "capture_evidence"
+    ]
+  },
+
+  "transcript_budget": {
+    "_comment": "Bounds on the accumulated message history in the OpenAI-compat backend (`harness/openai_backend.py`), which unlike the Anthropic SDK has no automatic context handling. `max_total_chars` is the ceiling on the whole request body; when exceeded, the OLDEST tool-call rounds are elided first. `max_tool_result_chars` caps one tool message at insertion time, before it can ever enter the history. `keep_recent_rounds` is the number of most-recent assistant/tool rounds that are never elided, so the model keeps its immediate working state no matter how tight the budget gets. The system prompt and the ORIGINAL task message are never elided at all — losing the task is how a trimmed agent starts confidently answering a different question. Tune `max_total_chars` to the context window of whichever model HARNESS_BACKEND points at: the default is sized for a 128k-token window at ~4 chars/token with room for the reply.",
+    "max_total_chars": 360000,
+    "max_tool_result_chars": 24000,
+    "keep_recent_rounds": 6
+  }
+}

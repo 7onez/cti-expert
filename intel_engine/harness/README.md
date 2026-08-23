@@ -44,11 +44,140 @@ Three phases; each is one `query()` call, wired so consistency comes from the sc
 - Each run prints its **cost breakdown** (SDK `total_cost_usd`, per phase + total) to stderr,
   so stdout stays clean JSON. Use it to measure real cost-per-case on your first runs.
 
+## Scope the case before you collect (`case_scope.py`)
+
+WebPivot's §0 intake is a conversation, and the harness has nobody to talk to. `intel.py open`,
+the SDK driver, the MCP server and every batch run start from a bare seed list — so the scoping a
+Claude Code session gets by *asking* was simply absent from the path that does the volume.
+`case_scope.py` is where the answers live instead: given once, persisted to
+`cases/<case>/scope.json`, and rendered into **every** phase prompt (`{{scope}}`) on every later
+round and resume.
+
+```bash
+python3 harness/orchestrator.py CASE-0001 \
+    --target-class victim_host --purpose attribution \
+    --claim "compromised CMS serving a phishing kit" --basis "victim complaint" \
+    --brand "Example Brand" --how ad --window 2026-03 \
+    --falsifier "the whole site is the operator's, not an injected path" \
+    https://host-a.example
+python3 harness/case_scope.py questions        # what to ask when an analyst IS in the loop
+python3 harness/case_scope.py show CASE-0001   # what a phase is actually being told
+```
+
+It changes three things that were previously guesses:
+
+| | |
+|---|---|
+| **Posture — and it is ENFORCED** | `target_class` resolves to a `fetch_posture`. `threat_actor_infra` (`never_direct_from_analyst_egress`) and `--no-direct-contact` both derive `hostile=True`, which the `audit.py` PreToolUse gate turns into a **hard denial** of outbound collection. A posture that only lives in a prompt is one the model can talk itself out of. `passive_first` deliberately does **not** derive it — passive-first is an *ordering* instruction, and conflating it with a prohibition would turn every unscoped run into a no-fetch run. |
+| **Ownership — what may be clustered** | On `victim_host` the page's WHOIS, favicon, certificate and analytics belong to the **victim**; clustering on them fuses unrelated victims into one imaginary operator estate. The class's `clustering_rule` goes into the collect **and** the judgment prompts — the collector labelling it correctly is no use if the correlator still clusters on it. |
+| **The claim, as a hypothesis** | The requester's assertion is recorded with its **source** and put in front of correlate/verify/assess with its falsifier — never written to the KB as a fact. The structured `Assessment` now carries `premise` + `premise_verdict` (`supported` / `partially_supported` / `not_supported` / `contradicted` / `inconclusive`), so the claim gets **answered** instead of becoming the frame the whole assessment was written inside. |
+
+**It never blocks.** No flags, a corrupt `scope.json`, an unwritable case dir or a typo'd class →
+the run continues under `unknown` (the conservative class) and every prompt tells the model to
+disclose that it is assuming. `premise_verdict` defaults to `inconclusive`, so an omission can
+never read as a claim confirmed. Interactively, the `case_scope` MCP tool reads and writes the
+same record — that is how an analyst's answers reach the automated path.
+
+Vocabulary (classes, postures, questions, verdicts, prohibitions, switches) is tunable data in
+`WebPivot/references/intake.json`, one owner shared with the skill so the two front-ends cannot
+drift. Gate: `tests/test_case_scope.py`.
+
+## Debug dashboard — where the tokens went, and what looks wrong (`dashboard/`)
+
+```bash
+python3 harness/dashboard/serve.py            # → http://127.0.0.1:7788
+python3 harness/dashboard/serve.py --sessions 200 --no-browser
+python3 harness/dashboard/collect.py findings  # same data, as JSON, no server
+```
+
+Python stdlib only — no framework, no npm, no build step. It **reads** five append-only sources
+that already exist and joins them; it instruments nothing, writes nothing, and makes no outbound
+request.
+
+| Source | What it contributes |
+|---|---|
+| `~/.claude/projects/<this repo>/*.jsonl` | Claude Code sessions — exact per-turn tokens (input / output / cache read / cache write, 1h vs 5m), model, effort, tool calls, `stop_reason`, subagent turns |
+| `MEMORY/` + `cases/*/tool_calls.jsonl` | the gate ledger — every call, allowed or **DENIED**, with the reason |
+| `MEMORY/api_usage.jsonl` | third-party credits by provider / case / day |
+| `cases/*/run_cost.jsonl` | the SDK's own per-phase Anthropic cost |
+| `SKILL.md` / `prompts/*.md` / `CLAUDE.md` | the context floor each phase carries before turn 1 |
+
+**Six panels.** *Overview* leads with a findings list, so you learn something is wrong without
+knowing which tab to open. *Trace* **replays one session** — the prompt that went in, the pinned
+context it carried, every tool call with its **arguments** and the **raw result** that came back,
+the reply that came out, and what each turn cost, in order; a run-flow ribbon puts the whole
+session on one line and jumps to any step. It is the panel for *why* an answer was wrong rather
+than *how much* it cost. *Tokens & cache* gives per-session and per-turn input/cache-read/
+cache-write splits, peak context, and cost. *Prompt surface* shows what occupies the window
+before anyone types — the harness pins whole `SKILL.md` bodies as phase system prompts, so a
+paragraph added to a skill is paid for on **every phase of every case** from then on.
+*Tool calls* is the gate ledger with denials and repeated-identical-call detection. *Cost &
+credits* puts the Anthropic estimate next to third-party credits — different ledgers, different
+currencies, never summed.
+
+**Two kinds of number, never mixed.** Anything from a transcript's `usage` is **exact**. Anything
+measured off a file on disk is an **estimate** from chars-per-token and renders differently
+(`≈`, distinct colour). Dollar figures are estimates at pay-as-you-go list prices — on a Pro/Max
+plan your real cost is the flat subscription. `tools/cost_report.py` owns the price table and the
+per-iteration cache-tier accounting; the dashboard imports it rather than restating a price.
+
+**Honest about its own limits.** A bounded scan says it is bounded (a truncated total presented as
+a total is a wrong number, not a partial one). An absent ledger reports *absence of record*, never
+"nothing happened". An unpriced model becomes a finding, because its tokens make every total an
+under-estimate. In the trace, a blob shortened for display states exactly how many characters it
+dropped and offers to re-read the whole value — a silently shortened tool result reads as a tool
+that found little.
+
+**One API response can span several transcript records** — Claude Code writes the thinking block
+and each `tool_use` as its own record and repeats the *same* `usage` object on every one. Billing
+per record therefore multiplies a tool-heavy turn's tokens and cost (2× is routine) while each row
+still looks plausible, so every reader here bills once per `requestId`. Note `tools/cost_report.py`
+does **not** do this yet: its per-session totals are inflated by the same factor.
+
+**Loopback only.** The pages render case names, target domains, operator artifacts and full prompt
+text, with no authentication. A non-loopback bind is refused and the refusal names the right
+answer — `ssh -N -L 7788:127.0.0.1:7788 <host>`. Flip `server.allow_nonlocal_bind` in
+`references/dashboard.json` only if you accept that anyone who can route to the port can read the
+case data.
+
+Thresholds, the findings rules and their explanations, the scan bounds and the prompt-surface
+list are tunable data in `harness/references/dashboard.json` — raise a threshold when a check
+cries wolf, but don't delete the check, or the failure it watches for goes back to being
+invisible. Gate: `tests/test_dashboard.py`.
+
+## Swappable reasoning backend (`HARNESS_BACKEND`)
+The orchestrator is written against the Anthropic Agent SDK, but the reasoning model is **not**
+hard-wired to Anthropic. `harness/sdk_compat.py` reads `HARNESS_BACKEND` and transparently swaps in
+`harness/openai_backend.py` — a drop-in shim over the slice of `claude_agent_sdk` the orchestrator
+uses — so the *same* Collect→Correlate→Assess driver runs against **any OpenAI-compatible
+`/chat/completions` endpoint**. The orchestrator code is untouched.
+
+```bash
+HARNESS_BACKEND=deepseek  python3 harness/orchestrator.py CASE-0001 https://site-a.example
+# HARNESS_BACKEND ∈ { claude (default) | openai | deepseek | kimi | local }
+```
+- Unset / `claude` → the real Anthropic SDK (schema-forced `output_format`, prompt cache, cost meter).
+- `openai|deepseek|kimi|local` → the shim, pointed at the matching base URL + `*_API_KEY`.
+- Note: some reasoning models (e.g. `deepseek-reasoner`) don't do tool-calling, so the tool-driven
+  phases stay on a chat model (e.g. `deepseek-chat`). Use for cost control or air-gapped/local runs.
+
+## Reactive fan-out + adversarial verify (`--fanout`, `--no-verify`)
+Two quality levers on top of the base loop:
+- **`--fanout`** replaces the single sequential Collect session with **one reactive collector agent
+  per seed**, run concurrently (`collect_fanout`). Each seed gets its own hostile/Cloudflare/empty
+  handling instead of sharing one context — better coverage, and faster on multi-seed cases.
+- **Adversarial verify** (on by default; `HARNESS_VERIFY=0` or `--no-verify` to skip) inserts a phase
+  between Correlate and Assess that tries to **refute** every proposed same-operator link before it's
+  committed — a skeptic pass so a plausible-but-wrong cluster edge doesn't survive into the
+  assessment. `HARNESS_VERIFY_MODEL` / `HARNESS_VERIFY_EFFORT` tune it.
+
 ## Files
 - `cli.py` — the `intel` console entrypoint (`open` / `continue` / `status`); `../intel` is the shim.
 - `tools.py` — your CLI scripts wrapped as in-process `@tool`s (+ the egress guardrail).
 - `schemas.py` — the `Assessment` Pydantic model (the structured checkpoint).
-- `orchestrator.py` — the Collect→Correlate→Assess driver + CLI.
+- `orchestrator.py` — the Collect→Correlate→Assess driver + CLI (incl. `--fanout` + adversarial verify).
+- `sdk_compat.py` — the `HARNESS_BACKEND` switch: real `claude_agent_sdk`, or the OpenAI-compat shim.
+- `openai_backend.py` — the drop-in shim that runs the driver on any `/chat/completions` endpoint.
 - `prompts/` — the per-phase **task** prompts (`collect.md` / `correlate.md` / `assess.md`), the
   single editable source of truth for what each phase instructs. `orchestrator._prompt(name, **kw)`
   loads and fills them (`{{token}}`); the phase *system* prompt still comes from the SKILL body.
@@ -56,6 +185,12 @@ Three phases; each is one `query()` call, wired so consistency comes from the sc
   objects to Claude Code / any MCP client (auto-discovered, so it never drifts); `mcp-server` is
   its launch shim, wired up by the repo-root `.mcp.json`.
 - `agents.py` — *optional* subagent definitions for parallel fan-out (ParallelBatch).
+- `audit.py` — the **tool-call gate + ledger**, shared by all three front-ends (see
+  *The guardrail seam*); its policy DATA is `references/tool_policy.json`.
+- `dashboard/` — the **local debug dashboard** (`serve.py` + `collect.py` + `static/`); see
+  *Debug dashboard*. Its tunable rules are `references/dashboard.json`.
+- `case_scope.py` — the **case intake record** (see *Scope the case before you collect*); its
+  vocabulary DATA is `WebPivot/references/intake.json`, shared with the WebPivot §0 intake.
 
 ## Run
 ```bash
@@ -237,6 +372,8 @@ why a run's Domain Summary WHOIS columns come back blank.
 ## Collection behavior & outputs
 Every `pivot_extract` call now, by default:
 - runs **full enrichment** — WHOIS + FOFA + urlscan (needs the API keys in `.env`); `HARNESS_NO_ENRICH=1` turns it off for cheap smoke runs only;
+- resolves **WHOIS with no key** — keyless RDAP (rdap.org bootstrap) + a `.vn` port-43 fallback fill registrar/dates/NS/status on every domain; `WHOISXML_API_KEY` only adds registrant history;
+- emits an active **JARM TLS-stack fingerprint** (`artifacts.jarm`) + a `jarm:<hash>` pivot on Shodan `ssl.jarm:` — it survives a full domain+cert rotation, so it re-finds an operator's origin. Suppressed under `--proxy` (raw-socket probe);
 - **saves the raw DOM** to `cases/<case>/dom/<host>.html` so you can manually analyze it or re-run a pivoting script over it;
 - **detects Cloudflare** (`meta.cloudflare`) and auto-retries the bypass — a real browser via `--render` (uses `WebPivot/.venv`), or FlareSolverr if `HARNESS_FLARESOLVERR=http://host:8191/v1` is set.
 
@@ -254,9 +391,9 @@ server** that serves the *same* `tools.py` tool objects to Claude Code (or any M
 front-ends share one typed, permission-gated surface.
 
 - **Zero duplication / no drift** — it re-implements nothing. It imports `tools.py` and
-  auto-discovers every `@tool` (`pivot_extract`, `kb_cluster`, `cert_overlap`, … — all 13); the
-  handlers and the CLIs under them stay the source of truth. Add a tool to `tools.py` and it appears
-  here automatically.
+  auto-discovers every `@tool` (`pivot_extract`, `kb_cluster`, `cert_overlap`, `impersonation_hunt`,
+  `search_pivot`, `case_clusters`/`case_frontier`/`case_loop`/`case_reopen`, … — all 23); the handlers and the CLIs
+  under them stay the source of truth. Add a tool to `tools.py` and it appears here automatically.
 - **Wired up** by the repo-root `.mcp.json` (`command: ./harness/mcp-server`). The shim runs the
   server under the **WebPivot venv** (tools.py imports `claude_agent_sdk`); edit `PY` in the shim if
   your SDK venv lives elsewhere.
@@ -269,12 +406,57 @@ front-ends share one typed, permission-gated surface.
   `.mcp.json` at startup — check `/mcp`). Egress policy still defaults to non-hostile here; enforce
   hostile egress out of process (below).
 
-## The guardrail seam
-`tools.POLICY["hostile"]` is flipped by the orchestrator for `--hostile` runs; the
-`pivot_extract` tool then **refuses a live fetch** unless called with `passive=true`
-or a `proxy`. That's your egress tradecraft as code. For production, enforce the same
-rule with a `PreToolUse` hook or the `can_use_tool` callback so it can't be bypassed
-in-process, and drop `permission_mode="bypassPermissions"`.
+## The guardrail seam — the tool-call gate (`audit.py`)
+Every tool call passes **one** policy point before it runs, and lands on a ledger whether it
+ran or not. `harness/audit.py` is front-end neutral, so the three drivers cannot drift:
+
+| Front-end | How it reaches the gate |
+|---|---|
+| SDK driver (Anthropic) | a **`PreToolUse` hook**, built per phase by `orchestrator._gate_hook` |
+| DeepSeek / OpenAI shim | `audit.gate()` inline in `openai_backend.query`'s tool loop |
+| Claude Code (stdio MCP) | `audit.gate()` in `mcp_server._call_tool` |
+
+**Why a hook and not `can_use_tool`.** The SDK only consults `can_use_tool` for calls that would
+otherwise *prompt* — and both `permission_mode="bypassPermissions"` **and** `allowed_tools` entries
+that allow a whole tool (exactly what `COLLECT_TOOLS` / `ANALYZE_TOOLS` are) shadow it. The SDK says
+so itself and emits `CanUseToolShadowedWarning`; its own guidance is to use a `PreToolUse` hook to
+gate every call. `tests/test_tool_gate.py` turns that warning into an error so the config can never
+drift back into a gate that is wired but never consulted. The hook is a **closure** over its phase's
+case + posture, because phases run concurrently and hooks fire on the SDK's task.
+
+What it denies (everything else is allowed — and still logged):
+- **hostile posture + an outbound tool** with no `passive=` / `proxy=` — now covering *every*
+  outbound collector, not only the one that implemented its own refusal (`pivot_extract`'s
+  internal check stays, as defence in depth);
+- **`anyrun_submit` without `HARNESS_ALLOW_SUBMIT=1`** — outbound, attributable, irreversible;
+- **a metered call past the run's credit budget** (`budget.max_metered_calls_per_run`, override
+  with `HARNESS_METERED_BUDGET`) — the backstop against a loop re-querying FOFA every round.
+
+A denial is returned **to the model** as text, so it adapts (`passive=true`, `free_only=true`)
+instead of the run dying. The lists, budget and approval env-vars are DATA —
+`harness/references/tool_policy.json` (contributor RULE 3) — so re-classifying a tool needs no
+code change.
+
+**The ledger.** One JSON line per call to `cases/<case>/tool_calls.jsonl`
+(`MEMORY/tool_calls.jsonl` for interactive calls with no case): timestamp, case, phase, backend,
+tool, risk classes, redacted+truncated args, and `allow` / `DENY` with the reason. Credential-shaped
+arguments are never written. An unwritable ledger warns and the run continues — losing a case at
+round 4 costs more evidence than it protects. Each run prints a gate summary beside the cost ledger.
+
+Note the split this completes: `run_cost.jsonl` = what the run *spent* on Anthropic,
+`MEMORY/api_usage.jsonl` = what it spent on third-party credits, `tool_calls.jsonl` = what it
+actually *did*.
+
+**Reading it back** — the `tool_calls` MCP tool, or the CLI:
+```bash
+python3 harness/audit.py report CASE-0001              # summary: classes, by tool, by phase
+python3 harness/audit.py report CASE-0001 --denied     # only what the gate blocked, and why
+python3 harness/audit.py report CASE-0001 --tool pivot_extract --last 20
+python3 harness/audit.py report --all                  # every case + the interactive ledger
+python3 harness/audit.py report CASE-0001 --json       # raw records
+```
+A missing ledger is reported as **absence of record** (the case predates the gate, or nothing has
+run) — never as "the run did nothing", the same discipline as the keyless-capability banner.
 
 ## Auth & billing (read before running)
 The Agent SDK authenticates with an **`ANTHROPIC_API_KEY` (pay-per-token)**, or Bedrock /
