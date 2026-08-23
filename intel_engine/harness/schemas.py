@@ -20,9 +20,38 @@ class ClusterMember(BaseModel):
     )
 
 
+class Alternative(BaseModel):
+    """One benign / competing explanation, put to the evidence.
+
+    Kept as its own list rather than folded into `gaps` because a reader auditing an attribution
+    needs to see WHICH innocent readings were tested and what decided each one. A table where every
+    row is `rejected` is advocacy, not analysis — `cannot_rule_out` is a first-class outcome and
+    must be reflected in `confidence`.
+    """
+
+    explanation: str = Field(
+        description="the competing explanation in one line (shared hosting panel, prior owner of "
+        "the domain, common-name collision, CDN/provider co-tenancy, …)"
+    )
+    status: Literal["rejected", "cannot_rule_out", "partially_rejected"] = Field(
+        description="what the evidence did to it"
+    )
+    why: str = Field(
+        description="the SPECIFIC observation that decided it — an artifact, a date, a prevalence "
+        "count. Never 'unlikely'."
+    )
+
+
 class Assessment(BaseModel):
     """The IntelAnalysis deliverable — mirrors the §7 write-up standard."""
 
+    decision_supported: str = Field(
+        default="",
+        description="one sentence: the question this assessment answers AND the decision it is "
+        "meant to support (registrar/host referral, platform enforcement, law-enforcement matter, "
+        "publication, or internal analytic reference). Sets the threshold of proof the reader "
+        "should apply; without it the reader silently applies their own.",
+    )
     bluf: str = Field(
         description="bottom line up front: one sentence with an estimative word "
         "(assessed / likely / possible)"
@@ -36,9 +65,16 @@ class Assessment(BaseModel):
         default_factory=list,
         description="cited artifacts justifying the attribution level",
     )
+    alternatives: list[Alternative] = Field(
+        default_factory=list,
+        description="the competing explanations considered, each with its status and the evidence "
+        "that decided it. At least one entry whenever an attribution level above 'inconclusive' is "
+        "claimed — an unrejected alternative caps the confidence of the judgment it threatens.",
+    )
     gaps: list[str] = Field(
         default_factory=list,
-        description="what could not be verified, and the competing explanation ruled out",
+        description="what could not be verified — including what a keyless / passive / blocked "
+        "collection could not have seen. Alternatives go in `alternatives`, not here.",
     )
     next_pivots: list[str] = Field(
         default_factory=list, description="prioritised open leads, highest yield/cost first"

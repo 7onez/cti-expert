@@ -272,7 +272,11 @@ def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any
 # ---------------------------------------------------------------- COLLECT tools
 @tool(
     "pivot_extract",
-    "Extract pivot artifacts and write the JSON into the case. `url` may be a URL/host "
+    "Extract pivot artifacts and write the JSON into the case. `url` may also be a local path to a "
+    "victim's saved email (`.eml`): it is parsed to the HTML body so every HTML-side extractor runs "
+    "over what the funnel actually SENT, plus header/CDN-derived selectors (sender domains, the "
+    "sending platform) that emit pivots like any other artifact — the first hop of the funnel, "
+    "which no live fetch of the landing page can recover. `url` may be a URL/host "
     "(domainPivot: favicon hash, tracking/analytics IDs, wallets, emails, third-party infra, plus "
     "the full HTTP request/response headers and an active CORS probe — a foreign-Origin GET+preflight "
     "that reads Access-Control-Allow-Origin: any LITERAL origin the server trusts becomes a "
@@ -329,7 +333,12 @@ def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any
     "topology) or an ANONYMOUS-FTP service — as an ip:misconfig pivot; these are FLAGS only, the "
     "tool never auto-connects). If ALREADY "
     "investigated (a pivot JSON exists in any case), it returns the cached data instead of "
-    "re-collecting — pass force=true to refresh. For HOSTILE targets a direct live fetch is "
+    "re-collecting — pass force=true to refresh. `url` may also be a LOCAL PATH: a saved HTML file, "
+    "or a victim's saved .eml — the email is parsed to its HTML body (so every extractor runs over "
+    "what the funnel actually sent) plus header selectors: the Return-Path/From/DKIM sender domain "
+    "(the operator's own sending infra in a low-effort scam → email:sender_domain, or email:sending_infra "
+    "when it is a public ESP), and embedded image URLs (a logo on a multi-tenant CDN under a per-brand "
+    "path is a fleet selector → email:image_url). For HOSTILE targets a direct live fetch is "
     "refused — pass proxy='<cidr>' to rotate egress, or passive=true with url set to an "
     "already-saved/archived HTML file (captured out-of-band via Wayback/urlscan).",
     {"url": str, "case": str},  # force/passive:bool, proxy:str are optional -> read via args.get()
@@ -544,16 +553,21 @@ async def domain_liveness(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "search_pivot",
     "Multi-engine SEARCH-ENGINE pivot for an indicator — the general-web complement to FOFA/"
-    "PublicWWW (which only see served HTML). Takes ANY indicator (domain, distinctive slogan, "
-    "tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded results URLs "
-    "+ raw OSINT dork queries across a switchable engine set (Google / Yandex / DuckDuckGo / Bing / "
-    "Brave) — off-site mentions, bilingual scam/fraud context, chat handles, paste/code leaks, "
-    "related: sites. It does NOT scrape (SERPs are bot-walled) — FIRE the queries with Claude "
-    "Code's WebSearch (single-engine but free) and/or WebFetch the duckduckgo html URL (the one a "
-    "plain fetch can read; Google/Yandex bot-wall WebFetch), extract candidate hosts from the "
-    "results, and feed the NEW ones back into pivot_extract to close the keyword→search→"
-    "infrastructure loop. Pass engines='google,yandex,duckduckgo' to pick engines; kind='domain'|"
-    "'keyword' to override auto-detection.",
+    "PublicWWW (which only see served HTML). Takes ANY indicator and auto-detects one of four "
+    "KINDS: 'domain' (footprint + off-site mentions + related: sites), 'handle' (a username/alias "
+    "— e.g. a Telegram/Discord/forum handle: emits dox-index, market/staff and cross-platform "
+    "dork context PLUS direct t.me/telegram.im profile and telemetr.io/tgstat ANALYTICS-MIRROR "
+    "URLs that expose a channel's bio, admin list and first-seen date the app hides), 'discord_id' "
+    "(a numeric snowflake — decodes the account-creation date LOCALLY and emits the discord user-"
+    "lookup mirrors), and 'keyword' (a slogan/tracking-ID/wallet — exact string + bilingual scam/"
+    "fraud context + paste/code leaks). It emits ready-to-open, URL-encoded result URLs + the raw "
+    "dork queries across a switchable engine set (Google / Yandex / DuckDuckGo / Bing / Brave). It "
+    "does NOT scrape (SERPs are bot-walled) — FIRE the queries with Claude Code's WebSearch "
+    "(single-engine but free) and/or WebFetch the duckduckgo html URL (the one a plain fetch can "
+    "read; Google/Yandex bot-wall WebFetch), open the `directories` URLs directly, extract "
+    "candidate hosts/handles from the results, and feed the NEW ones back into pivot_extract to "
+    "close the keyword→search→infrastructure loop. Pass engines='google,yandex,duckduckgo' to pick "
+    "engines; kind='domain'|'keyword'|'handle'|'discord_id' to override auto-detection.",
     {"indicator": str},  # engines:str (comma list), kind:str optional -> args.get()
     annotations=READONLY,
 )
@@ -1706,6 +1720,48 @@ async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "capture_screenshot",
+    "Capture a rendered full-page PNG of a live page as TIMESTAMPED, HASHED visual evidence — the "
+    "page as a human sees it (a Telegram channel bio naming admins, a crew card, a members-area "
+    "panel, a deposit page), which is real contemporaneous evidence the DOM/artifact layers do not "
+    "preserve. Renders post-JS via a real browser, so it captures what the page actually DISPLAYS, "
+    "not the empty SPA shell. Writes to cases/<case>/evidence/screenshots/<host>/<UTC>.png with a "
+    "sha256, pixel dimensions and page title recorded in a per-case manifest, so the image is citable "
+    "in a report's evidence ledger and embeddable as a figure (cite the sha256, not the path). "
+    "Captures are timestamped and never overwritten — re-capturing a page dates any change. Many "
+    "evidence pages sit behind ONE interaction (a splash/'ENTER' gate, a cookie wall, a lazy card "
+    "grid): pass click='ENTER NETWORK' to click the first element with that text and re-wait before "
+    "the shot, wait_selector=<css> to wait for an element, or wait_after=<sec> to settle — every "
+    "action taken is recorded in the manifest so a capture that clicked through a gate says so. "
+    "OUTBOUND and ATTRIBUTABLE like any live fetch: on hostile infrastructure pass proxy=<egress> so "
+    "the request does not carry the analyst's own IP. verify=true re-hashes a stored PNG or a case "
+    "manifest to confirm nothing was altered before you cite it. Required: url (or a png/manifest "
+    "path with verify=true). Optional: case, outdir, proxy, label, click, wait_selector, wait_after.",
+    {"url": str},  # case,outdir,proxy,label,click,wait_selector:str; wait_after:num; verify:bool -> args.get()
+)
+async def capture_screenshot(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_screenshot.py")
+    target = str(args.get("url") or "")
+    if not target:
+        return _err("capture_screenshot needs a `url` to capture (or a png/manifest path with verify=true).")
+    if args.get("verify"):
+        r = _run([RENDER_PY, script, "--verify", target], timeout=120)
+        return _ok(r.stdout or r.stderr or "no output")
+    cmd = [RENDER_PY, script, target, "--json"]
+    for flag in ("case", "outdir", "proxy", "label", "click", "wait_after"):
+        if args.get(flag) is not None:
+            cmd += [f"--{flag.replace('_', '-')}", str(args[flag])]
+    if args.get("wait_selector"):
+        cmd += ["--wait-selector", str(args["wait_selector"])]
+    if args.get("full_page") is False:
+        cmd += ["--no-full-page"]
+    r = _run(cmd, timeout=300)      # a real browser render is slow; matches the screenshot timeout
+    if r.returncode != 0:
+        return _err(f"capture_screenshot failed for {target}: {(r.stderr or '')[-500:]}")
+    return _ok(r.stdout or "capture_screenshot produced no output")
+
+
+@tool(
     "anyrun_lookup",
     "ANY.RUN READ-ONLY side — nothing is ever submitted by this tool (that is `anyrun_submit`). "
     "Threat Intelligence Lookup: what samples carrying this indicator DID when detonated — the "
@@ -2012,7 +2068,7 @@ COLLECT_SERVER = create_sdk_mcp_server(
     "collect", tools=[pivot_extract, doc_metadata, analyze_artifact, fallback_probe,
                       impersonation_hunt, search_pivot, censys, intelx_search,
                       anyrun_lookup, anyrun_submit, capability_check,
-                      url_paths, capture_evidence, serp_ads, passive_ssl, ip_info,
+                      url_paths, capture_evidence, capture_screenshot, serp_ads, passive_ssl, ip_info,
                       domain_liveness,
                       detect_login, make_persona, engage_account, harvest_authenticated,
                       engage_report,
@@ -2033,6 +2089,7 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__anyrun_lookup", "mcp__collect__anyrun_submit",
                  "mcp__collect__capability_check",
                  "mcp__collect__url_paths", "mcp__collect__capture_evidence",
+                 "mcp__collect__capture_screenshot",
                  "mcp__collect__serp_ads", "mcp__collect__passive_ssl",
                  "mcp__collect__ip_info",
                  "mcp__collect__domain_liveness",

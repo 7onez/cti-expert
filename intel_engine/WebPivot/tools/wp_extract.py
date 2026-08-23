@@ -41,10 +41,15 @@ _GL_FALLBACK = {
     "dom_skeleton_min_tags": {"tags": 12},
     "social_asset_extensions": [".png", ".jpg", ".svg", ".css", ".js"],
     "platform_default_favicon_mmh3": [342030173],
+    "prose_selectors": {"trigger_keywords": ["risk", "deposit", "invest", "withdraw", "guarantee",
+                        "regulat", "licen", "disclaimer", "liabilit", "terms"],
+                        "min_chars": 60, "max_chars": 240, "max_phrases": 5},
 }
 _GL_REF = load_ref(ref_path(__file__, "generic_labels.json"), _GL_FALLBACK)
 DOM_SKELETON_MIN_TAGS = int(_GL_REF["dom_skeleton_min_tags"]["tags"])
 SOCIAL_ASSET_EXTENSIONS = tuple(_GL_REF["social_asset_extensions"])
+# DATA: references/generic_labels.json -> prose_selectors — copied-disclaimer harvesting controls.
+_PROSE_REF = _GL_REF.get("prose_selectors", _GL_FALLBACK["prose_selectors"])
 
 # DATA: references/social_platforms.json — the platform registry and its base-rate controls.
 _SP_FALLBACK = {
@@ -84,6 +89,16 @@ TRACKER_PATTERNS = [
     ("clarity_ms",           r"c\.clarity\.ms/tag/([a-z0-9]{8,12})|['\"]clarity['\"]\s*,\s*['\"]script['\"]\s*,\s*['\"]([a-z0-9]{8,12})['\"]"),
     ("intercom_appid",       r"app_id\s*[:=]\s*['\"]([a-z0-9]{6,10})['\"]"),
     ("crisp_website",        r"CRISP_WEBSITE_ID\s*=\s*['\"]([a-f0-9-]{30,40})['\"]"),
+    # Stripe PUBLISHABLE key — one Stripe merchant account, and a custodian: Stripe holds the
+    # account holder's identity, bank/payout details and every other domain on the account. Test
+    # keys are account-scoped too (they show the merchant was mid-onboarding).
+    ("stripe_pk",            r"\bpk_(?:live|test)_[A-Za-z0-9]{16,99}\b"),
+    # Firebase project number (messagingSenderId) — one Firebase/Google Cloud project. Distinctive
+    # KEY name so it doesn't collide with the generic app_id used by Intercom/Facebook above.
+    ("firebase_sender_id",   r"messagingSenderId['\"]?\s*[:=]\s*['\"](\d{6,20})['\"]"),
+    # Firebase appId — the colon-delimited 1:<projectnumber>:<platform>:<hash> form is unique to
+    # one Firebase app, so it is matched by STRUCTURE (never a bare `appId`, which is everyone's).
+    ("firebase_appid",       r"\b(1:\d{6,20}:(?:web|android|ios):[A-Za-z0-9]{8,40})\b"),
 ]
 
 CRYPTO_PATTERNS = [
@@ -767,6 +782,42 @@ def extract_footer(html: str):
         if 2 < len(company) <= 80:
             out["copyright"] = company
     return out
+
+# Block-level boundaries become hard breaks BEFORE tags are stripped, so a heading/title/menu item
+# is never glued onto the paragraph that follows it (a glued prefix makes the exact-phrase search
+# over-specific and silently return nothing — the method's most dangerous failure mode).
+_BLOCK_BREAK_RE = re.compile(
+    r"(?i)</(?:p|div|footer|section|li|ul|ol|td|tr|table|h[1-6]|title|head|article|"
+    r"header|nav|main|aside|blockquote)\s*>|<br\s*/?>|<hr\s*/?>")
+# Split candidate text into sentences: on sentence punctuation OR an inserted block break.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+def extract_prose_selectors(html: str):
+    """Distinctive copy-pasted PROSE — risk warnings, disclaimers, withdrawal/verification and
+    T&C blurbs — that gets pasted across a fleet untouched because nobody rewrites the boring legal
+    paragraph per brand. It survives a complete front-end rebuild and is searchable verbatim on a
+    source-code search engine, so it is one of the few selectors that outlives a re-skin.
+
+    Returns the LONGEST candidate sentences that carry a legal/risk trigger word, because an oddly
+    worded or over-specific paragraph is far more discriminating than a short standard warning —
+    which every real broker also publishes. The base-rate caveat rides on the emitted pivot's note:
+    this is a MEDIUM lead needing a tier-1 corroborator, never a cluster on its own."""
+    body = NON_TEXT_BLOCK_RE.sub(" ", html)                 # drop <script>/<style> bodies
+    body = _BLOCK_BREAK_RE.sub("\n", body)                  # hard break at block boundaries
+    text = re.sub(r"[ \t]+", " ", re.sub(r"<[^>]+>", " ", body)).strip()
+    if not text:
+        return []
+    trig = tuple(k.lower() for k in _PROSE_REF["trigger_keywords"])
+    lo, hi = int(_PROSE_REF["min_chars"]), int(_PROSE_REF["max_chars"])
+    seen, cand = set(), []
+    for s in _SENTENCE_SPLIT_RE.split(text):
+        s = s.strip()
+        k = s.lower()
+        if lo <= len(s) <= hi and k not in seen and any(t in k for t in trig):
+            seen.add(k)
+            cand.append(s)
+    cand.sort(key=len, reverse=True)                        # idiosyncratic, dense phrases first
+    return cand[:int(_PROSE_REF["max_phrases"])]
 
 def dom_skeleton_hash(html: str):
     """Structure-only fingerprint: hash of the ordered tag skeleton (template reuse).

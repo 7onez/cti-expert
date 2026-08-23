@@ -16,6 +16,40 @@ flowchart LR
   classDef slate fill:#22333f,color:#fff;
 ```
 
+### Confidence-encoded links + rejected nodes (REQUIRED on any attribution graph)
+
+A relationship graph is read at a glance, so the *strength* of each link must be visible in the
+line, not buried in the prose — otherwise a "Low"-confidence extension (e.g. registrant → operator)
+reads as identical to a confirmed same-operator link, and the diagram overstates the case. Use ONE
+fixed vocabulary and put a legend in the figure so the reader never guesses:
+
+- **solid arrow `-->`** = confirmed / high confidence (≥2 attribution-grade artifacts).
+- **dashed arrow `-.->`** with a `?` label = assessed / **tentative** (the low-confidence extension;
+  the registrant→operator leap belongs here, never on a solid line).
+- **dotted arrow `..>`** into a `rejected` node = a link tested and **discarded** (keeps the
+  falsified alternative visible — the strongest tradecraft signal — without asserting it).
+
+```
+flowchart LR
+  reg["Registrant Name<br/>(registrant)"]:::steel
+  op["site-a.example<br/>operator"]:::brick
+  acct["Same-name individual<br/>(unrelated business)"]:::rejected
+  reg -.->|"assessed · Low"| op
+  reg ..>|"rejected: shared registrar only"| acct
+  subgraph Legend [" "]
+    direction LR
+    l1[" "] -->|confirmed| l2[" "]
+    l3[" "] -.->|"assessed (?)"| l4[" "]
+    l5[" "] ..>|rejected| l6[" "]
+  end
+  classDef brick fill:#8c2d2d,color:#fff;
+  classDef steel fill:#3b5566,color:#fff;
+  classDef rejected fill:#2b2b2b,color:#bbb,stroke:#8c2d2d,stroke-width:2px,stroke-dasharray:4 3;
+```
+
+Keep node text to an identifier plus a one-line role — the narrative carries the detail, the
+diagram carries the topology. A node crammed with a full sentence is the #1 legibility defect.
+
 ## Kill-chain / attack flow
 ```
 flowchart TD

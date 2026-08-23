@@ -66,6 +66,10 @@ def render_terminal(a: Assessment, table_md: str = "") -> None:
         return
     c = Console()
 
+    purpose = (getattr(a, "decision_supported", "") or "").strip()
+    if purpose:
+        c.print(Text(f"Decision supported: {purpose}", style="italic grey58"), "\n")
+
     c.print(Panel(Text(a.bluf, style="bold"), title="[bold cyan]BLUF",
                   border_style="cyan", box=box.ROUNDED, padding=(1, 2)))
 
@@ -99,9 +103,24 @@ def render_terminal(a: Assessment, table_md: str = "") -> None:
             t.add_row(m.domain, "\n".join(f"• {s}" for s in m.shared_artifacts) or "—")
         c.print(t, "\n")
 
+    alts = list(getattr(a, "alternatives", []) or [])
+    if alts:
+        t = Table(title="[bold]Alternative explanations", box=box.SIMPLE_HEAVY,
+                  header_style="bold yellow", expand=True, title_justify="left", padding=(0, 1))
+        t.add_column("Explanation", ratio=3, no_wrap=False)
+        t.add_column("Status", ratio=1)
+        t.add_column("Why", ratio=3, no_wrap=False)
+        for alt in alts:
+            status = alt.status.replace("_", " ")
+            # `cannot rule out` is the row that caps the confidence — make it the loud one.
+            tone = "red" if alt.status == "cannot_rule_out" else (
+                "yellow" if alt.status == "partially_rejected" else "grey58")
+            t.add_row(alt.explanation, Text(status, style=f"bold {tone}"), alt.why)
+        c.print(t, "\n")
+
     for title, items, style in (
         ("Evidence", a.evidence, "green"),
-        ("Gaps & alternatives", a.gaps, "yellow"),
+        ("Gaps & limitations", a.gaps, "yellow"),
         ("Next pivots", a.next_pivots, "cyan"),
     ):
         if not items:
@@ -119,6 +138,11 @@ def render_terminal(a: Assessment, table_md: str = "") -> None:
 def render_markdown(a: Assessment, table_md: str = "") -> str:
     """Return a clean Markdown assessment (renders in editors / GitHub)."""
     out: list[str] = ["# Assessment", ""]
+    # The purpose statement leads the document: it tells the reader what decision this supports and
+    # therefore what threshold of proof to apply. IntelReport Rule 0.
+    purpose = (getattr(a, "decision_supported", "") or "").strip()
+    if purpose:
+        out += [f"*{purpose}*", ""]
     out += [f"**BLUF —** {a.bluf}", ""]
     out += [f"- **Attribution:** `{a.attribution_level}`",
             f"- **Confidence:** `{a.confidence}`"]
@@ -135,8 +159,20 @@ def render_markdown(a: Assessment, table_md: str = "") -> str:
             arts = "<br>".join(m.shared_artifacts).replace("|", "\\|")
             out.append(f"| `{m.domain}` | {arts} |")
         out.append("")
+    alts = list(getattr(a, "alternatives", []) or [])
+    if alts:
+        out += ["## Alternative explanations considered", "",
+                "| Alternative explanation | Status | Why |", "|---|---|---|"]
+        for alt in alts:
+            status = alt.status.replace("_", " ")
+            if alt.status != "rejected":          # the row that caps the confidence
+                status = f"**{status}**"
+            what = alt.explanation.replace("|", "\\|")
+            why = alt.why.replace("|", "\\|")
+            out.append(f"| {what} | {status} | {why} |")
+        out.append("")
     for title, items in (("Evidence", a.evidence),
-                         ("Gaps & alternatives", a.gaps),
+                         ("Gaps & limitations", a.gaps),
                          ("Next pivots", a.next_pivots)):
         if items:
             out += [f"## {title}", ""]

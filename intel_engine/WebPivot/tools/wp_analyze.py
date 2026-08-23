@@ -49,7 +49,7 @@ except Exception:
 
 def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
             extra_cookies=None, proxy: str = None, probe_tls: bool = True,
-            probe_http: bool = True):
+            probe_http: bool = True, extra_artifacts: dict = None):
     # Unwrap Wayback/archive wrappers so the *original* site is treated as the origin.
     effective_url = unwrap_wayback(base_url) if base_url else ""
     is_archived = bool(base_url) and effective_url != base_url
@@ -79,6 +79,8 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     telegram = extract_telegram(all_hrefs)
     phones = extract_phones(html)
     footer = extract_footer(html)
+    # Copy-pasted disclaimer/risk/T&C prose — survives a full re-skin and reverse-searches verbatim.
+    prose_selectors = extract_prose_selectors(html)
     # Page description — owner-written copy; verbatim reuse across sites is a template tell.
     description = meta.get("description") or meta.get("og:description")
     # ETag response header — a strong etag on a static asset can fingerprint a shared origin/kit.
@@ -278,6 +280,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "trackers": trackers,
         "saas_ids": saas_ids,
         "crypto": crypto,
+        "prose_selectors": prose_selectors,
         "emails": emails,
         "socials": socials,
         "script_srcs": script_srcs[:60],
@@ -306,6 +309,11 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
             "response_headers": {k: v for k, v in headers.items() if k != "_status"},
         },
     }
+
+    # Selectors from a non-HTML source (e.g. a victim .eml's headers/CDN hosts) are merged in here
+    # so they land in the artifacts record AND emit pivots through the one build_pivots path.
+    if extra_artifacts:
+        artifacts.update(extra_artifacts)
 
     pivots = build_pivots(artifacts, self_host)
 

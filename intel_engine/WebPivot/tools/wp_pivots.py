@@ -33,6 +33,7 @@ from wp_extract import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_censys import censys_queries, attach_censys_queries  # CenQL builder (keyless — no PAT needed)
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
+from wp_email import ESP_DOMAINS  # sending-infra domains — ESP mailers, not the operator
 
 # ---------------------------------------------------------------- reference data (RULE 3)
 # How much a pivot artifact is WORTH (SaaS-token confidence) and which URL params carry
@@ -362,6 +363,20 @@ def build_pivots(art: dict, base_host: str):
                 {"service": "NerdyData", "query": f'"{v}"'},
                 {"service": "Google/Bing", "query": f'"{v}"'},
             ], note)
+
+    # Copy-pasted disclaimer / risk-warning / T&C prose — a selector that outlives a full front-end
+    # rebuild and reverse-searches verbatim on a source-code search engine.
+    for phrase in art.get("prose_selectors", []):
+        add("prose", phrase, "medium", [
+            {"service": "PublicWWW", "query": f'"{phrase}"'},
+            {"service": "FOFA", "query": _fofa_body(phrase)},
+            {"service": "NerdyData", "query": f'"{phrase}"'},
+            {"service": "urlscan.io", "query": f'"{phrase}"'},
+            {"service": "Google/Bing", "query": f'"{phrase}"'},
+        ], "Copy-pasted disclaimer/risk/T&C prose — survives a full re-skin and reverse-searches "
+           "verbatim. A shared phrase = shared copy/template; the ODD or grammatically broken "
+           "sentence is worth far more than a standard warning, which legit brokers publish too. "
+           "MEDIUM: corroborate with a tier-1 selector before clustering.")
 
     for coin, vals in art.get("crypto", {}).items():
         for v in vals:
@@ -859,6 +874,46 @@ def build_pivots(art: dict, base_host: str):
                     f"http://web.archive.org/cdx/search/cdx?url={base_host}{path}*&output=json"},
             ], "Path the operator asked crawlers not to index — an admin/staging/panel URL "
                "worth checking in the archive before touching it live.")
+
+    # --- Victim-email (.eml) header/CDN selectors -------------------------------------------------
+    # These come from a source a web capture never sees, and they arrive WITH provenance (headers +
+    # a date). A sending domain on a public ESP is infrastructure (low, "the mailer, not the
+    # operator"); the operator's OWN sending domain and, above all, a per-brand image URL on a
+    # multi-tenant CDN are real fleet leads.
+    email_h = art.get("email_headers") or {}
+
+    def _is_esp(host):
+        return bool(host) and host.endswith(ESP_DOMAINS)
+
+    for host in uniq(list(email_h.get("sender_domains", [])) + list(email_h.get("dkim_domains", []))):
+        if _is_esp(host):
+            add("email:sending_infra", host, "low", [
+                {"service": "crt.sh", "query": f"%.{host}"},
+            ], "Return-Path / DKIM domain on a public transactional-mail provider — the mailer the "
+               "operator rented, not the operator. Context only; never cluster on it.")
+        else:
+            add("email:sender_domain", host, "medium", [
+                {"service": "crt.sh", "query": f"%.{host}"},
+                {"service": "urlscan.io", "query": f"domain:{host}"},
+                {"service": "CIRCL PDNS", "query": host},
+            ], "Sender / DKIM-signing domain from the victim's email — in a low-effort scam this is "
+               "the operator's OWN sending infrastructure. Pivot it like the seed domain.")
+
+    for url in email_h.get("image_urls", [])[:15]:
+        add("email:image_url", url, "medium", [
+            {"service": "urlscan.io", "query": f'"{url}"'},
+            {"service": "PublicWWW", "query": f'"{url}"'},
+        ], "Image URL embedded in the operator's automated email. A logo/hero on a MULTI-TENANT CDN "
+           "under a per-brand path is a fleet selector — the path template can enumerate the other "
+           "brands. Recovered from a mailbox, so it carries headers + a date a scan never will.")
+
+    for host in email_h.get("unsubscribe_hosts", [])[:10]:
+        if not _is_esp(host):
+            add("email:unsubscribe_host", host, "low", [
+                {"service": "crt.sh", "query": f"%.{host}"},
+                {"service": "urlscan.io", "query": f"domain:{host}"},
+            ], "List-Unsubscribe host from the email — the CRM/ESP the operator provisioned; a "
+               "non-ESP one is worth a look as operator infra.")
 
     for host in art.get("third_party_hosts", [])[:15]:
         add("third_party_host", host, "low", [

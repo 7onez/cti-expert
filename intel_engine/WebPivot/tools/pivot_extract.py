@@ -94,6 +94,7 @@ import wp_serp     # noqa  (advertising: Ads Transparency advertiser + the click
 import wp_capture  # noqa  (raw evidence bundle: the DOM + every JS/CSS the host served, hashed)
 import wp_ippivot  # noqa  (IPPivot: bare-IP source runs passive IP recon instead of HTML)
 import wp_impersonate  # noqa  (ImpersonationHunt: --hunt-impersonation hunts lookalikes of a seed)
+import wp_email    # noqa  (.eml input: parse a victim's saved email into HTML body + header selectors)
 try:
     import api_usage  # licensed-API credit ledger (per-run summary + JSONL)
 except Exception:
@@ -454,6 +455,7 @@ def main():
     src = args.source
     base_url, headers, cookies = "", {}, None
     html = ""
+    email_art = None          # set on the .eml input branch: header/CDN selectors from a victim email
     live_error = None
     recovered_via = None
     cf_challenge = None       # set if the live target returned a Cloudflare interstitial
@@ -502,8 +504,18 @@ def main():
     if src == "-":
         html = sys.stdin.read()
     elif os.path.isfile(src):
-        with open(src, "r", encoding="utf-8", errors="ignore") as f:
-            html = f.read()
+        with open(src, "rb") as f:
+            raw = f.read()
+        if wp_email.is_eml(src, raw):
+            # A victim's saved email: parse it to the HTML body (so every HTML-side extractor runs
+            # over what the funnel actually sent) plus the header/CDN-derived selectors, which are
+            # merged into the artifacts below so they emit pivots like any other artifact.
+            html, email_art = wp_email.parse_eml(raw)
+            print(f"[+] .eml input: parsed email body ({len(html)} bytes)"
+                  f"{(' — sender ' + ', '.join(email_art['sender_domains'])) if email_art.get('sender_domains') else ''}",
+                  file=sys.stderr)
+        else:
+            html = raw.decode("utf-8", "ignore")
     elif src.startswith(("http://", "https://")):
         seed_ua, seed_proxy = next_ua(), next_proxy()
         host_for_intel = strip_www(urlparse(src).netloc)
@@ -674,7 +686,8 @@ def main():
         ap.error("source must be a URL, an existing file, or '-'")
 
     result = analyze(src, html, base_url, headers, seed_ua, extra_cookies=cookies,
-                     proxy=seed_proxy)
+                     proxy=seed_proxy,
+                     extra_artifacts=({"email_headers": email_art} if email_art else None))
 
     # Dead / blocked live target with no recoverable content: still RECORD the intended
     # host so the run is a persisted fact (not a silent MISS) and any passive intel
