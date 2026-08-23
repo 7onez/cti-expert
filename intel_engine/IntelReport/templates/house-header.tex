@@ -3,7 +3,7 @@
 % generated defs.tex (which defines \CLSLINE and \CASEID).
 \usepackage{fontspec}
 \usepackage[a4paper,margin=2.4cm,headheight=16pt,headsep=14pt,footskip=26pt]{geometry}
-\usepackage{xcolor}
+\usepackage[table]{xcolor}   % [table] -> colortbl: \rowcolors zebra + \rowcolor header band
 \usepackage{titlesec}
 \usepackage{fancyhdr}
 \usepackage{booktabs}
@@ -116,9 +116,21 @@
 
 % Text-heavy tables must stay compact — shrink the font + padding inside every
 % table environment (pandoc pipe/grid tables become longtable or tabular).
-\AtBeginEnvironment{longtable}{\footnotesize}
-\AtBeginEnvironment{tabular}{\small}
-\setlength{\tabcolsep}{4pt}
+% Coloured, readable tables: a steel HEADER BAND (dark bold text stays legible on the light fill)
+% and ZEBRA rows so long evidence tables are easy to track across. Colours are house-palette tints;
+% booktabs rules are softened to the grid colour so they read as separators, not heavy lines.
+\definecolor{tblhead}{HTML}{DEE4E8}   % header band — light steel-grey
+\definecolor{tblalt}{HTML}{F2F2F2}    % zebra stripe — subtle neutral grey
+\arrayrulecolor{grid}
+% header band: append a row-colour right after the top rule, so the (first) header row is filled.
+% (no @ in the saved name — this header is \input by pandoc where @ is not a letter.)
+\let\oldtoprule\toprule
+\renewcommand{\toprule}{\oldtoprule\rowcolor{tblhead}}
+% zebra: alternate from the first BODY row (row 2); the header keeps its band from the rule above.
+\AtBeginEnvironment{longtable}{\footnotesize\rowcolors{2}{tblalt}{white}}
+\AtBeginEnvironment{tabular}{\small\rowcolors{2}{tblalt}{white}}
+\setlength{\tabcolsep}{6pt}            % more horizontal padding inside cells
+\renewcommand{\arraystretch}{1.35}    % more vertical breathing room per row (was cramped)
 
 % Code / verbatim blocks wrap instead of running off the page.
 \fvset{breaklines=true,breakanywhere=true,fontsize=\small}
