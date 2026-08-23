@@ -36,13 +36,18 @@ import hashlib
 import json
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_refs  # noqa: E402 — reference DATA in references/*.json
+import sys
 from datetime import datetime, timezone
 
-# confidence label -> the probability it asserts (ICD-203 flavored). Override per-record
-# with --prob if you use a finer scale.
-CONF_PROB = {"high": 0.85, "medium": 0.60, "low": 0.35,
-             "almost_certain": 0.93, "likely": 0.75, "probable": 0.75,
-             "even": 0.50, "unlikely": 0.25, "remote": 0.08}
+# DATA: references/evidence_weights.json -> confidence_probabilities.
+# Confidence label -> the probability it asserts (ICD-203 flavoured). Override per-record with
+# --prob for a finer scale. Changing a value re-scores every past call, so change it deliberately.
+_EW_FALLBACK = {"confidence_probabilities": {"high": 0.85, "medium": 0.60, "low": 0.35,
+                                             "even": 0.50, "unlikely": 0.25, "remote": 0.08}}
+_EW = kb_refs.load_ref(kb_refs.ref_path(__file__, "evidence_weights.json"), _EW_FALLBACK)
+CONF_PROB = {k: float(v) for k, v in _EW["confidence_probabilities"].items()}
 
 
 def _store(kb_root):

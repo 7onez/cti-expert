@@ -1,0 +1,56 @@
+{
+  "_comment": "Social-platform registry and its base-rate controls, for WebPivot/tools/wp_extract.py::extract_socials / extract_telegram. A social handle is operator-controlled contact infra, so a reused one clusters an operator's properties — which is exactly why the boilerplate here must be excluded: a site-builder's OWN accounts and a platform's utility paths are carried by every tenant. RULE 1: generic platform constants only, never a case handle.",
+  "social_hosts": {
+    "_comment": "Host -> network name. A link to one of these hosts is read as a social account for that network. Matched exact or as a parent domain, so `m.facebook.com` resolves via `facebook.com`. Add a platform here to start recognising it; the value is the network label used in the `social:<network>:<handle>` indicator id.",
+    "entries": {
+      "twitter.com": "twitter",
+      "x.com": "twitter",
+      "t.me": "telegram",
+      "telegram.me": "telegram",
+      "telegram.dog": "telegram",
+      "facebook.com": "facebook",
+      "instagram.com": "instagram",
+      "linkedin.com": "linkedin",
+      "youtube.com": "youtube",
+      "youtu.be": "youtube",
+      "tiktok.com": "tiktok",
+      "github.com": "github",
+      "discord.gg": "discord",
+      "discord.com": "discord",
+      "vk.com": "vk",
+      "wa.me": "whatsapp",
+      "api.whatsapp.com": "whatsapp",
+      "medium.com": "medium",
+      "reddit.com": "reddit",
+      "m.me": "messenger",
+      "zalo.me": "zalo",
+      "zaloapp.com": "zalo"
+    }
+  },
+  "boilerplate_social_handles": {
+    "_comment": "`host/path` pairs that are the SITE BUILDER's own accounts, injected into every tenant's footer. Clustering on one links every Wix/Shopify/Squarespace/Webflow site ever built. Matched exactly against the lowercased `host/path` with any trailing slash removed.",
+    "values": [
+      "facebook.com/shopify",
+      "facebook.com/squarespace",
+      "facebook.com/webflow",
+      "facebook.com/wix",
+      "instagram.com/shopify",
+      "instagram.com/squarespace",
+      "instagram.com/wix",
+      "twitter.com/shopify",
+      "twitter.com/squarespace",
+      "twitter.com/webflow",
+      "twitter.com/wix",
+      "youtube.com/wix"
+    ]
+  },
+  "telegram_boilerplate": {
+    "_comment": "First path segments on t.me that are Telegram's OWN utility endpoints, not a channel or user: share widgets, the instant-view renderer, the URL shortener. A link to t.me/share is a share button on the page, not the operator's channel.",
+    "values": [
+      "iv",
+      "s",
+      "share",
+      "telegram"
+    ]
+  }
+}

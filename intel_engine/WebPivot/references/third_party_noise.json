@@ -105,5 +105,15 @@
       "dnsowl.com",
       "he.net"
     ]
+  },
+  "boilerplate_email_hosts": {
+    "_comment": "Email-host suffixes that are a PLATFORM's system addresses, never the site owner's: a Wix contact relay, a Sentry DSN host, a builder's support mailbox. An address at one of these is infrastructure, so it must not seed a contact or same-operator pivot.",
+    "values": [
+      "wixpress.com",
+      "sentry.io",
+      "squarespace.com",
+      "shopify.com",
+      "webflow.com"
+    ]
   }
 }

@@ -1,6 +1,6 @@
 ---
 name: BinaryPivot
-description: Static IOC extraction from binaries pulled off fraud/scam sites — the file half of a scam funnel (sideloaded Android APK, desktop "trading terminal" .exe/.dmg/.msi, bundled .jar/.zip). Downloads/opens the artifact, hashes it, and pulls the operator-clustering identifiers that survive re-skinning: APK signing-cert SHA-256, package name + permissions, embedded backend/C2 hosts, Firebase/appspot cloud tenant, S3 buckets, crypto wallets, Telegram/WhatsApp handles. Emits WebPivot-shaped pivot JSON so the SAME KB/case graph clusters the app with the web infrastructure. USE WHEN analyze APK, analyze binary, analyze exe, analyze installer, scam app, trading app, sideloaded APK, extract IOCs from file, malware IOCs, signing certificate, package name, APK backend, C2 endpoint, firebase project, mobile app analysis, reverse the app, what does this app connect to, pivot from a downloaded file, app download funnel.
+description: Static IOC extraction from binaries pulled off fraud/scam sites — the file half of a scam funnel (sideloaded Android APK, desktop "trading terminal" .exe/.dmg/.msi, bundled .jar/.zip). Hashes the artifact and pulls the operator-clustering identifiers that survive re-skinning: APK signing-cert SHA-256, package name + permissions, embedded backend/C2 hosts, Firebase/appspot tenant, S3 buckets, crypto wallets, Telegram/WhatsApp handles. Emits WebPivot-shaped JSON so the SAME KB/case graph clusters the app with the web infrastructure. USE WHEN analyze APK/binary/exe/installer, scam app, trading app, extract IOCs from file, malware IOCs, signing certificate, package name, APK backend, C2 endpoint, firebase project, mobile app analysis, what does this app connect to, pivot from a downloaded file, app download funnel, ANY.RUN, anyrun, TI Lookup, sandbox report, has this hash been detonated, what did the sample contact, sandbox-observed C2, threat intelligence lookup for a hash, packed sample real endpoints.
 ---
 
 > **OPSEC — this skill is portable/shared. Never write case data into it.** No real operator
@@ -8,6 +8,8 @@ description: Static IOC extraction from binaries pulled off fraud/scam sites —
 > workflows, tool code, or test fixtures. Investigation data lives only in the git-ignored
 > `cases/` / `knowledge/` / `MEMORY/`. In examples use placeholders (`example.com`,
 > `G-XXXXXXXXXX`, `CASE-0001`). See the repo-root `CLAUDE.md` for the full rule.
+
+---
 
 # BinaryPivot Skill
 
@@ -17,10 +19,34 @@ push. It performs **static** extraction only (no detonation): download (or open 
 hash it, and pull the identifiers that cluster an operator's whole app portfolio even after they
 re-skin the front end.
 
+## 🎯 The GOAL — the same one as WebPivot: unmask the OPERATOR
+
+**The objective is the human behind the estate, not an IOC list.** The file is worth analysing
+because a *front end is rewritten in an afternoon while a build pipeline is not*: the app carries
+identity the website already rotated away from. Hunt these first, and treat everything else as
+estate-expansion:
+
+- **the signing certificate** — CN/O/OU/L and the cert SHA-256: a keystore the operator generated
+  once, kept, and re-signs every build with. The single best cross-app operator key here.
+- **build-machine leftovers** — debug/developer paths, account names, project names, internal
+  hostnames, `BuildConfig`/env constants baked in at compile time.
+- **tenant accounts nobody else can mint** — Firebase/appspot project, S3 bucket, push/analytics
+  and crash-reporting project ids, chat-SaaS tenant.
+- **contact + money rails** — Telegram/WhatsApp handles, support numbers, wallet addresses.
+- **the backend** — embedded API/C2 hosts: the constant the rotating fronts all point at, and the
+  bridge back into `WebPivot` (feed it straight into `pivot_extract`).
+
+A finished analysis says **who** (or names the identity gap and the pivot that closes it), not just
+what the app connects to. Same rails as everywhere else: a shared packer, framework, library or
+threat-family label is **same-kit**, never same-operator; a signing cert from a public/default
+keystore identifies nobody.
+
 > ⚠️ **Authorization + safety first.** Only pull artifacts from infrastructure you are authorized
-> to investigate, from **non-attributable egress** (research VPS/VPN). This tool never executes the
-> sample — it is static analysis. For dynamic detonation use an isolated sandbox (MobSF, Triage,
-> Any.Run), never your workstation.
+> to investigate, from **non-attributable egress** (research VPS/VPN). `analyze_artifact.py` never
+> executes the sample — it is static analysis, and nothing in the collector path detonates anything.
+> For dynamic detonation use an isolated sandbox (MobSF, Triage, ANY.RUN), never your workstation —
+> and treat **sending a sample or URL to a third-party sandbox as an OPSEC decision the analyst
+> makes explicitly**, every time. See *ANY.RUN — the sandbox layer, and the confirmation gate*.
 
 ## The tool — `tools/analyze_artifact.py`
 
@@ -71,7 +97,7 @@ The result is **WebPivot-shaped JSON** (`meta.host` + `artifacts.trackers{label:
 WebPivot KB ingester turns them into shared indicator nodes with no code changes:
 
 ```bash
-# from the intel_engine project root — same ingest path as WebPivot
+# from the intelligence_assist project root — same ingest path as WebPivot
 python3 tools/kb/ingest_webpivot.py --kb knowledge "$CASE"/raw/*.json
 python3 tools/kb/query.py --kb knowledge --shared --min 2
 ```
@@ -80,6 +106,81 @@ A web domain and an APK that share a signing cert / backend host / Firebase proj
 **same cluster** in the case graph and the ICD-203 rollup — which is exactly how the app exposes the
 operator behind a re-skinned website. Set `meta.host` to the **download host** (default when you pass
 a URL) so the artifact anchors onto the site that served it.
+
+## ANY.RUN — the sandbox layer, and the confirmation gate on submitting
+
+Everything above is **static**: it reads the file. ANY.RUN runs it. The API is, in practice, a
+**submission API** — send a file or URL, get an interactive detonation with the network log, dropped
+files and a verdict. **Threat Intelligence Lookup** (searching *other people's* detonations without
+running your own) is a **separate, comparatively limited product**: its own licence, a small
+allowance, and **not included with a plain sandbox subscription** — so `keycheck` first, and treat a
+403 there as *"not entitled"*, never as *"nothing known"*.
+
+```bash
+BP=~/.claude/skills/BinaryPivot
+python3 "$BP/tools/bp_anyrun.py" query file:sha256 <sha256>     # OFFLINE: build the query, no key
+python3 "$BP/tools/bp_anyrun.py" keycheck                       # entitled to TI Lookup at all?
+python3 "$BP/tools/bp_anyrun.py" lookup --sha256 <sha256>       # TI Lookup (separate licence)
+python3 "$BP/tools/bp_anyrun.py" history                        # YOUR OWN past tasks (sandbox key)
+python3 "$BP/tools/bp_anyrun.py" report <task-uuid> [--iocs]    # one task's report / IOCs
+python3 "$BP/tools/analyze_artifact.py" <target> --anyrun       # lookups inside an analysis
+```
+
+### 🛑 Submitting is ALWAYS the analyst's call — ask, every time
+
+```bash
+python3 "$BP/tools/bp_anyrun.py" submit ./sample.bin            # prints the briefing, REFUSES
+python3 "$BP/tools/bp_anyrun.py" submit ./sample.bin --confirm-submission   # only after a yes
+```
+
+A lookup asks a question; a **submission acts**. It hands your case material to a third party and
+then **reaches out and touches the target** from a fingerprintable sandbox. Neither half is
+reversible — deleting the task afterwards un-sends nothing and un-notifies nobody. During triage
+that is a live OPSEC failure mode, not a theoretical one:
+
+- **Public exposure.** On a free plan every task is world-readable and searchable — sample, URL,
+  screenshots, full network log. Operators monitor that feed for their own domains and hashes.
+- **Tipping the operator.** A URL detonation *fetches the live target* from published ANY.RUN
+  egress ranges. They see a known sandbox hit their funnel, and rotate or start cloaking.
+- **A poisoned verdict.** The same filtering means a clean result may just be the decoy these
+  funnels serve to datacenter IPs. **`info` is not exoneration.**
+- **Third-party data handling.** The sample may carry victim PII or client data. Uploading it is a
+  disclosure decision, sometimes a legal one.
+
+**The rule:** never submit as a side effect of "analyze this". Run the static analysis, look for an
+**existing** detonation of the hash (TI Lookup if licensed, VirusTotal, MalwareBazaar, Triage,
+Koodous — someone has often already run it), and if it still must be detonated, **put the risks in
+front of the analyst and get an explicit yes for that submission.** Prefer detonating the downloaded
+**file** over the live **URL** where that answers the question. The code enforces this: `submit()`
+returns the risk briefing and sends nothing unless `confirm=True`; privacy defaults to `owner`
+(only you) with `public` refused unless separately authorized; a free-plan submission is **refused
+rather than silently downgraded** to a public one; and the gate lives in the function signature, so
+editing `references/anyrun.json` can tighten it but never switch it off. MCP tool: `anyrun_submit`
+— call it once *without* `confirm` to get the briefing, ask, then call again with `confirm=true`.
+**Never put a case ID or an analyst/client name in `--tags` or the filename** (RULE 1 crossing an
+API boundary).
+
+### Reading the lookup side
+
+- **It recovers infrastructure static extraction cannot see.** A backend assembled at runtime, or
+  decrypted out of a packed payload, is absent from the strings sweep *by construction* — so a thin
+  result **plus** a `binary:protection` finding is the cue to look here (and the cue that a
+  detonation may genuinely be warranted; see the gate above).
+- **Only observation fields map.** Hashes, contacted domains/IPs/URLs, JARM. A **signing cert, an
+  APK package name and a firebase project id are identity, not observation** — those get no ANY.RUN
+  query (reverse them on VirusTotal / Koodous / Triage, which the pivot already carries).
+- 🚫 **A shared threat FAMILY is same-KIT, never same-operator** — the same class of signal as a
+  shared packer or a shared white-label CDN. Two crews running one commodity stealer are two crews.
+  Policy: `references/anyrun.json → clustering_policy` (`cluster_on` vs `context_only`), enforced by
+  `grade_field()`, which **fails closed** on anything unknown.
+- **Metered**, capped per run and per month against the shared ledger
+  (`references/anyrun.json → request_budget`, or `ANYRUN_MAX_REQUESTS_PER_RUN` /
+  `ANYRUN_MONTHLY_REQUESTS`). A TI Lookup trial is tens of requests — spend them on the two or three
+  artifacts that decide the case.
+- 🔑 **Without `ANYRUN_API_KEY` the layer runs at ~50%** — it still composes the correct TI Lookup
+  query for every indexable artifact (right field, `ip:port` split, bounded window) and gives you
+  the UI address to paste it into, but **executes nothing**. A missing ANY.RUN section therefore
+  does **not** mean the sample is unknown to the sandbox world. Say so before reporting it.
 
 ## Workflow — APK/binary in a scam funnel
 
@@ -102,6 +203,8 @@ a URL) so the artifact anchors onto the site that served it.
 - "what does this trading app connect to", "find its backend / C2"
 - "get the signing cert / package name", "cluster these scam apps"
 - "pivot from the downloaded file", "the site pushes an APK — dig into it"
+- "has anyone detonated this hash", "what did it contact when it ran", "sandbox report for this
+  sample", "ANY.RUN this", "the sample is packed — where are the real endpoints"
 
 ## Notes on reliability
 
@@ -112,6 +215,14 @@ a URL) so the artifact anchors onto the site that served it.
 - Host extraction is **noise-filtered**: reverse-DNS package names (`com.x.y`), class names,
   permission constants, and resource filenames (`config.json`, `libapp.so`) are rejected; hosts
   pulled from a real `http(s)://` URL are trusted.
+- **All of those tables are data, in `references/binary_indicators.json` — extend it, not the
+  Python.** Protectors and installers ship new signatures far faster than this tool changes, so
+  when a sample comes back `protection: none` but is obviously wrapped, add the `.so` name /
+  section name / byte signature to the right group and rerun. Groups: `fake_tlds` and
+  `package_prefixes` (what is a filename, not a host), `pe_section_packers`,
+  `installer_signatures`, `android_protectors`. Each carries a `_comment` with its match
+  semantics (exact vs regex, and which order first-hit-wins applies in).
+  If the tool prints a `[refs] WARNING` it is running on a stub table — fix the file.
 - Static only — dead-code strings and library boilerplate can appear; corroborate a backend host by
   actually resolving/pivoting it before asserting it's live operator infra.
 - **Packer / obfuscation triage** is entropy + signature based (`protection` block in the JSON;

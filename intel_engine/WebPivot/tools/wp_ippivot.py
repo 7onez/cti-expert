@@ -29,7 +29,7 @@ from urllib.parse import urlencode
 
 from wp_common import *      # noqa  — DEFAULT_UA, _secret, uniq, strip_www, _registrable
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
-from wp_recon import fofa_search
+from wp_recon import fofa_search, scan_misconfig
 from wp_analyze import classify_ip
 from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
@@ -80,12 +80,21 @@ def _asn_from_org(org: str):
     return (None, org.strip() or None)
 
 
+#: Per-process memo. A case re-resolves the SAME addresses on every host — one Cloudflare pair
+#: can appear on twenty domains — and IPinfo bills per lookup, so without this a 20-host case
+#: buys the same answer twenty times. An address's ASN/country does not change inside one run,
+#: so the cache is exact rather than a staleness gamble.
+_IPINFO_CACHE: dict[str, dict] = {}
+
+
 def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
     """IPinfo.io lookup — keyless (rate-limited) or richer with IPINFO_TOKEN.
 
     Returns {ip, asn, org_name, hostname, city, region, country, abuse, is_hosting, raw}.
     `hostname` is IPinfo's PTR; `abuse` (email/contact) and `asn`/`company`/`privacy` blocks are
     only populated on token plans — parsed when present, absent-safe otherwise."""
+    if ip in _IPINFO_CACHE:
+        return _IPINFO_CACHE[ip]
     token = _secret("IPINFO_TOKEN", "IPINFO_API_KEY")
     url = f"https://ipinfo.io/{ip}/json"
     if token:
@@ -123,7 +132,33 @@ def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
     priv = data.get("privacy") or {}
     out["is_hosting"] = bool(priv.get("hosting") or priv.get("relay") or priv.get("proxy")
                              or priv.get("vpn") or priv.get("tor")) if isinstance(priv, dict) else False
+    if isinstance(priv, dict):
+        # Keep WHICH privacy flag fired, not just the boolean: "hosting" is ordinary for a scam
+        # site's server, while vpn/proxy/tor on an address the operator connected FROM is a
+        # different statement entirely, and collapsing them loses that.
+        out["privacy_flags"] = sorted(k for k in ("hosting", "proxy", "vpn", "tor", "relay")
+                                      if priv.get(k))
+    _IPINFO_CACHE[ip] = out
     return out
+
+
+def ip_summary(ip: str) -> str:
+    """One human line for an address: `1.2.3.4 · AS13335 Cloudflare (US) · hosting`.
+
+    The domain table, the assessment and the run banner all need the same one-liner; deriving it
+    here keeps three renderers from inventing three different formats for the same fact."""
+    d = ipinfo_lookup(ip)
+    if d.get("error"):
+        return f"{ip} · lookup failed"
+    bits = [ip]
+    who = " ".join(x for x in (d.get("asn"), d.get("org_name")) if x)
+    if who:
+        bits.append(who + (f" ({d['country']})" if d.get("country") else ""))
+    elif d.get("country"):
+        bits.append(d["country"])
+    if d.get("privacy_flags"):
+        bits.append("/".join(d["privacy_flags"]))
+    return " · ".join(bits)
 
 
 # --------------------------------------------------------------------------- DNS (dig / nslookup)
@@ -212,13 +247,15 @@ def mail_intel(name: str, txt_records=None) -> dict:
 
 # --------------------------------------------------------------------------- FOFA / Shodan (ports)
 def fofa_ip(ip: str, full: bool = False) -> dict:
-    """FOFA `ip="<ip>"` → {ports:[...], services:[...], co_domains:[...], total, error?}.
+    """FOFA `ip="<ip>"` → {ports:[...], services:[...], co_domains:[...], misconfig:[...], total, error?}.
 
     Passive: reads FOFA's index of what was last seen on the IP — no packet to the target. Aggregates
     open ports, service fingerprints (protocol/server), and co-hosted domains (same-operator leads).
-    None if no FOFA key is configured."""
+    Requests the `banner` field so `scan_misconfig` can flag an internal-IP leak or an anonymous-FTP
+    service on the box (a FOFA tier that does not return `banner` simply yields an empty misconfig
+    list, never an error here). None if no FOFA key is configured."""
     res = fofa_search(f'ip="{ip}"', size=200,
-                      fields="ip,port,protocol,host,domain,title,server", full=full)
+                      fields="ip,port,protocol,host,domain,title,server,banner", full=full)
     if res is None:
         return None
     if res.get("error"):
@@ -235,7 +272,8 @@ def fofa_ip(ip: str, full: bool = False) -> dict:
             co.add(d)
     return {"query": res.get("query"), "total": res.get("total"),
             "ports": sorted(ports, key=lambda p: int(p) if p.isdigit() else 0),
-            "services": sorted(services), "co_domains": sorted(co)[:80]}
+            "services": sorted(services), "co_domains": sorted(co)[:80],
+            "misconfig": scan_misconfig(res.get("results", []), self_ip=ip)}
 
 
 def shodan_host(ip: str, timeout: int = 20) -> dict:
@@ -453,6 +491,35 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
         ] + ([{"service": "Shodan", "query": f"https://www.shodan.io/host/{ip}"}] if shodan else []),
            f"Open ports / services seen on the IP: {', '.join(services) if services else 'n/a'}. "
            f"An unusual admin/panel port or a distinctive banner narrows the operator.")
+
+    # Misconfiguration triage — a leaked internal address (dual-homed box exposing its topology) or
+    # an anonymous-FTP service, read PASSIVELY from the FOFA index. Emitted as a MEDIUM lead, never
+    # fetched: connecting to the box's FTP is active + attributable and victim data has handling
+    # implications (see references/misconfig_signals.json). A distinct signal from co-tenancy — it
+    # says the box is operator-run and sloppy, and can hand you the real origin / internal map.
+    misconfig = (fofa or {}).get("misconfig") or []
+    if misconfig:
+        artifacts["ip_intel"]["misconfig"] = misconfig
+        leaks = sorted({f"{m['address']} ({m['leak_class']})"
+                        for m in misconfig if m["type"] == "internal_ip_leak"})
+        anon_ports = sorted({m.get("port") or "21"
+                             for m in misconfig if m["type"] == "anon_ftp"})
+        parts = []
+        if leaks:
+            parts.append("internal address(es) leaked into the public banner: " + ", ".join(leaks))
+        if anon_ports:
+            parts.append("ANONYMOUS FTP accepted on port(s) " + ", ".join(anon_ports))
+        add("ip:misconfig", "; ".join(parts), "medium", [
+            {"service": "FOFA", "query": f'ip="{ip}"'},
+            {"service": "note", "query": "PASSIVE flag — do NOT auto-connect (see note)"},
+        ], "Misconfiguration triage lead on this box, read passively from the index (no packet "
+           "sent). " + ". ".join(parts) + ". A leaked RFC1918/loopback address means the box is "
+           "dual-homed and exposing internal topology — pivot the leaked host or redirect for the "
+           "real origin / internal service map, and it marks the asset as operator-run and sloppy "
+           "(a CDN edge never leaks this). Anonymous FTP can hold the phishing kit, uploaded victim "
+           "logs or builder configs and is HIGH-value — but CONNECTING is active + attributable (it "
+           "tells the operator they are being examined) and victim data carries handling/legal "
+           "implications: a human decides that step, the tool never auto-connects.")
 
     # Censys saw the leaf certificate(s) this IP actually serves — the strongest artifact an IP
     # run can yield, because the same cert on a DIFFERENT IP is a same-operator link that survives

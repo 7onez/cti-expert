@@ -150,5 +150,86 @@
       "vue",
       "widget"
     ]
+  },
+  "dom_skeleton_min_tags": {
+    "_comment": "Minimum number of HTML tags a page must have before its tag-skeleton hash may be emitted as a template fingerprint. A page with no tags hashes to sha1('') and every empty, blocked, JSON or plain-text response then shares one 'template', fusing unrelated failed collections into a cluster. A handful of tags (html/head/body/title) is likewise universal and identifies nobody. Raise it if thin pages still cluster; lower it only if a genuinely minimal but distinctive kit is being missed.",
+    "tags": 12
+  },
+  "social_asset_extensions": {
+    "_comment": "File extensions that mark a link to a social platform as a STATIC ASSET rather than a profile. A page embedding github.com's octocat.png or a facebook.com share icon is not declaring an account, but the host matches the social-platform list, so without this the image filename is recorded as the operator's handle and every site using the same icon appears to share it. Matched against the lowercased end of the URL path.",
+    "values": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".svg",
+      ".webp",
+      ".ico",
+      ".css",
+      ".js",
+      ".mjs",
+      ".json",
+      ".xml",
+      ".woff",
+      ".woff2",
+      ".ttf",
+      ".mp4",
+      ".webm",
+      ".pdf"
+    ]
+  },
+  "multi_part_tlds": {
+    "_comment": "Two-part public suffixes, so the registrable apex keeps three labels: bbc.co.uk is one site, not a subdomain of co.uk. Getting this wrong merges every unrelated domain under a country's commercial suffix into one 'apex'. Add a suffix the moment a case touches a ccTLD that uses one.",
+    "values": [
+      "ac.uk",
+      "co.id",
+      "co.il",
+      "co.in",
+      "co.jp",
+      "co.ke",
+      "co.kr",
+      "co.nz",
+      "co.th",
+      "co.uk",
+      "co.za",
+      "com.ar",
+      "com.au",
+      "com.br",
+      "com.cn",
+      "com.co",
+      "com.eg",
+      "com.hk",
+      "com.mx",
+      "com.my",
+      "com.ng",
+      "com.pe",
+      "com.ph",
+      "com.pk",
+      "com.pl",
+      "com.sa",
+      "com.sg",
+      "com.tr",
+      "com.tw",
+      "com.ua",
+      "com.vn",
+      "gov.uk",
+      "net.au",
+      "org.au",
+      "org.uk"
+    ]
+  },
+  "platform_default_favicon_mmh3": {
+    "_comment": "Favicon mmh3 hashes shipped as the DEFAULT icon of a hosted site builder, carried by every tenant that never uploaded its own. Clustering on one links every Wix/Squarespace/Shopify site ever built. WebPivot filters these before pivots are built; tools/kb/references/noise_filters.json carries the same concept for the ingest side, since each skill is imported standalone.",
+    "values": [
+      -908198569,
+      342030173
+    ]
+  },
+  "noise_tracker_ids": {
+    "_comment": "Analytics / tag-manager IDs that belong to a PLATFORM, TEMPLATE or AGENCY rather than to the site owner, so they must never become a same-owner clustering hub. Two kinds, both observed: (a) a host injects its own ID into its parking/default/error pages, so every tenant carries it; (b) a site-builder TEMPLATE ships with the template author's container in the custom-code slot, so every buyer's site carries it — note this one still sits in the OWNER's editable slot, so 'the owner pasted it' does NOT prove it is theirs. A shared analytics ID is normally strong same-owner evidence, which is exactly why a wrong entry here is costly in both directions. VERIFY BEFORE ADDING: reverse the id and check the hits are unrelated businesses (different sectors/countries), then fetch two of them directly and confirm they serve the same id. The platform's own domains showing up in the reverse is the giveaway. Matched EXACTLY against the tracker value. A site's OWN second tracker stays clusterable — a site commonly carries a shared template container and its own private measurement id side by side, and only the shared one belongs here. MIRROR: tools/kb/references/noise_filters.json -> noise_tracker_ids holds the same values for the ingest side. Both copies must stay identical (tests/test_references.py enforces it); edit either and run tools/kb/sync_mirrors.py.",
+    "values": [
+      "UA-26575989-44",
+      "GTM-PLKZVKSB"
+    ]
   }
 }

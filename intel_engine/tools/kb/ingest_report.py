@@ -21,9 +21,13 @@ import argparse
 import json
 import os
 import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+
+sys.path.insert(0, HERE)
+import kb_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 
 _EMAIL = re.compile(r"\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b", re.I)
 _DOMAIN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b", re.I)
@@ -34,13 +38,17 @@ _PHONE = re.compile(r"(?<![\w.])(\+\d[\d\s().\-]{7,16}\d)(?![\w.])")
 _TG = re.compile(r"(?:https?://)?t\.me/([A-Za-z0-9_]{4,})", re.I)
 _WA = re.compile(r"(?:https?://)?(?:wa\.me|api\.whatsapp\.com/send\?phone=)/?(\+?\d{7,15})", re.I)
 
-# never treat these as investigation targets
-_NOISE_DOMAINS = ("example.com", "example.org", "example.net", "google.com", "gmail.com",
-                  "googletagmanager.com", "google-analytics.com", "facebook.com", "t.me",
-                  "wa.me", "whatsapp.com", "cloudflare.com", "github.com", "youtube.com",
-                  "instagram.com", "twitter.com", "x.com", "linkedin.com", "schema.org",
-                  "w3.org", "gstatic.com", "gname.com", "163.com", "hotmail.com", "outlook.com")
-_TLD_STOP = (".md", ".txt", ".json", ".html", ".png", ".jpg", ".py", ".js", ".css")
+# never treat these as investigation targets, and never mistake a filename for a domain
+# DATA: references/registrant_noise.json -> report_noise_domains / report_filename_suffixes
+_IR_FALLBACK = {
+    "report_noise_domains": ("example.com", "google.com", "gmail.com", "facebook.com", "t.me",
+                             "wa.me", "cloudflare.com", "github.com", "schema.org", "w3.org"),
+    "report_filename_suffixes": (".md", ".txt", ".json", ".html", ".png", ".jpg", ".py", ".js",
+                                 ".css"),
+}
+_IR_REF = kb_refs.load_ref(kb_refs.ref_path(__file__, "registrant_noise.json"), _IR_FALLBACK)
+_NOISE_DOMAINS = tuple(_IR_REF["report_noise_domains"])
+_TLD_STOP = tuple(_IR_REF["report_filename_suffixes"])
 
 
 def extract(text):

@@ -24,19 +24,49 @@ import glob
 import json
 import os
 import re
+import sys
+
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_refs import load_ref  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-REF = os.path.join(ROOT, "IntelAnalysis", "references", "risk_indicators.json")
 _IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
+def _ref_file():
+    """Where `risk_indicators.json` lives. It is IntelAnalysis's data (risk scoring is the analyst
+    layer) read by a tools/kb scorer, so it cannot be resolved by `ref_path(__file__, …)` — that
+    helper only looks beside the CALLING module. Both layouts are tried because the skills are
+    imported standalone onto other machines as often as they are run from the repo."""
+    for cand in (os.path.join(ROOT, "IntelAnalysis", "references", "risk_indicators.json"),
+                 os.path.expanduser("~/.claude/skills/IntelAnalysis/references/"
+                                    "risk_indicators.json")):
+        if os.path.exists(cand):
+            return cand
+    return os.path.join(ROOT, "IntelAnalysis", "references", "risk_indicators.json")
+
+
+REF = _ref_file()
+
+# RULE 3. This module used to hand-roll its own loader with a bare `except: return {…}`, which
+# FAILED OPEN SILENTLY: a missing or malformed file left `bph` and `money_trail` as empty dicts,
+# so every bulletproof-hosting and money-trail check quietly matched nothing and a domain on known
+# BPH scored clean. The shared loader keeps the same fallback shape but WARNS on stderr and fills
+# in only the groups that are actually broken. The fallback below is the conservative minimum —
+# NRD day-thresholds only, because a date comparison still works with no reference data while a
+# denylist match cannot.
+_RISK_FALLBACK = {
+    "nrd": {"critical_days": 30, "high_days": 90, "watch_days": 180},
+    "bph": {}, "money_trail": {},
+}
+RISK_INDICATORS = load_ref(REF, _RISK_FALLBACK)
+
+
 def _load_ref():
-    try:
-        return json.load(open(REF, encoding="utf-8"))
-    except Exception:
-        return {"nrd": {"critical_days": 30, "high_days": 90, "watch_days": 180},
-                "bph": {}, "money_trail": {}}
+    """The loaded reference. Kept as a function so the existing call sites are unchanged."""
+    return RISK_INDICATORS
 
 
 def _parse_date(s):

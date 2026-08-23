@@ -1,0 +1,27 @@
+{
+  "_comment": "Tunable thresholds for the ASSESSMENT RENDERER (WebPivot/tools/evidence_report.py). This file exists because the renderer's default reading of a reverse-search result is backwards at the top of the range: it treats 'an independent index returned hits for this artifact' as corroboration and bumps the artifact one notch UP the ICD-203 scale. That is correct for a handful of hits and exactly wrong for a million — a reverse search that returns 2.3M domains has not corroborated anything, it has proved the artifact is shared platform infrastructure (a hosting provider's parking favicon, its default analytics ID, a shared front-end IP). Generic, provider-agnostic numbers only — never case data, per repo CLAUDE.md RULE 1.",
+
+  "saturation_ceilings": {
+    "_comment": "Per-source hit counts at or above which a reverse search of THE ARTIFACT ITSELF stops being corroboration and becomes evidence the artifact is shared/common. Read as: 'if this many unrelated hosts carry this artifact, it cannot single out an operator.' Tune DOWN if saturated artifacts still reach Key Judgments; tune UP if a genuinely large but real cluster is being dismissed. `default` applies to any source not named here. NOTE: reverse-IP counts are deliberately NOT in this list — see `informational_sources`.",
+    "default": 500,
+    "fofa": 500,
+    "urlscan": 500,
+    "crtsh": 1000,
+    "passivedns": 1000,
+    "pdns": 1000,
+    "reverse_whois_current": 200,
+    "reverse_whois_historic": 200
+  },
+
+  "informational_sources": {
+    "_comment": "Sources that reverse something OTHER than the artifact, so a huge count says nothing about the artifact's own specificity. Reverse-IP is the case that matters: a domain on a shared hosting IP returns a million co-tenants, but that is a fact about the IP, not a reason to stop clustering on the DOMAIN. These are reported as co-tenancy context and never trigger the 'shared infrastructure, do not cluster' verdict. Co-tenancy is scored separately by the shared-host logic in evidence_report.py.",
+    "values": ["fofa_ip_reverse", "pdns_ip_reverse"]
+  },
+
+  "saturation_policy": {
+    "_comment": "What a saturated artifact does to the assessment. `invert_likelihood`: mirror the artifact's likelihood across the ICD-203 scale (almost certainly -> remote, very likely -> very unlikely) because the proposition being assessed — 'this identifies a specific operator' — is now being answered in the NEGATIVE. A one-notch downgrade is not enough: it leaves a high-confidence artifact still reading as 'likely' an operator link. `keep_confidence`: do NOT reduce analytic confidence. A reverse search returning two million hits is excellent sourcing for the judgment 'this is shared infrastructure' — we are more sure, not less. `exclude_from_bluf_lead`: never let a saturated artifact headline the Bottom Line Up Front, the specific failure that put a hosting provider's parking favicon forward as the strongest evidence of an operator link.",
+    "invert_likelihood": true,
+    "keep_confidence": true,
+    "exclude_from_bluf_lead": true
+  }
+}

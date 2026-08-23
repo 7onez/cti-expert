@@ -23,10 +23,15 @@ import hashlib
 import argparse
 import ipaddress
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 from knowledge_base import KB  # noqa: E402
-from noise_filters import is_managed_dns, is_parking_favicon, is_noise_email  # noqa: E402
+from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  # noqa: E402
+                           is_noise_indicator, is_noise_tracker, is_saturated_reverse,
+                           is_noise_social_handle, is_bulk_registrant,
+                           is_boilerplate_comment, DOM_SKELETON_MIN_TAGS)
 
 # reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
 try:
@@ -35,6 +40,21 @@ try:
     from pivot_extract import valid_crypto_address as _valid_wallet  # noqa: E402
 except Exception:
     def _valid_wallet(label, value):   # fail-open if collector not importable
+        return True
+
+# The document/image metadata base-rate filter, reused from the collector so BOTH paths agree on
+# what is a tool and what is an operator. It must be re-applied here and not merely trusted from
+# the pivot list, because ingest reads the raw `artifacts.docmeta` block directly: without it a PDF
+# whose Producer is "Microsoft Word" would edge together every unrelated domain that ever hosted a
+# Word-made document — the exact false-cluster class this repo's noise layer exists to prevent.
+# Fails CLOSED (drop the value) rather than open: a missed edge costs a lead, a false edge costs
+# an investigation.
+try:
+    from wp_docmeta import is_generic as _doc_generic  # noqa: E402
+except Exception:
+    def _doc_generic(key, value):
+        print("[ingest] WARNING: wp_docmeta not importable — document/image metadata will NOT be "
+              "ingested (cannot tell a tool string from an operator).", file=sys.stderr)
         return True
 
 # CDN/cloud classifier — a domain's Cloudflare/Fastly edge IP is NOT its operator host, so a
@@ -76,18 +96,51 @@ def _epoch_day(v):
 COLLECTOR = "webpivot/pivot_extract"
 
 _IP_HOST_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?:[:_]\d+)?$")
+
+# ---------------------------------------------------------------- reference data (RULE 3)
+# Every registrant-noise denylist below is DATA in references/registrant_noise.json — the SAME
+# file clean_kb.py, hypothesize.py and ingest_report.py read. Before it existed these lists were
+# pasted into each of those modules and drifted, so a proxy one module knew about kept slipping
+# through another. Add a value there; never re-paste a list into a module.
+_RN_FALLBACK = {
+    "org_suffixes": (" ltd", " llc", " inc", " corp", " gmbh", " limited", " group", " company"),
+    "name_junk": ("registrant state", "registrant country", "reactivation period",
+                  "pending delete", "redemption period"),
+    "role_name_placeholders": ("domain admin", "domain administrator", "registrant", "admin",
+                               "administrator", "hostmaster", "not available", "unknown"),
+    "privacy_markers": ("privacy", "redacted", "whoisguard", "data protected", "withheld",
+                        "not disclosed", "domains by proxy"),
+    "proxy_email_domains": ("godaddy.com", "namecheap.com", "domainsbyproxy.com",
+                            "withheldforprivacy.com", "privacyprotect.org"),
+}
+_RN = kb_refs.load_ref(kb_refs.ref_path(__file__, "registrant_noise.json"), _RN_FALLBACK)
+
 # corporate suffixes → the registrant is an ORG, not a natural person (route to type 'org')
-_ORG_SUFFIX = (" ltd", " ltd.", " llc", " inc", " inc.", " co.", " corp", " gmbh", " pty",
-               " limited", " group", " s.r.o", " pte", " b.v", " co ltd", " company",
-               " technologies", " technology", " systems", " media", " holdings", " sarl")
+_ORG_SUFFIX = tuple(_RN["org_suffixes"])
 # WHOIS field-label / status junk mis-captured as a registrant name
-_NAME_JUNK = ("registrant state", "registrant province", "registrant country", "registrant city",
-              "registrant_", "state/province", "reactivation period", "pending delete",
-              "redemption period", "pending renewal", "on behalf of", "domain buyer")
+_NAME_JUNK = tuple(_RN["name_junk"])
 
 
 def _is_ip_host(host):
     return bool(_IP_HOST_RE.match((host or "").strip()))
+
+
+def _host_of(url):
+    """Bare lowercase hostname of a URL (asset-layer backends arrive as full URLs).
+    Tolerates protocol-relative '//host/path' and a bare host with no scheme."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):
+        u = "https:" + u
+    elif "://" not in u:
+        u = "https://" + u
+    try:
+        netloc = urlparse(u).netloc
+    except Exception:
+        return ""
+    host = netloc.split("@")[-1].split(":")[0].strip().lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
 
 
 def _name_kind(nm):
@@ -108,11 +161,9 @@ REL = {
     "facebook_pixel":       ("uses_pixel",     "high"),
     "yandex_metrica":       ("uses_analytics", "high"),
 }
-_PRIV = ("privacy", "redacted", "whoisguard", "data protected", "withheld",
-         "not disclosed", "domains by proxy", "domainsbyproxy", "registration private",
-         "private by design", "identity protect", "contact privacy", "perfect privacy")
-_PROXY_DOM = ("porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com",
-              "withheldforprivacy.com", "privacyprotect.org", "contactprivacy.com")
+# DATA: references/registrant_noise.json -> privacy_markers / proxy_email_domains
+_PRIV = tuple(_RN["privacy_markers"])
+_PROXY_DOM = tuple(_RN["proxy_email_domains"])
 
 # Generic registrant ROLE placeholders. Distinct from _PRIV, which matches privacy-SIGNALLING
 # words ("privacy", "redacted", "withheld"). These strings contain no such word, so _PRIV misses
@@ -124,15 +175,8 @@ _PROXY_DOM = ("porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com
 # EXACTLY, never as a substring — a substring rule would eat legitimate registrant orgs such as
 # "Admin Solutions GmbH" or "Domain Manager Services Ltd". Exactness is the safety property here:
 # over-filtering silently destroys real attribution, which is the costlier direction.
-_ROLE_NAME_PLACEHOLDERS = frozenset({
-    "domain admin", "domain admins", "domain administrator", "domain administrators",
-    "domainadmin", "domain manager", "domain name administrator", "domain owner",
-    "domain registrant", "registrant", "dns admin", "dns administrator",
-    "admin", "administrator", "hostmaster", "postmaster", "webmaster",
-    "statutory masking enabled", "non public data", "nonpublic data",
-    "not available", "not applicable", "na", "n a", "none", "null", "unknown",
-    "no name", "anonymous", "customer", "client", "owner", "registry",
-})
+# DATA: references/registrant_noise.json -> role_name_placeholders
+_ROLE_NAME_PLACEHOLDERS = frozenset(_RN["role_name_placeholders"])
 
 
 def _norm_name(v):
@@ -295,6 +339,185 @@ def _ingest_ip(kb, d, meta, ip, observed, day):
     return n
 
 
+def _ingest_paths(kb, d, meta, host, observed, ev):
+    """The URL PATH as a clustering indicator — `path_kit:<kit>`.
+
+    Standard clustering hangs off the hostname. An operator who has noticed that buys a pool of
+    disposable hosts and selects which branded template a victim sees by the URL PATH instead:
+    `host-a/<kit>/`, `host-b/<kit>/`, `host-c/<kit>/`. Nothing at host level connects those, so
+    without this edge they ingest as three unrelated one-domain cases. With it they land in one
+    cluster keyed on the kit directory — the one string the operator cannot randomise without
+    rebuilding their own routing.
+
+    Weight is deliberately MEDIUM and the relation is `serves_kit`, not `same_operator`: a shared
+    kit directory is SAME-KIT evidence, exactly like a shared white-label platform artifact. Two
+    resellers of one kit have the same directory names. It is a strong collection lead; the
+    operator claim needs a second, independent artifact class.
+
+    A generic path emits nothing — `wp_paths.kit_segment()` applies the base-rate denylist, so
+    `/login` and `/assets` never become an edge. That guard is the whole reason this is safe."""
+    kit = (meta.get("kit") or "").strip().lower()
+    if not kit:
+        return 0
+    ind = f"path_kit:{kit}"
+    kb.touch("indicator", ind, observed)
+    kb.add_fact("indicator", ind, "kind", "url_path_kit", "webpivot", COLLECTOR, observed,
+                "high", ev)
+    kb.touch("domain", host, observed)
+    kb.add_edge("domain", host, "serves_kit", "indicator", ind, "webpivot", COLLECTOR,
+                observed, "medium", ev)
+    n = 1
+    # The full path is a FACT on the domain, not an edge: two hosts serving the same kit at
+    # different depths are still the same kit, and clustering on the deep path would split them.
+    if meta.get("url_path"):
+        kb.add_fact("domain", host, "url_path", meta["url_path"], "webpivot", COLLECTOR,
+                    observed, "high", ev)
+    if meta.get("path_template"):
+        kb.add_fact("domain", host, "path_template", meta["path_template"], "webpivot",
+                    COLLECTOR, observed, "medium", ev)
+    # Which market the template was localised for — target-selection evidence, never a cluster key
+    # (every kit in a country shares its locale segment).
+    if meta.get("locale"):
+        kb.add_fact("domain", host, "path_locale", meta["locale"], "webpivot", COLLECTOR,
+                    observed, "low", ev)
+    return n
+
+
+def _ingest_ads(kb, d, meta, host, observed, ev):
+    """The ADVERTISING layer as clustering indicators — `ads_advertiser:<AR…>`, `ads_campaign:<id>`.
+
+    An advertiser id is the only artifact in this collector that identifies a PAYER. To run Google
+    ads the operator passed identity verification and put a card on file, so `ads_advertiser:` is a
+    verified, billed account — and unlike a favicon or a template, it is not something a second
+    operator can copy off the first. Every domain that account advertised gets an edge to the same
+    indicator, which is what makes them cluster.
+
+    Two guards, both of which fail toward LOSING a link rather than inventing one:
+
+      - `agency_shaped` (from `clustering_policy.agency_domain_threshold`) marks an advertiser whose
+        creatives point at many unrelated domains. That is a media buyer or affiliate network buying
+        traffic FOR others, and fusing its clients into one operator would be the same mistake as
+        clustering on a shared white-label platform. Those co-advertised domains are recorded as
+        FACTS on the indicator, never as edges, so they stay visible as leads without joining a
+        cluster.
+      - the campaign OBJECT ids (`campaignid`/`adgroupid`/`creative`) are short integers, so they get
+        the medium weight their base rate deserves.
+
+    Cloaking is deliberately NOT an indicator. It is a property of one page — this host serves paid
+    clicks a different page than everyone else — so it lands as a high-confidence FACT on the domain.
+    It is evidence of intent, not of identity, and an indicator would cluster every cloaking site on
+    the internet into one operator."""
+    n = 0
+    adv_block = d.get("advertising") or {}
+    for adv in adv_block.get("advertisers") or []:
+        aid = (adv.get("advertiser_id") or "").strip()
+        if not aid:
+            continue
+        agency = bool(adv.get("agency_shaped"))
+        ind = f"ads_advertiser:{aid}"
+        kb.touch("indicator", ind, observed)
+        kb.add_fact("indicator", ind, "kind", "google_ads_advertiser", "webpivot", COLLECTOR,
+                    observed, "high", ev)
+        if adv.get("advertiser"):
+            # The verified legal name — the string that takes this out of infrastructure and into a
+            # corporate registry. Kept on the indicator so every domain in the cluster inherits it.
+            kb.add_fact("indicator", ind, "funded_by", adv["advertiser"], "webpivot", COLLECTOR,
+                        observed, "high", ev)
+        for k in ("first_shown", "last_shown"):
+            if adv.get(k):
+                kb.add_fact("indicator", ind, k, adv[k], "webpivot", COLLECTOR, observed,
+                            "medium", ev)
+        kb.add_edge("domain", host, "advertised_by", "indicator", ind, "webpivot", COLLECTOR,
+                    observed, "medium" if agency else "high", ev)
+        n += 1
+        if agency:
+            kb.add_fact("indicator", ind, "agency_shaped",
+                        adv.get("agency_note") or "many unrelated target domains", "webpivot",
+                        COLLECTOR, observed, "high", ev)
+        for peer in adv.get("target_domains") or []:
+            peer = _norm_domain(peer)
+            if not peer or peer == host or _is_ip_host(peer):
+                continue
+            if agency:
+                kb.add_fact("indicator", ind, "co_advertised", peer, "webpivot", COLLECTOR,
+                            observed, "low", ev)
+            else:
+                kb.touch("domain", peer, observed)
+                kb.add_edge("domain", peer, "advertised_by", "indicator", ind, "webpivot",
+                            COLLECTOR, observed, "medium", ev)
+            n += 1
+
+    # Campaign object ids come through as pivots (`ads:campaignid` and friends) rather than as a
+    # block, because they are read off the URL and exist even when no key resolved an advertiser.
+    for piv in d.get("pivots") or []:
+        # str(): a pivot value is not always a string (favicon_hash is an int), and this loop sees
+        # every pivot before it filters down to the `ads:` ones.
+        kind, val = (piv.get("kind") or ""), str(piv.get("value") or "").strip()
+        if not val or not kind.startswith("ads:") or kind in ("ads:paid_arrival", "ads:cloaking",
+                                                              "ads:advertiser", "ads:advertiser_id",
+                                                              "ads:co_advertised_domain"):
+            continue
+        ind = f"ads_campaign:{kind.split(':', 1)[1]}={val}"
+        kb.touch("indicator", ind, observed)
+        kb.add_fact("indicator", ind, "kind", "google_ads_campaign_object", "webpivot", COLLECTOR,
+                    observed, "medium", ev)
+        kb.add_edge("domain", host, "ran_campaign", "indicator", ind, "webpivot", COLLECTOR,
+                    observed, "medium", ev)
+        n += 1
+
+    cloak = (meta.get("cloaking") or {})
+    if cloak.get("verdict") == "divergent":
+        kb.add_fact("domain", host, "cloaking", "click_keyed: serves paid-click traffic different "
+                    "content than plain visitors", "webpivot", COLLECTOR, observed, "high", ev)
+        if cloak.get("unlock_url"):
+            kb.add_fact("domain", host, "cloaking_unlock_url", cloak["unlock_url"], "webpivot",
+                        COLLECTOR, observed, "high", ev)
+        n += 1
+    elif cloak.get("verdict") in ("dynamic", "identical"):
+        # Recorded so a later reader knows the probe RAN and what it found — an absent fact and a
+        # negative result must not look the same.
+        kb.add_fact("domain", host, "cloaking_probe", cloak["verdict"], "webpivot", COLLECTOR,
+                    observed, "medium", ev)
+        n += 1
+    return n
+
+
+def _ingest_impersonation(kb, d, meta, host, observed, day):
+    """Ingest an ImpersonationHunt result (meta.kind=='impersonation'). The seed's brand keyword
+    becomes an `indicator brand:<label>`; the seed and every CONFIRMED lookalike get an edge to it,
+    so a brand and its typosquats/TLD-swaps cluster together (union-find keys on domain→indicator
+    edges, exactly like a shared favicon). Resolved lookalikes also get a `hosted_on` edge to their
+    IP indicator, reusing the same IP-clustering IPPivot uses. The unregistered watchlist is NOT
+    ingested — non-existent NRDs aren't infrastructure yet, so they'd only add noise nodes."""
+    art = (d.get("artifacts") or {}).get("impersonation") or {}
+    label = art.get("brand_label")
+    if not label:
+        return 0
+    ev = kb.save_evidence("webpivot", host, d, day)
+    ind = f"brand:{label}"
+    kb.touch("indicator", ind, observed)
+    kb.add_fact("indicator", ind, "kind", "brand_keyword", "webpivot", COLLECTOR, observed, "high", ev)
+    # the seed anchors the brand indicator
+    kb.touch("domain", host, observed)
+    kb.add_edge("domain", host, "is_brand", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
+    n = 1
+    for p in d.get("pivots") or []:
+        if p.get("kind") != "impersonation:candidate":
+            continue
+        look = _norm_domain(p.get("value"))
+        if not look or _is_ip_host(look):
+            continue
+        kb.touch("domain", look, observed)
+        kb.add_edge("domain", look, "impersonates", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, p.get("confidence", "low"), ev)
+        n += 1
+        for ip in ((p.get("live_results") or {}).get("resolves") or []):
+            kb.add_edge("domain", look, "hosted_on", "indicator", f"ip:{ip}",
+                        "webpivot", COLLECTOR, observed, "medium", ev)
+            n += 1
+    return n
+
+
 def ingest_file(kb, path):
     d = json.load(open(path, encoding="utf-8"))
     meta = d.get("meta") or {}
@@ -312,6 +535,13 @@ def ingest_file(kb, path):
     n = 0
 
     kb.touch("domain", host, observed)
+    # URL-path kit FIRST: on a path-routed estate this is the only edge that survives the host
+    # rotation, so it must land even if the rest of the page yielded nothing clusterable.
+    n += _ingest_paths(kb, d, meta, host, observed, ev)
+    # The advertising layer next, for the same reason: an advertiser account is the one artifact
+    # here that identifies a PAYER rather than a configuration, and it survives the re-skin that
+    # invalidates the favicon and DOM facts collected below.
+    n += _ingest_ads(kb, d, meta, host, observed, ev)
     if art.get("title"):
         kb.add_fact("domain", host, "title", art["title"], "webpivot", COLLECTOR, observed, "high", ev)
         n += 1
@@ -323,6 +553,13 @@ def ingest_file(kb, path):
     for label, vals in (art.get("trackers") or {}).items():
         rel, conf = REL.get(label, ("uses_tracker", "medium"))
         for v in vals:
+            if is_noise_tracker(v):
+                # the hosting platform's own ID on its parking/default page — record it as a fact
+                # about this domain, but never as a clustering hub (mirrors parking_favicon)
+                kb.add_fact("domain", host, "platform_tracker", str(v),
+                            "webpivot", COLLECTOR, observed, "low", ev)
+                n += 1
+                continue
             kb.add_edge("domain", host, rel, "indicator", f"{label}:{v}",
                         "webpivot", COLLECTOR, observed, conf, ev)
             kb.add_fact("indicator", f"{label}:{v}", "kind", label, "webpivot", COLLECTOR, observed, conf, ev)
@@ -341,13 +578,11 @@ def ingest_file(kb, path):
                     f"dom_skeleton:{art['dom_skeleton_sha1'][:16]}",
                     "webpivot", COLLECTOR, observed, "medium", ev)
         n += 1
-    # distinctive HTML comments (shared builder tell — boilerplate filtered)
-    _BOILER = ("litespeed", "wordpress", "wp rocket", "yoast", "google tag manager",
-               "wayback", "archived", "page optimized", "quic.cloud", "elementor",
-               "cache", "w3tc", "autoptimize", "begin", "end", "if lt ie", "supported by")
+    # distinctive HTML comments (shared builder tell — boilerplate filtered).
+    # DATA: references/noise_filters.json -> comment_boilerplate / comment_min_length
     for c in art.get("html_comments") or []:
         cl = " ".join((c or "").split()).lower()
-        if len(cl) < 14 or any(b in cl for b in _BOILER):
+        if is_boilerplate_comment(cl):
             continue
         ch = hashlib.sha1(cl.encode("utf-8", "ignore")).hexdigest()[:16]
         kb.add_edge("domain", host, "same_comment", "indicator", f"comment:{ch}",
@@ -375,7 +610,10 @@ def ingest_file(kb, path):
     # --- socials ---
     for net, handles in (art.get("socials") or {}).items():
         for h in handles:
-            ind = f"social:{net}:{h.rstrip('/').split('/')[-1]}"
+            leaf = h.rstrip("/").split("/")[-1]
+            if is_noise_social_handle(leaf):
+                continue        # a share icon or a bundle's `{u}` placeholder is nobody's account
+            ind = f"social:{net}:{leaf}"
             kb.add_edge("domain", host, "uses_contact", "indicator", ind, "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
 
@@ -418,6 +656,193 @@ def ingest_file(kb, path):
             ind = f"{pref}:{v}"
             kb.add_edge("domain", host, "uses_saas", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
             kb.add_fact("indicator", ind, "kind", label, "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+
+    # --- ASSET LAYER (wp_assets): JS bundles, source maps, build config, policy files ---
+    # These are the artifacts that survive a re-skin. The front end is rebuilt per brand; the
+    # backend host, the build-time tenant token, the developer's machine and the operator's
+    # monetization account behind it are not. A shared-platform backend is filtered by the one
+    # noise policy (is_noise_indicator) so a white-label BaaS never becomes a same-operator edge.
+    assets = art.get("assets") or {}
+    _api = assets.get("api") or {}
+
+    for base in (_api.get("api_bases") or [])[:10]:
+        bh = _host_of(base)
+        if not bh or _is_ip_host(bh):
+            continue
+        ind = f"api_endpoint:{bh}"
+        if is_noise_indicator(ind):
+            kb.add_fact("domain", host, "backend_platform", bh,
+                        "webpivot", COLLECTOR, observed, "low", ev)
+            n += 1
+            continue
+        kb.add_edge("domain", host, "uses_backend", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, "high", ev)
+        kb.add_fact("indicator", ind, "kind", "api_endpoint", "webpivot", COLLECTOR,
+                    observed, "high", ev)
+        n += 1
+
+    for ws in (_api.get("websockets") or [])[:6]:
+        wh_host = _host_of(ws)
+        if not wh_host or _is_ip_host(wh_host):
+            continue
+        ind = f"websocket:{wh_host}"
+        if is_noise_indicator(ind):
+            continue
+        kb.add_edge("domain", host, "uses_backend", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, "medium", ev)
+        kb.add_fact("indicator", ind, "kind", "websocket", "webpivot", COLLECTOR,
+                    observed, "medium", ev)
+        n += 1
+
+    # Build-time tenant/brand tokens. Clustering keys on KEY *and* value: the same KEY with a
+    # DIFFERENT value means the same white-label PLATFORM (a same-kit link), not one operator.
+    _BRANDY = ("BRAND", "TENANT", "SITE", "NAME", "PROJECT", "CLIENT", "MERCHANT",
+               "PLATFORM", "COMPANY", "AGENT", "CHANNEL")
+    for key, vals in list((_api.get("build_env") or {}).items())[:20]:
+        if not any(b in key.upper() for b in _BRANDY):
+            continue
+        for v in vals[:3]:
+            ind = f"build_tenant:{key}={v}"
+            kb.add_edge("domain", host, "same_build_tenant", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "build_env", "webpivot", COLLECTOR,
+                        observed, "high", ev)
+            n += 1
+
+    # A compiled bundle digest — same build artifact deployed twice. Same KIT; only an operator
+    # link once corroborated, so it lands at medium like the other template/DOM hashes.
+    for f in (assets.get("collected") or [])[:8]:
+        if f.get("sha256"):
+            ind = f"js_bundle:{f['sha256'][:32]}"
+            kb.add_edge("domain", host, "same_bundle", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "medium", ev)
+            n += 1
+
+    # --- DOCUMENT / IMAGE METADATA (artifacts.docmeta) -------------------------------------
+    # What is embedded in the files the site HOSTS. wp_docmeta already dropped the generic
+    # values (Word / Photoshop / "Windows User"), so anything reaching here is non-generic —
+    # but the EDGE STRENGTH still differs by what the value actually identifies:
+    #   author / copyright / GPS / XMP DocumentID  -> a PERSON or one specific source file (high)
+    #   producer / editing software / camera / file hash -> the SHOP or the KIT (medium), which
+    #   only becomes same-operator once an owner-tied artifact corroborates it.
+    for f in (art.get("docmeta") or {}).get("files", [])[:12]:
+        fm = f.get("meta") or {}
+        for key, prefix, rel, conf in (
+                ("author", "doc_author", "authored_by", "high"),
+                ("artist", "doc_author", "authored_by", "high"),
+                ("xp_author", "doc_author", "authored_by", "high"),
+                ("last_modified_by", "doc_author", "authored_by", "high"),
+                ("company", "doc_company", "names_company", "high"),
+                ("manager", "doc_company", "names_company", "high"),
+                ("copyright", "doc_copyright", "claims_copyright", "high"),
+                ("xmp_document_id", "doc_xmp_docid", "same_source_document", "high"),
+                ("gps", "doc_gps", "photographed_at", "high"),
+                ("producer", "doc_producer", "same_document_shop", "medium"),
+                ("creator_tool", "doc_producer", "same_document_shop", "medium"),
+                ("software", "doc_software", "same_editor", "medium")):
+            val = str(fm.get(key) or "").strip()
+            if not val or len(val) < 3 or _doc_generic(key, val):
+                continue
+            ind = f"{prefix}:{val.lower()[:120]}"
+            kb.add_edge("domain", host, rel, "indicator", ind,
+                        "webpivot", COLLECTOR, observed, conf, ev)
+            kb.add_fact("indicator", ind, "kind", prefix, "webpivot", COLLECTOR,
+                        observed, conf, ev)
+            n += 1
+        cam = " ".join(str(fm.get(k) or "").strip()
+                       for k in ("camera_make", "camera_model")).strip()
+        if len(cam) > 3:
+            ind = f"doc_camera:{cam.lower()[:80]}"
+            kb.add_edge("domain", host, "shot_with", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "medium", ev)
+            kb.add_fact("indicator", ind, "kind", "doc_camera", "webpivot", COLLECTOR,
+                        observed, "medium", ev)
+            n += 1
+        # Only a SAME-SITE file: a third-party image the page hot-links is the other site's
+        # asset, and hashing it would cluster on someone else's stock photo.
+        if f.get("sha256") and f.get("same_site"):
+            ind = f"media:{f['sha256'][:32]}"
+            kb.add_edge("domain", host, "serves_file", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "medium", ev)
+            n += 1
+
+    for sm in (assets.get("source_maps") or [])[:4]:
+        for user in (sm.get("usernames") or [])[:4]:
+            ind = f"dev_user:{user.lower()}"
+            kb.add_edge("domain", host, "built_by", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "dev_username", "webpivot", COLLECTOR,
+                        observed, "high", ev)
+            n += 1
+        for root in (sm.get("project_roots") or [])[:5]:
+            ind = f"dev_project:{root.lower()}"
+            kb.add_edge("domain", host, "same_codebase", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "dev_project", "webpivot", COLLECTOR,
+                        observed, "high", ev)
+            n += 1
+
+    # SPA route inventory. The signature is a same-KIT edge (medium, like the DOM/template
+    # hashes): an identical compiled routing table survives a cosmetic re-skin, but a shared
+    # white-label platform gives every tenant the same routes — so it clusters the KIT, and
+    # only an owner-tied artifact promotes that to same-OPERATOR.
+    _routes = assets.get("routes") or {}
+    if _routes.get("signature"):
+        ind = f"spa_routes:{_routes['signature'][:32]}"
+        kb.add_edge("domain", host, "same_route_table", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, "medium", ev)
+        kb.add_fact("indicator", ind, "kind", "spa_route_signature", "webpivot", COLLECTOR,
+                    observed, "medium", ev)
+        kb.add_fact("domain", host, "spa_router", str(_routes.get("router") or "unknown"),
+                    "webpivot", COLLECTOR, observed, "low", ev)
+        kb.add_fact("domain", host, "spa_route_count", str(_routes.get("count") or 0),
+                    "webpivot", COLLECTOR, observed, "low", ev)
+        n += 3
+    # Admin/funnel routes are recorded as FACTS about this domain, never as clustering edges:
+    # '/admin' is universal and would false-cluster the entire internet.
+    for _r in (_routes.get("admin_routes") or [])[:12]:
+        kb.add_fact("domain", host, "admin_route", _r, "webpivot", COLLECTOR, observed, "low", ev)
+        n += 1
+    for _r in (_routes.get("funnel_routes") or [])[:12]:
+        kb.add_fact("domain", host, "funnel_route", _r, "webpivot", COLLECTOR, observed, "low", ev)
+        n += 1
+
+    # ads.txt / app-ads.txt publisher accounts — owner-registered monetization ids. A stranger
+    # cannot declare your publisher id on their own domain, so this is Tier-A like a GSC token.
+    _wk = assets.get("well_known") or {}
+    for _which in ("ads_txt", "app_ads_txt"):
+        for pub in ((_wk.get(_which) or {}).get("publishers") or [])[:15]:
+            pid = pub.get("publisher_id")
+            if not pid:
+                continue
+            ind = f"adstxt_pub:{pub.get('exchange', '')}:{pid}"
+            kb.add_edge("domain", host, "uses_publisher_account", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "adstxt_publisher", "webpivot", COLLECTOR,
+                        observed, "high", ev)
+            n += 1
+
+    _aasa = _wk.get("apple_app_site_association") or {}
+    for team in (_aasa.get("team_ids") or [])[:5]:
+        ind = f"apple_team:{team}"
+        kb.add_edge("domain", host, "signed_by", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, "high", ev)
+        kb.add_fact("indicator", ind, "kind", "apple_team_id", "webpivot", COLLECTOR,
+                    observed, "high", ev)
+        n += 1
+    for bid in (_aasa.get("bundle_ids") or [])[:6]:
+        ind = f"ios_bundle:{bid.lower()}"
+        kb.add_edge("domain", host, "ships_app", "indicator", ind,
+                    "webpivot", COLLECTOR, observed, "high", ev)
+        kb.add_fact("indicator", ind, "kind", "ios_bundle_id", "webpivot", COLLECTOR,
+                    observed, "high", ev)
+        n += 1
+
+    for contact in ((_wk.get("security_txt") or {}).get("contacts") or [])[:4]:
+        if "@" in contact and not is_noise_email(contact):
+            kb.add_edge("domain", host, "shows_email", "email", contact.lower(),
+                        "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
 
     # --- WHOIS ---
@@ -468,16 +893,34 @@ def ingest_file(kb, path):
         lr = piv.get("live_results") or {}
         kind = piv.get("kind", "")
         # map the pivot back to the indicator id used above
+        # The noise checks must be repeated HERE, not only at the seed's own artifact above: this
+        # loop turns a reverse-search result set into one edge per hit, so a platform artifact
+        # (a parking favicon, a host's own analytics ID) lands thousands of unrelated domains on a
+        # single indicator and makes it the largest cluster in the KB.
         ind = None
         if kind == "favicon_hash":
+            if is_parking_favicon(piv["value"]):
+                continue
             ind = f"favicon:{piv['value']}"
         elif kind.startswith("tracker:"):
+            if is_noise_tracker(piv["value"]):
+                continue
             ind = f"{kind.split(':',1)[1]}:{piv['value']}"
         elif kind.startswith("verification:"):
             ind = f"verification:{kind.split(':',1)[1]}:{piv['value']}"
         # FOFA / urlscan hits
         for engine, block in (("fofa", lr.get("fofa")), ("urlscan", lr.get("urlscan"))):
             if not block or block.get("error") or not ind:
+                continue
+            # BASE RATE: an artifact this widely carried is shared infrastructure, and fanning its
+            # hits out into edges is what makes a hosted platform's default favicon the largest
+            # "cluster" in the KB. The seed's own artifact is still recorded above; only the
+            # reverse-search fan-out is suppressed. Catches values no denylist has enumerated.
+            if is_saturated_reverse(block.get("total")):
+                kb.add_fact("domain", host, "saturated_indicator",
+                            f"{ind} ({engine}: {block.get('total')} hits)",
+                            engine, f"webpivot/{engine}", observed, "low", ev)
+                n += 1
                 continue
             hits = [r.get("domain") or r.get("host") for r in block.get("results", [])] \
                 if engine == "fofa" else block.get("domains", [])
@@ -491,9 +934,24 @@ def ingest_file(kb, path):
                             observed, "medium", ev)
                 n += 1
         # reverse-WHOIS hits (share a registrant)
-        if kind == "whois:registrant_email":
+        # The collector already refuses to emit a privacy-proxied registrant, but this ingest is
+        # also fed by older raw files and by other collectors, and one registrar role mailbox
+        # reversed here writes a `registered_by` edge per hit — hundreds of unrelated domains on
+        # a shared abuse address. Re-check here, and apply the same base-rate cap as above.
+        if kind == "whois:registrant_email" and not is_noise_email(piv.get("value") or ""):
             for stk in ("reverse_whois_current", "reverse_whois_historic"):
                 blk = lr.get(stk) or {}
+                # A registrant CONTACT gets the tighter bulk-registrant bound, not the artifact
+                # cap: it is a much weaker hub, and this is the same number ingest_reverse_whois
+                # enforces — they used to disagree (200 vs 500) and a reseller fell between them.
+                _cnt = blk.get("count") or blk.get("total")
+                if is_bulk_registrant(_cnt):
+                    kb.add_fact("domain", host, "bulk_registrant",
+                                f"registrant {piv.get('value')} ({stk}: {_cnt} domains) "
+                                f"— shared registration service, not an owner",
+                                "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                    n += 1
+                    continue
                 for hd in blk.get("domains", []) or []:
                     if hd and hd != host and not _is_ip_host(hd):
                         kb.add_edge("domain", hd, "registered_by", "email", piv["value"].lower(),

@@ -21,10 +21,19 @@ the map, and the rules that keep the two from drifting.
 
 **Vendored engine — one subtree** (`intel_engine/`, copied one-way from the `intel_engine`
 archive; that archive is **read-only**, cti-expert never writes back to it):
-- `intel_engine/harness/` — the pipeline brain (`cli.py`, `orchestrator.py`, `mcp_server.py`)
-- `intel_engine/tools/` — `intel.py` (deterministic pipeline), `kb/*` (KB + correlation), `cert_overlap`, `case_store`, …
+- `intel_engine/harness/` — the pipeline brain (`cli.py`, `orchestrator.py`, `mcp_server.py`),
+  plus `audit.py` (what the model actually called), `case_scope.py` (intake + egress gate),
+  `sdk_compat.py` / `openai_backend.py` (run the loop on an open-weight backend) and
+  `dashboard/` (loopback-only run inspector)
+- `intel_engine/tools/` — `intel.py` (deterministic pipeline), `case_state.py` (frontier/reopen),
+  `kb/*` (KB + correlation), `cert_overlap`, `case_store`, …
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
-- `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis/` — render + analysis skills (their `SKILL.reference.md` are docs, not skill entrypoints)
+- `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness/` — render,
+  analysis and engagement skills (their `SKILL.reference.md` are docs, not skill entrypoints —
+  the repo has exactly one `SKILL.md`, at the root)
+- `intel_engine/tests/` — the vendored engine's own gates (`test_tool_registry` RULE 2,
+  `test_tool_gate` submission approval, `test_engage`, …); `run_eval.py` puts both this
+  directory and the repo-root `tests/` on the path so neither suite silently stops running
 - `intel_engine/knowledge/` + `intel_engine/cases/` — **local runtime data, gitignored** (a fresh KB; the old data stays in the archive)
 
 ## Anti-drift rule — single source per collector (do NOT create a second copy)

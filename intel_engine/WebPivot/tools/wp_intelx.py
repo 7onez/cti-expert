@@ -46,10 +46,24 @@ triple with its session context, cookies and autofill. That is a different class
   - and operators get infected too. A log whose machine holds the campaign's own panel URL and
     credentials is attribution, not exposure.
 
-So results are ordered by `bucket_rank()` (logs first, public combolists near the bottom), and
-stealer-log hits come back separately as `read_these` / `stealer_log_items` — items to OPEN one by
-one and ask *whose machine is this*, even though the corpus itself can never carry an automatic
-edge. Handle them as real victim credentials: cite metadata, never paste secrets into a case file.
+So the logs are QUERIED FIRST, not merely sorted first. IntelX returns a bounded page, and on a
+long-exposed selector the recycled combolist rows fill it — the one infostealer record is truncated
+away before any sort can reach it. `search()` therefore runs a bucket-scoped pass over
+`leaks.logs` and only then the general pass (`search_plan` in the reference file; one unit each,
+and when the budget allows only one, the logs pass is the one that runs). `logs_pass` records
+whether that happened, which is what makes an empty `read_these` a real negative. Hits come back
+separately as `read_these` / `stealer_log_items` — items to OPEN one by one and ask *whose machine
+is this*, even though the corpus itself can never carry an automatic edge. Handle them as real
+victim credentials: cite metadata, never paste secrets into a case file.
+
+AND SEARCH THE DOMAIN, NOT JUST THE CONTACTS
+---------------------------------------------
+A stealer-log record is indexed by the URL the malware captured, so the CASE DOMAIN is a first-class
+IntelX selector, not an afterthought: searching it returns the machines that held credentials FOR
+that domain — the campaign's victims, the admin/panel URLs the public site never links, and, when
+the operator logged into their own panel from an infected box, the operator's own machine. So
+`search_plan.selector_priority` spends the allowance on the DOMAIN and the EMAIL first (the seed
+host ahead of any discovered sibling), and the contact artifacts after them.
 
 KEYLESS IS A SUPPORTED MODE — AND IT IS ABOUT HALF THE LAYER
 -------------------------------------------------------------
@@ -73,7 +87,9 @@ Auth: `INTELX_KEY` (Account -> Developer tab), sent as the `x-key` header. `INTE
 overrides the API root when your account is issued against a different instance.
 
 CLI:
-  python3 wp_intelx.py search registrant@example.com [--buckets leaks.logs,pastes] [--max 50]
+  python3 wp_intelx.py search registrant@example.com          # logs pass + general pass (2 units)
+  python3 wp_intelx.py search example.com --logs-only         # 1 unit: whose machine held creds?
+  python3 wp_intelx.py search example.com --no-logs-first     # 1 unit, general only (noisier)
   python3 wp_intelx.py phonebook example.com [--target emails]   # PAID endpoint
   python3 wp_intelx.py query example.com          # OFFLINE — selector class + UI URLs, no key
   python3 wp_intelx.py caps                       # what this key is entitled to
@@ -119,6 +135,11 @@ _INTELX_FALLBACK = {
         "domain": {"regex": r"^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$", "strong": True},
     },
     "pivot_kind_map": {"email": "email", "phone": "phone", "domain": "domain", "ip": "ipv4"},
+    # Conservative but NOT neutral: even on a broken data file the logs pass still runs first and
+    # the domain/email selectors are still spent first, because the failure this ordering prevents
+    # (combolist rows truncating the one stealer-log record out of the page) is silent.
+    "search_plan": {"logs_first": True, "first_pass_buckets": ["leaks.logs"],
+                    "selector_priority": ["domain", "email", "url", "phone", "ipv4"]},
     "buckets": {},
     "media_types": {},
     "phonebook_targets": {"all": 0, "domains": 1, "emails": 2, "urls": 3},
@@ -141,6 +162,7 @@ ENDPOINTS = _REFS["endpoints"]
 SEARCH_STATUS = _REFS["search_status"]
 SELECTOR_TYPES = _REFS["selector_types"]
 PIVOT_KIND_MAP = _REFS["pivot_kind_map"]
+SEARCH_PLAN = _REFS["search_plan"]
 BUCKETS = _REFS["buckets"]
 MEDIA_TYPES = _REFS["media_types"]
 PHONEBOOK_TARGETS = _REFS["phonebook_targets"]
@@ -556,9 +578,73 @@ def _poll(path: str, ident: str, key: str, limit: int):
     return rows, None
 
 
+STEALER_LOG_NOTE = (
+    "Stealer-log items matched. Open them ONE BY ONE — a log is one machine at one moment, so the "
+    "question is WHOSE machine: a victim of this campaign (holds credentials FOR the scam's "
+    "front-end → victim/access-vector layer) or the OPERATOR's own box (holds the admin panel, and "
+    "the registrar / CMS / hosting / exchange logins behind it → direct attribution). Corpus "
+    "co-membership is still not an operator link. Handle as real victim credentials: cite the "
+    "item's metadata, never paste secrets into the case file.")
+
+
+def _plan_passes(buckets, logs_first=None):
+    """The bucket-scoped passes to run for one selector, in order.
+
+    An explicit `buckets` from the analyst is honoured verbatim — one pass, exactly what was asked
+    for. Otherwise the plan from `references/intelx.json -> search_plan` applies: the stealer logs
+    are queried in their OWN pass before the general one.
+
+    This is not cosmetic ordering. IntelX returns a bounded page, so on a long-exposed selector the
+    recycled combolist rows fill it and the single infostealer-log record is truncated away before
+    any sort can reach it. Scoping the first pass to `leaks.logs` is what guarantees the logs are
+    actually retrieved; sorting only decides what an analyst reads first among records that came
+    back. Costs one unit per pass — that is the price of the guarantee."""
+    if buckets:
+        return [{"pass": "explicit", "buckets": list(buckets)}]
+    first = [str(b) for b in (SEARCH_PLAN.get("first_pass_buckets") or []) if b]
+    want_logs = SEARCH_PLAN.get("logs_first", True) if logs_first is None else bool(logs_first)
+    passes = []
+    if want_logs and first:
+        passes.append({"pass": "logs", "buckets": first})
+    if not passes or SEARCH_PLAN.get("general_pass", True):
+        passes.append({"pass": "general", "buckets": []})
+    return passes
+
+
+def _search_once(norm, buckets, limit, media, datefrom, dateto, timeout):
+    """One IntelX search -> (summarised_records, error_dict_or_None). `[]` with no error is a REAL
+    negative: the search ran and IntelX has nothing for this selector in these buckets."""
+    body = {"term": norm, "buckets": list(buckets or []), "lookuplevel": 0,
+            "maxresults": limit, "media": media, "sort": 4, "terminate": [],
+            "datefrom": datefrom, "dateto": dateto,
+            "timeout": int(RESULT_LIMITS.get("search_timeout_seconds", 5))}
+    data, err = _call(ENDPOINTS.get("search_start", "/intelligent/search"),
+                      method="POST", body=body, timeout=timeout)
+    if err:
+        return [], err
+    ident = (data or {}).get("id")
+    if not ident:
+        # status 1 with no id = IntelX accepted the selector and has nothing. That IS a real
+        # negative — but only because the search ran, which is exactly the distinction the
+        # keyless mode cannot make.
+        return [], None
+    rows, perr = _poll(ENDPOINTS.get("search_result", "/intelligent/search/result"),
+                       ident, "records", limit)
+    _call(ENDPOINTS.get("search_terminate", "/intelligent/search/terminate"),
+          params={"id": ident})              # free the backend slot; costs nothing
+    recs = [r for r in (summarise_record(r) for r in rows) if r]
+    return recs[:limit], ({"partial": perr} if perr else None)
+
+
 def search(term: str, maxresults: int = None, buckets: list = None, media: int = 0,
-           datefrom: str = "", dateto: str = "", timeout: int = 30):
+           datefrom: str = "", dateto: str = "", timeout: int = 30, logs_first: bool = None):
     """Search IntelX for one strong selector -> {'term','selector','records':[…],'by_bucket':{…}}.
+
+    Runs the STEALER LOGS in their own pass first (see `_plan_passes`), then the general pass, and
+    merges — so a hundred recycled combolist rows can never crowd the one infostealer record out of
+    a bounded page. `logs_pass` records whether that pass actually ran, which is what makes an
+    empty `read_these` a real negative rather than a budget artefact. Pass `buckets` to override
+    the plan, or `logs_first=False` for a single general pass.
 
     Returns None with no key. `{"skipped": …}` when the selector is soft, the budget is spent, or
     the account is not entitled — in every one of those cases the emitted UI URL is still the
@@ -573,35 +659,50 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
                 "term": term, "ui_url": ui}
     limit = int(maxresults or RESULT_LIMITS.get("max_records", 200))
     cost = int(SEARCH_BUDGET.get("search_costs", 1))
+    plan = _plan_passes(buckets, logs_first)
 
     def run():
-        blocked = _budget_block(cost, f"{cls} search")
-        if blocked:
-            return {"skipped": blocked, "term": norm, "selector": cls, "ui_url": ui,
+        out = {"term": norm, "selector": cls, "ui_url": ui, "passes": [],
+               "logs_pass": False}
+        recs, seen, hard_err = [], set(), None
+        for p in plan:
+            blocked = _budget_block(cost, f"{cls} {p['pass']} search")
+            if blocked:
+                # A pass NOT run is recorded as such. The logs pass is first precisely so that a
+                # tight allowance buys log coverage and drops the combolists, never the reverse.
+                out["passes"].append(dict(p, ran=False, skipped=blocked))
+                continue
+            got, err = _search_once(norm, p["buckets"], limit, media, datefrom, dateto, timeout)
+            if err and "partial" not in err:
+                _record("search", 0, norm, ok=False)
+                out["passes"].append(dict(p, ran=False, **err))
+                hard_err = hard_err or err
+                break                    # auth / soft selector / entitlement — later passes fail too
+            _record("search", cost, norm, results=len(got))
+            fresh = 0
+            for r in got:      # the general pass re-returns what the logs pass already found
+                ident = r.get("systemid") or (r.get("name"), r.get("date"), r.get("bucket"))
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                recs.append(r)
+                fresh += 1
+            entry = dict(p, ran=True, records=len(got), new=fresh)
+            if err:
+                entry.update(err)
+            out["passes"].append(entry)
+            if p["pass"] in ("logs", "explicit"):
+                out["logs_pass"] = out["logs_pass"] or any(item_evidence(b) for b in p["buckets"])
+        ran = [p for p in out["passes"] if p.get("ran")]
+        if not ran:
+            # Nothing was queried at all — keep the legacy `skipped` shape so callers that test
+            # `hits.get("skipped")` still see this as "not searched", never as "no hits".
+            reason = hard_err or {}
+            return {"skipped": reason.get("skipped") or reason.get("error")
+                    or (out["passes"][0].get("skipped") if out["passes"] else "no pass ran"),
+                    "term": norm, "selector": cls, "ui_url": ui, "passes": out["passes"],
                     "budget": budget_status()}
-        body = {"term": norm, "buckets": list(buckets or []), "lookuplevel": 0,
-                "maxresults": limit, "media": media, "sort": 4, "terminate": [],
-                "datefrom": datefrom, "dateto": dateto,
-                "timeout": int(RESULT_LIMITS.get("search_timeout_seconds", 5))}
-        data, err = _call(ENDPOINTS.get("search_start", "/intelligent/search"),
-                          method="POST", body=body, timeout=timeout)
-        if err:
-            _record("search", 0, norm, ok=False)
-            return dict(err, term=norm, selector=cls, ui_url=ui)
-        ident = (data or {}).get("id")
-        if not ident:
-            # status 1 with no id = IntelX accepted the selector and has nothing. That IS a real
-            # negative — but only because the search ran, which is exactly the distinction the
-            # keyless mode cannot make.
-            _record("search", cost, norm, results=0)
-            return {"term": norm, "selector": cls, "ui_url": ui, "records": [], "by_bucket": {},
-                    "note": "IntelX ran the search and returned no records for this selector."}
-        rows, perr = _poll(ENDPOINTS.get("search_result", "/intelligent/search/result"),
-                           ident, "records", limit)
-        _call(ENDPOINTS.get("search_terminate", "/intelligent/search/terminate"),
-              params={"id": ident})          # free the backend slot; costs nothing
-        recs = [summarise_record(r) for r in rows]
-        recs = [r for r in recs if r][:limit]
+        recs = recs[:limit]
         # Rank order, newest first within a rank. IntelX returns whatever matched, and on a
         # long-exposed address that is overwhelmingly recycled combolist rows — sorting by bucket
         # value is what keeps the one stealer-log entry from being buried under a hundred of them.
@@ -609,22 +710,27 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
         # freshest infection leads, and the logs as a whole lead the combolists.
         recs.sort(key=lambda r: str(r.get("date") or ""), reverse=True)
         recs.sort(key=lambda r: r.get("rank", 99))
-        _record("search", cost, norm, results=len(recs))
         by_bucket = {}
         for r in recs:
             by_bucket[r.get("bucket") or "(none)"] = by_bucket.get(r.get("bucket") or "(none)", 0) + 1
         by_bucket = dict(sorted(by_bucket.items(), key=lambda kv: bucket_rank(kv[0])))
-        out = {"term": norm, "selector": cls, "ui_url": ui, "records": recs,
-               "by_bucket": by_bucket,
-               "clusterable_hits": [r for r in recs if r.get("clusterable")],
-               # The items to actually open — stealer-log entries, where a single record can name
-               # the operator's own machine. Surfaced separately so a thin `clusterable_hits` list
-               # never reads as "nothing here worth reading".
-               "read_these": [r for r in recs if r.get("read_item")]}
-        if perr:
-            out["partial"] = perr
+        out.update({"records": recs, "by_bucket": by_bucket,
+                    "clusterable_hits": [r for r in recs if r.get("clusterable")],
+                    # The items to actually open — stealer-log entries, where a single record can
+                    # name the operator's own machine. Surfaced separately so a thin
+                    # `clusterable_hits` list never reads as "nothing here worth reading".
+                    "read_these": [r for r in recs if r.get("read_item")]})
+        if out["read_these"]:
+            out["stealer_log_note"] = STEALER_LOG_NOTE
+        elif out["logs_pass"]:
+            out["logs_note"] = ("The stealer-log buckets were queried in their own pass and "
+                                "returned nothing for this selector — a real negative, not a "
+                                "truncated page.")
+        if not recs:
+            out["note"] = "IntelX ran the search and returned no records for this selector."
         return out
-    return _memoised("search", f"{norm}|{','.join(buckets or [])}|{limit}", run)
+    return _memoised("search", f"{norm}|{','.join(buckets or [])}|{limit}|"
+                               f"{'+'.join(p['pass'] for p in plan)}", run)
 
 
 def phonebook(domain: str, target: str = "all", maxresults: int = None, timeout: int = 30):
@@ -715,17 +821,34 @@ def capabilities(timeout: int = 20):
 
 
 # --------------------------------------------------------------------------- run enrichment
-# Priority order for spending a bounded allowance across a result's artifacts. Contact selectors
-# come first because they are the ones that carry ATTRIBUTION — a registrant email or a support
-# phone in a paste or a market listing is the operator's own text. The host itself is last: it is
-# the selector the analyst can most easily run by hand in the UI.
-_ENRICH_PRIORITY = ["email", "phone", "bitcoin", "iban", "url", "ipv4", "domain"]
+# Priority order for spending a bounded allowance across a result's artifacts — DATA
+# (`references/intelx.json -> search_plan.selector_priority`), because which artifact deserves the
+# next unit is exactly the kind of judgement an analyst should be able to retune per case.
+#
+# THE DOMAIN AND THE EMAIL LEAD, and the domain leads them. A stealer-log record is indexed by the
+# URL the malware captured, so searching the CASE DOMAIN returns the machines that held credentials
+# FOR it: the campaign's victims, the admin/panel URLs the public site never links, and — when the
+# operator logged into their own panel from an infected box — the operator's own machine. Nothing
+# else in this toolkit reaches that. The email is next: it is the selector that carries identity
+# across corpora. Contact artifacts (phone, wallet) follow, since they carry the operator's own
+# advertising copy in pastes and market listings.
+_ENRICH_PRIORITY = [str(s) for s in (SEARCH_PLAN.get("selector_priority") or []) if s] or \
+                   ["domain", "email", "url", "phone", "bitcoin", "iban", "ipv4"]
 
 
 def _enrich_targets(result: dict) -> list:
     """[(selector_class, value, pivot)] for every artifact in a result IntelX can search, ordered
     by `_ENRICH_PRIORITY` and de-duplicated on the normalised value."""
     seen, rows = set(), []
+    # The SEED HOST goes in first, so that among the domains it is the one the allowance is spent
+    # on before any discovered sibling: it is the hostname a stealer log would have captured a
+    # credential for, i.e. the one most likely to name an infected machine that matters.
+    host = (result.get("meta") or {}).get("host")
+    if host:
+        cls, norm = classify_selector(str(host))
+        if cls == "domain":
+            seen.add(norm)
+            rows.append((cls, norm, None))
     for piv in result.get("pivots") or []:
         sel = selector_for_kind(piv.get("kind"))
         if not sel:
@@ -735,12 +858,7 @@ def _enrich_targets(result: dict) -> list:
             continue
         seen.add(norm)
         rows.append((cls, norm, piv))
-    host = (result.get("meta") or {}).get("host")
-    if host:
-        cls, norm = classify_selector(str(host))
-        if cls == "domain" and norm not in seen:
-            seen.add(norm)
-            rows.append((cls, norm, None))
+    # Stable — so within a selector class the seed host keeps its head start.
     rows.sort(key=lambda r: _ENRICH_PRIORITY.index(r[0]) if r[0] in _ENRICH_PRIORITY else 99)
     return rows
 
@@ -755,8 +873,14 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
     returns are new collection targets, not just evidence.
 
     Spending is bounded twice: by the module's own run cap and by `max_selectors`, and the targets
-    are ordered so a small allowance is spent on the contact selectors that carry attribution
-    rather than on whatever happened to sort first.
+    are ordered by `search_plan.selector_priority` — the SEED DOMAIN and the operator's EMAIL
+    first, because a stealer-log record is indexed by the URL it captured, so those two are the
+    selectors that can name an infected machine (a victim's, or the operator's own).
+
+    Each selector normally costs TWO units, not one: the stealer logs are queried in their own pass
+    ahead of the general one so the public breach corpora cannot fill the page first. `max_selectors`
+    counts UNITS, so a cap of 10 buys 5 fully-searched selectors — or 10 log-only ones with
+    `search_plan.general_pass` set false.
 
     Keyless / --free-only: nothing is queried and `result['intelx']` carries the capability
     statement instead, so the case file records that these indexes were NOT consulted."""
@@ -775,24 +899,29 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
         host = (result.get("meta") or {}).get("host")
         cls, norm = classify_selector(str(host or ""))
         if cls == "domain":
+            before = budget_status()["spent_this_run"]
             pb = phonebook(norm) or {}
             out["phonebook"] = pb
+            limit -= max(0, budget_status()["spent_this_run"] - before)
             if pb.get("emails") or pb.get("domains"):
                 # These are COLLECTION TARGETS, not conclusions: an address IntelX saw under the
                 # apex still has to be corroborated before it attributes anything.
                 out["discovered"] = {"emails": pb.get("emails", [])[:50],
                                      "subdomains": pb.get("domains", [])[:50],
                                      "urls": pb.get("urls", [])[:50]}
-            limit = max(0, limit - 1)
+            limit = max(0, limit)
 
     for cls, value, piv in targets:
         if limit <= 0:
             out["skipped_for_budget"].append(value)
             continue
+        before = budget_status()["spent_this_run"]
         hits = search(value)
         if not isinstance(hits, dict):
             continue
-        limit -= 1
+        # Charge what was ACTUALLY spent (a selector is normally two passes), so `limit` stays a
+        # unit budget and `skipped_for_budget` stays truthful about what was left unsearched.
+        limit -= max(1, budget_status()["spent_this_run"] - before)
         if piv is not None:
             piv.setdefault("live_results", {})["intelx"] = hits
         out["searched"].append({"selector": cls, "value": value,
@@ -803,17 +932,24 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
                                 # `clusterable` because it is the opposite trade-off: no automatic
                                 # edge, but the highest chance of naming a machine that matters.
                                 "read_these": len(hits.get("read_these") or []),
+                                # Did the logs-scoped pass actually run for this selector? Without
+                                # it, zero `read_these` says nothing — with it, it is a negative.
+                                "logs_pass": bool(hits.get("logs_pass")),
                                 "skipped": hits.get("skipped")})
         if hits.get("read_these"):
             out.setdefault("stealer_log_items", []).extend(hits["read_these"][:10])
+    searched = out["searched"]
+    out["logs_coverage"] = {
+        "selectors_with_logs_pass": [s["value"] for s in searched if s.get("logs_pass")],
+        "selectors_without_logs_pass": [s["value"] for s in searched if not s.get("logs_pass")]}
     if out.get("stealer_log_items"):
+        out["stealer_log_note"] = STEALER_LOG_NOTE
+    elif out["logs_coverage"]["selectors_with_logs_pass"]:
         out["stealer_log_note"] = (
-            "Stealer-log items matched. Open them individually — a log is one machine at one "
-            "moment, so the question is WHOSE machine: a victim of this campaign (holds "
-            "credentials for the scam's front-end → victim/access-vector layer) or the OPERATOR's "
-            "own box (holds the admin panel, registrar, CMS or exchange logins behind it → direct "
-            "attribution). Corpus co-membership is still not an operator link. Handle as real "
-            "victim credentials: cite the item's metadata, never paste secrets into the case file.")
+            "The stealer-log buckets were queried FIRST for "
+            f"{len(out['logs_coverage']['selectors_with_logs_pass'])} selector(s) and returned "
+            "nothing. That is a real negative for those selectors — not a page filled by breach "
+            "dumps before the logs were reached.")
     if out["skipped_for_budget"]:
         out["note"] = (f"{len(out['skipped_for_budget'])} selector(s) were NOT searched — the "
                        f"per-run IntelX cap was reached. Their absence from this file is a budget "
@@ -880,7 +1016,7 @@ __all__ = ["intelx_key", "intelx_configured", "api_root", "classify_selector", "
            "search", "phonebook", "item_selectors", "capabilities", "enrich_result",
            "capability", "banner_lines",
            "bucket_grade", "bucket_rank", "item_evidence", "clusterable", "summarise_record",
-           "budget_status", "month_spent",
+           "budget_status", "month_spent", "STEALER_LOG_NOTE", "SEARCH_PLAN",
            "ENDPOINTS", "SELECTOR_TYPES", "PIVOT_KIND_MAP", "BUCKETS", "PHONEBOOK_TARGETS",
            "PLAN_CAPABILITIES", "SEARCH_BUDGET", "RESULT_LIMITS", "UI_TEMPLATES",
            "CLUSTERING_POLICY"]
@@ -889,9 +1025,17 @@ __all__ = ["intelx_key", "intelx_configured", "api_root", "classify_selector", "
 def main():
     ap = argparse.ArgumentParser(description="Intelligence X selector search + keyless query builder")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("search", help="search one strong selector (1 unit)")
+    p = sub.add_parser("search", help="search one strong selector (logs pass + general pass, "
+                                      "1 unit each)")
     p.add_argument("term")
-    p.add_argument("--buckets", default="", help="comma list, e.g. leaks.logs,pastes")
+    p.add_argument("--buckets", default="", help="comma list, e.g. leaks.logs,pastes — overrides "
+                                                 "the two-pass plan and searches exactly these")
+    p.add_argument("--no-logs-first", dest="logs_first", action="store_false", default=None,
+                   help="skip the stealer-log pass and run ONE general search (halves the cost, "
+                        "and lets recycled breach rows fill the page before the logs are reached)")
+    p.add_argument("--logs-only", action="store_true",
+                   help="run ONLY the stealer-log pass (1 unit) — the cheap high-yield question: "
+                        "is there an infected machine holding credentials for this selector?")
     p.add_argument("--max", type=int, default=None)
     p.add_argument("--datefrom", default="")
     p.add_argument("--dateto", default="")
@@ -941,8 +1085,11 @@ def main():
             file=sys.stderr)
         return 2
     elif args.cmd == "search":
-        out = search(args.term, maxresults=args.max,
-                     buckets=[b.strip() for b in args.buckets.split(",") if b.strip()],
+        bk = [b.strip() for b in args.buckets.split(",") if b.strip()]
+        if args.logs_only and not bk:
+            bk = [str(b) for b in (SEARCH_PLAN.get("first_pass_buckets") or ["leaks.logs"])]
+        out = search(args.term, maxresults=args.max, buckets=bk,
+                     logs_first=args.logs_first,
                      datefrom=args.datefrom, dateto=args.dateto)
     elif args.cmd == "phonebook":
         out = phonebook(args.domain, target=args.target, maxresults=args.max)

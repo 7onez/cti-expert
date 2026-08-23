@@ -25,6 +25,36 @@ trap 'rm -f "$F"' EXIT
 # synthetic placeholder range from that table (e.g. UA-100000001); a real UA carries a dashed
 # property suffix, which this pattern deliberately does not match.
 ALLOW='X{5,}|example\.(com|org)|CASE-0001|ExampleBitcoinAddress|UA-10000000[0-9]'
+# The placeholder LOCAL-PARTS from CLAUDE.md's table (`registrant@…`, `operator@…`) stay
+# placeholders whichever domain follows them. The noise-filter tests need a real personal-provider
+# domain — asserting that `registrant@163.com` is NOT filtered is the whole point of the case — so
+# the domain cannot be swapped for example.com without deleting the test's meaning.
+ALLOW="$ALLOW"'|(registrant|operator)@'
+
+# GENERIC PUBLIC CONSTANTS — enumerated one by one, never a class-wide hole.
+#
+# CLAUDE.md already exempts "generic public constants … the Sedo/Wix default-favicon hashes",
+# because they describe the TOOLING, not a case. These are that same class in wallet/tracker shape:
+# they exist in the code precisely so the clustering logic can EXCLUDE them, and treating one as an
+# operator artifact is the false-positive the lists were written to prevent.
+#
+# Each entry is listed literally and justified. Adding a value here is a review decision, not a
+# convenience: a bare `0x[0-9a-f]{40}` escape hatch would silence every real ETH wallet too.
+#   TR7NHqje…  USDT-TRC20 token contract (Tron)      — wallet_base_rate_exclude
+#   0xdAC17F…  USDT ERC-20 token contract (Ethereum) — wallet_base_rate_exclude
+#   0x55d398…  USDT BEP-20 token contract (BSC)      — wallet_base_rate_exclude
+#   0x0000…dEaD  the burn address                    — never an operator payee
+#   0x529084…  the canonical EIP-55 checksum test vector from the spec itself
+#   UA-26575989-44  a template-default Analytics property shared by unrelated sites —
+#                   noise_tracker_ids, the same role as the parking-favicon hashes
+# Verified before allowing: the two Tron strings were base58check-decoded. The contract above is
+# valid (hence real, hence a genuine public constant); the Engage test fixture TJ8y5w… fails its
+# checksum, i.e. it is synthetic by construction and needs no entry here.
+PUBLIC_CONST='TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t|0xdAC17F958D2ee523a2206206994597C13D831ec7'
+PUBLIC_CONST="$PUBLIC_CONST"'|0x55d398326f99059fF775485246999027B3197955'
+PUBLIC_CONST="$PUBLIC_CONST"'|0x0{36}dEaD|0x52908400098527886E0F7030069857D2E4169EE7'
+PUBLIC_CONST="$PUBLIC_CONST"'|UA-26575989-44'
+ALLOW="$ALLOW|$PUBLIC_CONST"
 
 HITS="$(
   {

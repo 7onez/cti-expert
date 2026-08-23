@@ -1,0 +1,215 @@
+{
+  "_comment": "INTAKE — the scoping step that runs BEFORE a single byte is collected, and the rules for testing what the requester told you. Two distinct failures motivate this file. (1) UNSCOPED COLLECTION: a bare hostname with no context forces the tool to guess, so it runs the default profile — direct live fetch, every layer, whatever keys are configured — which is the wrong posture for at least three of the six target classes below. Touching a threat actor's live infrastructure from the analyst's own egress tips the operator and can be attributed to the investigation; treating a COMPROMISED third-party host as operator infrastructure clusters the VICTIM's favicon, trackers and registrant into the operator's estate and fuses unrelated victims into one imaginary campaign; and running a fraud-shaped read over a legitimate brand's own site manufactures an accusation. None of those errors is visible in the output — each one produces a confident, well-formatted, wrong result. (2) ANCHORING ON THE REQUESTER'S CLAIM: 'this is a scam site' arrives as a premise, and every ambiguous artifact downstream is then read as confirming it. The requester's belief is a HYPOTHESIS THIS RUN TESTS, never a fact the run inherits — it is frequently right, and when it is wrong (the seed is the impersonated brand's REAL site, the page is a parking template, the host is a victim, the campaign ended two years ago) it is wrong in a direction that costs a real party their reputation. So: ask the questions, record the answer as an assertion with a named source, and make the collection carry a verdict on it. NON-BLOCKING BY DESIGN — see `policy`: an unanswered intake degrades to target_class `unknown` under the conservative posture and SAYS SO in the deliverable; it never refuses to run, because `intel.py open`, the SDK orchestrator and the MCP server have nobody to ask. EDIT THIS FILE when a class needs a different posture, a question stops changing the run (delete it — an intake nobody answers is worse than none), or a new disconfirming check should be mandatory. RULE 1 applies: generic tradecraft only, never a real case's target, brand or claim.",
+
+  "intake_questions": {
+    "_comment": "The question set, in the order to ask it. Each entry states WHY it is asked and WHAT it changes — a question whose answer changes nothing about the run does not belong here, because every question spends the requester's patience and a long intake gets skipped wholesale. Ask them as ONE grouped prompt, not a serial interrogation. `required` marks the two that carry most of the scoping value (`target_class`, `purpose`); the rest are best-effort. `default_if_unanswered` is what the run assumes and must state in the output.",
+    "values": [
+      {
+        "id": "target_class",
+        "ask": "What do you believe this is — a confirmed scam, a suspected one, threat-actor infrastructure, a compromised victim host, a legitimacy check, or genuinely unknown?",
+        "why": "It selects the entire collection posture: whether we may touch the target directly, which layers run, and — critically — whether artifacts found on the page belong to the OPERATOR or to a VICTIM.",
+        "changes": "fetch_posture, opsec, which layers run, clustering_rule",
+        "required": true,
+        "default_if_unanswered": "unknown"
+      },
+      {
+        "id": "basis",
+        "ask": "What is that belief based on — a victim complaint, a takedown/seizure notice, a vendor report, an ad you were served, a log entry, a hunch?",
+        "why": "Separates an evidenced class from an assumed one. A seizure banner is a fact about the host; 'it looked fake' is a lead. The claim's SOURCE is what its verdict is later judged against, and it is what stops an assumption laundering into the case as a finding.",
+        "changes": "claim strength, whether the class is asserted or hypothesised in the deliverable",
+        "required": false,
+        "default_if_unanswered": "unstated"
+      },
+      {
+        "id": "purpose",
+        "ask": "What is this run for — triage this one host, expand a cluster, attribute an operator, build a takedown/referral package, or check your own exposure?",
+        "why": "Decides the deliverable and therefore the depth. Triage stops at the ranked leads; attribution requires the KB ingest, the correlation hand-off and a confidence call; a takedown package needs the raw capture and the evidence ledger, because a report that cites a page which is gone next week proves nothing.",
+        "changes": "depth, whether capture/ingest/assessment are mandatory, which skill runs next",
+        "required": true,
+        "default_if_unanswered": "triage"
+      },
+      {
+        "id": "brand_or_entity",
+        "ask": "Is a specific brand, company or person being impersonated or targeted here — and which side of it is this host?",
+        "why": "Turns on the impersonation hunt with the right seed, and forces the DIRECTION check: the requester naming a brand does not establish that this host is the imposter rather than the genuine site.",
+        "changes": "enables --hunt-impersonation, sets the impersonation direction check",
+        "required": false,
+        "default_if_unanswered": "none stated"
+      },
+      {
+        "id": "how_encountered",
+        "ask": "How did the target reach you — an ad or sponsored result, a message/DM, an app or file download, a redirect chain, a referral from another case?",
+        "why": "Names the funnel, and the funnel decides which layer sees the real page at all. An ad arrival means the site may serve a decoy to anyone without the click parameters, so a bare-domain fetch would describe the decoy; a file download hands off to a different skill entirely.",
+        "changes": "enables the advertising + cloaking probe, or the binary hand-off",
+        "required": false,
+        "default_if_unanswered": "direct"
+      },
+      {
+        "id": "time_window",
+        "ask": "Is there a date that matters — when the victim was hit, when the ad ran, when the report was published?",
+        "why": "A domain's state today is not its state at the incident. Without the window the archive timeline has no anchor, and a site that is parked now gets written off although it hosted the funnel during the window.",
+        "changes": "archive/CDX depth, timeline anchor, which hosting window is the relevant one",
+        "required": false,
+        "default_if_unanswered": "full history"
+      },
+      {
+        "id": "constraints",
+        "ask": "Any constraints — is direct contact with the target acceptable, may metered API credits be spent, and is there a case id to file this under?",
+        "why": "Egress and spend are decisions the requester owns, not the tool. Metered credits are shared across every future case, and a direct fetch is an irreversible, attributable action against live infrastructure.",
+        "changes": "passive-only vs direct fetch, --free-only, the case path everything persists to",
+        "required": false,
+        "default_if_unanswered": "passive-first, free-only, ad-hoc case"
+      },
+      {
+        "id": "falsifier",
+        "ask": "What result would tell you this is NOT what you think — what would make you drop it?",
+        "why": "The single most valuable intake answer. It converts the requester's belief into something testable, and it pre-commits both of you to an exit, which is what keeps a run from spending a week confirming a premise nobody ever agreed to test.",
+        "changes": "the disconfirming checks the run must report on, and the stop condition",
+        "required": false,
+        "default_if_unanswered": "use the class's built-in disconfirming list"
+      }
+    ]
+  },
+
+  "target_classes": {
+    "_comment": "The class vocabulary and what each one CHANGES. `fetch_posture` is the safety-relevant field: `passive_first` = exhaust archive/urlscan/CT/passive DNS before considering a direct request; `direct_ok` = an ordinary fetch is acceptable; `never_direct_from_analyst_egress` = never touch it from an attributable source, use stored captures and third-party scanners only. `clustering_rule` is the correctness-relevant field: it decides whose artifacts these are, and getting it wrong is how a victim's tracking ID ends up in an operator's estate. `disconfirming` lists the observations that should move the target OUT of this class — run them even when the class was asserted confidently, and especially then.",
+    "entries": {
+      "confirmed_scam": {
+        "means": "Fraud already evidenced independently of this run — a victim complaint with losses, a regulator/registrar takedown, a seizure banner, a published vendor writeup.",
+        "fetch_posture": "passive_first",
+        "opsec": "The operator is adversarial and may log and geo-profile visitors. Prefer stored captures; if fetching directly, use non-attributable egress.",
+        "run": ["capture_evidence", "full_pivot", "kb_ingest", "assessment"],
+        "clustering_rule": "Artifacts on the page are the operator's unless the hosting is shared — base-rate every one before it becomes an edge.",
+        "disconfirming": [
+          "the live page is a parking / suspended / server-default template, so today's artifacts belong to the host, not the operator",
+          "the evidenced fraud predates the current registrant era — the name changed hands and the current site is unrelated"
+        ],
+        "confidence_note": "The fraud is established; what still needs proving is every SAME-OPERATOR link this run proposes."
+      },
+      "suspected_scam": {
+        "means": "The requester believes it is fraudulent but the evidence is a lead — it looked wrong, it resembles a known kit, it appeared in a suspicious list.",
+        "fetch_posture": "passive_first",
+        "opsec": "Treat as adversarial until shown otherwise; the cost of being wrong about a benign site is an accusation.",
+        "run": ["liveness", "full_pivot", "archive_timeline", "impersonation_direction_check"],
+        "clustering_rule": "Nothing is an operator artifact until the class itself survives the disconfirming checks.",
+        "disconfirming": [
+          "the host is the genuine brand's own site, or a licensed reseller/affiliate of it",
+          "the 'kit' resemblance is a commercial website template or site-builder shared by millions of pages",
+          "no funnel exists — no payment path, no credential capture, no contact channel"
+        ],
+        "confidence_note": "Report the fraud judgement itself with an estimative term. Do not inherit the requester's certainty."
+      },
+      "threat_actor_infra": {
+        "means": "Espionage, intrusion or malware infrastructure — C2, exploit kit, delivery or staging host — rather than consumer fraud.",
+        "fetch_posture": "never_direct_from_analyst_egress",
+        "opsec": "A direct request is an intelligence gift: it reveals that the infrastructure is being examined and from where, and target-side allowlists mean a single probe can burn the collection. Third-party scanners and stored captures only, and never a scan or a path walk.",
+        "run": ["passive_sources_only", "certificate_and_asn_pivots", "capture_from_stored_scans"],
+        "clustering_rule": "Configuration overlap on this class is usually a shared toolkit or hosting provider default — base-rate the population before calling any of it an actor link.",
+        "disconfirming": [
+          "the population count for the 'fingerprint' shows a provider or software default, not an actor choice",
+          "the host is a compromised legitimate server, so its ownership artifacts are the victim's"
+        ],
+        "confidence_note": "Actor attribution is a higher bar than operator clustering; same-toolkit is never same-actor."
+      },
+      "victim_host": {
+        "means": "A legitimate site or account under someone else's control that is serving the operator's content — a compromised CMS, a hijacked subdomain, an abused hosting panel.",
+        "fetch_posture": "passive_first",
+        "opsec": "The owner is a third party with no involvement. Do not probe, and treat the finding as notifiable to them.",
+        "run": ["liveness", "path_layer", "victim_profile", "access_vector_inference"],
+        "clustering_rule": "CRITICAL — the host's own artifacts (its WHOIS, its analytics, its favicon, its certificate) belong to the VICTIM. Clustering on them merges unrelated victims into a fake operator estate. Only the INJECTED content — the kit path, its assets, its endpoints — is the operator's.",
+        "disconfirming": [
+          "the whole site is the operator's, not an injected path — no legitimate content exists alongside it",
+          "the 'victim' domain was registered specifically for this campaign"
+        ],
+        "confidence_note": "The valuable output is the ACCESS VECTOR the victim set implies, not another domain for the cluster."
+      },
+      "benign_check": {
+        "means": "A legitimacy question rather than an accusation — is this the real company, is this domain ours, is our brand exposed here.",
+        "fetch_posture": "direct_ok",
+        "opsec": "Ordinary collection. The risk here is the opposite one: an unfounded fraud verdict on a legitimate business.",
+        "run": ["full_pivot", "whois", "archive_timeline"],
+        "clustering_rule": "Shared infrastructure with a bad neighbourhood is co-tenancy, not complicity — a legitimate site on a shared IP or CDN is not part of anything.",
+        "disconfirming": [
+          "the site does show a fraud funnel — reclassify to suspected_scam and restate the posture"
+        ],
+        "confidence_note": "Never publish a fraud verdict from this class on thin evidence; say 'no fraud indicators observed' and state what was checked."
+      },
+      "unknown": {
+        "means": "No context was supplied, or the requester genuinely does not know yet. This is the honest default, not a failure.",
+        "fetch_posture": "passive_first",
+        "opsec": "Conservative by construction: assume it could be adversarial infrastructure until the collection says otherwise.",
+        "run": ["liveness", "archive_timeline", "full_pivot", "classify_then_restate_scope"],
+        "clustering_rule": "Hold every edge as provisional until the class resolves — the same artifact means different things depending on whose asset it is.",
+        "disconfirming": [
+          "the collection itself establishes a class — say so, restate the posture, and re-scope rather than continuing under `unknown`"
+        ],
+        "confidence_note": "State in the deliverable that the run proceeded without stated context and which assumptions it therefore made."
+      }
+    }
+  },
+
+  "claim_verification": {
+    "_comment": "How the requester's stated class is treated. The stance is the whole point of this group: an assertion arriving with the target is EVIDENCE ABOUT THE REQUESTER'S BELIEF, not about the target. It is recorded with its source, tested by the mandatory checks, and answered with an explicit verdict in the deliverable — so that 'the analyst said it was a scam' can never silently become 'the collection found it was a scam'.",
+    "stance": "The stated class is a hypothesis this run TESTS. It sets the posture (safety-conservative) but never the finding.",
+    "record_as": "Assertion with a named source and a timestamp — never as a collected fact, and never ingested into the knowledge base as an entity attribute.",
+    "required_output_line": "Stated premise: <class> (source: <basis>). Collection verdict: <supported | partially supported | not supported | contradicted | inconclusive> — <one line of why>.",
+    "verdicts": {
+      "supported": "Independent collected evidence matches the stated class.",
+      "partially_supported": "The class holds but a material part of the claim does not — e.g. fraudulent, but not the brand or campaign named.",
+      "not_supported": "The collection found nothing either way. This is NOT a refutation, and if the run was keyless or passive it may be a statement about the collection rather than the target — say which.",
+      "contradicted": "Collected evidence is inconsistent with the stated class. Report it plainly and early; it is the most valuable thing an intake can produce.",
+      "inconclusive": "The target could not be observed — challenge wall, blocked, unresolved. The claim was never tested; do not report it as either outcome."
+    },
+    "mandatory_checks": {
+      "_comment": "Run these regardless of how confident the stated class was, because each one is a way a confidently-stated class turns out wrong — and each failure is invisible in a normal run.",
+      "values": [
+        "liveness — classify the page by reading it, not by its status code: a parking, suspended, default or soft-404 page returns HTTP 200, and collecting off one harvests a template shared by millions of domains",
+        "archive timeline — the site's state at the incident date is the relevant one; a benign page today may have hosted the funnel, and a scam page today may postdate the claim entirely",
+        "impersonation direction — when a brand is named, confirm the seed is the imposter and not the brand's own site, a licensed reseller, or a regional property",
+        "base rate — count the population behind any artifact before it becomes an edge; a shared favicon, template, nameserver or tracking ID may be a platform default rather than an operator choice",
+        "ownership boundary — decide whose asset each artifact is before clustering on it; on a compromised host most of the page belongs to the victim"
+      ]
+    },
+    "never": {
+      "_comment": "Prohibitions. Each of these is a way the intake would defeat its own purpose by converting the requester's belief into evidence.",
+      "values": [
+        "raise a confidence level because the requester was certain",
+        "skip a disconfirming check because the class was stated as confirmed",
+        "write the stated class into the knowledge base or an assessment as a collected finding",
+        "report 'not supported' as 'benign' when the run was keyless, passive or blocked",
+        "let a stated class authorise a fetch its own posture forbids"
+      ]
+    }
+  },
+
+  "scope_switches": {
+    "_comment": "What an intake answer actually turns on, so the questions are demonstrably load-bearing rather than ceremony. Left side is the answer, right side is the concrete change to the run. Keep this honest — if an answer maps to nothing, delete its question.",
+    "entries": {
+      "how_encountered=ad_or_sponsored": "Run the advertising layer and the click-keyed cloaking probe — an ad-funnel page may serve a decoy to any arrival without the click parameters, so a bare-domain collection would describe the decoy and its 'nothing found' would be worthless.",
+      "how_encountered=file_download": "Hand the artifact to the BinaryPivot skill; the file's signing certificate and embedded endpoints outlive every domain in the funnel.",
+      "how_encountered=redirect_chain": "Collect from the FINAL url after redirects, and treat the intermediate hops as their own hosts.",
+      "brand_or_entity=named": "Enable the impersonation hunt seeded on the brand, and run the impersonation-direction check before writing anything.",
+      "target_class=victim_host": "Enable the victim-profile layer; suppress clustering on host-owned artifacts.",
+      "target_class=threat_actor_infra": "Passive sources only; no direct fetch, no scan, no path walk from analyst egress.",
+      "purpose=takedown_package": "Raw evidence capture and the evidence ledger become mandatory — a citation to a page that is gone proves nothing.",
+      "purpose=attribution": "The knowledge-base ingest and the correlation hand-off become mandatory; ranked pivots alone do not answer 'who'.",
+      "purpose=triage": "Stop at the ranked leads and the liveness call; do not spend metered credits.",
+      "time_window=given": "Anchor the archive/CDX pull and the hosting-window comparison on that date rather than on today.",
+      "constraints=no_direct_contact": "Passive sources only, and state in the deliverable that the live page was never observed.",
+      "constraints=no_spend": "Run free-only, and disclose which indexes therefore went unqueried before presenting any negative result."
+    }
+  },
+
+  "policy": {
+    "_comment": "The rules that keep the intake from becoming a wall. It is a SCOPING step, not a gate: it never blocks a run, never blocks a non-interactive caller, and never asks twice for something already supplied.",
+    "blocking": false,
+    "ask_once": true,
+    "skip_when_context_supplied": true,
+    "skip_when_non_interactive": true,
+    "non_interactive_callers": ["intel.py", "orchestrator", "mcp_server", "batch"],
+    "unanswered_target_class": "unknown",
+    "must_state_assumptions_in_output": true,
+    "max_questions_in_one_prompt": 4,
+    "reclassify_mid_run": "When the collection establishes a different class than the one stated, stop, say so, restate the posture, and continue under the new class."
+  }
+}

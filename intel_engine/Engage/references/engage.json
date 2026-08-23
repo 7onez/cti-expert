@@ -1,0 +1,157 @@
+{
+  "_comment": "Tunable DATA for the Engage skill (contributor RULE 3). Engage has two halves with very different risk. DETECTION (en_forms.py) is passive-ish page reading — it GETs the page and classifies its <form>s as login / register / reset by the FIELDS they carry, not by a URL word. ENGAGEMENT (en_engage.py) is the analyst deliberately creating an account on the operator's own box to see the panel/deposit/withdrawal/affiliate mechanics; it is OUTBOUND, ATTRIBUTABLE and IRREVERSIBLE, so it is gated. Every list below is what an analyst may reasonably want to extend for a new kit family WITHOUT editing Python: the tokens that name an identifier/password/confirm/referral/OTP field, the submit-button wording per form type, the anti-bot markers, and the engagement policy. Keys starting with `_` are documentation and are ignored by the loader. RULE 1 still applies: generic form/field vocabulary only, never a value lifted from a live case.",
+
+  "identifier_fields": {
+    "_comment": "Tokens (matched case-insensitively as substrings of an input's name/id/type/autocomplete/placeholder) that mark a field as the LOGIN IDENTIFIER — the thing you type alongside a password. A form needs an identifier + a password to be a login; an identifier with NO password is usually a password-reset request. `tel`/`phone` count because many SEA fraud funnels log in by phone number, not email.",
+    "values": ["email", "e-mail", "username", "user name", "userid", "user_id", "login", "account", "loginname", "mobile", "phone", "tel", "msisdn", "member", "uid"]
+  },
+  "password_fields": {
+    "_comment": "Tokens that mark a PASSWORD input. A field with type=password is treated as a password regardless of name; these tokens additionally catch password inputs a kit hid behind type=text (a known cloaking trick) or named oddly.",
+    "values": ["password", "passwd", "pass", "pwd", "pin", "passphrase", "secret"]
+  },
+  "confirm_password_tokens": {
+    "_comment": "Tokens that mark the SECOND password field of a registration form (confirm / retype). The presence of a confirm-password field is the single strongest tell that a form is a REGISTRATION form, not a login. Keep this list ahead of `password_fields` in the classifier.",
+    "values": ["confirm", "confirmation", "repeat", "retype", "re-enter", "reenter", "again", "verify_password", "password2", "repassword", "re_password", "cpassword"]
+  },
+  "login_submit_terms": {
+    "_comment": "Submit-button / link wording that means LOG IN. Read from the button text, value or aria-label. Multilingual on purpose — VN/CN/RU fraud panels are common; add your kit's language here rather than in code.",
+    "values": ["log in", "login", "log-in", "sign in", "signin", "sign-in", "log on", "enter", "access", "dang nhap", "đăng nhập", "登录", "登錄", "вход", "войти"]
+  },
+  "register_submit_terms": {
+    "_comment": "Submit-button / link wording that means CREATE AN ACCOUNT. Read the same way as login_submit_terms.",
+    "values": ["sign up", "signup", "sign-up", "register", "registration", "create account", "create an account", "create your account", "join", "join now", "get started", "open account", "open an account", "dang ky", "đăng ký", "注册", "註冊", "регистрация", "зарегистрироваться"]
+  },
+  "reset_terms": {
+    "_comment": "Wording for a PASSWORD-RESET / forgot-password surface. A form matching these plus an identifier but NO password field is a reset request, not a login.",
+    "values": ["forgot", "reset", "recover", "recovery", "lost password", "forgot password", "quên mật khẩu", "忘记密码"]
+  },
+  "register_link_tokens": {
+    "_comment": "Substrings of an <a href> (or its text) that point at the REGISTRATION page, so detection can follow ONE hop to find the signup form when the entry page only shows a login box. Word tokens only — the classifier confirms by reading the linked page's fields, never by the URL alone.",
+    "values": ["register", "signup", "sign-up", "sign_up", "join", "create-account", "create_account", "createaccount", "new-account", "registration", "dangky", "dang-ky", "zhuce", "reg."]
+  },
+  "login_link_tokens": {
+    "_comment": "Substrings of an <a href> that point at the LOGIN page — the reverse hop, used when the entry page is the signup form and you want the login surface too.",
+    "values": ["login", "signin", "sign-in", "sign_in", "log-in", "logon", "auth", "account/login", "dangnhap", "denglu"]
+  },
+  "referral_tokens": {
+    "_comment": "Tokens that mark a REFERRAL / INVITE / PROMO code field. Two reasons this matters: (1) a mandatory invite code is a base-rate tell of a closed fraud/MLM funnel; (2) the referral code an operator seeds their own ads with is a PIVOT — it clusters the funnel and sometimes names the upline. Emitted as a referral_param pivot when found.",
+    "values": ["referral", "referrer", "refcode", "ref_code", "invite", "invitation", "invitecode", "invite_code", "promo", "promocode", "promo_code", "sponsor", "inviter", "recommend", "agent_code", "affiliate", "aff", "yqm", "邀请码", "ma gioi thieu"]
+  },
+  "otp_tokens": {
+    "_comment": "Tokens that mark a one-time-code / verification field (email OTP, SMS code, 2FA, authenticator). Their presence is an ENGAGEMENT BLOCKER: a synthetic persona cannot complete an OTP without a real inbox/number the analyst controls, and the tool NEVER tries to bypass it.",
+    "values": ["otp", "one-time", "onetime", "verify", "verification", "code", "2fa", "twofa", "sms", "authcode", "auth_code", "confirm_code", "captcha_code", "pin_code"]
+  },
+  "captcha_markers": {
+    "_comment": "Strings that, appearing in a <script src>, an element id/class, or an iframe src, reveal an anti-bot / CAPTCHA widget. Their presence is an ENGAGEMENT BLOCKER reported in the plan. The tool NEVER integrates a solving service and NEVER evades these — a UA swap is not a challenge bypass; a human decides whether to solve one by hand.",
+    "values": ["recaptcha", "g-recaptcha", "gstatic.com/recaptcha", "hcaptcha", "turnstile", "challenges.cloudflare.com", "geetest", "gt_captcha", "arkoselabs", "funcaptcha", "px-captcha", "perimeterx", "datadome", "captcha"]
+  },
+  "terms_tokens": {
+    "_comment": "Tokens marking a 'I agree to the terms' checkbox on a registration form — recorded so en_engage knows it must be ticked, and counted as weak corroboration that a form is a registration form.",
+    "values": ["agree", "terms", "tos", "privacy", "consent", "accept", "policy", "18", "adult"]
+  },
+  "thresholds": {
+    "_comment": "Scalars the classifier and the one-hop crawl budget against. `max_login_fields`: a login form is small — more visible fields than this (and a confirm-password or terms box) pushes classification toward registration. `register_min_fields`: registration forms ask for more. `crawl_register_hops`: how many linked login/register pages detection may follow from the entry page (kept tiny — this is detection, not a crawler). `fetch_timeout_s`: per-request timeout.",
+    "max_login_fields": 4,
+    "register_min_fields": 3,
+    "crawl_register_hops": 1,
+    "fetch_timeout_s": 20
+  },
+
+  "engagement_policy": {
+    "_comment": "THE ENGAGEMENT GATE. Creating an account is NOT reading a page: it reaches out and touches the operator's own infrastructure from your egress, tells them a new member appeared at a known time, and cannot be undone — deleting the account later un-notifies nobody and the operator may have already logged the registration IP, fingerprint and email. So en_engage NEVER acts without explicit per-engagement confirmation, uses a SYNTHETIC identity only, and refuses to auto-solve a CAPTCHA or OTP. `require_explicit_confirmation` and `synthetic_identity_only` are ALSO enforced in code (the function signature), so a stale copy of this file cannot loosen them — editing here can only make the policy STRICTER. This is the same shape as BinaryPivot's ANY.RUN submission_policy.",
+    "require_explicit_confirmation": true,
+    "synthetic_identity_only": true,
+    "require_nonattributable_egress": true,
+    "never_auto_solve_captcha": true,
+    "never_reuse_real_pii": true,
+    "risks": [
+      "TIPPING THE OPERATOR — a registration is an outbound POST to the operator's own backend. They see a new account created at a known time from your egress IP, with a browser fingerprint, and can correlate it with the report that lands weeks later. On a small closed funnel a single unexpected signup is noticeable.",
+      "ATTRIBUTION / EGRESS — the registration and every authenticated page load originate from wherever this runs. Direct from the analyst's own network, that is a self-identifying beacon. Use a research VPS / VPN dedicated to the case; the tool warns hard and refuses a direct-egress engagement unless the analyst overrides it knowingly.",
+      "IRREVERSIBLE — you cannot un-register. The email, phone, password and persona used are now known to the operator; never reuse them on anything real, and never reuse a persona across unrelated cases (it links your own operations for the adversary).",
+      "LEGAL — creating an account, accepting terms and accessing a members area is a deliberate interaction with a live system. Do it only within your authorization for THIS investigation, and know your jurisdiction's line between OSINT engagement and unauthorized access / entrapment. This is an analyst decision, not the tool's.",
+      "VICTIM DATA — an authenticated panel may expose other users' data (chats, deposits, uploaded KYC, victim logs). Treat everything the account reveals as sensitive case material under the same handling rules as a stealer log; capture what is needed as evidence and no more.",
+      "POISONED VIEW — the members area served to a fresh no-deposit account may itself be a decoy; the real mechanics can gate behind a deposit. A thin panel is not proof the operation is thin."
+    ],
+    "try_first": [
+      "en_forms.py on the target — the login/register surface, the fields required and the blockers (captcha/OTP) are read passively, no account needed.",
+      "Search the leak corpus for existing credentials to the panel (WebPivot IntelX / stealer logs) — a real operator or victim login recovered from a log answers 'what is inside' WITHOUT you creating anything or touching the box.",
+      "urlscan / Wayback for an archived authenticated view or an exposed API response someone already captured.",
+      "If a members area must be seen live, seek an existing account or credentials before minting a new one — a new signup is the most attributable option, not the first."
+    ],
+    "data_handling": [
+      "Persona files and captured authenticated pages are case evidence — they live under cases/<case>/engage/, never in the skill.",
+      "Never put a real person's name, email, phone or document into a persona. The persona is synthetic by construction; if a real disposable inbox/number is wired for OTP, it must be one the analyst controls and dedicated to research.",
+      "One persona per case. Do not reuse it elsewhere — a reused research identity links your investigations together for the adversary.",
+      "The puppet-inbox pool holds REAL credentials to mailboxes the analyst controls. It is CASE/OPERATOR data (RULE 1): it lives ONLY in the git-ignored store (default knowledge/engage_inboxes.json), is referenced by PATH via ENGAGE_INBOX_POOL, and is NEVER written into the skill, a fixture, or a commit.",
+      "The mission material — the scammer's wallet and bank details, the service flow, the credential-harvester upload path — is high-value evidence and may sit beside OTHER victims' data. Capture what proves the flow and no more; handle it like a stealer log."
+    ],
+    "mission": [
+      "Once inside, the objective is the OPERATOR's money and mechanics — the things the public page hides behind the login: the crypto WALLET addresses deposits actually go to, the BANK / payee account details, the SERVICES and FLOW the platform runs (deposit → 'trade'/'task' → withdraw-block → top-up demand), and the UPLOAD PATH of any credential harvester (where the panel POSTs captured credentials / KYC uploads).",
+      "Every finding is fed back into WebPivot + IntelAnalysis under the SAME rails — a wallet or account is base-rate checked and judged same-kit vs same-operator before it attributes anyone. A shared payment processor address is infrastructure, not the operator's wallet.",
+      "A wallet or bank account the operator collects on is among the strongest identity-bearing artifacts in the whole kit: it is reused across the estate and it is where a financial-intelligence / law-enforcement referral begins."
+    ],
+    "kyc_and_confirmation": [
+      "Most fraud funnels do NOT verify identity — a made-up username + password registers, and you log straight in. Do that and skip the inbox entirely.",
+      "When a funnel DOES gate on email confirmation (or light KYC), the persona must use a REAL mailbox the analyst controls — one of the puppet-inbox pool. en_engage registers, en_inbox waits for the confirmation email and extracts the confirm link, the link is opened, then login proceeds.",
+      "en_inbox only READS a mailbox you own over IMAP — it never sends mail and never touches anyone else's inbox. It confirms the analyst's own account; that is the whole of what it does.",
+      "Hard KYC (government ID / selfie / liveness) is a STOP — the tool never fabricates or uploads identity documents. A human decides whether that engagement is in scope at all."
+    ]
+  },
+
+  "kyc_confirmation": {
+    "_comment": "How en_inbox recognises the registration confirmation email in a puppet mailbox and pulls the link out. `link_keywords` are substrings that mark the confirm/verify URL among the links in the email body; `subject_markers` help match the right message; `link_path_hints` are URL path fragments a confirm link commonly carries. `poll_timeout_s`/`poll_interval_s` bound the wait. Matching is corroborated by the TARGET DOMAIN too, so an unrelated newsletter in the same inbox is not mistaken for the confirmation.",
+    "link_keywords": ["confirm", "verify", "activate", "activation", "validate", "verification", "confirm-email", "confirm_email", "verifyemail", "email-confirm"],
+    "subject_markers": ["confirm", "verify", "activate", "welcome", "verification", "complete your registration", "confirm your email", "activate your account"],
+    "link_path_hints": ["/confirm", "/verify", "/activate", "/activation", "/auth/verify", "/email/verify", "/register/confirm", "token=", "code="],
+    "poll_timeout_s": 180,
+    "poll_interval_s": 10
+  },
+  "harvest_targets": {
+    "_comment": "What en_harvest looks for in the AUTHENTICATED page — the mission. Keyword buckets that flag WHERE on the panel the money/mechanics live, so the extractor and the analyst know what a match means. These are context labels; the actual wallet/bank/upload extraction uses the pattern groups below.",
+    "deposit_flow": ["deposit", "recharge", "top up", "top-up", "topup", "add funds", "fund", "nap tien", "充值", "recarga"],
+    "withdraw_flow": ["withdraw", "withdrawal", "cash out", "cashout", "payout", "rut tien", "提现", "retirar"],
+    "wallet_context": ["wallet", "address", "usdt", "trc20", "erc20", "bep20", "network", "qr", "scan to pay", "payment address"],
+    "bank_context": ["bank", "account number", "account name", "iban", "swift", "bic", "routing", "sort code", "beneficiary", "payee", "ngan hang", "银行"],
+    "kyc_upload": ["upload", "id card", "passport", "selfie", "proof", "document", "verification photo", "kyc"],
+    "service_flow": ["task", "order", "commission", "vip level", "invite", "referral", "team", "profit", "roi", "signal", "trade"]
+  },
+  "credential_harvester_markers": {
+    "_comment": "Signs that a page/endpoint is a CREDENTIAL HARVESTER — where captured logins/KYC are POSTed or stored. `upload_path_hints` are URL/action fragments that a harvester's collector commonly uses; `harvester_field_markers` are input names that mean the page is collecting third-party credentials (a victim's bank/exchange login), not the platform's own signup. Reporting the upload PATH is the point: it is the operator's own routing and it clusters the kit.",
+    "upload_path_hints": ["/upload", "/save", "/gate", "/gate.php", "/log", "/logs", "/collect", "/submit", "/post.php", "/panel", "/admin/upload", "/api/upload", "/store", "/data", "/result", "/receive"],
+    "harvester_field_markers": ["cardnumber", "card_number", "cc_number", "cvv", "cvc", "expiry", "card_expiry", "otp", "pin", "seed", "seedphrase", "mnemonic", "private_key", "privatekey", "recovery_phrase", "bank_login", "bank_password", "exchange_password", "2fa_code"]
+  },
+  "modal_dismiss_labels": {
+    "_comment": "Button/label text (any language) that DISMISSES an interstitial modal blocking the form or the panel — a cookie notice, a 'link your Telegram' nag, a payment-notice overlay, a warmup splash. en_engage clicks the first match inside the top-most [role=dialog] before it interacts, because a React SPA commonly floats one of these over the auth/deposit view and it silently intercepts every click (observed on a live VN fraud panel: registration and the deposit walk both stalled on an aria-modal overlay). NEVER a 'confirm payment' / 'submit' button — only close/skip/later/understood wording. It never solves a CAPTCHA (that is a separate, hard stop).",
+    "values": ["Close", "Đóng", "Bỏ qua", "Skip", "Nhắc lại sau", "Để sau", "Later", "Remind me later", "Đã hiểu", "Tôi đã hiểu", "Tôi hiểu rồi", "Understood", "Got it", "OK", "Tiếp tục", "Continue", "Dismiss", "Không, cảm ơn", "No thanks", "×"]
+  },
+  "wallet_base_rate_exclude": {
+    "_comment": "Addresses that are INFRASTRUCTURE, not an operator's wallet, and must NEVER be clustered on even though they match a wallet regex. The classic trap: a USDT deposit UI shows the operator's deposit `wallet` AND the Tether TOKEN CONTRACT address, and a naive sweep grabs both — the contract is in every USDT-on-Tron interface on earth. When an API response labels a field `contract`/`token`/`tokenAddress`, that value is excluded automatically; this list catches the same addresses when they appear only in the DOM. Extend it as new token-contract / router / burn addresses recur across cases.",
+    "values": [
+      "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+      "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+      "0x55d398326f99059fF775485246999027B3197955",
+      "0x000000000000000000000000000000000000dEaD"
+    ]
+  },
+  "api_wallet_fields": {
+    "_comment": "JSON field names whose VALUE is an operator wallet/payment address to harvest from a captured API response (en_harvest.harvest_api). `wallet`/`address`/`deposit_address` are the operator's; `contract`/`token`/`tokenAddress` are the base-rate token contract and are recorded as EXCLUDED, never clustered. Field names are matched case-insensitively.",
+    "operator_wallet": ["wallet", "address", "deposit_address", "depositAddress", "walletAddress", "payment_address", "receive_address"],
+    "excluded_contract": ["contract", "token", "tokenaddress", "token_address", "tokencontract"]
+  },
+  "wallet_patterns": {
+    "_comment": "Regexes for crypto wallet addresses to pull off the authenticated deposit page (the scammer's collection wallets). Deliberately anchored to reduce false positives; a match is still base-rate checked before it is treated as the operator's own wallet (a shared processor address is infrastructure). BTC (legacy/segwit + bech32), ETH/BEP20/ERC20 (0x), TRON (T...), and a broad USDT-on-tron note lives in wallet_context above.",
+    "values": [
+      "\\b(bc1[0-9ac-hj-np-z]{11,71})\\b",
+      "\\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})\\b",
+      "\\b(0x[a-fA-F0-9]{40})\\b",
+      "\\b(T[1-9A-HJ-NP-Za-km-z]{33})\\b"
+    ]
+  },
+  "bank_patterns": {
+    "_comment": "Regexes for banking details on the authenticated payout/deposit page (the scammer's payee account). IBAN is well-structured; SWIFT/BIC is 8 or 11 alnum; a bare account number is intentionally NOT a blind regex (too many false positives) — it is captured by proximity to the bank_context keywords above instead. Every hit is corroborated against the bank_context label, never clustered on a raw number alone.",
+    "values": [
+      "\\b([A-Z]{2}[0-9]{2}[A-Z0-9]{11,30})\\b",
+      "\\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\\b"
+    ]
+  }
+}

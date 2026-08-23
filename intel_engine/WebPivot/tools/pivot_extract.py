@@ -84,9 +84,14 @@ from wp_crawl import *  # noqa
 import wp_extract  # noqa  (for the QR toggle set in main)
 import wp_assets   # noqa  (asset layer: JS bundles / source maps / well-known files toggles)
 from wp_assets import *  # noqa
+import wp_docmeta  # noqa  (document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF)
 import wp_censys   # noqa  (Censys Platform: lookups + CenQL builder; --no-censys flips ENABLED)
+import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin behind a CDN)
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
 import wp_capabilities  # noqa  (which keys are present -> what this run could and could not query)
+import wp_paths    # noqa  (URL PATH as a campaign identifier — kit directory, template, patterns)
+import wp_serp     # noqa  (advertising: Ads Transparency advertiser + the click-keyed cloaking probe)
+import wp_capture  # noqa  (raw evidence bundle: the DOM + every JS/CSS the host served, hashed)
 import wp_ippivot  # noqa  (IPPivot: bare-IP source runs passive IP recon instead of HTML)
 import wp_impersonate  # noqa  (ImpersonationHunt: --hunt-impersonation hunts lookalikes of a seed)
 try:
@@ -239,6 +244,12 @@ def main():
                          "not roll over), so this is the switch for conserving them. The Censys "
                          "CenQL queries are still emitted on every pivot — they are built offline "
                          "and cost nothing.")
+    ap.add_argument("--no-pssl", action="store_true",
+                    help="do NOT query CIRCL passive SSL even when the CIRCL credentials "
+                         "(PDNS_USERNAME/PDNS_PASSWORD) are set. Passive SSL is the historical "
+                         "certificate->IP direction — the one that recovers an ORIGIN from behind "
+                         "a CDN — and rides the same free account as passive DNS, so this switch "
+                         "is for a minimal footprint or a rate-limit, not for cost.")
     ap.add_argument("--intelx", action="store_true",
                     help="RUN Intelligence X live on this result's selectors — emails, phones, "
                          "wallets, the host itself — searching leaks, stealer logs, pastes, "
@@ -247,6 +258,38 @@ def main():
                          "references/intelx.json and skipped under --free-only. Without this flag "
                          "(or without INTELX_KEY) every pivot still carries its IntelX selector "
                          "and web-UI URL — built offline, costing nothing.")
+    ap.add_argument("--serp", action="store_true",
+                    help="RUN the Google Ads Transparency Center live on this domain via SerpApi: "
+                         "who ADVERTISES it (a Google-VERIFIED, paying advertiser account and the "
+                         "legal name it is funded by), every OTHER domain that account advertised, "
+                         "and the ad creative's destination link — which is where the operator's "
+                         "own utm/gclid campaign tagging is published, i.e. the key that unlocks a "
+                         "cloaked landing page. METERED (1 SerpApi search per call, capped in "
+                         "references/serpapi.json) and skipped under --free-only. Without this flag "
+                         "the layer still classifies every ad parameter and emits the free "
+                         "adstransparency.google.com address for the domain.")
+    ap.add_argument("--serp-region", default=None, metavar="CODE",
+                    help="which market to query the ad archive for: an ISO-2 code (VN, US, GB) or a "
+                         "numeric Google geotarget. The archive is queried PER REGION, so a domain "
+                         "that advertises only in its victims' country returns nothing from the "
+                         "default 'anywhere'. Codes: WebPivot/references/serpapi.json.")
+    ap.add_argument("--ad-params", default=None, metavar="SPEC",
+                    help="the ad's OWN click parameters, as a full landing URL or 'k=v&k=v' — from "
+                         "the ad creative, a victim's browser history, or a stealer log. Used to "
+                         "fetch the page as the campaign's audience sees it. Many fraud landing "
+                         "pages serve their real content ONLY to an arrival that carries the "
+                         "correct utm/gclid set and show everyone else a decoy; without these the "
+                         "run collects the decoy and reports it as the site.")
+    ap.add_argument("--cloak-probe", dest="cloak_probe", action="store_true", default=None,
+                    help="force the CLICK-KEYED CLOAKING probe: fetch the page as a plain visitor, "
+                         "again as a paid ad click (ad parameters + a Google referrer), and once "
+                         "more as a plain visitor as a control, then compare. FREE — no API credit, "
+                         "three requests to the target. By default it runs automatically whenever "
+                         "there is advertising evidence (an AW- conversion id, an ads.txt, or ad "
+                         "parameters on the URL) and is skipped otherwise.")
+    ap.add_argument("--no-cloak-probe", dest="cloak_probe", action="store_false",
+                    help="never run the cloaking probe, even with advertising evidence present "
+                         "(saves two extra requests to the target)")
     ap.add_argument("--no-intelx-phonebook", action="store_true",
                     help="with --intelx, skip the phonebook inventory of the apex (it is the "
                          "expensive call and needs a PAID entitlement)")
@@ -295,6 +338,20 @@ def main():
                          "(needs openpyxl) plus a sibling .csv.")
     ap.add_argument("--case", default=None,
                     help="case name tagged onto the report and every master-ledger row")
+    ap.add_argument("--capture", dest="capture", action="store_true", default=None,
+                    help="store the RAW EVIDENCE bundle — the served DOM plus every JavaScript and "
+                         "stylesheet the page loaded, each with its own sha256 and a bundle-level "
+                         "capture_sha256 — under cases/<case>/evidence/captures/<host>/<kit>/<UTC>/. "
+                         "DEFAULT ON whenever --case is given: derived artifacts (hashes, "
+                         "fingerprints) are assertions about a page that will be gone in days, and "
+                         "the capture is the only thing that lets anyone re-check them later.")
+    ap.add_argument("--no-capture", dest="capture", action="store_false",
+                    help="do NOT store the raw evidence bundle, even with --case")
+    ap.add_argument("--no-capture-third-party", dest="capture_third_party",
+                    action="store_false", default=True,
+                    help="record third-party asset URLs in the capture manifest but do not download "
+                         "them (they describe the library, not the operator). Same-site JS/CSS is "
+                         "always captured.")
     ap.add_argument("--classification", default="UNCLASSIFIED//FOR OFFICIAL USE ONLY",
                     help="classification banner printed at the top and bottom of the report")
     ap.add_argument("--analyst", default=None,
@@ -309,6 +366,16 @@ def main():
                     help="with --hunt-impersonation: also run the urlscan keyword sweep (metered)")
     ap.add_argument("--hunt-max", type=int, default=600, metavar="N",
                     help="with --hunt-impersonation: cap on generated candidates (default 600)")
+    ap.add_argument("--no-docmeta", action="store_true",
+                    help="skip the DOCUMENT/IMAGE metadata layer (hosted PDFs + images are "
+                         "downloaded and read for /Info, XMP and EXIF — author, XMP DocumentID, "
+                         "camera, GPS, editing software). On by default; it costs extra requests "
+                         "TO THE TARGET, so turn it off for a minimal footprint.")
+    ap.add_argument("--docmeta-max", type=int, default=None, metavar="N",
+                    help=f"cap how many hosted files are downloaded for metadata "
+                         f"(default {wp_docmeta.BUDGET.get('max_files')}; documents are always "
+                         f"tried before images). Per-file and per-run byte caps live in "
+                         f"references/docmeta.json.")
     ap.add_argument("--no-assets", action="store_true",
                     help="do NOT fetch the page's own JS bundles or their source maps. Default is "
                          "ON: on an SPA kit the shell HTML is empty and the operator's config "
@@ -341,13 +408,25 @@ def main():
     # live internet, and a keyless run of it is explicitly ~50% — see wp_intelx.capability().
     for _line in wp_intelx.banner_lines(free_only=args.free_only):
         print(_line, file=sys.stderr)
+    # The advertising layer discloses only when it was ASKED for. Its keyless half — the cloaking
+    # probe, the part that decides which page gets collected — runs regardless and needs no caveat;
+    # what a missing key costs is the advertiser's identity, and that only matters if we went looking.
+    if args.serp:
+        for _line in wp_serp.banner_lines(free_only=args.free_only):
+            print(_line, file=sys.stderr)
     if args.screenshot is not None and not args.render:
         args.render = True   # a screenshot requires the rendered (Playwright) page
     wp_extract.QR_DECODE_IMAGES = bool(args.decode_qr)
     wp_censys.ENABLED = not args.no_censys   # offline CenQL builder is unaffected — it costs nothing
+    wp_pssl.ENABLED = not args.no_pssl       # passive SSL: historical cert->IP (origin recovery)
     # Asset layer (JS bundles / source maps / well-known files) — on by default, per-half opt-out.
     wp_assets.COLLECT_ASSETS = not args.no_assets
     wp_assets.COLLECT_WELL_KNOWN = not args.no_well_known
+    # Free/keyless, but it DOWNLOADS FILES FROM THE TARGET — so --free-only leaves it on
+    # (it spends no credits) while --no-docmeta is the switch for a minimal footprint.
+    wp_docmeta.COLLECT_DOCMETA = not args.no_docmeta
+    if args.docmeta_max is not None:
+        wp_docmeta.BUDGET["max_files"] = max(0, args.docmeta_max)
     if args.assets_max is not None:
         wp_assets.MAX_JS_FILES = max(0, args.assets_max)
 
@@ -382,6 +461,7 @@ def main():
     wb_submitted = None       # result of an --archive-missing Save-Page-Now submission
     screenshot_file = None
     intel = None
+    cloak_report = None       # click-keyed cloaking probe (wp_serp) — set on the URL branch
     redirects = []  # redirect hops from the seed fetch (URL branch only)
     seed_ua, seed_proxy = DEFAULT_UA, None  # only used on the URL branch; reset there
 
@@ -484,6 +564,55 @@ def main():
                     print("[!] --solve-cf render needs Playwright (pip install playwright)", file=sys.stderr)
                 except Exception as e:
                     print(f"[!] cf render failed: {e}", file=sys.stderr)
+        # --- CLICK-KEYED CLOAKING: are we being shown the same page the victims are? ------------
+        # This runs BEFORE extraction on purpose. A kit that buys traffic can gate on the arrival:
+        # present the campaign's utm set and a gclid and it serves the scam; arrive without them —
+        # directly, from a crawler, from Google's own reviewer — and it serves a decoy. Every
+        # artifact below (favicon, DOM fingerprint, wallets, contacts) is taken from whatever `html`
+        # holds, so if that is the decoy the run does not fail, it succeeds on the wrong page and
+        # reports "no scam content" as a finding. When the probe says the two views diverge we
+        # switch to the CLICK view and collect that instead. Free — no API credit, two extra
+        # requests. Auto-triggered only where there is advertising evidence to justify them.
+        if html and src.startswith(("http://", "https://")) and args.cloak_probe is not False:
+            _adp = wp_serp.parse_ad_params(args.ad_params)
+            _auto = bool(_adp or args.serp or wp_serp.ad_params(src)
+                         or re.search(r"\bAW-\d{6,12}\b", html))
+            if args.cloak_probe is True or _auto:
+                probe_url = base_url or src
+                print(f"[*] cloaking probe: fetching {strip_www(urlparse(probe_url).netloc)} as a "
+                      f"plain visitor, as a paid ad click, and as a control …", file=sys.stderr)
+                cloak_report = wp_serp.cloak_probe(
+                    probe_url, extra_params=_adp, ua=seed_ua, proxy=seed_proxy,
+                    timeout=args.timeout, keep_bodies=True)
+                _bodies = cloak_report.pop("_bodies", {})
+                if cloak_report.get("verdict") == "divergent" and _bodies.get("click"):
+                    for _s in cloak_report.get("signals") or []:
+                        print(f"    · {_s}", file=sys.stderr)
+                    if args.render:
+                        # The probe fetches raw HTML; `html` here is a Playwright-rendered DOM.
+                        # Swapping would silently downgrade an SPA collection to its empty shell —
+                        # worse than the decoy it is meant to fix. Hand the analyst the address and
+                        # let them re-render it.
+                        cloak_report["render_note"] = (
+                            "collected with --render, so the rendered DOM was KEPT and the unlocked "
+                            "page was not substituted (the probe reads raw HTML). Re-run: "
+                            f"pivot_extract '{cloak_report['unlock_url']}' --render")
+                        print(f"[!] CLOAKING DETECTED — but this run used --render, so the DOM was "
+                              f"NOT swapped. Re-run on the unlocked page:\n"
+                              f"    pivot_extract '{cloak_report['unlock_url']}' --render",
+                              file=sys.stderr)
+                    else:
+                        # The plain view is the decoy. Re-point the whole collection at the page the
+                        # campaign's audience actually lands on.
+                        html = _bodies["click"]
+                        base_url = cloak_report["unlock_url"]
+                        cloak_report["collected_view"] = "click"
+                        print(f"[!] CLOAKING DETECTED — this host serves paid-click traffic a "
+                              f"different page. Collecting the CLICK view instead: {base_url}",
+                              file=sys.stderr)
+                else:
+                    print(f"[+] cloaking probe: {cloak_report.get('verdict')}", file=sys.stderr)
+
         # --- if the live target is unreachable/blocked, go passive ---
         if not html and not args.no_fallback:
             print(f"[!] live fetch failed ({live_error}); falling back to Wayback + urlscan",
@@ -563,6 +692,66 @@ def main():
         dest_host = strip_www(urlparse(dest).netloc)
         if dest_host and dest_host != result["meta"].get("host"):
             result["meta"]["redirect_destination"] = dest_host
+    # --- the URL PATH as a campaign identifier -------------------------------------------------
+    # Runs AFTER the redirect chain on purpose: a kit operator routinely lands you on a short
+    # entry URL and redirects into the template directory, so the path that identifies the kit is
+    # the FINAL one, not the one we were handed. Every other pivot in this tool hangs off the
+    # hostname; on a path-routed estate the hostname is disposable packaging and this is the only
+    # field that survives the rotation. Offline, free, and emits nothing when the path is generic
+    # (the base-rate control in references/url_paths.json).
+    if src.startswith(("http://", "https://")) or result["meta"].get("final_url"):
+        _pu = result["meta"].get("final_url") or base_url or src
+        _pa = wp_paths.analyse(_pu, result["meta"].get("host") or "")
+        result["meta"].update({k: _pa[k] for k in
+                               ("url_path", "path_template", "kit", "locale", "location")
+                               if _pa.get(k) is not None})
+        _ppiv = wp_paths.path_pivots(_pu, result["meta"].get("host") or "")
+        if _ppiv:
+            result["pivots"].extend(_ppiv)
+            sort_pivots(result["pivots"])
+
+    # --- PASSIVE SSL: promote the enrichment result to real pivots -------------------------------
+    # The enrichment step stores its passive-SSL answer inside the domain pivot's `live_results`,
+    # which is where passive DNS has always sat — visible in the JSON, invisible to the KB and to
+    # the assessment. Promoting it to pivots is what makes an origin candidate reach the case
+    # instead of only the file. Policy (CDN certs, over-prevalent certs) was already applied in
+    # wp_pssl, so a non-clusterable cert arrives here as `pssl:information`, never as an edge.
+    _pssl_piv = []
+    for _p in result.get("pivots", []):
+        _res = (_p.get("live_results") or {}).get("pssl")
+        if _res and not _res.get("skipped"):
+            _pssl_piv += wp_pssl.pssl_pivots(result["meta"].get("host") or "", _res)
+    if _pssl_piv:
+        _seen_ps = {(p.get("kind"), str(p.get("value"))) for p in result["pivots"]}
+        for _p in _pssl_piv:
+            if (_p["kind"], str(_p["value"])) not in _seen_ps:
+                _seen_ps.add((_p["kind"], str(_p["value"])))
+                result["pivots"].append(_p)
+        sort_pivots(result["pivots"])
+
+    # --- the ADVERTISING half of the URL, and the cloaking verdict -------------------------------
+    # Free and offline. `extract_url_codes` below already turns utm_*/affiliate values into
+    # `affiliate:*` pivots (one owner per artifact class), so this adds only what nothing else
+    # reads: the Google ValueTrack ACCOUNT OBJECT ids (campaignid/adgroupid/creative — allocated
+    # inside one advertiser account, so a match means one payer) and the fact that the URL we were
+    # handed describes a PAID arrival at all, which is the cue to resolve the advertiser.
+    _ad_urls = [u for u in ([src, base_url, result["meta"].get("final_url")] +
+                            [h.get("to", "") for h in redirects]) if u]
+    _ad_pivots = []
+    for _u in uniq(_ad_urls):
+        _ad_pivots += wp_serp.ad_param_pivots(_u, host=result["meta"].get("host") or "")
+    if cloak_report:
+        result["meta"]["cloaking"] = cloak_report
+        _ad_pivots += wp_serp.cloaking_pivots(cloak_report, host=result["meta"].get("host") or "")
+    if _ad_pivots:
+        _seen_ad = set()
+        for _p in _ad_pivots:
+            _k = (_p["kind"], _p["value"])
+            if _k not in _seen_ad:
+                _seen_ad.add(_k)
+                result["pivots"].append(_p)
+        sort_pivots(result["pivots"])
+
     url_pool = [src] + [h.get("to", "") for h in redirects]
     if base_url:
         url_pool.append(base_url)
@@ -660,13 +849,78 @@ def main():
     if args.intelx:
         wp_intelx.enrich_result(result, do_phonebook=not args.no_intelx_phonebook,
                                 free_only=args.free_only)
+    # The advertising archive runs LAST of the metered layers: it is the only one whose answer can
+    # send us back to collect a different page (a creative's destination link carries the operator's
+    # real campaign tagging, which unlocks a cloaked landing page), so it should see the finished
+    # result — and its cost is one search, which should not be spent before the free layers have
+    # had their chance to make it unnecessary.
+    if args.serp:
+        _adv = wp_serp.enrich_result(result, region=args.serp_region,
+                                     free_only=args.free_only, timeout=args.timeout)
+        for _a in (_adv.get("advertisers") or []):
+            print(f"[+] advertiser: {_a.get('advertiser') or '(unnamed)'} [{_a['advertiser_id']}] "
+                  f"· {_a['creative_count']} creative(s) · "
+                  f"{len(_a.get('target_domains') or [])} domain(s)", file=sys.stderr)
+        for _det in (_adv.get("creatives_opened") or []):
+            if _det.get("landing_params"):
+                _lp = "&".join(f"{k}={r['value']}" for k, r in _det["landing_params"].items())
+                print(f"[+] the ad's OWN landing parameters: {_lp}\n"
+                      f"    re-collect the page as its audience sees it: "
+                      f"pivot_extract '{_det['link']}'", file=sys.stderr)
+        if _adv.get("skipped"):
+            print(f"[!] ads transparency skipped: {_adv['skipped']}", file=sys.stderr)
 
-    # --- store the raw DOM (the collected page) ---
+    # --- RAW EVIDENCE: the DOM plus every JS/CSS the host served, hashed ------------------------
+    # Default ON with --case. Everything else this tool emits is DERIVED — a hash, a fingerprint,
+    # an extracted address — i.e. an assertion about a page that will not exist next month. The
+    # capture is the primary source those assertions can be re-checked against, by a reviewer or
+    # by us when the same kit resurfaces on a new host and we want to diff it.
+    want_capture = args.capture if args.capture is not None else bool(args.case)
+    if want_capture and html and src.startswith(("http://", "https://")):
+        try:
+            cap = wp_capture.capture(
+                result["meta"].get("final_url") or src, html=html, case=args.case,
+                # seed_ua / seed_proxy, NOT args.* — those are unresolved (--ua defaults to None,
+                # and --rotate-ua picks per run). The capture must go out on the SAME identity the
+                # page was fetched with, or the assets come from a different session than the DOM.
+                ua=seed_ua, proxy=seed_proxy, third_party=args.capture_third_party,
+                rendered=bool(getattr(args, "render", False)), timeout=args.timeout)
+            if cap.get("error"):
+                print(f"[!] capture failed: {cap['error']}", file=sys.stderr)
+            else:
+                m = cap["manifest"]
+                result["meta"]["capture"] = {
+                    "dir": cap["dir"], "capture_sha256": cap["capture_sha256"],
+                    "files": m["counts"]["total"], "js": m["counts"]["js"],
+                    "css": m["counts"]["css"], "bytes": m["bytes"],
+                    "captured_at": m["captured_at"],
+                    "incomplete": m.get("completeness"),
+                }
+                print(f"[+] captured {m['counts']['total']} file(s) "
+                      f"({m['counts']['js']} js, {m['counts']['css']} css) -> {cap['dir']}",
+                      file=sys.stderr)
+                print(f"    capture_sha256 {cap['capture_sha256']}", file=sys.stderr)
+                if m.get("skipped_for_budget"):
+                    print(f"    [!] {len(m['skipped_for_budget'])} asset(s) skipped for budget — "
+                          f"this bundle is NOT the whole page (see manifest).", file=sys.stderr)
+        except Exception as e:
+            # Never lose a collection because evidence storage failed — but say so loudly, since
+            # a run that reports no capture must not be mistaken for one that had nothing to store.
+            print(f"[!] capture failed ({e}) — the analysis below stands, but the raw bytes were "
+                  f"NOT stored for this run.", file=sys.stderr)
+
+    # --- store the raw DOM on its own (superseded by --capture, kept for ad-hoc use) ---
     if args.save_dom and html:
         if isinstance(args.save_dom, str):
             dom_path = args.save_dom
         elif args.out:
             dom_path = re.sub(r"\.json$", "", args.out) + ".html"
+        elif args.case:
+            # Never the bare CWD when a case exists: a stray <host>.dom.html at the repo root is
+            # case data outside cases/, which the contributor rules exist to prevent.
+            dom_dir = os.path.join("cases", args.case, "evidence", "dom")
+            os.makedirs(dom_dir, exist_ok=True)
+            dom_path = os.path.join(dom_dir, (result["meta"].get("host") or "page") + ".dom.html")
         else:
             dom_path = (result["meta"].get("host") or "page") + ".dom.html"
         try:

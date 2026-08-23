@@ -27,25 +27,41 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 from knowledge_base import KB  # noqa: E402
 
-# artifact tier by relationship (mirrors IntelAnalysis §1 triage ladder)
-ATTRIBUTION = {"registered_by", "uses_verification", "uses_analytics", "uses_saas",
-               "uses_pixel", "uses_wallet"}   # a reused crypto wallet = the same payee
-# identity artifacts an operator legitimately reuses across MANY of their own domains
-# vs. third-party SERVICE tokens that a shared SEO/marketing agency spreads across UNRELATED
-# clients — the latter over-merge, so they get a much stricter fan-out cap (agency-suspect).
-_IDENTITY_RELS = {"registered_by", "uses_wallet"}
-_SERVICE_RELS = {"uses_verification", "uses_analytics", "uses_saas", "uses_pixel"}
-CORROBORATING = {"uses_contact", "same_template", "same_inline_css", "same_comment",
-                 "uses_theme", "uses_favicon", "uses_tracker", "shows_email"}
-# `uses_nameserver` is CONDITIONAL, which is why it is not in any set above. Delegation to a
-# managed provider (Cloudflare, GoDaddy, Route 53 …) is shared by millions of unrelated domains
-# and must never cluster — but delegation to a nameserver the operator RUNS THEMSELVES is one of
-# the strongest links available: you cannot point a domain at ns1.<their-host>.com without
-# controlling that zone. noise_filters.MANAGED_DNS_SUFFIXES is the list that tells them apart;
-# _ns_tier() below applies it. (Previously a blanket NOISE = {"uses_nameserver"} constant sat
-# here unused, so self-hosted NS silently fell through to "noise" and never merged a cluster.)
+# ---------------------------------------------------------------- evidence weights (RULE 3)
+# DATA: references/evidence_weights.json — the scoring weights behind an attribution call, so an
+# analyst can promote or demote a relation without editing Python. See that file's _comment for
+# why attribution/corroborating deliberately diverge from the graph projection's own tiers.
+# Minimal safety net. Trimmed on purpose and in the CONSERVATIVE direction: on a broken data
+# file fewer relations count as attribution-grade and fewer count as corroborating, so the
+# scorer makes FEWER claims rather than more. `noise_rels` stays complete — shrinking that one
+# would start clustering on managed nameservers, which is the failure that must never happen.
+_EW_FALLBACK = {
+    "attribution_rels": ["registered_by", "uses_verification"],
+    "identity_rels": ["registered_by"],
+    "service_rels": ["uses_analytics"],
+    "corroborating_rels": ["same_template", "uses_favicon"],
+    "noise_rels": ["uses_nameserver"],
+}
+_EW = kb_refs.load_ref(kb_refs.ref_path(__file__, "evidence_weights.json"), _EW_FALLBACK)
+
+ATTRIBUTION = set(_EW["attribution_rels"])
+# identity artifacts an operator legitimately reuses across MANY of their own domains vs.
+# third-party SERVICE tokens a shared SEO/marketing agency spreads across UNRELATED clients —
+# the latter over-merge, so they get a much stricter fan-out cap (agency-suspect).
+_IDENTITY_RELS = set(_EW["identity_rels"])
+_SERVICE_RELS = set(_EW["service_rels"])
+CORROBORATING = set(_EW["corroborating_rels"])
+NOISE = set(_EW["noise_rels"])
+
+# `uses_nameserver` is CONDITIONAL in cti-expert (RULE 5), which is why _tier() below overrides
+# the flat `noise_rels` grading for it. Delegation to a managed provider (Cloudflare, GoDaddy,
+# Route 53 …) is shared by millions of unrelated domains and must never cluster — but delegation
+# to a nameserver the operator RUNS THEMSELVES is one of the strongest links available: you cannot
+# point a domain at ns1.<their-host>.com without controlling that zone.
+# noise_filters.MANAGED_DNS_SUFFIXES is the list that tells them apart; is_managed_ns() applies it.
 try:
     from noise_filters import MANAGED_DNS_SUFFIXES
 except Exception:  # noqa: BLE001 — keep hypothesize usable standalone
@@ -58,22 +74,25 @@ def is_managed_ns(indicator):
     host = str(indicator or "").split(":", 1)[-1].strip().lower().rstrip(".")
     return any(host == s or host.endswith("." + s) or s in host for s in MANAGED_DNS_SUFFIXES)
 
+
+# ---------------------------------------------------------------- reference data (RULE 3)
 # privacy-proxy / registrar-role / protected-whois emails — shared by thousands of UNRELATED
-# domains, so they must never drive clustering (they'd chain the whole KB into one blob).
-# Mirrors WebPivot/tools/whois_enrich.py's privacy list + the >N-domain reseller rule.
-_PROXY_EMAIL = ("privacy", "protect", "proxy", "whoisguard", "redacted", "data-protected",
-                "domain-contact", "domainabuse", "abuse@", "yinsibaohu", "gname.com",
-                "withheld", "contactprivacy", "not.disclosed", "namecheap", "tucows",
-                "domainsbyproxy", "registrar", "noreply", "no-reply")
-
-
-# placeholder registrants (never a real owner) + empty-hash parser artifacts — junk, never link.
-_PLACEHOLDER_PERSON = ("domain admin", "c/o id#", "redacted", "privacy", "whois", "not disclosed",
-                       "registration private", "domain expired", "statutory masking",
-                       "reactivation period", "pending delete", "redemption period", "pending renewal")
-_JUNK_HASH = ("da39a3ee5e6b4b0d",              # sha1("")
-              "e3b0c44298fc1c14",              # sha256("") prefix
-              "d41d8cd98f00b204", "g-recaptcha")   # md5("") ; mis-parsed recaptcha as GA id
+# domains, so they must never drive clustering (they'd chain the whole KB into one blob) —
+# plus placeholder registrants and empty-hash parser artifacts. All DATA, in
+# references/registrant_noise.json, shared with ingest_webpivot.py and ingest_report.py.
+_H_FALLBACK = {
+    "proxy_email_tokens": ("privacy", "protect", "proxy", "whoisguard", "redacted", "withheld",
+                           "abuse@", "registrar", "noreply", "no-reply"),
+    "placeholder_person_markers": ("domain admin", "redacted", "privacy", "whois",
+                                   "not disclosed", "reactivation period", "pending delete"),
+    "junk_hash_prefixes": ("da39a3ee5e6b4b0d", "e3b0c44298fc1c14", "d41d8cd98f00b204",
+                           "g-recaptcha"),
+}
+_H_REF = kb_refs.load_ref(kb_refs.ref_path(__file__, "registrant_noise.json"), _H_FALLBACK)
+_PROXY_EMAIL = tuple(_H_REF["proxy_email_tokens"])
+_PLACEHOLDER_PERSON = tuple(_H_REF["placeholder_person_markers"])
+# sha1("") / sha256("") prefix / md5("") ; plus recaptcha mis-parsed as a GA id
+_JUNK_HASH = tuple(_H_REF["junk_hash_prefixes"])
 
 
 def _is_proxy(indicator_type, indicator):

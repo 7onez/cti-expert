@@ -1,6 +1,6 @@
 ---
 name: IntelGraph
-description: Generate publication-quality charts, graphs, timelines, Gantt charts, and relationship diagrams from threat-intelligence and OSINT reports. Produces TWO outputs per figure — a high-resolution PNG/SVG/PDF for embedding in reports, and a lower-res analytical thumbnail for quick review. Use this skill WHENEVER the user pastes or uploads an intelligence report, IOC table, incident timeline, campaign summary, actor-infrastructure mapping, or asks for a "chart", "graph", "timeline", "Gantt", "diagram", "network graph", or "visualization" from investigative/CTI data — even if they don't say the word "skill". Also renders WebPivot case graphs via scripts/render_network.py. Output is deliberately non-AI-looking, using matplotlib, Mermaid, or Graphviz with a clean editorial theme. Supports English and Vietnamese labels.
+description: Generate publication-quality charts, graphs, timelines, Gantt charts, and relationship diagrams from threat-intelligence and OSINT reports — a high-res PNG/SVG/PDF for embedding plus an analytical thumbnail, via matplotlib, Mermaid, or Graphviz with a clean editorial (non-AI-looking) theme; English and Vietnamese labels. Also renders WebPivot case graphs (scripts/render_network.py) and the infrastructure LIFECYCLE timeline — domain registration/expiry spans, registrant eras, IP hosting windows, certificate validity, archive visibility — from a case's pivot JSON (scripts/case_timeline.py), with an evidence ledger citing every dated fact to an online source link. USE WHEN the user pastes or uploads an intelligence report, IOC table, incident timeline, campaign summary, or actor-infrastructure mapping, or asks for a chart, graph, timeline, Gantt, diagram, network graph, or visualization from investigative/CTI data — even if they don't say the word "skill".
 ---
 
 > **OPSEC — this skill is portable/shared. Never write case data into it.** No real operator
@@ -24,6 +24,7 @@ GRAPH=~/.claude/skills/IntelGraph          # absolute — works from any CWD (pr
 python3 "$GRAPH/scripts/render_mermaid.py"  diagram.mmd  outputs/stem   # via mmdc
 python3 "$GRAPH/scripts/render_graphviz.py" graph.dot    outputs/stem   # needs graphviz/dot
 python3 "$GRAPH/scripts/render_network.py"  case_graph.json network.html --title "..."
+python3 "$GRAPH/scripts/case_timeline.py"   CASE/out/*.json --stem CASE/timeline --markdown
 # theme.py + gantt.py:  sys.path.insert(0, "<GRAPH>/scripts")
 ```
 
@@ -46,8 +47,8 @@ need their deps present.
 6. **Present both** with `present_files`, hi-res first.
 
 **Output contract:** when the figure belongs to a case, save it into that case, not a loose
-`outputs/`. Network graphs → `knowledge/reports/<case>/` beside the assessment (or `cases/<case>/`);
-standalone/ad-hoc figures → `outputs/`. Always emit the full artifact set the figure type
+`outputs/`. Network graphs → `cases/<case>/` beside the assessment; standalone/ad-hoc figures →
+`outputs/`. Always emit the full artifact set the figure type
 promises (hi-res PNG + SVG/PDF + thumb for matplotlib; the single self-contained `network.html`
 for `render_network.py`). Same case + same input JSON → same output filenames, so a re-render
 overwrites rather than accumulating stray files.
@@ -87,6 +88,65 @@ Use this figure with the **IntelReport** skill to build the PDF/DOCX. Both outpu
 `render_network.py` (interactive HTML) is unchanged and still the right tool for live triage.
 Rendering needs `mmdc` + headless Chrome (same as any Mermaid figure).
 
+## The timeline figure — `case_timeline.py`  (run this on every case)
+
+The network graph answers *what is connected*; it cannot answer *were they connected at the same
+time*, and that is the question every same-operator claim actually rests on. Two hosts on one IP
+in windows that never overlap are a recycled address, not co-tenants. Build the temporal view
+**before** you draw conclusions from the relationship web:
+
+```bash
+python3 scripts/case_timeline.py cases/<case>/out/*.json \
+    --stem cases/<case>/timeline --title "Infrastructure lifecycle — N domains" \
+    --markdown --history cases/<case>/out/wayback_*.json \
+    --source "OSINT collection" --grading B2 [--lang vi] [--max-certs 12] [--max-lanes 24]
+```
+
+Three artifacts, one run:
+
+| Output | What it is |
+|---|---|
+| `timeline_hires.png` / `.svg` / `_thumb.png` | the swimlane figure for the report |
+| `timeline_events.json` | the **evidence ledger** — every dated fact with its source + online link |
+| `timeline.md` (`--markdown`) | paste-ready evidence table + the derived correlations |
+
+**Encoding** — one lane per host, stacked sub-tracks per interval kind: registration
+(created→expires, sand) · registrant era from WHOIS history (ochre) · hosting window from passive
+DNS (steel) · certificate validity from CT (olive) · archive visibility (hatched — a *crawl*
+schedule, deliberately weaker-looking than the records of control) · artifact-presence window
+(slate). Brick diamonds on the strip below each lane are point observations (WHOIS update,
+capture, scan). A dotted rule marks *now*, so a lapsed registration reads at a glance.
+
+**It also does the temporal correlation for you** (in the `.md` and the ledger's
+`correlations` block), each with the caveat that could kill it: registration cohorts · **expiry /
+renewal cohorts** · same-day WHOIS updates · certificate issuance batches · **IP-tenancy overlap**
+(co-tenant vs *sequential tenancy*) · shared-artifact window overlap · abandonment cohorts. The
+tradecraft for reading those is IntelAnalysis §1.5 — this tool computes them, the analyst judges
+them.
+
+Inputs are the case's `pivot_extract` JSON. Richness follows collection: RDAP/WHOIS gives the
+registration spine keylessly, CT gives cert windows, **passive DNS (`PDNS_*` credentials) is what
+gives real hosting windows** — without it you get scans and live DNS, i.e. points, not intervals.
+`--max-certs` / `--max-lanes` bound the figure and the omitted counts are **printed, never hidden**.
+
+## Evidence rule — cite time, source and an ONLINE link (never a file path)
+
+Every figure and every table this skill produces is an exhibit someone else has to be able to
+re-check. So each dated claim carries four things: **what · when (UTC) · source · a public URL**.
+
+- **Links must resolve for a reader who has no access to the case store.** Wayback snapshot,
+  archive.today, urlscan result, crt.sh cert id, RDAP record, BGP. A `cases/<case>/out/x.json`
+  path is our *collection record* — it may appear in an internal appendix, never as the citation.
+- **Prefer a frozen copy over a search.** `web.archive.org/web/<ts>/<url>` and
+  `urlscan.io/result/<uuid>/` still show what you saw; `crt.sh/?q=…` moves under the reader.
+- **No public copy yet? Make one before you assert** — `pivot_extract --archive-missing` (Wayback
+  Save Page Now) or a urlscan submission — then cite what you created.
+- **Caption every figure with its observation window**, not just a render date: a chart built from
+  a 2024 capture is a 2024 claim no matter when the PNG was written.
+- The link templates and the per-source Admiralty grades live in
+  `references/evidence_sources.json` — add a service there (no code change) rather than
+  hand-writing URL shapes.
+
 ## Chart type selection
 
 | Input signal | Chart | Engine |
@@ -97,6 +157,7 @@ Rendering needs `mmdc` + headless Chrome (same as any Mermaid figure).
 | Two-metric relationship | Scatter | matplotlib |
 | Event sequence with dates | Timeline | `gantt.py` (matplotlib) |
 | Overlapping activity windows (campaign phases, IR tasks) | Gantt | `gantt.py` (matplotlib) |
+| **A case's infrastructure over time** — when each domain was registered/expired, who held it, which IP hosted it when, which certs covered it | **Lifecycle swimlane** | **`case_timeline.py`** (matplotlib) |
 | Attack progression | Kill-chain / flow | Mermaid or Graphviz |
 | Actor ↔ infra ↔ victim links | Relationship graph | Graphviz |
 | Matrix (Diamond Model, MITRE coverage, C1–C8 scoring) | Heatmap | matplotlib |
@@ -145,6 +206,11 @@ See `references/matplotlib_recipes.md` for ready-to-adapt code for bar, line, do
 
 Prefer the matplotlib-native `scripts/gantt.py` — it needs no browser, matches the data-chart house style exactly, and handles Vietnamese. Use it for Gantt charts and event timelines:
 
+> **`gantt.py` vs `case_timeline.py`:** `gantt.py` draws a list of dates **you** supply (campaign
+> phases, IR tasks, a narrative of events from a report). `case_timeline.py` **derives** the
+> timeline from the case's collected JSON and cites each row — use it for anything about the
+> investigated infrastructure itself.
+
 ```python
 import sys; sys.path.insert(0, "IntelGraph/scripts")
 from gantt import gantt, timeline
@@ -191,6 +257,10 @@ When `--lang vi` / `lang="vi"`:
 ## Quality checklist before presenting
 
 - Two files exist: a hi-res AND a thumbnail.
+- Every dated claim in the figure/table cites **when · source · a resolvable online link** — no
+  local case-store paths, no uncited timestamps.
+- A timeline's intervals are intervals: a shared IP or artifact is drawn (and described) as a
+  window, and the assessment says whether the windows **overlap**.
 - Vietnamese text renders with correct diacritics (no tofu boxes).
 - Caption footer has source + confidence grading + date.
 - No 3D, no default matplotlib blue, no gradient fills.

@@ -1,0 +1,31 @@
+{
+  "_comment": "Signals that a FOFA / Shodan / Censys result exposes a MISCONFIGURED, operator-run box rather than hardened or CDN infrastructure. Read PASSIVELY from an index that already holds the banner (no packet is ever sent to the target). Two tells. (1) INTERNAL-IP LEAK: an RFC-reserved address (loopback / RFC1918 / link-local) surfacing in a public result's ip / host / banner means a dual-homed box is leaking its internal topology — a redirect Location header pointing at the LAN upstream, a self-signed certificate SAN, or a service banner echoing the internal address. It marks the asset as operator-run and sloppy (a hardened CDN edge never does this) and can hand you the real origin or the internal service map. (2) ANONYMOUS FTP: an FTP banner that grants anonymous / guest login is a HIGH-value triage lead — the box can hold the phishing kit itself, uploaded victim logs, builder configs, backups, sometimes the operator's own files. TRADECRAFT — this layer FLAGS the lead only, from the passive index. Actually connecting to the box's FTP is ACTIVE and attributable (it tells the operator they are being examined) and pulling victim data has handling / legal implications, so a human decides that step and the tool never auto-connects. These are generic infrastructure markers, never case data (repo RULE 1). To flag ranges BEYOND the RFC classes (e.g. a provider's documented private management range you catch leaking), add an optional group `extra_reserved_cidrs` with a `values` list of GENERIC CIDRs — never a live case's real internal range.",
+  "anon_ftp_markers": {
+    "_comment": "Case-insensitive substrings that, in an FTP service BANNER, indicate anonymous or guest login is accepted. The scan applies them only to a row recognised as FTP (see ftp_protocol_markers). ADD a marker when you see an anon-accepting banner slip past — these are the standard vsftpd / ProFTPD / Pure-FTPd / IIS success strings, not case-specific values.",
+    "values": [
+      "230 anonymous access granted",
+      "230 anonymous user logged in",
+      "230 anonymous login ok",
+      "230 login successful",
+      "230 guest login ok",
+      "230 user anonymous logged in",
+      "230 user logged in, proceed",
+      "anonymous access allowed",
+      "anonymous ftp",
+      "anonymous login"
+    ]
+  },
+  "ftp_protocol_markers": {
+    "_comment": "How to recognise an FTP service in a FOFA / Shodan row so the anon-login banner scan runs on it. Matched case-insensitively against the row's protocol field, and as the opening bytes of a raw banner (an FTP greeting is a 220). Port 21 is also treated as FTP. Generic protocol identifiers only.",
+    "values": ["ftp", "220 ", "220-"]
+  },
+  "leak_classes": {
+    "_comment": "Which RFC-reserved address CLASSES, when they surface in a public result, count as an internal-topology leak worth flagging. Matching uses Python's stdlib ipaddress predicates; each switch here gates one predicate so an analyst can silence a class WITHOUT touching code. Keep cgnat OFF by default — 100.64.0.0/10 is carrier-grade NAT and is frequently a legitimate public-facing address, not a leak.",
+    "entries": {
+      "private": true,
+      "loopback": true,
+      "link_local": true,
+      "cgnat": false
+    }
+  }
+}

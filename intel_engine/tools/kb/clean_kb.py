@@ -24,7 +24,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
-from ingest_webpivot import _is_role_placeholder   # one source of truth with the ingester
+# One source of truth with the ingester — including its registrant-noise lists, which it loads
+# from references/registrant_noise.json. Re-pasting them here is what let them drift before.
+from ingest_webpivot import (_is_role_placeholder, _ORG_SUFFIX,  # noqa: E402
+                             _NAME_JUNK)
 try:
     from pivot_extract import valid_crypto_address as _valid_wallet
 except Exception:
@@ -32,12 +35,6 @@ except Exception:
         return True
 
 _IP = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?:[:_]\d+)?$")
-_ORG_SUFFIX = (" ltd", " ltd.", " llc", " inc", " inc.", " co.", " corp", " gmbh", " pty",
-               " limited", " group", " s.r.o", " pte", " b.v", " co ltd", " company",
-               " technologies", " technology", " systems", " media", " holdings", " sarl")
-_NAME_JUNK = ("registrant state", "registrant province", "registrant country", "registrant city",
-              "registrant_", "state/province", "reactivation period", "pending delete",
-              "redemption period", "pending renewal", "on behalf of", "domain buyer")
 
 
 def _wallet_parts(dst):                 # "wallet:btc:<addr>" -> ("btc","<addr>")

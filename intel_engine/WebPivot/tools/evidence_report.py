@@ -57,6 +57,21 @@ except Exception:
 # and requires it be kept distinct from analytic CONFIDENCE (how solid the sourcing is).
 # We map the extractor's internal pivot confidence (high/medium/low) to both.
 
+# Base-rate control for the estimative scale. Above these per-source hit counts a reverse
+# search stops being corroboration and becomes proof the artifact is shared infrastructure.
+_RT_FALLBACK = {
+    "saturation_ceilings": {"default": 500, "fofa": 500, "urlscan": 500},
+    "informational_sources": ["fofa_ip_reverse", "pdns_ip_reverse"],
+    "saturation_policy": {"invert_likelihood": True, "keep_confidence": True,
+                          "exclude_from_bluf_lead": True},
+}
+_RT_REF = load_ref(ref_path(__file__, "reporting_thresholds.json"), _RT_FALLBACK)
+_SAT_CEILINGS = _RT_REF["saturation_ceilings"]
+_SAT_POLICY = _RT_REF["saturation_policy"]
+# Sources that reverse something other than the artifact (the IP it happens to sit on), so a
+# huge count is co-tenancy context and must not disqualify the artifact itself.
+_INFO_SOURCES = frozenset(_RT_REF["informational_sources"])
+
 # Likelihood that the pivot reflects a real, actionable infrastructure/ownership link.
 _ESTIMATIVE = {
     "high":   "very likely",
@@ -82,17 +97,44 @@ def _bump(scale: list, value: str) -> str:
     return scale[min(idx + 1, len(scale) - 1)]
 
 
-def estimative_terms(confidence: str, live_corroborated: bool = False) -> dict:
+def _mirror(scale: list, value: str) -> str:
+    """Reflect a term across an ordered scale — 'almost certainly' <-> 'remote'.
+
+    Used when the proposition flips polarity: a saturated artifact is being assessed as
+    NOT identifying an operator, so high certainty must map to the negative end, not to
+    one notch lower on the positive end.
+    """
+    if value not in scale:
+        return scale[len(scale) // 2]
+    return scale[len(scale) - 1 - scale.index(value)]
+
+
+def estimative_terms(confidence: str, live_corroborated: bool = False,
+                     saturated: bool = False) -> dict:
     """Return {'likelihood', 'confidence'} in ICD 203 language for a pivot.
 
     Live corroboration (an independent source returned hits for the pivot) bumps the
     likelihood one notch up the estimative scale and lifts analytic confidence — this
     is the tradecraft rule that multiple independent sources raise confidence.
+
+    `saturated` inverts that. Past `saturation_ceilings` a reverse search has not
+    corroborated the artifact, it has shown the artifact is shared by so many unrelated
+    hosts that it cannot single out an operator (a hosting platform's parking favicon or
+    its default analytics ID). Saturation wins over corroboration: the count IS the
+    corroboration signal, so a saturated artifact must never also be read as corroborated.
+    The returned likelihood is then a statement about the NEGATIVE proposition — 'very
+    unlikely to identify a specific operator' — while analytic confidence is deliberately
+    NOT reduced, because a two-million-hit reverse search is strong sourcing for that call.
     """
     conf = (confidence or "low").lower()
     likelihood = _ESTIMATIVE.get(conf, "roughly even chance")
     analytic = _CONFIDENCE.get(conf, "low confidence")
-    if live_corroborated:
+    if saturated:
+        if _SAT_POLICY.get("invert_likelihood", True):
+            likelihood = _mirror(_SCALE, likelihood)
+        if not _SAT_POLICY.get("keep_confidence", True):
+            analytic = _CONFIDENCE.get("low", "low confidence")
+    elif live_corroborated:
         likelihood = _bump(_SCALE, likelihood)
         analytic = _bump(_CONF_SCALE, analytic)
     return {"likelihood": likelihood, "confidence": analytic}
@@ -103,24 +145,59 @@ def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+_HIT_SOURCES = (("fofa", "FOFA"), ("urlscan", "urlscan"),
+                ("crtsh", "crt.sh"), ("passivedns", "passive DNS"),
+                ("pdns", "PDNS"), ("fofa_ip_reverse", "FOFA reverse-IP"),
+                ("pdns_ip_reverse", "PDNS reverse-IP"))
+
+
+def _ceiling(key: str) -> int:
+    try:
+        return int(_SAT_CEILINGS.get(key, _SAT_CEILINGS.get("default", 500)))
+    except (TypeError, ValueError):
+        return 500
+
+
+def _saturated_sources(pivot: dict) -> list:
+    """Sources whose hit count is so large the artifact cannot single out an operator.
+
+    Returns ["FOFA: 2356412 hits (>= 500 — shared infrastructure)", ...]. An empty list
+    means nothing about the pivot was saturated; it does NOT mean the pivot was corroborated.
+    """
+    lr = pivot.get("live_results") or {}
+    out = []
+    for key, label in _HIT_SOURCES:
+        if key in _INFO_SOURCES:      # reverses the IP, not the artifact — co-tenancy context
+            continue
+        total = (lr.get(key) or {}).get("total")
+        if total and int(total) >= _ceiling(key):
+            out.append(f"{label}: {total} hits (>= {_ceiling(key)} — shared infrastructure)")
+    for stk in ("reverse_whois_current", "reverse_whois_historic"):
+        cnt = (lr.get(stk) or {}).get("count")
+        if cnt and int(cnt) >= _ceiling(stk):
+            out.append(f"{stk}: {cnt} domains (>= {_ceiling(stk)} — shared registrant contact)")
+    return out
+
+
 def _live_hits(pivot: dict) -> list:
-    """Human-readable one-liners for whatever independent sources corroborated a pivot."""
+    """Human-readable one-liners for whatever independent sources corroborated a pivot.
+
+    A source past its saturation ceiling is deliberately NOT listed here — it is not
+    corroboration. `_saturated_sources` reports it instead, as a base-rate finding.
+    """
     lr = pivot.get("live_results") or {}
     out = []
     dns = lr.get("dns") or {}
     if dns.get("ips"):
         out.append("live DNS: " + ", ".join(dns["ips"]))
-    for key, label in (("fofa", "FOFA"), ("urlscan", "urlscan"),
-                       ("crtsh", "crt.sh"), ("passivedns", "passive DNS"),
-                       ("pdns", "PDNS"), ("fofa_ip_reverse", "FOFA reverse-IP"),
-                       ("pdns_ip_reverse", "PDNS reverse-IP")):
+    for key, label in _HIT_SOURCES:
         blk = lr.get(key) or {}
         total = blk.get("total")
-        if total:
+        if total and int(total) < _ceiling(key):
             out.append(f"{label}: {total} hits")
     for stk in ("reverse_whois_current", "reverse_whois_historic"):
         rw = lr.get(stk) or {}
-        if rw.get("count"):
+        if rw.get("count") and int(rw["count"]) < _ceiling(stk):
             out.append(f"{stk}: {rw['count']} domains")
     return out
 
@@ -155,6 +232,8 @@ def render_cia_report(result: dict,
 
     # Walk each pivot's live_results exactly once; everything below reads these.
     pivot_hits = [(p, _live_hits(p)) for p in pivots]
+    # Artifacts whose reverse search saturated — shared infrastructure, not operator links.
+    saturated_map = {id(p): _saturated_sources(p) for p in pivots}
 
     L: list = []
     banner = classification.strip().upper()
@@ -186,10 +265,17 @@ def render_cia_report(result: dict,
     high = [p for (p, _h) in signal if (p.get("confidence") or "").lower() == "high"]
     corr = [p for (p, hits) in signal if hits]
     L.append("## Bottom Line Up Front")
+    saturated = [p for (p, _h) in signal if saturated_map.get(id(p))]
     if signal:
-        lead, lead_hits = next(((p, h) for p, h in signal
-                                if (p.get("confidence") or "").lower() == "high"), signal[0])
-        terms = estimative_terms(lead.get("confidence"), bool(lead_hits))
+        # A saturated artifact must never headline the BLUF: it is the most COMMON artifact in
+        # the set, which reads as the strongest one only because nothing counted the hits.
+        unsat = ([(p, h) for p, h in signal if not saturated_map.get(id(p))]
+                 if _SAT_POLICY.get("exclude_from_bluf_lead", True) else list(signal))
+        pool = unsat or list(signal)
+        lead, lead_hits = next(((p, h) for p, h in pool
+                                if (p.get("confidence") or "").lower() == "high"), pool[0])
+        terms = estimative_terms(lead.get("confidence"), bool(lead_hits),
+                                 bool(saturated_map.get(id(lead))))
         L.append(
             f"Collection against {host} yielded {len(signal)} pivot artifact(s) of analytic value"
             + (f" ({len(suppressed)} suppressed as registrar/CDN boilerplate)" if suppressed else "")
@@ -198,6 +284,16 @@ def render_cia_report(result: dict,
             f"the strongest indicator — {lead.get('kind')} `{lead.get('value')}` — {terms['likelihood']} "
             f"reflects a genuine, pivotable link to the operator's wider infrastructure."
         )
+        if saturated:
+            L.append("")
+            L.append(
+                f"**Base-rate caution.** {len(saturated)} of these artifact(s) returned a reverse "
+                "search so large that the artifact cannot single out an operator — it is shared "
+                "platform infrastructure. Those are downgraded below and must not be used to "
+                "cluster: "
+                + "; ".join(f"{p.get('kind')} `{p.get('value')}`" for p in saturated[:5])
+                + ("…" if len(saturated) > 5 else "") + "."
+            )
     else:
         L.append(
             f"Collection against {host} returned no high-value pivot artifacts"
@@ -232,13 +328,24 @@ def render_cia_report(result: dict,
              "link is real; confidence describes the strength of the underlying sourcing._")
     L.append("")
     if signal:
-        for i, (p, hits) in enumerate(signal[:15], 1):
-            terms = estimative_terms(p.get("confidence"), bool(hits))
-            L.append(f"- **KJ-{i}.** The {p.get('kind')} artifact `{p.get('value')}` "
-                     f"**{terms['likelihood']}** links the subject to related infrastructure "
-                     f"(*{terms['confidence']}*).")
+        # Saturated artifacts sort last: the report should lead with what discriminates.
+        ordered = ([x for x in signal if not saturated_map.get(id(x[0]))]
+                   + [x for x in signal if saturated_map.get(id(x[0]))])
+        for i, (p, hits) in enumerate(ordered[:15], 1):
+            sat = saturated_map.get(id(p)) or []
+            terms = estimative_terms(p.get("confidence"), bool(hits), bool(sat))
+            if sat:
+                L.append(f"- **KJ-{i}.** The {p.get('kind')} artifact `{p.get('value')}` is "
+                         f"**shared infrastructure** and is **{terms['likelihood']}** to identify "
+                         f"a specific operator (*{terms['confidence']}*). Do not cluster on it.")
+            else:
+                L.append(f"- **KJ-{i}.** The {p.get('kind')} artifact `{p.get('value')}` "
+                         f"**{terms['likelihood']}** links the subject to related infrastructure "
+                         f"(*{terms['confidence']}*).")
             if p.get("note"):
                 L.append(f"    - Basis: {p['note']}")
+            if sat:
+                L.append(f"    - Base rate: {'; '.join(sat)}.")
             L.append(f"    - Corroboration: {'; '.join(hits)}." if hits
                      else "    - Corroboration: none returned this collection; single-source.")
         if len(signal) > 15:

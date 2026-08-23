@@ -12,6 +12,8 @@ your scripts (e.g. pivot_extract's --crawl / --rotate-ua, risk_signals' options)
 """
 from __future__ import annotations
 
+import concurrent.futures
+import contextvars
 import datetime
 import json
 import os
@@ -131,12 +133,139 @@ def _find_cached_raw(host: str, exclude: str = "") -> str:
     return collect_core.find_cached_raw(ROOT, host, exclude)
 
 
-def _err(text: str) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": text}], "is_error": True}
+# --- context governor -------------------------------------------------------
+# One place that bounds how much of a tool result enters the model's context, replacing the
+# four hand-placed slices that used to be the whole story (every other tool returned its full
+# payload, so one pivot_extract over a large cluster could crowd the phase's own instructions
+# out of the window). Budgets are DATA — references/context_budget.json (RULE 3).
+#
+# TRUNCATION IS NEVER SILENT. A quietly shortened result is indistinguishable from a tool that
+# found less, and "found less" is how a false negative enters a case — the same reason a
+# keyless run has to announce what it could not query. Every cut carries the original size,
+# what was dropped, and where to read the full copy.
+try:
+    from wp_refs import load_ref as _load_ref, ref_path as _ref_path   # the shared RULE 3 loader
+except Exception:  # noqa: BLE001 — degrade, never block a run
+    def _ref_path(module_file: str, name: str) -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(module_file)), "references", name)
+
+    def _load_ref(path: str, fallback: dict) -> dict:
+        print(f"[tools] WARNING: wp_refs unavailable; {os.path.basename(path)} not read — "
+              f"running on the minimal embedded context budget.", file=sys.stderr)
+        return dict(fallback)
 
 
-def _ok(text: str) -> dict[str, Any]:
-    return {"content": [{"type": "text", "text": text}]}
+_CTX_FALLBACK = {
+    "result_budget": {"default_chars": 12000, "large_chars": 40000, "head_fraction": 0.7,
+                      "min_tail_chars": 800, "error_chars": 4000},
+    "large_result_tools": ["pivot_extract", "impersonation_hunt", "fallback_probe",
+                           "reverse_whois", "intelx_search", "censys"],
+    "transcript_budget": {"max_total_chars": 360000, "max_tool_result_chars": 24000,
+                          "keep_recent_rounds": 6},
+}
+_CTX = _load_ref(_ref_path(__file__, "context_budget.json"), _CTX_FALLBACK)
+
+# The OPTIONAL parameters each handler reads via args.get(). They are not in the `@tool` schema
+# (which lists only the required ones), so before this they existed nowhere the model could see —
+# only inside the description prose. Strong models infer them; mid-size open-weight models mostly
+# do not, and the miss is expensive rather than loud: no `passive=true` on a hostile run means the
+# gate denies the call and the run burns turns. Attached to the tool objects below and read by
+# BOTH schema builders (mcp_server._input_schema, openai_backend._params_schema).
+_PARAMS_FALLBACK = {"optional_params": {}}
+OPTIONAL_PARAMS = _load_ref(_ref_path(__file__, "tool_params.json"),
+                            _PARAMS_FALLBACK)["optional_params"]
+
+RESULT_BUDGET = dict(_CTX["result_budget"])
+LARGE_RESULT_TOOLS = set(_CTX["large_result_tools"])
+TRANSCRIPT_BUDGET = dict(_CTX["transcript_budget"])
+# Per-run override without a code edit or a data edit (e.g. a cheap smoke run on a small model).
+_BUDGET_ENV = os.environ.get("HARNESS_RESULT_CHARS")
+
+
+# Which @tool is executing right now. A ContextVar (not a global) because collect_fanout runs
+# several collector agents concurrently in ONE process — a plain global would let one agent's
+# tool name decide another agent's budget. Set by _governed() below, read by _budget_for(), so
+# every tool is governed by NAME without editing ~60 _ok() call sites.
+_CURRENT_TOOL: contextvars.ContextVar = contextvars.ContextVar("harness_current_tool",
+                                                               default=None)
+
+
+def _budget_for(tool: str | None) -> int:
+    if _BUDGET_ENV:
+        try:
+            return max(500, int(_BUDGET_ENV))
+        except ValueError:
+            pass
+    name = tool or _CURRENT_TOOL.get()
+    key = "large_chars" if name in LARGE_RESULT_TOOLS else "default_chars"
+    return int(RESULT_BUDGET.get(key, 12000))
+
+
+def _governed(t):
+    """Bind a tool's NAME around its handler so _ok()/_err() inside it pick the right budget.
+
+    Wrapping here rather than at each return keeps the governor in one place and makes it
+    impossible for a NEW tool to escape it by forgetting to pass `tool=` — the failure mode
+    that left this gap open before, where only four of the tools capped themselves."""
+    h = getattr(t, "handler", None)
+    name = getattr(t, "name", None)
+    if h is None or name is None or getattr(t, "_governed", False):
+        return t
+
+    async def _wrapped(args, _h=h, _n=name):
+        token = _CURRENT_TOOL.set(_n)
+        try:
+            return await _h(args)
+        finally:
+            _CURRENT_TOOL.reset(token)
+
+    try:
+        t.handler = _wrapped
+        t._governed = True
+    except Exception:  # noqa: BLE001 — an immutable tool object still works, just at the default budget
+        pass
+    return t
+
+
+def _bounded(text: str, *, tool: str | None = None, budget: int | None = None,
+             where: str = "") -> str:
+    """Cap one tool result at its budget, keeping the HEAD and the TAIL and saying so.
+
+    The head is kept because our JSON leads with `meta` — host, http status, capability,
+    collection time — which the model needs to reason about the payload at all. The tail is
+    kept because list-shaped output carries its summary/last rows at the end. What disappears
+    is the middle, and the marker names its exact size so the model can ask for it narrowly
+    instead of assuming the tool came back empty."""
+    text = text if isinstance(text, str) else str(text)
+    limit = budget or _budget_for(tool)
+    if len(text) <= limit:
+        return text
+    head_n = max(1, int(limit * float(RESULT_BUDGET.get("head_fraction", 0.7))))
+    tail_n = max(int(RESULT_BUDGET.get("min_tail_chars", 800)), limit - head_n)
+    head_n = max(1, limit - tail_n)
+    dropped = len(text) - head_n - tail_n
+    marker = (
+        f"\n\n… ⚠️ RESULT TRUNCATED TO FIT THE CONTEXT BUDGET — "
+        f"{len(text):,} chars → {head_n + tail_n:,} (head {head_n:,} + tail {tail_n:,}); "
+        f"{dropped:,} chars omitted from the MIDDLE.\n"
+        f"This is a context cut, NOT the tool's full output and NOT evidence of absence — "
+        f"do not report the omitted portion as 'nothing found'.\n"
+        + (f"Full result on disk: {where}\n" if where else "")
+        + f"To see the omitted part, re-run narrowed (one host / one kind / a smaller limit) "
+          f"or raise HARNESS_RESULT_CHARS.\n… \n\n"
+    )
+    return text[:head_n] + marker + text[-tail_n:]
+
+
+def _err(text: str, *, tool: str | None = None) -> dict[str, Any]:
+    return {"content": [{"type": "text",
+                         "text": _bounded(text, tool=tool,
+                                          budget=int(RESULT_BUDGET.get("error_chars", 4000)))}],
+            "is_error": True}
+
+
+def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": _bounded(text, tool=tool, where=where)}]}
 
 
 # ---------------------------------------------------------------- COLLECT tools
@@ -152,10 +281,52 @@ def _ok(text: str) -> dict[str, Any]:
     "host into a mail_server pivot and an M365 routing host into an m365_tenant pivot, and flags a "
     "no-MX domain as a throwaway/parked tell; and reads SPF + DMARC (apex/_dmarc TXT) — custom SPF "
     "includes and ip4/ip6 senders become spf_include/mail_sender_ip pivots, and DMARC rua/ruf "
-    "addresses not at a monitoring vendor become dmarc_contact attribution pivots) OR a "
+    "addresses not at a monitoring vendor become dmarc_contact attribution pivots; plus the ASSET "
+    "layer, which is what makes an SPA/white-label kit readable — it fetches the page's OWN JS "
+    "bundles (config/env-named files and hashed build artifacts first, known libraries skipped) and "
+    "re-runs every extractor over the bundle source, because on a modern kit the shell HTML is empty "
+    "and the operator's config lives only there: an off-apex api_endpoint / websocket_endpoint (the "
+    "backend the front end was compiled against — the strongest same-operator link in a white-label "
+    "kit, since every front rotates but the backend does not), build_env:<KEY> tokens inlined by the "
+    "bundler (a VUE_APP_BRAND/REACT_APP_TENANT value is the platform naming its own customer — same "
+    "value = same tenant, same KEY with a different value = same PLATFORM not same operator), and a "
+    "js_bundle_sha256 kit fingerprint that survives a favicon/DOM re-skin; from those same "
+    "already-fetched bundles it also recovers the SPA ROUTE TABLE (Vue/React/Angular route "
+    "literals, Next.js sortedPages/__NEXT_DATA__) at ZERO extra requests and with no path "
+    "brute-forcing — a spa_route_signature (sha256 over the sorted route set: an identical route "
+    "inventory elsewhere = the same compiled app, same-KIT not same-operator), plus spa_route:admin "
+    "leads (the operator panel the public funnel never links to) and spa_route:funnel leads "
+    "(deposit/withdraw/KYC/referral — the scam's mechanics, read without walking the funnel); "
+    "discovered routes are NEVER fetched, they are leads for the analyst to judge; it then follows "
+    "sourceMappingURL to the .js.map for dev_username / dev_project / dev_path — the operator's own "
+    "build machine and internal project name, which survive every re-brand; and it reads the fixed "
+    "list of published policy files (robots.txt, sitemap.xml, ads.txt, app-ads.txt, security.txt, "
+    "humans.txt, apple-app-site-association) yielding adstxt_publisher (an owner-registered AdSense "
+    "pub- account, Tier-A like a GSC/GA4 token), apple_team_id + ios_bundle_id, security_contact and "
+    "robots_disallow leads. All of it is free/keyless and on by default; disable with "
+    "no_assets=true / no_well_known=true, or cap the bundle count with assets_max=<N>); plus the "
+    "DOCUMENT/IMAGE METADATA layer, which reads the files the site HOSTS rather than the page — "
+    "it downloads the linked PDFs (the 'licence', 'certificate', 'prospectus') and the site's own "
+    "images and parses /Info + XMP + EXIF out of them. A page is re-skinned in minutes, but nobody "
+    "re-exports the PDF when the brand changes, so these outlive every cosmetic rotation: "
+    "doc_author (a real name or OS account from /Author, EXIF Artist or XPAuthor — not copyable "
+    "by a stranger), doc_xmp_docid (an XMP DocumentID is minted per SOURCE document, so the same "
+    "id on two domains is literally the same file — near-decisive same-operator), doc_copyright, "
+    "doc_gps (coordinates from an unstripped photo), doc_camera, doc_producer/doc_software (the "
+    "SHOP that made the file — same-KIT until corroborated), and media_sha256. Values naming a "
+    "common TOOL or a DEFAULT account (Microsoft Word, Photoshop, Canva, 'Windows User') are "
+    "recorded as context but NEVER clustered on — base-rate rule, tunable in "
+    "references/docmeta.json. Note that an EMPTY result is the normal case (most CMS/CDN "
+    "pipelines strip EXIF automatically) and is NOT evidence of deliberate sanitising. Free and "
+    "keyless but it costs extra requests TO THE TARGET, so disable with no_docmeta=true or cap it "
+    "with docmeta_max=<N>) OR a "
     "bare IP (IPPivot: passive IP recon — IPinfo ASN/abuse, FOFA ip= ports/services/co-hosted "
     "domains, Shodan host, dig MX/NS/TXT/PTR; a shared CDN/hosting IP is marked information not a "
-    "same-operator pivot, and its ASN is banked to references/asn_registry.json). If ALREADY "
+    "same-operator pivot, and its ASN is banked to references/asn_registry.json. It also flags "
+    "MISCONFIG TRIAGE leads read passively from the FOFA banner — an internal/RFC1918/loopback "
+    "address leaking into the public result (a dual-homed operator box exposing its internal "
+    "topology) or an ANONYMOUS-FTP service — as an ip:misconfig pivot; these are FLAGS only, the "
+    "tool never auto-connects). If ALREADY "
     "investigated (a pivot JSON exists in any case), it returns the cached data instead of "
     "re-collecting — pass force=true to refresh. For HOSTILE targets a direct live fetch is "
     "refused — pass proxy='<cidr>' to rotate egress, or passive=true with url set to an "
@@ -165,31 +336,59 @@ def _ok(text: str) -> dict[str, Any]:
 async def pivot_extract(args: dict[str, Any]) -> dict[str, Any]:
     res = collect_one(args["url"], args["case"], hostile=POLICY["hostile"],
                       passive=args.get("passive", False), proxy=args.get("proxy"),
-                      force=bool(args.get("force")))
+                      force=bool(args.get("force")),
+                      no_assets=bool(args.get("no_assets")),
+                      no_well_known=bool(args.get("no_well_known")),
+                      assets_max=args.get("assets_max"),
+                      no_docmeta=bool(args.get("no_docmeta")),
+                      docmeta_max=args.get("docmeta_max"))
     if res.get("error"):
         return _err(res["error"])
     blob = json.dumps(res.get("data") or {}, ensure_ascii=False)
+    # No hand-placed slice here any more: the governor applies pivot_extract's LARGE budget and,
+    # if it has to cut, says so and names the raw JSON — a silent `blob[:6000]` looked identical
+    # to a host that simply had fewer pivots.
+    raw_path = os.path.join("cases", args.get("case", ""), "raw", res["host"] + ".json")
     if res["reused"]:
         return _ok(f"ALREADY INVESTIGATED — reused cached pivot for {res['host']} "
-                   f"({res['n_pivots']} pivots); NOT re-collected. force=true to refresh.\n{blob[:4000]}")
+                   f"({res['n_pivots']} pivots); NOT re-collected. force=true to refresh.\n{blob}",
+                   where=raw_path)
     return _ok(f"Extracted {res['n_pivots']} pivots from {res['host']}{res['note']}\n"
-               f"DOM saved for manual review: {res['dom']}\n{blob[:6000]}")
+               f"DOM saved for manual review: {res['dom']}\n{blob}", where=raw_path)
 
 
 def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = False,
-                proxy: str | None = None, force: bool = False) -> dict[str, Any]:
+                proxy: str | None = None, force: bool = False, no_assets: bool = False,
+                no_well_known: bool = False, assets_max: int | None = None,
+                no_docmeta: bool = False, docmeta_max: int | None = None) -> dict[str, Any]:
     """Collect ONE host end-to-end (cache-reuse → live fetch + enrichment → evidence capture →
     manifest) via the shared, single-sourced collect_core.collect_host — the SAME routine the
     deterministic pipeline (tools/intel.py) delegates to. This wrapper only supplies the harness's
     config (env knobs + the WebPivot-shim collector + the evidence-manifest callback). Sync + safe
     to fan out across threads via collect_many. Returns a summary dict, never raises."""
+    # The asset (JS bundles / source maps / well-known) and document-metadata layers are ON by
+    # default in pivot_extract; these knobs only ever turn them DOWN, so a caller can shrink the
+    # target footprint. They ride as extra_flags because collect_core.filter_args probes the
+    # collector's --help and drops whatever it does not accept — surfacing every dropped flag
+    # (RULE 4) rather than aborting the collection.
+    extra: list[str] = []
+    if no_assets:
+        extra.append("--no-assets")
+    if no_well_known:
+        extra.append("--no-well-known")
+    if assets_max is not None:
+        extra += ["--assets-max", str(int(assets_max))]
+    if no_docmeta:
+        extra.append("--no-docmeta")
+    if docmeta_max is not None:
+        extra += ["--docmeta-max", str(int(docmeta_max))]
     return collect_core.collect_host(
         url, case,
         root=ROOT, py=PY, render_py=RENDER_PY,
         collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
         hostile=hostile, passive=passive, proxy=proxy,
         force=(FORCE or force), smoke=SMOKE, no_archive=NO_ARCHIVE, want_shot=SHOT,
-        flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest)
+        flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest, extra_flags=extra)
 
 
 def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
@@ -275,7 +474,70 @@ async def impersonation_hunt(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(f"ImpersonationHunt on {host}: generated {art.get('generated', 0)} candidates → "
                f"{art.get('existing_count', 0)} confirmed lookalikes (DNS/CT), "
                f"{art.get('candidate_count', 0)} on the monitoring watchlist. "
-               f"Written to {os.path.relpath(out, ROOT)} for kb_ingest.\n{blob[:6000]}")
+               f"Written to {os.path.relpath(out, ROOT)} for kb_ingest.\n{blob}",
+               where=os.path.relpath(out, ROOT))
+
+
+@tool(
+    "domain_liveness",
+    "Is this host actually SERVING the operator's content? Decides by READING THE PAGE plus DNS, "
+    "never by the HTTP status code alone — the guardrail in front of every 'is it still up' "
+    "claim. Two errors it exists to stop, both of which corrupt a case silently. (1) 200 IS NOT "
+    "ALIVE: a registrar parking page, a fresh 'Welcome to nginx' default page, a host's 'Account "
+    "Suspended' notice and a soft-404 all return HTTP 200 with a full HTML document, and "
+    "collecting pivots off one of those harvests a template shared by millions of unrelated "
+    "domains — which is how a parking favicon becomes a fifty-domain 'operator cluster' that "
+    "isn't one. (2) 404/403 IS NOT DEAD: the server ANSWERED, so the name is registered, "
+    "resolving and pointed at infrastructure someone controls — only that path is gone, or we "
+    "specifically are being refused (allowlist / geo-fence / cloaking). A Cloudflare interstitial "
+    "returns state='blocked' with live=null: the page was never seen, which is absence of RECORD, "
+    "not evidence about the target. States: live · parked · default_page · suspended · soft_404 · "
+    "not_found · forbidden · blocked · empty · redirected_offsite · server_error · no_http · "
+    "unresolved. EVERY state except live and unresolved sets reuse_watch=true, meaning the name "
+    "is STILL CONTROLLED and can be flipped to live content later (operators park names between "
+    "campaigns, and rebuild after a takedown while keeping the domain) — put those on the "
+    "re-check list, do not discard them. Only NXDOMAIN evidences a dead name. Pass "
+    "domain=<host|url>; case=<ID> to classify from the ALREADY-COLLECTED pivot JSON offline "
+    "(no new request to the target — use this on hostile infra).",
+    {"domain": str},   # case:str, offline:bool, timeout:int optional -> args.get()
+    annotations=READONLY,
+)
+async def domain_liveness(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args["domain"])
+    host = _host(target)
+    script = os.path.join("WebPivot", "tools", "wp_liveness.py")
+
+    # Offline path: classify from the pivot JSON we already hold — no packet to the target.
+    raw = ""
+    if args.get("case"):
+        cand = os.path.join(ROOT, "cases", str(args["case"]), "raw", host + ".json")
+        raw = cand if os.path.exists(cand) else ""
+    if not raw and args.get("offline"):
+        raw = _find_cached_raw(host)
+    if raw:
+        code = ("import json,sys;sys.path.insert(0,'WebPivot/tools');import wp_liveness;"
+                "print(json.dumps(wp_liveness.from_pivot_result("
+                "json.load(open(sys.argv[1],encoding='utf-8'))),ensure_ascii=False))")
+        r = _run([PY, "-c", code, raw], timeout=60)
+        v = _load_json_str(r.stdout or "")
+        if v is None:
+            return _err(f"domain_liveness (offline) failed for {host}: {(r.stderr or '')[-400:]}")
+        return _ok(f"LIVENESS {host} (offline, from the stored capture — no request sent)\n"
+                   f"{json.dumps(v, ensure_ascii=False, indent=2)}")
+
+    if POLICY.get("hostile"):
+        return _err(f"domain_liveness refused: this run is HOSTILE and a live probe would touch "
+                    f"attacker infrastructure from the analyst's own IP. Collect first "
+                    f"(pivot_extract with passive/proxy), then re-run with case=<ID> to classify "
+                    f"the stored capture offline.")
+    cmd = [PY, script, target, "--json"]
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd, timeout=120)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"domain_liveness failed for {host}: {(r.stderr or '')[-400:]}")
+    return _ok(f"LIVENESS {host}\n{json.dumps(v, ensure_ascii=False, indent=2)}")
 
 
 @tool(
@@ -304,105 +566,6 @@ async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
     if r.returncode != 0:
         return _err(r.stderr or "search_pivot failed")
     return _ok(r.stdout or "search_pivot produced no output")
-
-
-@tool(
-    "intelx_search",
-    "Intelligence X — search ONE STRONG SELECTOR across a corpus nothing else here indexes: breach "
-    "dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS and IntelX's own web crawl. "
-    "`selector` must be an email, domain (a `*.apex` wildcard is allowed), URL, IP/CIDR, phone "
-    "number, wallet, MAC/UUID/IBAN — never a brand or person name (a soft term is refused and still "
-    "costs a unit). Use it on the artifacts that carry ATTRIBUTION: a registrant email, a support "
-    "phone, a payout wallet. mode='phonebook' instead turns ONE domain into an inventory of every "
-    "email address, subdomain and URL IntelX has seen under it — the highest-value call for web "
-    "casework, and PAID-only. Every record comes back graded: a hit in a breach corpus or a stealer "
-    "log is EXPOSURE evidence and is flagged NOT clusterable (two addresses in one combolist share "
-    "victims, not an operator); only whois/pastes/darknet hits may support a same-operator edge. "
-    "METERED and capped per run. With no INTELX_KEY the layer still runs at ~50%: it classifies the "
-    "selector and returns the intelx.io / phonebook.cz URL to run by hand — say so rather than "
-    "reporting an empty result as 'not in any leak'.",
-    {"selector": str},  # mode:'search'|'phonebook', buckets:str, max:int optional -> args.get()
-    annotations=READONLY,
-)
-async def intelx_search(args: dict[str, Any]) -> dict[str, Any]:
-    script = os.path.join("WebPivot", "tools", "wp_intelx.py")
-    mode = str(args.get("mode") or "search").lower()
-    sel = str(args["selector"])
-    if mode == "phonebook":
-        cmd = [PY, script, "phonebook", sel]
-        if args.get("target"):
-            cmd += ["--target", str(args["target"])]
-    else:
-        cmd = [PY, script, "search", sel]
-        if args.get("buckets"):
-            cmd += ["--buckets", str(args["buckets"])]
-    if args.get("max"):
-        cmd += ["--max", str(int(args["max"]))]
-    r = _run(cmd, timeout=180)
-    if r.returncode != 0 and not r.stdout:
-        # rc=2 is the documented KEYLESS path: the stderr block explains what was not queried and
-        # gives the UI URL. That is information, not a failure — surfacing it as an error would
-        # teach the model to stop asking.
-        return _ok((r.stderr or "intelx produced no output") +
-                   "\n\n(Keyless/limited IntelX: nothing was queried. Do NOT report this as "
-                   "'the selector appears in no leak' — run the URL above by hand.)")
-    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
-
-
-@tool(
-    "anyrun_lookup",
-    "ANY.RUN Threat Intelligence Lookup — what samples carrying this indicator actually DID when "
-    "OTHER people detonated them: the domains, IPs, URLs and ports they contacted, the family "
-    "label, Suricata context and public sandbox tasks. The file half's counterpart to a reverse "
-    "search: run it after analyze_artifact on the sample's sha256, its backend host or its C2 "
-    "`ip:port`. It is the ONLY way to recover a PACKED sample's real endpoints — those exist only "
-    "at runtime, so a thin static string sweep plus a `binary:protection` finding is exactly the "
-    "cue to call this. `indicator` is auto-typed (sha256/md5/domain/ip[:port]/url); pass "
-    "query='field:\"value\"' for a raw TI Lookup query. Contacted hosts may support an operator "
-    "edge once corroborated; a shared threat FAMILY is same-KIT only and never attribution on its "
-    "own.\n"
-    "OPSEC — THIS TOOL NEVER SUBMITS A SAMPLE, AND YOU MUST NOT ARRANGE FOR ONE TO BE SUBMITTED. "
-    "It is lookup-only: it reads detonations that already happened. Uploading the case's own APK / "
-    "installer to ANY.RUN is an OUTBOUND, IRREVERSIBLE act — on a public plan the task, the file "
-    "and its hash become world-readable, so the operator can watch their own sample being analysed "
-    "and burn the infrastructure before the case closes. If detonation is genuinely needed, STOP "
-    "and put the decision to the analyst in plain terms (what gets exposed, that a public task is "
-    "permanent) and let THEM do it in the sandbox UI on a private plan. Never submit as a side "
-    "effect of a pivot, and never infer standing permission from an earlier approval.\n"
-    "METERED (needs a TI Lookup licence, separate from a sandbox subscription) and capped per run. "
-    "With no ANYRUN_API_KEY the layer still runs at ~50%: it composes the correct query and returns "
-    "the UI address — say so rather than reporting silence as 'unknown sample'.",
-    {"indicator": str},  # query:str, days:int optional -> args.get()
-    annotations=READONLY,
-)
-async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
-    import re
-    script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
-    cmd = [PY, script, "lookup"]
-    if args.get("query"):
-        cmd += ["--query", str(args["query"])]
-    else:
-        ind = str(args["indicator"]).strip()
-        host = ind.split(":")[0]
-        if re.fullmatch(r"[0-9a-fA-F]{64}", ind):
-            flag = "--sha256"
-        elif re.fullmatch(r"[0-9a-fA-F]{32}", ind):
-            flag = "--md5"
-        elif ind.startswith(("http://", "https://")):
-            flag = "--url"
-        elif re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
-            flag = "--ip"
-        else:
-            flag = "--domain"
-        cmd += [flag, ind]
-    if args.get("days"):
-        cmd += ["--days", str(int(args["days"]))]
-    r = _run(cmd, timeout=180)
-    if r.returncode != 0 and not r.stdout:
-        return _ok((r.stderr or "anyrun produced no output") +
-                   "\n\n(Keyless/limited ANY.RUN: nothing was queried. Do NOT report this as "
-                   "'the sample is unknown to the sandbox world' — paste the query into the UI.)")
-    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
 
 
 @tool(
@@ -751,6 +914,32 @@ async def reference_check(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "reference_mirrors",
+    "Check (or repair) the reference DENYLISTS that are duplicated across skills. Each skill is "
+    "imported standalone and cannot read another's references/, so a denylist both the collector "
+    "and the ingest need is physically copied — and when the copies drift the failure is SILENT: "
+    "one side filters a platform's default favicon, the other does not, and a thousand-edge false "
+    "cluster reaches the knowledge base with nothing logged. Returns which mirrored groups are "
+    "identical and which have drifted, with the differing values. mode='check' (default) is "
+    "read-only; mode='repair' merges every copy (union — the safe direction, since a value was "
+    "put there by an analyst who had a reason) and writes it back to all sides. The mirror list "
+    "is declared in tests/reference_mirrors.json.",
+    {},   # optional: mode ('check' | 'repair')
+    annotations=READONLY,
+)
+async def reference_mirrors(args: dict[str, Any]) -> dict[str, Any]:
+    mode = str(args.get("mode", "check")).lower()
+    if mode not in ("check", "repair"):
+        return _err("mode must be 'check' or 'repair'.")
+    cmd = [PY, os.path.join("tools", "kb", "sync_mirrors.py")]
+    if mode == "repair":
+        cmd += ["--union", "--write"]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": (r.stdout or r.stderr or "").rstrip()}],
+            "is_error": False}
+
+
+@tool(
     "reference_add",
     "Remember a fingerprint in the reference so it improves every future case. Use verdict="
     "'benign' when a hash/keyword turned out to be a common logo / CDN / CSS-framework / template "
@@ -810,7 +999,7 @@ async def domain_verdict(args: dict[str, Any]) -> dict[str, Any]:
     cases = (ci.stdout or "").strip() or f"{d} (domain): NOT seen in any existing case."
     collected = bool(_find_cached_raw(d))
     return _ok(f"VERDICT for {d}  (pivot data on file: {'yes' if collected else 'no'})\n"
-               f"[cases] {cases}\n[operator] {verdict}\n[KB] {facts[:3000]}")
+               f"[cases] {cases}\n[operator] {verdict}\n[KB] {facts}")
 
 
 @tool(
@@ -835,9 +1024,120 @@ async def api_usage(args: dict[str, Any]) -> dict[str, Any]:
             "is_error": r.returncode != 0}
 
 
+@tool(
+    "doc_metadata",
+    "Download a hosted DOCUMENT or IMAGE and read the identifiers embedded inside it — the "
+    "standalone form of pivot_extract's document/image layer, for a file or URL you already have "
+    "(a PDF an analyst was sent, an image pulled from a Telegram channel, a file already on disk). "
+    "Give it `targets` as a comma-separated list of URLs and/or local paths. Parses PDF /Info and "
+    "the XMP packet, JPEG/TIFF EXIF (including GPS), and PNG tEXt/zTXt/iTXt chunks, dispatching on "
+    "MAGIC BYTES not the file extension (a .jpg URL serving an error page is common). Returns "
+    "every field found, plus a `pivotable` subset with the generic values removed: an Author of "
+    "'Windows User' or a Producer of 'Microsoft Word' names a default or a tool, not an operator, "
+    "and clustering on those fuses unrelated cases. The high-value fields are author/artist "
+    "(a real name, uncopyable by a stranger), xmp_document_id (minted per SOURCE document — the "
+    "same id elsewhere is literally the same file), copyright, and gps. IMPORTANT: an empty result "
+    "is the NORMAL case — most CMS and CDN pipelines strip EXIF automatically — so never report "
+    "absent metadata as evidence of deliberate sanitising. Read-only apart from the fetch; a URL "
+    "target is an OUTBOUND request to whoever hosts it.",
+    {"targets": str},
+    annotations=READONLY,
+)
+async def doc_metadata(args: dict[str, Any]) -> dict[str, Any]:
+    targets = [t.strip() for t in str(args.get("targets", "")).split(",") if t.strip()]
+    if not targets:
+        return _err("doc_metadata needs `targets`: a comma-separated list of URLs or file paths.")
+    r = _run([PY, os.path.join("WebPivot", "tools", "wp_docmeta.py"), *targets[:12]])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_scope",
+    "The case INTAKE record — what this target IS, and what claim the run is testing. READ it "
+    "before collecting and WRITE it as soon as the analyst tells you any of it; every harness "
+    "phase renders it into its prompt, so this is how context reaches the automated path that "
+    "otherwise has nobody to ask. Call with only `case` to READ (also prints the questions to "
+    "ask when nothing is set yet); pass any of target_class / purpose / claim / basis / brand / "
+    "how / window / falsifier to SET it (persisted to cases/<case>/scope.json, so later rounds, "
+    "a --continue resume and the other front-end inherit it). `target_class` is one of "
+    "confirmed_scam · suspected_scam · threat_actor_infra · victim_host · benign_check · unknown "
+    "and it decides three things: the FETCH POSTURE (threat_actor_infra means the tool gate "
+    "DENIES outbound collection from this address — passive sources only), the OWNERSHIP rule "
+    "(on victim_host the page's WHOIS/favicon/cert/analytics are the VICTIM's and clustering on "
+    "them fuses unrelated victims into a fake operator estate), and the DISCONFIRMING checks the "
+    "run must report on. `claim` is recorded as an ASSERTION WITH A SOURCE, never as a collected "
+    "fact — the assessment answers it with a premise_verdict. Setting nothing is allowed: an "
+    "unscoped case resolves to `unknown` under the conservative posture and the deliverable must "
+    "say so. Use `no_direct_contact=true` when the analyst forbids touching the target at all, "
+    "`no_spend=true` when metered credits are not authorised.",
+    {"case": str},   # optional: target_class, purpose, claim, basis, brand, how, window,
+                     # falsifier, no_direct_contact (bool), no_spend (bool)
+    annotations=ToolAnnotations(readOnlyHint=False),   # writes cases/<case>/scope.json
+)
+async def case_scope(args: dict[str, Any]) -> dict[str, Any]:
+    case = str(args.get("case") or "").strip()
+    if not case:
+        return _err("case_scope needs `case`: the case id whose scope you want to read or set.")
+    setters = {"target_class": "--target-class", "purpose": "--purpose", "claim": "--claim",
+               "basis": "--basis", "brand": "--brand", "how": "--how",
+               "window": "--window", "falsifier": "--falsifier"}
+    cmd = [PY, os.path.join("harness", "case_scope.py"),
+           "set" if any(args.get(k) for k in setters) or args.get("no_direct_contact")
+           or args.get("no_spend") else "show", case]
+    for key, flag in setters.items():
+        if args.get(key):
+            cmd += [flag, str(args[key])]
+    for key, flag in (("no_direct_contact", "--no-direct-contact"), ("no_spend", "--no-spend")):
+        if args.get(key):
+            cmd.append(flag)
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "tool_calls",
+    "Read back the TOOL-CALL LEDGER — what a run actually DID, the action counterpart to "
+    "api_usage (which reports what it SPENT). Every tool call on every front-end is written to "
+    "cases/<case>/tool_calls.jsonl by the gate, allowed or denied, with its risk classes "
+    "(outbound = touched the target from your IP, metered = spent third-party credits, mutating = "
+    "wrote to the shared KB). Pass case=<ID> to scope to one case (omit for the interactive "
+    "MEMORY ledger, all=true for every case), denied=true to see only what the gate BLOCKED and "
+    "why, tool=<name> to follow one tool, since=YYYY-MM-DD to bound by date, last=<N> to list the "
+    "most recent calls. Use it to answer 'did this run touch the target directly', 'what got "
+    "blocked', 'which round introduced that KB entry'. Read-only. NOTE a missing ledger is "
+    "ABSENCE OF RECORD (the case predates the gate, or nothing has run) — never report it as "
+    "'the run did nothing'.",
+    {},   # all optional: case, all (bool), denied (bool), tool (str), since (str), last (int)
+    annotations=READONLY,
+)
+async def tool_calls(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("harness", "audit.py"), "report"]
+    if args.get("case"):
+        cmd.append(str(args["case"]))
+    for flag in ("all", "denied"):
+        if args.get(flag):
+            cmd.append("--" + flag)
+    for opt in ("tool", "since"):
+        if args.get(opt):
+            cmd += ["--" + opt, str(args[opt])]
+    if args.get("last"):
+        cmd += ["--last", str(int(args["last"]))]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
 # ---------------------------------------------------------------- RENDER tools
 @tool(
     "render_diagram",
+    "RENDERING ONLY — the `IntelGraph` skill owns figure DESIGN (engine choice, encoding, when to "
+    "split one hairball into several focused figures); load it if the figure needs judgement. Note "
+    "this builds the graph from COLLECTED hosts only, so a case whose finding spans domains you never "
+    "collected will render a misleading partial picture — check the node count against the claim, and "
+    "hand-edit the emitted .mmd (then render with IntelGraph's render_mermaid.py, and pass "
+    "no_figures=true to render_report so it is not overwritten) when it does not match. "
     "Turn a graph_build.py case_graph.json into an EDITABLE Mermaid diagram source (.mmd) and "
     "render it to PNG + SVG (+ thumb) via IntelGraph. Use this when you want the relationship web "
     "as a static, hand-editable figure to drop into a report — unlike render_network.py's opaque "
@@ -865,25 +1165,84 @@ async def render_diagram(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "case_timeline",
+    "THE TEMPORAL VIEW of a case — run this before asserting any same-operator link, because a "
+    "shared artifact only links two hosts if BOTH carried it at the same time. Reads the case's "
+    "pivot_extract JSON (out/*.json) and extracts every dated fact: registration span "
+    "(created→expires), registrant eras from WHOIS history, hosting windows from passive DNS "
+    "(which IP served the name, between which dates), certificate validity windows from CT, "
+    "Wayback archive spans + per-artifact presence windows, and point observations (WHOIS "
+    "updates, urlscan scans, recovered snapshots). Then derives the correlations: registration "
+    "cohorts, EXPIRY/renewal cohorts (aligned expiry from DIFFERENT creation dates = one payer, "
+    "the billing-account tell), same-day WHOIS updates, certificate issuance batches, IP-tenancy "
+    "OVERLAP (co-tenancy vs sequential tenancy of a recycled address), shared-artifact window "
+    "overlap, and abandonment cohorts. Emits a swimlane figure (PNG+SVG+thumb), a "
+    "<stem>_events.json evidence ledger and, with markdown=true, a paste-ready evidence table "
+    "where every row carries when (UTC) + source + Admiralty grade + an ONLINE permalink "
+    "(Wayback / urlscan / crt.sh / RDAP / BGP) — never a local case-store path. Required: inputs "
+    "(list of JSON paths or a glob), stem (output path, no extension). Optional: title, subtitle, "
+    "history (wayback_ga.py JSON paths), markdown=true, lang (en|vi), source, grading, "
+    "max_certs (default 12), max_lanes (default 24), no_figure=true.",
+    {"inputs": list, "stem": str},
+)
+async def case_timeline(args: dict[str, Any]) -> dict[str, Any]:
+    inputs = args["inputs"]
+    if isinstance(inputs, str):
+        inputs = sorted(glob.glob(inputs)) or [inputs]
+    cmd = [PY, os.path.join("IntelGraph", "scripts", "case_timeline.py"),
+           *[str(i) for i in inputs], "--stem", str(args["stem"])]
+    for key, flag in (("title", "--title"), ("subtitle", "--subtitle"), ("lang", "--lang"),
+                      ("source", "--source"), ("grading", "--grading"),
+                      ("max_certs", "--max-certs"), ("max_lanes", "--max-lanes")):
+        if args.get(key):
+            cmd += [flag, str(args[key])]
+    hist = args.get("history")
+    if hist:
+        cmd += ["--history", *[str(h) for h in (hist if isinstance(hist, list) else [hist])]]
+    if args.get("markdown"):
+        cmd += ["--markdown"]
+    if args.get("no_figure"):
+        cmd += ["--no-figure"]
+    r = _run(cmd, timeout=300)
+    return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
     "render_report",
-    "Render an assessment MARKDOWN file into a polished PDF and/or DOCX via pandoc, using the "
-    "IntelReport house style (muted editorial palette matching IntelGraph, cover page, TOC, running "
-    "header/footer with the classification + case id, embedded figures, Vietnamese-safe fonts). No "
-    "analyst name is ever stamped; date defaults to UTC today. Title/case-id/classification/subtitle "
-    "are read from the markdown's YAML frontmatter unless overridden. Required: markdown (path), stem "
-    "(output path, no extension). Optional: title, subtitle, case_id, classification (e.g. TLP:AMBER), "
-    "date (YYYY-MM-DD), pdf=true / docx=true (default: both). Embed IntelGraph figures with a normal "
-    "markdown image whose path is resolvable from the markdown file's directory.",
+    "TYPOGRAPHY ONLY — this renders a markdown file you have ALREADY written to the house structure; "
+    "it does NOT make a report conformant. LOAD THE `IntelReport` SKILL FIRST and author the markdown "
+    "to its contract, then call this. The skill owns the structure and the OPSEC rules; this tool only "
+    "applies the LaTeX template (cover, TOC, running header/footer, figure styling, Vietnamese-safe "
+    "fonts) via pandoc and emits PDF + DOCX. What the skill requires and this tool cannot supply: "
+    "Executive-Summary-first Key Judgments, an early Methodology with the NATO Admiralty + ICD-203 "
+    "tables, the artifact register and per-domain-profile appendices, and — critically — naming every "
+    "indicator (seed domain, IPs, hashes, impersonated brands) in the BODY while keeping internal "
+    "tool/vendor/case-store names out of it. Required: markdown (path), stem (output path, no "
+    "extension). Optional: lang ('en'|'vi') — localises the GENERATED furniture only (cover labels, "
+    "TOC title, 'Phụ lục', figure/table captions) and picks a Vietnamese-capable font; it does NOT "
+    "translate the body, so write the assessment in the target language from the start and take the "
+    "estimative wording verbatim from `render_report.py --glossary` (the ICD-203 scale is calibrated "
+    "— a paraphrase changes what the report claims). report_ref (EXTERNAL reference shown on the "
+    "cover — use this, NOT case_id, "
+    "or the internal case-store id leaks onto every page), audience (technical|executive|le), title, "
+    "subtitle, case_id (internal fallback only), classification (e.g. TLP:AMBER), date (YYYY-MM-DD), "
+    "no_figures=true (skip figures.json regeneration — set this when the .mmd was hand-edited, else "
+    "the hand-edited figure is overwritten), pdf=true / docx=true (default: both). Embed figures with "
+    "a markdown image path resolvable from the markdown file's directory.",
     {"markdown": str, "stem": str},
 )
 async def render_report(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, os.path.join("IntelReport", "scripts", "render_report.py"),
            str(args["markdown"]), str(args["stem"])]
     for k, flag in (("title", "--title"), ("subtitle", "--subtitle"),
+                    ("report_ref", "--report-ref"), ("audience", "--audience"),
                     ("case_id", "--case-id"), ("classification", "--classification"),
-                    ("date", "--date")):
+                    ("date", "--date"), ("lang", "--lang")):
         if args.get(k):
             cmd += [flag, str(args[k])]
+    if args.get("no_figures"):
+        cmd += ["--no-figures"]
     if args.get("pdf"):
         cmd += ["--pdf"]
     if args.get("docx"):
@@ -932,29 +1291,765 @@ async def email_permute(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--max", str(args["max"])]
     r = _run(cmd)
     return _ok(r.stdout or r.stderr or "no output")
+# ---------------------------------------------------------------- convergence loop
+@tool(
+    "case_clusters",
+    "PARTITION a case into same-operator clusters BEFORE judging it — the unit of judgment is the "
+    "CLUSTER, not the case. Returns each connected component over STRONG shared indicators "
+    "(boilerplate / reference-benign / over-prevalent edges excluded), the indicators binding it, "
+    "and each indicator's KB-WIDE prevalence — so an indicator binding 3 domains here but sitting "
+    "on 400 domains KB-wide is visibly noise, not an owner link. Judge each cluster on its own "
+    "evidence: correlating 100 domains in one pass is unfocused and blows context, and it is N "
+    "attribution questions, not one. Pure KB read — collects nothing, spends no credits. Writes "
+    "cases/<case>/clusters.json. Optional: min (domains an indicator must bind, default 2), "
+    "max_prevalence (KB-wide count above which an indicator is generic noise, default 8).",
+    {"case": str},
+    annotations=READONLY,
+)
+async def case_clusters(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "intel.py"), "clusters", str(args["case"]),
+           "--min", str(int(args.get("min", 2))),
+           "--max-prevalence", str(int(args.get("max_prevalence", 8)))]
+    if args.get("all"):
+        cmd.append("--all")
+    if args.get("json"):
+        cmd.append("--json")
+    r = _run(cmd, timeout=300)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_frontier",
+    "Read the case's UNRESOLVED GAPS without collecting anything: the next FREE frontier (new "
+    "registrable apexes already discovered — via crt.sh SAN, passive-DNS co-host, urlscan-related, "
+    "TLS co-SAN, CORS, impersonation, reverse-WHOIS — that are not yet collected), plus the "
+    "convergence verdict and the DEFERRED metered leads (FOFA/WhoisXML pivots that would spend "
+    "credits, held for your approval). Call this after an assessment to decide what to chase next. "
+    "Read-only; spends no credits.",
+    {"case": str},
+    annotations=READONLY,
+)
+async def case_frontier(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, os.path.join("tools", "case_state.py"), "frontier", str(args["case"]),
+              "--max-new", str(int(args.get("max_new", 8)))])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_loop",
+    "Run the RESUMABLE convergence feedback loop on a case: collect (free-only WebPivot) -> ingest "
+    "-> convergence snapshot -> assess (assessment.md + machine-readable assessment.json) -> chase "
+    "the discovered FREE frontier back into WebPivot -> repeat until CONVERGED, cold (no free leads "
+    "left), or the round cap (awaiting-analyst). Never spends FOFA/urlscan-Pro/WhoisXML credits — "
+    "those pivots are deferred to assessment.json.metered_leads. Checkpoints cases/<case>/state.json "
+    "every round, so an interrupt RESUMES and a cold case re-mines against the current KB on re-run. "
+    "First run / added evidence: pass seeds (a domains-file path or a comma list). Resume: omit seeds.",
+    {"case": str},
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def case_loop(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "intel.py"), "loop", str(args["case"])]
+    if args.get("seeds"):
+        cmd.append(str(args["seeds"]))
+    cmd += ["--max-rounds", str(int(args.get("max_rounds", 6))),
+            "--max-new", str(int(args.get("max_new", 8)))]
+    r = _run(cmd, timeout=1800)   # a multi-round loop of live free collection can take a while
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_reopen",
+    "Cold-case reopen: flip a finished (converged/cold) case back to 'expanding' and optionally "
+    "merge NEW seeds, so the next case_loop re-mines its frontier against the CURRENT knowledge base "
+    "— an old case benefits from breakthroughs made in other cases since it closed. Pass seeds as a "
+    "space/comma list of new domains, or omit to just reopen for re-mining.",
+    {"case": str},
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def case_reopen(args: dict[str, Any]) -> dict[str, Any]:
+    seeds = str(args.get("seeds", "")).replace(",", " ").split()
+    r = _run([PY, os.path.join("tools", "case_state.py"), "reopen", str(args["case"]), *seeds])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "victim_profile",
+    "VICTIM-SIDE analysis — run this when the operator serves from hostnames they DO NOT OWN "
+    "(a phishing label on a legitimate business's subdomain, a compromised CMS, a dangling "
+    "record). It does not attribute; it infers the operator's ACCESS VECTOR, because the victim "
+    "set is a sample of their capability: victims all at one provider = that provider is "
+    "breached; one control panel across many providers = a panel exploit; one CMS = a plugin "
+    "vulnerability; a small shared DNS operator + one country/sector = a compromised web agency; "
+    "and NOTHING technical in common = STOLEN OR PURCHASED CREDENTIALS (dispersion is a positive "
+    "finding, not a dead end — a credential list has no common platform by construction). Fully "
+    "PASSIVE: public DNS only, the victims are never scanned; the control panel is read from the "
+    "subdomains a panel creates in its own customer's zone. Flags base-rate confounds (cPanel/"
+    "WordPress dominate any victim set) instead of counting them. Pass case=<case> to derive the "
+    "victim set from collected hosts, and exclude='a.com,b.com' for any apex the OPERATOR "
+    "registered themselves — those have no victim and would corrupt every concentration. "
+    "Thresholds are tunable in tools/kb/references/victim_profile.json. Read-only.",
+    {"case": str},  # victims:str (comma list), exclude:str optional -> args.get()
+    annotations=READONLY,
+)
+async def victim_profile(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "kb", "victim_profile.py")]
+    if args.get("case"):
+        case = args["case"]
+        cmd += ["--case", case,
+                "-o", os.path.join(ROOT, "cases", case, "victim_profile.json")]
+    for v in (args.get("victims") or "").replace(",", " ").split():
+        cmd.append(v)
+    if args.get("exclude"):
+        cmd += ["--exclude", str(args["exclude"])]
+    r = _run(cmd, timeout=300)
+    return {"content": [{"type": "text",
+                         "text": r.stdout or r.stderr or "victim_profile produced no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "intelx_search",
+    "Intelligence X — search ONE STRONG SELECTOR across a corpus nothing else here indexes: breach "
+    "dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS and IntelX's own web crawl. "
+    "`selector` must be an email, domain (a `*.apex` wildcard is allowed), URL, IP/CIDR, phone "
+    "number, wallet, MAC/UUID/IBAN — never a brand or person name (a soft term is refused and still "
+    "costs a unit). SEARCH THE CASE DOMAIN FIRST, then the operator's email: a stealer-log record is "
+    "indexed by the URL the malware captured, so the domain returns the MACHINES that held "
+    "credentials for it — the campaign's victims, the admin/panel URLs the public site never links, "
+    "and sometimes the operator's own infected box (direct attribution). Then the contact artifacts "
+    "(support phone, payout wallet), which carry the operator's own advertising copy in pastes. "
+    "The STEALER LOGS ARE QUERIED IN THEIR OWN PASS BEFORE the general one, because IntelX returns a "
+    "bounded page and recycled public-breach rows would otherwise fill it and truncate the one log "
+    "record away: a default search is 2 units (logs pass + general pass), buckets='leaks.logs' is "
+    "the 1-unit logs-only question. Check `logs_pass` in the output — only with it true is an empty "
+    "`read_these` a real negative. mode='phonebook' instead turns ONE domain into an inventory of "
+    "every email address, subdomain and URL IntelX has seen under it — the highest-value call for "
+    "web casework, and PAID-only. Every record comes back graded: a hit in a breach corpus or a "
+    "stealer log is EXPOSURE evidence and is flagged NOT clusterable (two addresses in one combolist "
+    "share victims, not an operator); only whois/pastes/darknet hits may support a same-operator "
+    "edge — but a stealer-log ITEM comes back in `read_these` to open one by one and ask whose "
+    "machine it is (victim = credentials FOR the front-end; operator = the back office, i.e. the "
+    "registrar/hosting/CMS/exchange logins behind it). Judgement lives in IntelAnalysis SKILL.md "
+    "§1.7 + Workflows/StealerLog.md. Never quote a password/cookie/token — metadata only. "
+    "METERED and capped per run. With no INTELX_KEY the layer still runs at ~50%: it classifies the "
+    "selector and returns the intelx.io / phonebook.cz URL to run by hand — say so rather than "
+    "reporting an empty result as 'not in any leak'.",
+    {"selector": str},  # mode:'search'|'phonebook', buckets:str, max:int optional -> args.get()
+    annotations=READONLY,
+)
+async def intelx_search(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_intelx.py")
+    mode = str(args.get("mode") or "search").lower()
+    sel = str(args["selector"])
+    if mode == "phonebook":
+        cmd = [PY, script, "phonebook", sel]
+        if args.get("target"):
+            cmd += ["--target", str(args["target"])]
+    else:
+        cmd = [PY, script, "search", sel]
+        if args.get("buckets"):
+            cmd += ["--buckets", str(args["buckets"])]
+    if args.get("max"):
+        cmd += ["--max", str(int(args["max"]))]
+    r = _run(cmd, timeout=180)
+    if r.returncode != 0 and not r.stdout:
+        # rc=2 is the documented KEYLESS path: the stderr block explains what was not queried and
+        # gives the UI URL. That is information, not a failure — surfacing it as an error would
+        # teach the model to stop asking.
+        return _ok((r.stderr or "intelx produced no output") +
+                   "\n\n(Keyless/limited IntelX: nothing was queried. Do NOT report this as "
+                   "'the selector appears in no leak' — run the URL above by hand.)")
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "url_paths",
+    "THE URL PATH AS A CAMPAIGN IDENTIFIER — use this whenever the hosts in a case look disposable "
+    "(numeric/random labels, cheap TLDs, a fresh certificate each, nothing shared at host level) but "
+    "the pages are branded. That is a deliberate technique: the operator keeps one directory per "
+    "branded template on a shared back end and selects which victim sees which brand by the URL "
+    "PATH, so `host-a/<kit>/`, `host-b/<kit>/` and `host-c/<kit>/` are ONE operator running one kit "
+    "on three throwaway hosts. Every other pivot here (favicon, TLS, registrant, JARM, nameserver) "
+    "hangs off the hostname and therefore sees three unrelated sites; the kit directory is the one "
+    "string that survives the rotation, because it is the operator's own routing. "
+    "mode='analyze' (default) takes ONE url and returns the normalised path, the path TEMPLATE "
+    "(session ids / build hashes / dates / locales replaced by placeholders, so per-victim URLs "
+    "collapse to one template), the kit directory, the locale, and ready-to-run reverse queries "
+    "(urlscan page.url, an inurl: dork, FOFA, PublicWWW, a Wayback CDX sweep) that find the NEXT "
+    "host serving the same kit before it is reported anywhere. mode='patterns' takes `paths` (globs "
+    "of collected WebPivot result JSON, e.g. 'cases/<case>/raw/*.json') and reports which kits recur "
+    "and on how many DISTINCT hosts, plus multi_kit_hosts (one back end serving several brands — the "
+    "other half of the same technique). Offline, free, zero API credits. Base-rate controlled: "
+    "`/login`, `/assets`, `/api/v1`, `/wp-admin` and friends are denylisted in "
+    "WebPivot/references/url_paths.json and NEVER become a kit, so a path with nothing distinctive "
+    "returns no pivot — that is the correct result for an ordinary site, not a failure. A shared kit "
+    "directory is SAME-KIT evidence and a strong collection lead; it becomes a same-OPERATOR claim "
+    "only when an independent artifact class agrees (two resellers of one kit share these strings).",
+    {"url": str},  # mode:'analyze'|'patterns', paths:str (space-separated globs), min_hosts:int
+    annotations=READONLY,
+)
+async def url_paths(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_paths.py")
+    mode = str(args.get("mode") or "analyze").lower()
+    # `url` is the one required field, so mode='patterns' accepts its globs in EITHER `paths` or
+    # `url` — a caller that has only the required field must still be able to run the mode.
+    if mode == "patterns":
+        globs = str(args.get("paths") or args.get("url") or "").split()
+        if not globs:
+            return _ok("url_paths(mode='patterns') needs result-JSON globs in `paths` (or `url`), "
+                       "e.g. 'cases/<case>/raw/*.json'.")
+        cmd = [PY, script, "patterns", *globs]
+        if args.get("min_hosts"):
+            cmd += ["--min-hosts", str(int(args["min_hosts"]))]
+    else:
+        cmd = [PY, script, "analyze", str(args["url"])]
+    r = _run(cmd, timeout=120)
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "ip_info",
+    "WHERE IS THIS ADDRESS AND WHOSE IS IT — country, city, ASN + org, reverse hostname, the "
+    "network's ABUSE CONTACT, and IPinfo's privacy flags (hosting / proxy / vpn / tor / relay) for "
+    "one IP. Use it on any address a case surfaces: the host's live A record, an origin candidate "
+    "recovered from passive DNS or passive SSL, a mail sender from SPF, a stealer-log victim "
+    "address. Three things it decides that nothing else here does cleanly. (1) WHETHER THE ADDRESS "
+    "IS A PIVOT AT ALL — a shared CDN/cloud edge is other people's tenants, so reversing it "
+    "returns noise, while a small hosting ASN is a real co-tenancy lead. (2) JURISDICTION — the "
+    "country and the abuse contact are who a takedown or an LEA referral actually goes to, and "
+    "they are properties of the ADDRESS, never of the domain's WHOIS (which on a privacy-masked "
+    "registration says nothing). (3) WHAT KIND of address it is: `hosting` on a scam site's server "
+    "is ordinary and means nothing, but `vpn`/`proxy`/`tor` on an address an operator connected "
+    "FROM is a different statement entirely — the flags are returned individually, not collapsed "
+    "into one boolean, so that distinction survives. Runs KEYLESS (rate-limited, still gives "
+    "country + org); IPINFO_TOKEN adds the structured ASN block, the abuse contact and the privacy "
+    "flags. Memoised per process, so re-asking about the same address inside one case is free. "
+    "For the full passive recon of an address (FOFA/Shodan co-tenancy, PTR, MX) pass the bare IP "
+    "to pivot_extract instead — that runs IPPivot, of which this is the identity half.",
+    {"ip": str},
+    annotations=READONLY,
+)
+async def ip_info(args: dict[str, Any]) -> dict[str, Any]:
+    ip = str(args.get("ip") or "").strip()
+    code = (
+        "import json,sys;sys.path.insert(0,'WebPivot/tools');"
+        "from wp_ippivot import ipinfo_lookup, ip_summary;"
+        f"d=ipinfo_lookup({ip!r});d.pop('raw',None);"
+        f"d['summary']=ip_summary({ip!r});print(json.dumps(d,indent=2,ensure_ascii=False))"
+    )
+    r = _run([PY, "-c", code], timeout=60)
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "passive_ssl",
+    "PASSIVE SSL (CIRCL) — the HISTORICAL certificate view, and the only pivot here that runs "
+    "cert -> IP. Every other TLS source reads the certificate a host presents NOW (the live "
+    "handshake) or the names a CA logged at issuance (crt.sh, Censys); this one answers which IP "
+    "ADDRESSES have actually been observed serving a given leaf certificate, over time. That is "
+    "how you RECOVER AN ORIGIN FROM BEHIND A CDN: an operator who later fronted a host with "
+    "Cloudflare usually served the same certificate on their own box first, and a passive sensor "
+    "recorded it there. It is the partner of passive DNS — pDNS gives historical name->IP, pSSL "
+    "gives historical cert->IP, and an address returned by BOTH is the strongest origin lead the "
+    "pair produces. Modes: **origin** (default, `target`=a hostname) — take the host's leaf "
+    "certificate and return every address that served it, with the host's current (CDN) addresses "
+    "removed, so what is left are ORIGIN CANDIDATES to verify directly with the Host header. "
+    "**cert** (`target`=a certificate SHA-1 — this API is sha1-keyed, unlike Censys which is "
+    "sha256) — every IP observed serving that leaf. **ip** (`target`=an address) — every "
+    "certificate seen on it. THE BASE RATE IS THE WHOLE DIFFICULTY: a shared CDN or default-"
+    "hosting certificate is served by THOUSANDS of unrelated addresses (a Cloudflare edge cert "
+    "measured in testing came back on 915), so clustering on one would fabricate an estate out of "
+    "a CDN's customer list. The result therefore carries `clusterable`, already decided against "
+    "references/pssl.json — trust it, and never build a same-operator edge on a cert marked "
+    "false. COVERAGE IS EUROPE-WEIGHTED AND PARTIAL: an empty answer for a Vietnamese, Chinese or "
+    "small-ISP address is routine and means the corpus never saw it — report it as ABSENCE OF "
+    "RECORD, never as 'this address served no certificate'. Uses the same free CIRCL account as "
+    "passive DNS (PDNS_USERNAME/PDNS_PASSWORD); rate-limited rather than credit-metered.",
+    {"target": str},  # mode:'origin'|'cert'|'ip'|'budget', sha1:str, known_ips:str -> args.get()
+    annotations=READONLY,
+)
+async def passive_ssl(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_pssl.py")
+    mode = str(args.get("mode") or "origin").lower()
+    target = str(args.get("target") or "").strip()
+    if mode == "budget":
+        cmd = [PY, script, "budget"]
+    elif mode == "cert":
+        cmd = [PY, script, "cert", target]
+        if args.get("subject"):
+            cmd += ["--subject", str(args["subject"])]
+    elif mode == "ip":
+        cmd = [PY, script, "ip", target]
+    else:
+        cmd = [PY, script, "origin", target]
+        if args.get("sha1"):
+            cmd += ["--sha1", str(args["sha1"])]
+        for ip in str(args.get("known_ips") or "").split(","):
+            if ip.strip():
+                cmd += ["--known-ip", ip.strip()]
+    r = _run(cmd, timeout=180)
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "serp_ads",
+    "THE ADVERTISING LAYER — who PAID to send traffic to this domain, and whether the page shows "
+    "those visitors something different from what it shows you. Use it whenever a target buys "
+    "traffic: an `AW-` conversion id in the page, an ads.txt, a URL carrying a gclid/utm set, a "
+    "victim who says they clicked an ad, or a brand you suspect is being impersonated in search "
+    "results. Modes: "
+    "**advertiser** (default, needs `target`=domain) — the Google Ads Transparency Center, which "
+    "publishes a VERIFIED, paying advertiser account for the domain plus the legal name its ads are "
+    "'funded by'. That identity survives WHOIS privacy and domain rotation, because nobody "
+    "re-verifies a fresh ad account for each throwaway host. "
+    "**creatives** (`target`=an AR… advertiser id) — the reverse, and the reason to be here: every "
+    "OTHER domain that account advertised. Same-PAYER evidence, stronger than a shared template — "
+    "unless the advertiser is agency-shaped (many unrelated domains), which the result flags, and "
+    "then the co-advertised domains are leads, not operator links. "
+    "**serp** (`target`=a keyword) — who is buying that keyword right now, in market `gl`. "
+    "BEST-EFFORT: Google serves the sponsored block inconsistently to automated clients, so an empty "
+    "result means the response carried no ads block, NEVER 'nobody advertises this keyword'. Two "
+    "domains bidding on one keyword are competitors, NEVER an operator link. "
+    "**cloak** (`target`=a URL) — FREE, no API credit: fetch the page as a plain visitor, as a paid "
+    "ad click, and once more as a control, then compare. Many fraud landing pages serve the real "
+    "scam ONLY to traffic carrying the right utm/gclid and show everyone else a decoy, so a "
+    "collection of the bare domain describes the decoy and its 'nothing found' is worthless. A "
+    "`divergent` verdict returns the `unlock_url` — re-run pivot_extract on THAT. Pass the ad's own "
+    "parameters in `ad_params` (a landing URL or 'k=v&k=v') when you have them; the advertiser mode "
+    "sometimes recovers them from a creative, but the archive often stores a text ad as an image "
+    "with no URL — that is normal. Verdicts `dynamic` / `inconclusive_unstable` are NOT "
+    "cloaking — do not report them as evasion. "
+    "**params** (`target`=a URL) — offline classification of the advertising parameters. "
+    "METERED except cloak/params (1 SerpApi search per call, capped per run). Keyless it still runs "
+    "at ~55%: the cloaking probe in full plus the free adstransparency.google.com address — say so "
+    "rather than reporting an unqueried archive as 'the domain does not advertise'.",
+    {"target": str},  # mode:'advertiser'|'creatives'|'serp'|'cloak'|'params', region:str,
+                      # ad_params:str, gl:str, hl:str, details:int -> args.get()
+    annotations=READONLY,
+)
+async def serp_ads(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_serp.py")
+    mode = str(args.get("mode") or "advertiser").lower()
+    target = str(args["target"]).strip()
+    if mode in ("cloak", "cloaking"):
+        cmd = [PY, script, "cloak", target]
+        if args.get("ad_params"):
+            cmd += ["--ad-params", str(args["ad_params"])]
+    elif mode == "params":
+        cmd = [PY, script, "params", target]
+    elif mode == "serp":
+        cmd = [PY, script, "serp", target]
+        for flag in ("gl", "hl"):
+            if args.get(flag):
+                cmd += [f"--{flag}", str(args[flag])]
+    else:
+        cmd = [PY, script, "creatives" if target.upper().startswith("AR") else "advertiser", target]
+        if args.get("region"):
+            cmd += ["--region", str(args["region"])]
+        if args.get("details"):
+            cmd += ["--details", str(int(args["details"]))]
+    r = _run(cmd, timeout=240)
+    body = (r.stdout or "") + ("\n" + r.stderr if r.stderr else "")
+    if r.returncode != 0 and not r.stdout:
+        # Keyless is a documented path, not a failure: returning it as an error teaches the model to
+        # stop asking, and the free UI address in the stderr block is the actual deliverable.
+        return _ok(body + "\n\n(Keyless/limited SerpApi: the Ads Transparency archive was NOT "
+                          "queried. Do NOT report this as 'the domain does not advertise' — open "
+                          "the adstransparency.google.com URL above by hand.)")
+    return _ok(body)
+
+
+@tool(
+    "capture_evidence",
+    "STORE THE RAW BYTES the host served — the DOM plus every JavaScript and stylesheet the page "
+    "loaded, each with its own sha256, under cases/<case>/evidence/captures/<host>/<kit>/<UTC>/ with "
+    "a manifest and a bundle-level `capture_sha256`. Everything else this toolkit produces is "
+    "DERIVED: a favicon hash, a DOM fingerprint, an extracted wallet — assertions about a page that "
+    "will not exist next month. Once the host is gone nobody can re-check them, including us. "
+    "pivot_extract already captures automatically whenever --case is set, so call this tool for a "
+    "page you did NOT collect through the pipeline, for a re-capture (captures are timestamped and "
+    "never overwritten — the diff between two captures is how you date a re-skin), or with "
+    "verify=true to re-hash a stored capture and confirm it still matches its manifest before citing "
+    "it. Required: url (or dir with verify=true). Optional: case, outdir, third_party=false (record "
+    "third-party URLs in the manifest but do not download them). BUDGETED: same-site assets get the "
+    "generous allowance because they are the operator's own code, third-party CDN libraries a small "
+    "one — anything dropped is listed in `skipped_for_budget`, so read that before treating a bundle "
+    "as the whole page. Cite the capture_sha256, not the directory path.",
+    {"url": str},  # case:str, outdir:str, verify:bool, dir:str, third_party:bool
+)
+async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_capture.py")
+    # verify=true takes a capture DIRECTORY; accept it in either `dir` or the required `url`, so a
+    # caller passing only the required field can still verify.
+    target = str(args.get("dir") or args.get("url") or "")
+    if not target:
+        return _ok("capture_evidence needs a `url` to capture, or a capture directory in `url`/"
+                   "`dir` with verify=true.")
+    cmd = [PY, script, target]
+    if args.get("verify") or args.get("dir"):
+        cmd += ["--verify"]
+    else:
+        if args.get("case"):
+            cmd += ["--case", str(args["case"])]
+        if args.get("outdir"):
+            cmd += ["--outdir", str(args["outdir"])]
+        if args.get("third_party") is False:
+            cmd += ["--no-third-party"]
+    r = _run(cmd, timeout=300)
+    return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "anyrun_lookup",
+    "ANY.RUN READ-ONLY side — nothing is ever submitted by this tool (that is `anyrun_submit`). "
+    "Threat Intelligence Lookup: what samples carrying this indicator DID when detonated — the "
+    "domains, IPs, URLs and ports contacted, the family label, Suricata context, public task links. "
+    "Run it after analyze_artifact on the sample's sha256, its backend host or its C2 `ip:port`; it "
+    "is the cheapest way to recover a PACKED sample's real endpoints, which exist only at runtime, "
+    "so a thin static sweep plus a `binary:protection` finding is the cue to call it. NOTE TI Lookup "
+    "is a SEPARATE and limited licence — a plain sandbox key answers 403 here, so a failure usually "
+    "means 'not entitled', not 'nothing known'; mode='history' lists YOUR OWN past tasks and "
+    "mode='report' with indicator=<task-uuid> fetches one, both of which need only the sandbox key. "
+    "`indicator` is auto-typed (sha256/md5/domain/ip[:port]/url); query='field:\"value\"' for a raw "
+    "query. Contacted hosts may support an operator edge once corroborated; a shared threat FAMILY "
+    "is same-KIT only, never attribution alone. METERED and capped per run. With no ANYRUN_API_KEY "
+    "the layer still runs at ~50%: it composes the correct query and returns the UI address — say "
+    "so rather than reporting silence as 'unknown sample'.",
+    {"indicator": str},  # mode:'lookup'|'history'|'report', query:str, days:int -> args.get()
+    annotations=READONLY,
+)
+async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
+    import re
+    script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
+    mode = str(args.get("mode") or "lookup").lower()
+    if mode == "history":
+        r = _run([PY, script, "history", "--limit", str(int(args.get("limit", 25)))], timeout=120)
+        return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+    if mode == "report":
+        cmd = [PY, script, "report", str(args["indicator"])]
+        if args.get("iocs"):
+            cmd.append("--iocs")
+        r = _run(cmd, timeout=180)
+        return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+    cmd = [PY, script, "lookup"]
+    if args.get("query"):
+        cmd += ["--query", str(args["query"])]
+    else:
+        ind = str(args["indicator"]).strip()
+        host = ind.split(":")[0]
+        if re.fullmatch(r"[0-9a-fA-F]{64}", ind):
+            flag = "--sha256"
+        elif re.fullmatch(r"[0-9a-fA-F]{32}", ind):
+            flag = "--md5"
+        elif ind.startswith(("http://", "https://")):
+            flag = "--url"
+        elif re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
+            flag = "--ip"
+        else:
+            flag = "--domain"
+        cmd += [flag, ind]
+    if args.get("days"):
+        cmd += ["--days", str(int(args["days"]))]
+    r = _run(cmd, timeout=180)
+    if r.returncode != 0 and not r.stdout:
+        return _ok((r.stderr or "anyrun produced no output") +
+                   "\n\n(Keyless/limited ANY.RUN: nothing was queried. Do NOT report this as "
+                   "'the sample is unknown to the sandbox world' — paste the query into the UI.)")
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "anyrun_submit",
+    "DETONATE a file or URL in the ANY.RUN sandbox. **YOU MUST ASK THE USER FIRST, EVERY TIME.** "
+    "Call it with confirm=false (or omitted) to get the RISK BRIEFING, show that briefing to the "
+    "analyst, and only call again with confirm=true after they explicitly say yes to THIS "
+    "submission. Consent to 'analyze this sample' is NOT consent to detonate it. Why it is gated: a "
+    "submission is outbound, attributable and irreversible — it hands case material to a third "
+    "party, and a URL detonation FETCHES the live target from published ANY.RUN egress, so the "
+    "operator learns they are being sandboxed and rotates or starts serving a decoy (which also "
+    "poisons the verdict: 'info' from a datacenter IP is not exoneration). On a free plan the task "
+    "is PUBLIC and searchable, and operators watch that feed. Deleting the task afterwards un-sends "
+    "nothing. TRY FIRST and say what you tried: static analyze_artifact, then an EXISTING detonation "
+    "of the hash (anyrun_lookup / VirusTotal / MalwareBazaar / Triage / Koodous). Prefer submitting "
+    "the downloaded FILE over the live URL. Privacy defaults to owner (only you); public is refused "
+    "unless the analyst separately authorizes it. NEVER put a case ID or an analyst/client name in "
+    "`tags` or the filename. kind='file' (a local path) or 'url'.",
+    {"target": str},  # kind:'file'|'url', confirm:bool, privacy:str, allow_public:bool, tags:str
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
+    kind = str(args.get("kind") or ("url" if str(args["target"]).startswith(("http://", "https://"))
+                                    else "file")).lower()
+    cmd = [PY, script, "submit", str(args["target"])]
+    if kind == "url":
+        cmd.append("--url")
+    confirmed = bool(args.get("confirm"))
+    if confirmed:
+        cmd.append("--confirm-submission")
+    if args.get("privacy"):
+        cmd += ["--privacy", str(args["privacy"])]
+    if args.get("allow_public"):
+        cmd.append("--allow-public")
+    if args.get("tags"):
+        cmd += ["--tags", str(args["tags"])]
+    r = _run(cmd, timeout=300)
+    body = (r.stdout or "") + ("\n" + r.stderr if r.stderr else "")
+    if not confirmed:
+        # rc=3 is the gate firing, which is the DESIGNED outcome, not a failure. Returning it as an
+        # error would push the model to retry with confirm=true on its own — the exact thing this
+        # gate exists to prevent.
+        return _ok("NOTHING WAS SUBMITTED — confirmation required.\n"
+                   "Show the briefing below to the analyst, ask them explicitly whether to "
+                   "detonate, and only then call anyrun_submit again with confirm=true.\n\n" + body)
+    return _ok(body)
+
+
+# ---------------------------------------------------------------- Engage (auth surface + gated engagement)
+_ENGAGE = os.path.join("Engage", "tools")
+
+
+@tool(
+    "detect_login",
+    "DETECT a site's authentication surface — the login form, the password field and the "
+    "registration page — passively, needing no account. Reads the page and classifies every "
+    "<form> by the FIELDS it carries, not by a word in the URL: LOGIN (an identifier + a "
+    "password, no confirm-password), REGISTER (adds a confirm-password / invite code / terms / "
+    "extra identity fields), PASSWORD-RESET (an identifier, no password, under 'forgot/recover'). "
+    "Follows ONE hop to the linked register/login page so the signup form is found even when the "
+    "entry page shows only a login box, confirmed by that page's fields. Surfaces what engagement "
+    "would need before anyone touches the box: the form POST `action` (an auth_endpoint pivot, "
+    "often the backend/API the HTML never otherwise names), a CAPTCHA or OTP/verification step "
+    "that BLOCKS an automated signup, and a required invite/referral code (a closed-funnel tell "
+    "AND a clustering pivot). If the form is JS-rendered and absent from static HTML it says so "
+    "and points at a rendered fetch — 'no form in static HTML' is never reported as 'no login'. "
+    "GET-only; free/keyless. Pass url=<URL|host>; proxy=<research egress> optional.",
+    {"url": str},   # proxy:str, no_crawl:bool, case:str optional -> args.get()
+    annotations=READONLY,
+)
+async def detect_login(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args["url"])
+    cmd = [PY, os.path.join(_ENGAGE, "en_forms.py"), target]
+    if args.get("proxy"):
+        cmd += ["--proxy", str(args["proxy"])]
+    if args.get("no_crawl"):
+        cmd += ["--no-crawl"]
+    if args.get("case"):
+        out = os.path.join(ROOT, "cases", str(args["case"]), "engage", "forms.json")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        cmd += ["-o", out, "--pretty"]
+    r = _run(cmd, timeout=120)
+    v = _load_json_str(r.stdout or "")
+    if v is None:
+        return _err(f"detect_login failed for {_host(target)}: {(r.stderr or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "make_persona",
+    "Mint a SYNTHETIC research persona for an authorized engagement — the identity a signup form "
+    "asks for, generated fresh and obviously non-real, never a real person's details. Email is a "
+    "non-deliverable .invalid placeholder unless email_domain names a disposable inbox YOU "
+    "control (so an email-verifying signup forces a conscious choice, not an invented live "
+    "address); phone is omitted unless with_phone, then a reserved non-routable number. Nothing "
+    "is registered or sent — this only produces the data. Persist under cases/<case>/engage/ with "
+    "case=<ID>. One persona per case; never reuse across cases (a reused research identity links "
+    "your own operations for the adversary).",
+    {},   # case:str, email_domain:str, with_phone:bool, seed:str, country:str optional -> args.get()
+    annotations=READONLY,
+)
+async def make_persona(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_ENGAGE, "en_persona.py"), "--pretty"]
+    for flag, key in (("--email-domain", "email_domain"), ("--country", "country"),
+                      ("--seed", "seed"), ("--case", "case")):
+        if args.get(key):
+            cmd += [flag, str(args[key])]
+    if args.get("with_phone"):
+        cmd += ["--with-phone"]
+    r = _run(cmd, timeout=60)
+    v = _load_json_str(r.stdout or "")
+    if v is None:
+        return _err(f"make_persona failed: {(r.stderr or '')[-300:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "engage_account",
+    "GATED — create an account on the target and log in to gather intel from the members area "
+    "(panel, deposit/withdraw flow, referral tree, support handles) the public page hides. This "
+    "is OUTBOUND, ATTRIBUTABLE and IRREVERSIBLE — a POST to the operator's own backend that tells "
+    "them a new member appeared, from your egress, with a fingerprint — so it is gated exactly "
+    "like a sandbox submission. WITHOUT confirm=true it returns only the preflight BRIEFING and "
+    "does nothing; the harness ALSO requires env INTEL_ENGAGE_CONFIRM=1 (approval_required), which "
+    "an agent loop cannot set for itself. It refuses a non-synthetic persona (use make_persona), "
+    "refuses direct egress unless allow_direct_egress=true, STOPS at any CAPTCHA/OTP blocker "
+    "(never solves or evades one), and drives a real browser via Playwright if present else "
+    "returns a fill-by-hand runbook. Most fraud funnels do NOT verify identity — a made-up "
+    "username+password registers and logs straight in; when a funnel gates on email confirmation, "
+    "mint the persona --from-pool (a real puppet inbox) and pass await_confirm=true so en_inbox "
+    "fetches the confirm link and the browser clicks it before login (hard KYC — government ID / "
+    "selfie — is a STOP the tool never fabricates). Once logged in it runs the MISSION harvest over "
+    "the members area: the operator's crypto WALLET and BANK/payee details, the SERVICE FLOW, and "
+    "the credential-harvester UPLOAD PATH. Persona, screenshots, authenticated DOM, harvest and one "
+    "audit line per engagement are written under cases/<case>/engage/. Try the no-account routes "
+    "first (detect_login; leaked panel credentials in the leak corpus; an archived authenticated "
+    "view) — a fresh signup is the most attributable option, not the first. Pass url; persona=<path "
+    "to a make_persona JSON>; detection=<path to a detect_login JSON, the fill plan>; case; "
+    "proxy=<research egress>; await_confirm for email-gated signups; confirm=true only after a "
+    "human said yes to THIS engagement.",
+    {"url": str},   # persona:str, detection:str, case:str, proxy:str, allow_direct_egress:bool, confirm:bool, no_login:bool
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def engage_account(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args["url"])
+    cmd = [PY, os.path.join(_ENGAGE, "en_engage.py"), target]
+    for flag, key in (("--persona", "persona"), ("--detection", "detection"),
+                      ("--case", "case"), ("--proxy", "proxy"), ("--target-domain", "target_domain")):
+        if args.get(key):
+            cmd += [flag, str(args[key])]
+    if args.get("allow_direct_egress"):
+        cmd += ["--allow-direct-egress"]
+    if args.get("await_confirm"):
+        cmd += ["--await-confirm"]
+    if args.get("no_login"):
+        cmd += ["--no-login"]
+    # confirm is honoured ONLY if the analyst also set the env second-lock; en_engage re-checks it.
+    if args.get("confirm") and os.environ.get("INTEL_ENGAGE_CONFIRM") == "1":
+        cmd += ["--confirm-engagement"]
+    r = _run(cmd, timeout=240)
+    v = _load_json_str(r.stdout or "")
+    if v is None:
+        return _err(f"engage_account failed for {_host(target)}: {(r.stderr or '')[-400:]}")
+    if isinstance(v, dict) and str(v.get("action", "")).startswith("CONFIRMATION REQUIRED"):
+        return _ok("NOTHING WAS SENT — no account created; confirmation required.\n"
+                   "Show the briefing below to the analyst, ask explicitly whether to create an "
+                   "account on the operator's box, and only then call engage_account with "
+                   "confirm=true (the run must also have INTEL_ENGAGE_CONFIRM=1).\n\n"
+                   + json.dumps(v, ensure_ascii=False, indent=2))
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "harvest_authenticated",
+    "The post-login MISSION extractor — read an AUTHENTICATED members-area page (the DOM "
+    "engage_account captured, or any saved authenticated HTML) for the operator's money and "
+    "mechanics that the public page hid: crypto WALLET addresses deposits go to (BTC / ETH-ERC20-"
+    "BEP20 / TRON-TRC20), BANK / payee details (IBAN, SWIFT/BIC, account numbers taken ONLY in "
+    "bank context), the SERVICE FLOW present (deposit → task/trade → withdraw-block → top-up; VIP "
+    "levels; referral tree), and the CREDENTIAL-HARVESTER UPLOAD PATH (a form whose action is a "
+    "collector, a file-upload endpoint, or a page collecting third-party card/CVV/seed-phrase/bank "
+    "logins — the operator's own routing, which clusters the kit). Extracts only; every wallet/"
+    "account is a lead fed back into WebPivot + IntelAnalysis and base-rate checked there — a "
+    "shared processor wallet is infrastructure, not the operator's. Pass html_path=<file>; "
+    "base_url optional; case to append to the evidence ledger.",
+    {"html_path": str},   # base_url:str, case:str optional -> args.get()
+    annotations=READONLY,
+)
+async def harvest_authenticated(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_ENGAGE, "en_harvest.py"), str(args["html_path"]), "--pretty"]
+    if args.get("base_url"):
+        cmd += ["--base-url", str(args["base_url"])]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    r = _run(cmd, timeout=90)
+    v = _load_json_str(r.stdout or "")
+    if v is None:
+        return _err(f"harvest_authenticated failed: {(r.stderr or '')[-300:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "engage_report",
+    "Render a case's ENGAGEMENT artifacts (under cases/<case>/engage/ — payment_methods, "
+    "cluster_expansion, detect_* and the interaction ledger) into a citable 'Panel Engagement — "
+    "Evidence' markdown section: the method/authorization note, the auth surface, the payment "
+    "methods (bank + crypto, with base-rate exclusions kept visible), the cluster expansion, and "
+    "an evidence table citing each fact to the API endpoint or capture it came from. Fold it into "
+    "the case assessment (append_to=<path>) and re-render with render_report. Reads only the "
+    "case folder — holds no case data itself. Pass case=<ID>; append_to optional.",
+    {"case": str},   # append_to:str optional -> args.get()
+    annotations=READONLY,
+)
+async def engage_report(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_ENGAGE, "en_report.py"), str(args["case"])]
+    if args.get("append_to"):
+        cmd += ["--append-to", str(args["append_to"])]
+    r = _run(cmd, timeout=60)
+    out = (r.stdout or "") + (("\n" + r.stderr) if args.get("append_to") else "")
+    if r.returncode != 0 and not out.strip():
+        return _err(f"engage_report failed: {(r.stderr or '')[-300:]}")
+    return _ok(out or "(engagement section written)")
 
 
 # ---------------------------------------------------------------- servers + names
+# Every @tool MUST appear in exactly one server below AND in that server's *_TOOLS allowlist.
+# The stdio front-end (mcp_server.py) auto-discovers @tools, so a tool missing here is visible in
+# Claude Code and INVISIBLE to the SDK — the two front-ends silently diverge and a phase prompt
+# that references the tool just fails. The reverse is worse: an allowlist entry with no served
+# tool tells the model it may call something that does not exist. `tests/test_tool_registry.py`
+# asserts the three lists agree, so this can only drift again on purpose.
+# Bind every @tool's NAME around its handler, so the context governor knows which budget to
+# apply to that tool's output (see _bounded / _budget_for). Done by sweeping the module rather
+# than by listing tools, so a tool added later CANNOT escape the governor by being forgotten —
+# which is exactly how the old per-call slices ended up covering only four of them.
+for _t in list(globals().values()):
+    if hasattr(_t, "handler") and hasattr(_t, "name") and hasattr(_t, "input_schema"):
+        _governed(_t)
+        # Same sweep, same reason: attach the declared optional params so every front-end's
+        # schema builder can show them. A tool with none simply gets {}.
+        try:
+            _t.optional_schema = dict(OPTIONAL_PARAMS.get(_t.name) or {})
+        except Exception:  # noqa: BLE001 — an immutable tool object still works, just without them
+            pass
+
 COLLECT_SERVER = create_sdk_mcp_server(
-    "collect", tools=[pivot_extract, analyze_artifact, fallback_probe,
-                      impersonation_hunt, search_pivot, intelx_search, anyrun_lookup,
+    "collect", tools=[pivot_extract, doc_metadata, analyze_artifact, fallback_probe,
+                      impersonation_hunt, search_pivot, censys, intelx_search,
+                      anyrun_lookup, anyrun_submit, capability_check,
+                      url_paths, capture_evidence, serp_ads, passive_ssl, ip_info,
+                      domain_liveness,
+                      detect_login, make_persona, engage_account, harvest_authenticated,
+                      engage_report,
                       kb_ingest])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
-                      reverse_whois, cert_overlap, censys, capability_check,
-                      reference_check, reference_add,
-                      which_cases, domain_verdict, api_usage, email_permute,
-                      render_diagram, render_report])
+                      reverse_whois, cert_overlap, reference_check, reference_add, reference_mirrors,
+                      which_cases, domain_verdict, api_usage, tool_calls, case_scope,
+                      case_clusters, case_frontier, case_loop, case_reopen,
+                      email_permute,
+                      render_diagram, case_timeline, render_report, victim_profile])
 
-COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__analyze_artifact",
+COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
+                 "mcp__collect__analyze_artifact",
                  "mcp__collect__fallback_probe", "mcp__collect__impersonation_hunt",
-                 "mcp__collect__search_pivot", "mcp__collect__intelx_search",
-                 "mcp__collect__anyrun_lookup", "mcp__collect__kb_ingest"]
+                 "mcp__collect__search_pivot", "mcp__collect__censys",
+                 "mcp__collect__intelx_search",
+                 "mcp__collect__anyrun_lookup", "mcp__collect__anyrun_submit",
+                 "mcp__collect__capability_check",
+                 "mcp__collect__url_paths", "mcp__collect__capture_evidence",
+                 "mcp__collect__serp_ads", "mcp__collect__passive_ssl",
+                 "mcp__collect__ip_info",
+                 "mcp__collect__domain_liveness",
+                 "mcp__collect__detect_login", "mcp__collect__make_persona",
+                 "mcp__collect__engage_account", "mcp__collect__harvest_authenticated",
+                 "mcp__collect__engage_report",
+                 "mcp__collect__kb_ingest"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
                  "mcp__analyze__reverse_whois", "mcp__analyze__cert_overlap",
-                 "mcp__analyze__censys", "mcp__analyze__capability_check",
                  "mcp__analyze__reference_check", "mcp__analyze__reference_add",
+                 "mcp__analyze__reference_mirrors",
                  "mcp__analyze__which_cases", "mcp__analyze__domain_verdict",
-                 "mcp__analyze__api_usage", "mcp__analyze__email_permute",
-                 "mcp__analyze__render_diagram", "mcp__analyze__render_report"]
+                 "mcp__analyze__api_usage", "mcp__analyze__tool_calls",
+                 "mcp__analyze__case_scope",
+                 "mcp__analyze__case_clusters", "mcp__analyze__case_frontier",
+                 "mcp__analyze__case_loop",
+                 "mcp__analyze__case_reopen",
+                 "mcp__analyze__email_permute",
+                 "mcp__analyze__render_diagram", "mcp__analyze__case_timeline",
+                 "mcp__analyze__render_report", "mcp__analyze__victim_profile"]

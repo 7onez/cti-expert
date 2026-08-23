@@ -1,0 +1,42 @@
+{
+  "_comment": "THE MIRROR MANIFEST — the declared list of reference groups that exist in more than one skill and MUST hold identical values. Read by tests/test_references.py (which fails the gate on drift) and by tools/kb/sync_mirrors.py (which repairs it). WHY MIRRORS EXIST AT ALL: every skill — WebPivot, BinaryPivot, IntelGraph, IntelReport — is imported onto other machines STANDALONE, so it cannot read a repo-root package or another skill's references/ directory. A denylist the collector and the ingest both need therefore has to be physically duplicated. That duplication is safe only if something enforces equality, because the failure is silent: a favicon filtered at collection but not at ingest still reaches the knowledge base and still builds a false cluster, and nobody sees an error. ADDING A MIRROR: add the entry here, then run `python3 tools/kb/sync_mirrors.py --write` to propagate from the canonical copy. NOT EVERY REPEATED GROUP NAME IS A MIRROR — `endpoints`, `credit_costs`, `search_budget`, `result_limits`, `clustering_policy` and `plan_capabilities` appear in several provider files (Censys, IntelX, SerpApi, ANY.RUN) describing DIFFERENT providers; those are correctly independent and must not be listed here. Mirrors are matched by explicit file+group pairs, not by name, because a mirror may be named differently on each side.",
+
+  "mirrors": [
+    {
+      "concept": "WHOIS privacy / proxy markers",
+      "why": "The collector refuses to emit a privacy-proxied registrant as a pivot; the ingest refuses to build a registrant edge from one. A provider known to only one side means a proxy address becomes a 200-domain false cluster on the other.",
+      "canonical": {"file": "WebPivot/references/registrant_noise.json", "group": "privacy_markers"},
+      "mirrors": [{"file": "tools/kb/references/registrant_noise.json", "group": "privacy_markers"}]
+    },
+    {
+      "concept": "WHOIS privacy-proxy email domains",
+      "why": "Same split as privacy_markers — collector-side suppression and ingest-side edge refusal must agree on the provider list.",
+      "canonical": {"file": "WebPivot/references/registrant_noise.json", "group": "proxy_email_domains"},
+      "mirrors": [{"file": "tools/kb/references/registrant_noise.json", "group": "proxy_email_domains"}]
+    },
+    {
+      "concept": "Platform / site-builder DEFAULT favicon hashes",
+      "why": "A hosted platform's default icon is carried by every tenant. WebPivot drops it before building pivots; the KB drops it before building edges. When these drifted, one side filtered the Wix default and the other the GoHighLevel default, so each let the other's through.",
+      "canonical": {"file": "tools/kb/references/noise_filters.json", "group": "platform_default_favicon_mmh3"},
+      "mirrors": [{"file": "WebPivot/references/generic_labels.json", "group": "platform_default_favicon_mmh3"}]
+    },
+    {
+      "concept": "Platform / template analytics container ids",
+      "why": "A template's tag-manager container is carried by every site built from it. The collector demotes it to context so an analyst does not chase it by hand; the ingest refuses to make it a clustering hub. Both need the same list.",
+      "canonical": {"file": "tools/kb/references/noise_filters.json", "group": "noise_tracker_ids"},
+      "mirrors": [{"file": "WebPivot/references/generic_labels.json", "group": "noise_tracker_ids"}]
+    },
+    {
+      "concept": "Static-asset endings that disqualify a scraped social handle",
+      "why": "A share icon on a social host is not an account. Named differently on each side (social_asset_extensions vs social_handle_noise) because the collector matches a URL path and the ingest matches an indicator leaf — which is precisely why a name-based drift check would miss this pair.",
+      "canonical": {"file": "WebPivot/references/generic_labels.json", "group": "social_asset_extensions"},
+      "mirrors": [{"file": "tools/kb/references/noise_filters.json", "group": "social_handle_noise"}]
+    },
+    {
+      "concept": "Minimum tag count for a DOM skeleton to be distinctive",
+      "why": "The collector refuses to emit a skeleton hash below this; the ingest refuses to build a same_template edge below it. If they disagree, the stricter side is simply bypassed by the looser one.",
+      "canonical": {"file": "tools/kb/references/noise_filters.json", "group": "dom_skeleton_min_tags"},
+      "mirrors": [{"file": "WebPivot/references/generic_labels.json", "group": "dom_skeleton_min_tags"}]
+    }
+  ]
+}

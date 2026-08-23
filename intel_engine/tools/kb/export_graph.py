@@ -26,21 +26,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "WebPivot", "tools"))
 sys.path.insert(0, HERE)
 import graph_build as gb  # noqa: E402
+import kb_refs  # noqa: E402 — reference DATA in references/*.json
 from knowledge_base import KB  # noqa: E402
 
-# relations that count as attribution-grade for the domain projection (draw an edge)
-STRONG = {"registered_by", "uses_analytics", "uses_verification", "uses_favicon"}
-# also drawn (weaker, but real cross-cluster bridges — e.g. a shared Messenger handle)
-BRIDGE = {"uses_contact"}
+# DATA: references/evidence_weights.json — which relations are drawn, how strongly, and their
+# labels. Shared with hypothesize.py/calibration.py; the graph tiers deliberately differ from the
+# hypothesis tiers (see that file's _comment).
+_EW_FALLBACK = {
+    "graph_strong_rels": ["registered_by", "uses_analytics", "uses_verification", "uses_favicon"],
+    "graph_bridge_rels": ["uses_contact"],
+    "graph_kit_rels": ["uses_theme", "same_template", "same_inline_css", "same_comment",
+                       "uses_contact", "uses_nameserver", "uses_tracker"],
+    "relation_labels": {"registered_by": "registrant", "uses_analytics": "analytics-ID"},
+}
+_EW = kb_refs.load_ref(kb_refs.ref_path(__file__, "evidence_weights.json"), _EW_FALLBACK)
+
+STRONG = set(_EW["graph_strong_rels"])
+BRIDGE = set(_EW["graph_bridge_rels"])
 DRAWN = STRONG | BRIDGE
-# same-kit relations — shown only as node context / weak edges, never the backbone
-KIT = {"uses_theme", "same_template", "same_inline_css", "same_comment",
-       "uses_contact", "uses_nameserver", "uses_tracker"}
-# short human labels for the shared-artifact classes
-RELNAME = {"registered_by": "registrant", "uses_analytics": "analytics-ID",
-           "uses_verification": "verif-token", "uses_favicon": "favicon",
-           "uses_contact": "contact", "uses_theme": "theme", "same_template": "template",
-           "same_inline_css": "css", "same_comment": "comment", "uses_nameserver": "NS"}
+KIT = set(_EW["graph_kit_rels"])
+RELNAME = dict(_EW["relation_labels"])
 
 
 def main():

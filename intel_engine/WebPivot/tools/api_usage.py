@@ -47,7 +47,15 @@ def _now():
 
 def record(provider, action, credits=1, query=None, results=None,
            remaining=None, limit=None, ok=True, path=None):
-    """Log one licensed-API call. Returns the record dict; never raises (best-effort append)."""
+    """Log one licensed-API call. Returns the record dict; never raises (best-effort append).
+
+    `ok` means THE CALL SUCCEEDED — not that it returned results. Credits are zeroed when ok is
+    False because providers do not bill a rejected request (401/403/429/5xx). Do NOT pass ok=False
+    merely because a search came back empty: a 200 that found nothing is still a billed call, and
+    flagging it as failed silently under-reports the month. Record emptiness with `results=0`
+    instead. This exact confusion made the SerpApi ledger read 8 spent against an account that had
+    really spent 12, and the monthly guard enforces its cap from this field.
+    """
     rec = {"ts": _now(), "provider": provider, "action": action,
            "credits": (credits if ok else 0),
            "query": (str(query)[:200] if query else None), "results": results,
