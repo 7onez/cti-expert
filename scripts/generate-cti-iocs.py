@@ -24,7 +24,7 @@ Outputs three machine-readable formats for SIEM / TIP ingest and sharing.
 
 Usage:
     uv run generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|all]
-    python3 generate-cti-iocs.py <case.json> IOC-CASE-2026-03-30 --format all
+    python3 generate-cti-iocs.py <case.json> IOC-CASE-0001 --format all
 
 With --format all (default) writes <out_prefix>.stix.json, .txt and .csv.
 With a single format, <out_prefix> is treated as the exact output path.

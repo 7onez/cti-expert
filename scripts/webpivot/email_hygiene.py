@@ -20,7 +20,7 @@ detection works fully offline from the built-in list; an optional burner API key
 (CHONGLUADAO_API_KEY) only augments it — never required.
 
 Usage:
-  uv run email_hygiene.py admin@mailinator.com john.smith@gmail.com ceo@acme.com
+  uv run email_hygiene.py admin@mailinator.com john.smith@example.com ceo@acme.com
   uv run email_hygiene.py --stdin --pretty < emails.txt
   uv run email_hygiene.py ceo@acme.com -o hygiene.json
 """

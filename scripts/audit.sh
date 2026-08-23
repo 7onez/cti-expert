@@ -13,15 +13,27 @@ fail=0
 note(){ printf '  %s\n' "$1"; }
 bad(){ printf '  FAIL: %s\n' "$1"; fail=1; }
 
-echo "== 1. leak check (RULE 1) on the staged diff =="
-# leakcheck is DIFF-based on purpose: it flags newly-added case data, not the curated example
-# values already in the docs/tests (UA-100000001, registrant@163.com fixtures, sample wallets…).
-# Locally this scans your staged changes; in CI it is empty (nothing staged) and the workflow's
-# own step scans the PR diff vs base instead.
+echo "== 1. leak check (RULE 1) =="
+# Two passes, because they answer different questions.
+#
+# DIFF pass — what this commit ADDS. Added lines only: a `-` line is a leak leaving, and refusing
+# that made the gate self-locking (the only way to remove a leaked value was --no-verify, i.e. the
+# gate pushed you toward the exact bypass it exists to prevent). Locally this scans your staged
+# changes; in CI it is empty (nothing staged) and the workflow's own step scans the PR diff.
 if bash scripts/leakcheck.sh >/tmp/audit_lk 2>&1; then
   note "clean (staged diff)"
 else
   cat /tmp/audit_lk; bad "leakcheck found newly-added case data"
+fi
+# TREE pass — what is ALREADY there. The diff pass can only ever see lines someone touched, so a
+# leak that predates the hook lives forever in a file nobody edits. This scans every tracked text
+# file. Four such values survived for months exactly this way, in usage examples nobody had reason
+# to open. Skips binaries; the file mode reads whole files, not a diff.
+lkfiles="$(git ls-files | grep -vE '\.(png|jpg|jpeg|gif|svg|pdf|ico|woff2?|zip|gz|tgz)$')"
+if [ -n "$lkfiles" ] && bash scripts/leakcheck.sh $lkfiles >/tmp/audit_lk2 2>&1; then
+  note "clean (all $(printf '%s\n' "$lkfiles" | wc -l | tr -d ' ') tracked text files)"
+else
+  cat /tmp/audit_lk2; bad "leakcheck found case data already present in a tracked file"
 fi
 
 echo "== 2. every DISPATCH op resolves to a script (no dangling command, RULE 3) =="

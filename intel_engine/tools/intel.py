@@ -684,14 +684,29 @@ def cmd_loop(a):
               f"{', '.join(batch[:8])}{' …' if len(batch) > 8 else ''}")
 
         # 1) collect (parallel, FREE-ONLY — no metered credits) ---------------
+        # Same single-sourced collector as `open` above (collect_core), not a second fan-out: the
+        # autonomous loop must spend no credits, so --free-only rides as an extra flag and
+        # filter_args drops it (loudly) if this checkout's collector does not take it.
         ok, failed = [], []
-        with cf.ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
-            futs = {ex.submit(_extract_one, h, case_dir, a.timeout, False, False, a.render_extract,
-                              True): h for h in batch}
-            for fut in cf.as_completed(futs):
-                host, good, note = fut.result()
-                print(f"   [{'ok ' if good else 'MISS'}] {host}  {note}")
-                (ok if good else failed).append(host)
+        loop_extra = ["--free-only"]
+        if a.render_extract:
+            loop_extra.append("--render")
+
+        def _loop_status(res):
+            good = _extract_ok(res)
+            note = (res.get("note") or "").strip() or ("ok" if good else res.get("error") or "miss")
+            print(f"   [{'ok ' if good else 'MISS'}] {res['host']}  {note}")
+            (ok if good else failed).append(res["host"])
+
+        collect_core.collect_many(
+            [f"https://{h}" for h in batch], case,
+            max_workers=max(1, a.jobs), on_result=_loop_status, retry_misses=1,
+            root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
+            # no_archive=True keeps the ported behaviour EXACTLY: the routine this replaced never
+            # passed --archive-missing/--master. Archiving asks a third-party archive to fetch the
+            # target, which is outbound and attributable — an autonomous loop must not start doing
+            # that as a side effect of a refactor. `open` still archives; that run is analyst-driven.
+            timeout=a.timeout, no_archive=True, extra_flags=loop_extra)
         for h in batch:                              # consumed even on miss (don't re-queue a dead host)
             if h.lower() not in {c.lower() for c in st["consumed"]}:
                 st["consumed"].append(h.lower())

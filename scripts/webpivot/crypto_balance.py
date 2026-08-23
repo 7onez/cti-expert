@@ -15,7 +15,7 @@ covers (incl. BCH/DASH/DOGE/ZEC-transparent); SUBSCAN_API_KEY lifts DOT limits.
 
 Usage:
   uv run crypto_balance.py 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-  uv run crypto_balance.py 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 -c eth --pretty
+  uv run crypto_balance.py 0x52908400098527886E0F7030069857D2E4169EE7 -c eth --pretty
   uv run crypto_balance.py --stdin -o balances.json < wallets.txt
 
 FOR AUTHORIZED INVESTIGATIONS ONLY. All lookups hit public explorers, never the
