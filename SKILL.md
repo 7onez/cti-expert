@@ -117,8 +117,10 @@ available or contradicts it. Tag every asserted link in the report with the rung
 | 9 | Site template / framework / kit | **weak — kit-level, never operator-level** |
 | 10 | Co-tenancy on **shared/reseller** hosting; managed-provider nameservers | information, not a link |
 
-**Reverse-WHOIS is the highest-yield pivot here.** Always `mode=preview` first — the count is
-free. A term returning hundreds is shared boilerplate; do not purchase it.
+**Reverse-WHOIS is the highest-yield pivot here, and it previews by default** — there is no `mode`
+argument on either layer. The preview count is free. A term returning more than `max_domains`
+(default 150) is shared boilerplate; do not purchase it. Spending credits is an explicit
+re-call with `confirm=true` (T1) or `--reverse-mode purchase` (T2).
 
 ### Mandatory false-positive control
 

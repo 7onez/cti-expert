@@ -85,12 +85,49 @@ def briefing(label, why, before):
               "explicitly asked for it in this session.")
 
 
+# Kept in step with _FALSEY in intel_engine/harness/audit.py. It cannot be imported — hooks/ is
+# stdlib-only on purpose, so the guard still runs when the vendored engine is broken — so the
+# values are duplicated deliberately. Divergence here runs PERMISSIVE: a spelling this set omits
+# reads as truthy, i.e. as an opt-out, and silences the gate while the action still happens.
+_FALSEY = {"", "0", "false", "no", "off", "none", "null"}
+
+
+def _truthy(v):
+    return str(v).strip().lower() not in _FALSEY
+
+
+def outbound_now(spec, tool_input):
+    """True when a tool whose DEFAULT path is outbound is in fact taking it on THIS call.
+
+    `spec` names the opt-outs, never the flag: an env var that disables the behaviour, and any
+    typed parameter that does the same. Anything else means the action happens.
+    """
+    env = spec.get("unless_env") or []
+    for name in ([env] if isinstance(env, str) else env):
+        if _truthy(os.environ.get(name, "")):
+            return False
+    for p in spec.get("unless_params") or []:
+        if _truthy((tool_input or {}).get(p, "")):
+            return False
+    return True
+
+
 def check_mcp(tool_name, tool_input, ref):
     """Match on the bare tool name so mcp__intel__x and mcp__other__x behave identically."""
     bare = tool_name.split("__")[-1]
     ent = (ref.get("mcp_tools") or {}).get("entries", {}).get(bare)
     if not ent:
         return None
+    # A tool whose DEFAULT path is ALREADY outbound cannot be gated on flag text. The MCP surface
+    # is typed, so a CLI flag never appears in tool_input, and the harness appends that flag inside
+    # its own subprocess — so neither this check nor check_bash would ever see it, and the row
+    # would read as coverage while allowing every call. Gate on the effective behaviour instead;
+    # the opt-out, not the flag, is what makes it silent. `flag_required` still applies below for
+    # the case where the default has been disabled.
+    dflt = ent.get("outbound_by_default")
+    if dflt and outbound_now(dflt, tool_input):
+        return briefing(bare, dflt.get("why") or ent.get("why", ""),
+                        dflt.get("before") or ent.get("before", ""))
     need = ent.get("flag_required")
     if need:
         blob = json.dumps(tool_input, ensure_ascii=False)

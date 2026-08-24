@@ -19,8 +19,10 @@ Work **down** the SKILL.md §2.5 priority ladder — highest-strength evidence f
 | 7 | favicon / tracker / tenant IDs | `mcp__intel__kb_cluster` |
 | 8–10 | co-tenancy, managed-provider NS, site kit | weak — corroborate or demote |
 
-**Reverse-WHOIS is the highest-yield pivot here — always `mode=preview` first.** The count is
-free; a term returning hundreds is shared boilerplate and must not be purchased or clustered on.
+**Reverse-WHOIS is the highest-yield pivot here, and it PREVIEWS BY DEFAULT — there is no
+`mode` argument on either layer.** The preview count is free; a term returning more than
+`max_domains` (default 150) is shared boilerplate and must not be purchased or clustered on.
+Only re-call with `confirm=true` (T1) / `--reverse-mode purchase` (T2) to spend credits.
 
 Run `/cti-check` on every indicator before it becomes an edge. Report each asserted link with the
 rung it rests on, so a reader can weigh it.

@@ -6,7 +6,8 @@
   M4 convergence._indicators_from_raw   — social key uses KB's last-path-segment form
 
 (M3 aggregate_case2 CF-range and M5/M6 atomic-writes/timeouts are exercised by a functional
-smoke in the audit run, not here — aggregate_case2 isn't import-safe.) Pure stdlib, deterministic.
+smoke in the audit run, not here. aggregate_case2 IS import-safe as of the __main__ guard — before
+that, importing it ran the aggregation and wrote to a real case.) Pure stdlib, deterministic.
 """
 import os
 import sys

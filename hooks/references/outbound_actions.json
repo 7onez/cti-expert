@@ -1,5 +1,5 @@
 {
-  "_comment": "Actions that reach OUT to infrastructure that is not ours, in a way that is attributable and cannot be undone. hooks/actionguard.py turns each match into a confirmation prompt with the briefing below. RULE 1: capability names and flags only — never a case target. Tuning: adding an entry costs one prompt; removing one silently removes a safety rail, so prefer narrowing `flag_required` over deleting a row. An entry with `flag_required` only fires when that flag is present, which is how a tool whose DEFAULT path is safe (pivot_extract collects passively; only --submit publishes) stays unprompted for ordinary use.",
+  "_comment": "Actions that reach OUT to infrastructure that is not ours, in a way that is attributable and cannot be undone. hooks/actionguard.py turns each match into a confirmation prompt with the briefing below. RULE 1: capability names and flags only — never a case target. Tuning: adding an entry costs one prompt; removing one silently removes a safety rail, so prefer narrowing `flag_required` over deleting a row. An entry with `flag_required` only fires when that flag is present, which is how a tool whose DEFAULT path really is safe (capture_evidence archives only when asked) stays unprompted for ordinary use. `flag_required` is NOT enough when the default path is itself outbound: the MCP surface is typed, so CLI flag text never reaches tool_input and the row would read as coverage while allowing every call. Use `outbound_by_default` there — it names the opt-outs (`unless_env`, `unless_params`) instead of the flag, and gates on what the call actually does.",
 
   "mcp_tools": {
     "_comment": "Matched against the PreToolUse tool_name for MCP tools, i.e. mcp__<server>__<tool>. The server segment is ignored so a differently-named registration is still covered.",
@@ -22,9 +22,14 @@
         "flag_required": ["--submit"]
       },
       "pivot_extract": {
-        "why": "Ordinary collection is passive, but --submit asks urlscan/Wayback to fetch the target, publishing the URL and the timing.",
-        "before": "Only the --submit path is gated; plain collection and --archive-missing are not.",
-        "flag_required": ["--submit"]
+        "why": "Collection is NOT passive by default: the harness appends --submit, asking Wayback Save-Page-Now and urlscan to fetch the target. Wayback keeps a permanent PUBLIC snapshot showing the URL was under investigation, and when. urlscan defaults to unlisted.",
+        "before": "Archiving is right for evidence and wrong for a target you have not decided to touch. Set HARNESS_NO_ARCHIVE=1 (or pass no_archive) to collect without submitting.",
+        "flag_required": ["--submit"],
+        "outbound_by_default": {
+          "unless_env": ["HARNESS_NO_ARCHIVE", "HARNESS_NO_ENRICH"],
+          "unless_params": ["no_archive", "smoke"],
+          "note": "Gated on BEHAVIOUR, not flag text: the typed MCP surface never carries --submit (collect_core.py appends it inside the harness subprocess), so flag_required alone can never fire here. It still covers the shell front-end and the archiving-disabled case."
+        }
       },
       "misp_push": {
         "why": "Writes the event to your MISP instance. Staged organisation-only and unpublished, so it stays inside your org and an unpublished event can still be deleted — but it is a real write to a shared system your colleagues read, and it leaves an audit trail under your API key.",

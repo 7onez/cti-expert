@@ -150,9 +150,14 @@ def check():
            f"actionguard stays silent on {tool} (detection is free)")
 
     # ---- actionguard: dual-mode tools gate on the FLAG, not the tool -------------------------
-    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__pivot_extract",
+    # NOTE: this assertion USED to claim ordinary pivot_extract collection is allowed. That was
+    # wrong, and being a green test is precisely why the gap survived: ordinary collection is not
+    # passive — collect_core archives by default. The behaviour gate below owns pivot_extract now;
+    # capture_evidence keeps the flag-shaped case, since it genuinely does nothing outbound
+    # unless asked.
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__capture_evidence",
                              "tool_input": {"url": "https://site-a.example"}}) == "allow",
-       "actionguard allows ordinary pivot_extract collection")
+       "actionguard allows a capture_evidence call with no submission flag")
     ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__pivot_extract",
                              "tool_input": {"url": "https://site-a.example",
                                             "flags": "--submit"}}) == "ask",
@@ -169,6 +174,44 @@ def check():
     for tool in ("misp_export", "misp_search", "collection_gaps"):
         ok(_decide(ACTIONGUARD, {"tool_name": f"mcp__intel__{tool}", "tool_input": {}}) == "allow",
            f"actionguard stays silent on {tool} (local build / read-only)")
+
+    # ---- actionguard: a tool whose DEFAULT path is outbound ----------------------------------
+    # collect_core appends `--submit --archive-missing` unless HARNESS_NO_ARCHIVE is set, so
+    # ordinary collection asks Wayback Save-Page-Now (a PERMANENT PUBLIC snapshot) to fetch the
+    # target. A `flag_required: ["--submit"]` row can never fire here: the MCP surface is typed, so
+    # the flag text never reaches tool_input, and the harness appends it inside its own subprocess
+    # where check_bash cannot see it either. Before the behaviour gate this returned "allow" — the
+    # row read as coverage while every call went out unprompted. Both directions, because a gate
+    # proven in one direction only is not proven.
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__pivot_extract",
+                             "tool_input": {"url": "https://site-a.example",
+                                            "case": "CASE-0001"}}) == "ask",
+       "actionguard ASKS on a typed pivot_extract call (default path archives)")
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__plugin_cti-expert_intel__pivot_extract",
+                             "tool_input": {"url": "https://site-a.example"}}) == "ask",
+       "actionguard ASKS on pivot_extract under the plugin tool prefix too")
+    # ...and goes quiet the moment archiving is actually opted out of — otherwise the rail is one
+    # you have to switch off to work, which is a rail that gets switched off.
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__pivot_extract",
+                             "tool_input": {"url": "https://site-a.example",
+                                            "no_archive": True}}) == "allow",
+       "actionguard is silent on pivot_extract with no_archive=true")
+    # An opt-out is only an opt-out when it says YES. Divergence in the falsey table runs
+    # PERMISSIVE — a spelling the set omits reads as truthy, i.e. as an opt-out, and silences the
+    # gate while the archive submission still happens. "off" and "null" were missing exactly once.
+    for spelling in ("off", "null", "false", "0", "no", "none", ""):
+        ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__pivot_extract",
+                                 "tool_input": {"url": "https://site-a.example",
+                                                "no_archive": spelling}}) == "ask",
+           f"actionguard still ASKS when no_archive={spelling!r} (not a real opt-out)")
+    _env = dict(os.environ, HARNESS_NO_ARCHIVE="1")
+    _r = subprocess.run([sys.executable, ACTIONGUARD],
+                        input=json.dumps({"hook_event_name": "PreToolUse",
+                                          "tool_name": "mcp__intel__pivot_extract",
+                                          "tool_input": {"url": "https://site-a.example"}}),
+                        capture_output=True, text=True, timeout=30, env=_env)
+    ok(json.loads(_r.stdout)["hookSpecificOutput"]["permissionDecision"] == "allow",
+       "actionguard is silent on pivot_extract when HARNESS_NO_ARCHIVE=1 in the environment")
 
     # ---- actionguard: the shell front-end is covered too -------------------------------------
     def bash(cmd):
