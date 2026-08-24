@@ -219,6 +219,13 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
       `{"raw":["../raw/a.json", …], "graph":"cluster_a.json", "stem":"fig_cluster_a",
       "title":"…", "direction":"LR", "legend":true,
       "drop_types":["nameserver","registrar","template","theme","email"]}`
+      Also accepted: `"scale"` (device pixel ratio for the hi-res PNG, default 2), `"width"`,
+      `"split_clusters"`, `"all_edge_labels"`, `"inline_legend"`, and `"pdf"` (default **true** —
+      the vector figure the PDF build embeds; set false to skip that render).
+      **`"legend": true` on a multi-cluster graph produces a COMPANION figure**
+      `<stem>_legend_hires.png`, because an inline legend box overflows its own title and eats a
+      third of the figure. Embed it beside the graph — the render warns if a rendered figure,
+      legend or otherwise, is never referenced in the markdown.
     - **REASONING — a hand-authored Mermaid source.** Best for the argument a collected graph cannot
       express: corporate/entity structure, an ownership timeline, the inference chain from artifact
       to attribution, the alternative hypothesis that was ruled out:

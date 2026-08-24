@@ -88,6 +88,7 @@ import wp_docmeta  # noqa  (document/image metadata layer: hosted PDFs + images 
 import wp_censys   # noqa  (Censys Platform: lookups + CenQL builder; --no-censys flips ENABLED)
 import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin behind a CDN)
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
+import wp_exhaust  # noqa  (collection-exhaustion checklist: which evidence layers never ran)
 import wp_capabilities  # noqa  (which keys are present -> what this run could and could not query)
 import wp_paths    # noqa  (URL PATH as a campaign identifier — kit directory, template, patterns)
 import wp_serp     # noqa  (advertising: Ads Transparency advertiser + the click-keyed cloaking probe)
@@ -194,6 +195,18 @@ def _emit_result(result, args, src):
     if _ib["spent_this_run"]:
         print(f"  intelx     {_ib['remaining_this_month']}/{_ib['monthly_searches']} search "
               f"unit(s) left for {_ib['month']}", file=sys.stderr)
+
+    # --- EXHAUSTION: which evidence layers never ran on this seed -------------------------------
+    # Printed last, next to the credit summary, because it answers the other half of "what did
+    # this run cost": what it did NOT search. The opt-in layers (leak corpus, advertising,
+    # lookalikes, document metadata) are the ones a run silently skips, and a correlation pass
+    # over a triage-depth collection reports "nothing further found" as though it had looked.
+    # Never fatal: a broken checklist must not take a collection down with it.
+    try:
+        for _line in wp_exhaust.banner_lines(result):
+            print(_line, file=sys.stderr)
+    except Exception as _exc:                                   # noqa: BLE001
+        print(f"[!] exhaustion check unavailable ({_exc})", file=sys.stderr)
 
 
 def main():

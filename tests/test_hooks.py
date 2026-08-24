@@ -158,6 +158,18 @@ def check():
                                             "flags": "--submit"}}) == "ask",
        "actionguard asks on pivot_extract --submit (it publishes the URL)")
 
+    # ---- actionguard: dissemination (IntelShare) ---------------------------------------------
+    # MISP splits into two decisions and the gate must respect that split. `push` STAGES an
+    # organisation-only, unpublished event — a real write to a shared system, still deletable.
+    # `publish` syncs it to peers and CANNOT be recalled; every attribute becomes somebody else's
+    # blocking rule. Both ask. Building the event locally and searching the instance do NOT.
+    for tool in ("misp_push", "misp_publish"):
+        ok(_decide(ACTIONGUARD, {"tool_name": f"mcp__intel__{tool}", "tool_input": {}}) == "ask",
+           f"actionguard ASKS on {tool}")
+    for tool in ("misp_export", "misp_search", "collection_gaps"):
+        ok(_decide(ACTIONGUARD, {"tool_name": f"mcp__intel__{tool}", "tool_input": {}}) == "allow",
+           f"actionguard stays silent on {tool} (local build / read-only)")
+
     # ---- actionguard: the shell front-end is covered too -------------------------------------
     def bash(cmd):
         return _decide(ACTIONGUARD, {"tool_name": "Bash", "tool_input": {"command": cmd}})
@@ -171,6 +183,15 @@ def check():
     # The near-miss that decides whether this rail survives contact with daily use.
     ok(bash("python3 scripts/backend/intel.py engage-report -o out.md") == "allow",
        "actionguard does NOT ask on `intel.py engage-report` (local render, no egress)")
+    ok(bash("python3 IntelShare/tools/sh_misp.py publish 42") == "ask",
+       "actionguard asks on `sh_misp.py publish` from the shell")
+    ok(bash("python3 scripts/backend/intel.py misp push") == "ask",
+       "actionguard asks on `intel.py misp push`")
+    # The near-misses that decide whether the MISP rail survives daily use.
+    ok(bash("python3 scripts/backend/intel.py misp keycheck") == "allow",
+       "actionguard does NOT ask on `intel.py misp keycheck` (credential probe)")
+    ok(bash("python3 scripts/backend/intel.py misp-export CASE-0001") == "allow",
+       "actionguard does NOT ask on `intel.py misp-export` (builds the event locally)")
     ok(bash("python3 scripts/backend/intel.py kb --stats") == "allow",
        "actionguard stays silent on ordinary engine commands")
     ok(bash("ls -la") == "allow", "actionguard stays silent on ordinary shell")
@@ -186,7 +207,8 @@ def check():
     if os.path.exists(ref):
         d = json.load(open(ref, encoding="utf-8"))
         names = set((d.get("mcp_tools") or {}).get("entries", {}))
-        for must in ("engage_account", "anyrun_submit", "harvest_authenticated"):
+        for must in ("engage_account", "anyrun_submit", "harvest_authenticated",
+                     "misp_push", "misp_publish"):
             ok(must in names, f"reference data still gates {must}")
 
     # ---- the wiring: a hook nobody registered is a comment that runs -------------------------

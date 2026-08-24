@@ -53,7 +53,7 @@ MUST_KNOW = ["domainsbyproxy", "withheldforprivacy", "privacyprotect", "namechea
 # a shared `refs.py` would collide.
 LOADERS = ["WebPivot/tools/wp_refs.py", "tools/kb/kb_refs.py", "BinaryPivot/tools/bp_refs.py",
            "IntelGraph/scripts/ig_refs.py", "IntelReport/scripts/ir_refs.py",
-           "Engage/tools/en_refs.py"]
+           "Engage/tools/en_refs.py", "IntelShare/tools/sh_refs.py"]
 
 
 def _loader_body(relpath):
@@ -80,6 +80,7 @@ def check():
               os.path.join(ROOT, "BinaryPivot", "tools"),
               os.path.join(ROOT, "IntelGraph", "scripts"),
               os.path.join(ROOT, "IntelReport", "scripts"),
+              os.path.join(ROOT, "IntelShare", "tools"),
               os.path.join(ROOT, "harness")):
         if p not in sys.path:
             sys.path.insert(0, p)
@@ -148,6 +149,8 @@ def check():
     import case_scope                                                              # noqa: E401
     import wp_liveness                                                             # noqa: E401
     import wp_pssl                                                                 # noqa: E401
+    import wp_exhaust                                                              # noqa: E401
+    import sh_export                                                               # noqa: E401
     import tools                                                                   # noqa: E401  (harness/tools.py — the context governor)
 
     consumers = [
@@ -328,6 +331,34 @@ def check():
         # unrelated domains into one "shared builder" cluster.
         ("noise_filters.COMMENT_BOILERPLATE", noise_filters.COMMENT_BOILERPLATE,
          noise_filters._FALLBACK["comment_boilerplate"]),
+        # MISP dissemination. This is the one consumer whose fallback failure is visible OUTSIDE
+        # this machine. On the stub the attribute map knows 4 pivot kinds instead of ~60 (so a
+        # published event is nearly empty — the safe direction), `excluded_kinds` knows one entry
+        # instead of ~25, and `class_policy` loses the per-class notes that tell a receiving
+        # analyst which reservation we held. `value_validators` and `never_publish` are the two
+        # that must never silently empty: an empty validator table shares malformed indicators
+        # nobody can match, and an empty never_publish table stops refusing events that carry our
+        # own case identifiers and local paths.
+        # The collection-exhaustion checklist. On the stub it knows four layers instead of
+        # seventeen, so it reports FEWER gaps — a degraded run under-claims what is missing
+        # rather than inventing gaps, which is the safe direction for a module whose whole job
+        # is to make people collect more. `seed_policy` on the stub also drops the required
+        # layers an analyst tuned, so a seed can read as exhausted on a shorter checklist.
+        ("wp_exhaust.LAYERS", wp_exhaust.LAYERS, wp_exhaust._EXHAUST_FALLBACK["layers"]),
+        ("wp_exhaust.SEED_POLICY", wp_exhaust.SEED_POLICY,
+         wp_exhaust._EXHAUST_FALLBACK["seed_policy"]),
+        ("sh_export.ATTRIBUTE_MAP", sh_export.ATTRIBUTE_MAP,
+         sh_export._MISP_FALLBACK["attribute_map"]),
+        ("sh_export.EXCLUDED_KINDS", sh_export.EXCLUDED_KINDS,
+         sh_export._MISP_FALLBACK["excluded_kinds"]),
+        ("sh_export.VALUE_VALIDATORS", sh_export.VALUE_VALIDATORS,
+         sh_export._MISP_FALLBACK["value_validators"]),
+        ("sh_export.NEVER_PUBLISH", sh_export.NEVER_PUBLISH,
+         sh_export._MISP_FALLBACK["never_publish"]),
+        ("sh_export.CLASS_POLICY", sh_export.CLASS_POLICY,
+         sh_export._MISP_FALLBACK["class_policy"]),
+        ("sh_export.DISTRIBUTION_LEVELS", sh_export.DISTRIBUTION_LEVELS,
+         sh_export._MISP_FALLBACK["distribution_levels"]),
         # Role/registrar mailboxes. On the fallback the list halves and registrar complaint and
         # takedown addresses start seeding `registered_by` registrant clusters.
         ("noise_filters.ROLE_EMAIL_LOCALPARTS", noise_filters.ROLE_EMAIL_LOCALPARTS,

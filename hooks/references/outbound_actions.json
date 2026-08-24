@@ -25,6 +25,14 @@
         "why": "Ordinary collection is passive, but --submit asks urlscan/Wayback to fetch the target, publishing the URL and the timing.",
         "before": "Only the --submit path is gated; plain collection and --archive-missing are not.",
         "flag_required": ["--submit"]
+      },
+      "misp_push": {
+        "why": "Writes the event to your MISP instance. Staged organisation-only and unpublished, so it stays inside your org and an unpublished event can still be deleted — but it is a real write to a shared system your colleagues read, and it leaves an audit trail under your API key.",
+        "before": "Check the TLP and distribution are what you intend BEFORE the write, not after. Correcting them later means editing an event other people may already have opened."
+      },
+      "misp_publish": {
+        "why": "PUBLISHES the event so it syncs to the community. This is the irreversible one: a MISP event pushed to peers cannot be recalled, and every indicator in it becomes somebody else's blocking rule. A false positive here blocks innocent infrastructure on networks you will never see.",
+        "before": "Confirm every attribute survives false-positive control (run /cti-check on the clustering indicators), that the TLP matches what the source permits, and that the analyst has explicitly asked to disseminate. Staging with push first is the reversible option."
       }
     }
   },
@@ -38,7 +46,11 @@
       {"match": "intel.py engage-harvest", "why": "Engage via the T2 dispatcher — drives the authenticated session."},
       {"match": "--confirm-submission", "why": "ANY.RUN: this is the flag that actually detonates the sample in the public sandbox."},
       {"match": "bp_anyrun.py submit", "why": "ANY.RUN submission path."},
-      {"match": "--submit", "why": "Asks a third-party archive/scanner to fetch the target, publishing the URL and the timing."}
+      {"match": "--submit", "why": "Asks a third-party archive/scanner to fetch the target, publishing the URL and the timing."},
+      {"match": "sh_misp.py push", "why": "IntelShare: writes the event to your MISP instance (staged, organisation-only)."},
+      {"match": "sh_misp.py publish", "why": "IntelShare: PUBLISHES to the community — irreversible; the event cannot be recalled and its indicators become other people's blocking rules."},
+      {"match": "intel.py misp push", "why": "IntelShare via the T2 dispatcher — writes the event to your MISP instance."},
+      {"match": "intel.py misp publish", "why": "IntelShare via the T2 dispatcher — PUBLISHES to the community; irreversible."}
     ]
   }
 }

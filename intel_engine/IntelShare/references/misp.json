@@ -1,0 +1,306 @@
+{
+  "_comment": "The MISP DISSEMINATION layer's data spine — what a case's findings become when they leave this machine and enter somebody else's detection stack. Everything here is tunable by an analyst without touching Python. Three things are decided in this file and nowhere else. (1) THE MAPPING: which of our pivot `kind`s become MISP attributes, of what type and category, and with what `to_ids` (see `attribute_map`) — an unmapped kind is EXCLUDED and named, never guessed at, because a wrong type is silently un-correlatable in MISP. (2) WHAT MAY BE SHARED AT ALL: `publish_classes` splits every artifact into auto / review / never, `class_policy` re-reads that through the case's intake class (a VICTIM host's own WHOIS and favicon belong to the victim, so they can never be published as the operator's IOCs), and `never_publish` lists the values that are OURS and must never travel (case ids, the research persona, local paths, credentials). (3) HOW FAR IT GOES: `distribution_levels` is MISP's own visibility ladder and `policy` holds the two-step rail — a push always STAGES at organisation-only and unpublished, and only the separately-gated publish step raises distribution and flips `published`, because that step syncs to every peer server and cannot be recalled. The base-rate discipline the rest of this toolkit applies to CLUSTERING applies here with higher stakes: a Cloudflare certificate or a parking favicon published with to_ids=true does not just make our case wrong, it makes every subscriber's blocklist wrong.",
+
+  "endpoints": {
+    "_comment": "MISP REST paths, appended to MISP_URL. Kept as data because self-hosted instances sit behind different base paths and a hardened deployment may disable some of them. `version` is the connectivity probe (cheap, read-only, no case data leaves). `describe_types` is what makes the attribute map safe across MISP versions: the instance tells us which types it actually accepts, so a type this file names but that instance does not know is DOWNGRADED with a note instead of failing the whole push. `add_event_report` attaches the narrative — MISP takes an event report through its own endpoint, never as a key inside the event, and an unsupported key inside `Event` is dropped SILENTLY, which would ship the indicators with their caveats quietly missing. `search_attributes` is the read-only correlation lookup — 'is this indicator already known here' — which is the one call worth making BEFORE deciding to publish anything.",
+    "entries": {
+      "version": "/servers/getVersion",
+      "describe_types": "/attributes/describeTypes.json",
+      "add_event": "/events/add",
+      "edit_event": "/events/edit/{event_id}",
+      "get_event": "/events/view/{event_id}",
+      "publish_event": "/events/publish/{event_id}",
+      "add_attribute": "/attributes/add/{event_id}",
+      "add_event_report": "/eventReports/add/{event_id}",
+      "edit_event_report": "/eventReports/edit/{report_id}",
+      "delete_object": "/objects/delete/{object_id}/1",
+      "search_attributes": "/attributes/restSearch",
+      "search_events": "/events/restSearch",
+      "event_ui": "/events/view/{event_id}"
+    }
+  },
+
+  "attribute_map": {
+    "_comment": "One entry per WebPivot/BinaryPivot pivot `kind` -> the MISP attribute it becomes. `type` and `category` must be values the target instance accepts (validated live against describe_types; `fallback_type` is used when it does not, and `text` always exists). `to_ids` is NOT a formality — it means 'a detection system may block on this value', so it is true only for things that identify the operator's own infrastructure and false for every hunting pivot (a favicon hash, a JARM, a tracker id are for FINDING more, not for blocking). `publish_class` is auto / review / never (see publish_classes). Kinds absent from this map are excluded from the event and listed by name in the export's `excluded` block so an analyst can add the mapping here rather than wonder where the artifact went.",
+    "entries": {
+      "domain":                        {"type": "domain",   "category": "Network activity", "to_ids": true,  "publish_class": "auto",   "note": "The operator's own hostname as collected."},
+      "subdomain":                     {"type": "hostname", "category": "Network activity", "to_ids": true,  "publish_class": "auto"},
+      "ip":                            {"type": "ip-dst",   "category": "Network activity", "to_ids": false, "publish_class": "review", "note": "An address is shared far more often than a name — to_ids stays false unless the analyst has established it is dedicated."},
+      "urlscan_ip":                    {"type": "ip-dst",   "category": "Network activity", "to_ids": false, "publish_class": "review", "note": "Third-party-reported resolution; corroborate before it is anyone's blocklist entry."},
+      "mail_sender_ip":                {"type": "ip-src",   "category": "Network activity", "to_ids": false, "publish_class": "review"},
+      "url":                           {"type": "url",      "category": "Network activity", "to_ids": true,  "publish_class": "auto"},
+      "api_endpoint":                  {"type": "url",      "category": "Network activity", "to_ids": true,  "publish_class": "auto",   "note": "The kit's own backend route — one of the few URL-level values worth detecting on."},
+      "app:backend_host":              {"type": "hostname", "category": "Network activity", "to_ids": true,  "publish_class": "review", "note": "The app's C2/backend is a real IOC when it is real — but these are recovered from BINARY STRINGS, and a string scan of an APK yields plausible-looking rubbish alongside the true endpoints. Confirm it resolves, or that the sandbox saw it contacted, before it becomes anyone's blocking rule."},
+      "urlscan_related_domain":        {"type": "domain",   "category": "Network activity", "to_ids": false, "publish_class": "review", "note": "DERIVED from a third party's index, not observed by us on the target."},
+      "favicon_hash":                  {"type": "favicon-mmh3",           "category": "Network activity",   "to_ids": false, "publish_class": "auto", "note": "A hunting pivot. Never to_ids: thousands of unrelated sites share a template favicon."},
+      "tls_cert:fingerprint_sha256":   {"type": "x509-fingerprint-sha256","category": "Network activity",   "to_ids": false, "publish_class": "auto"},
+      "jarm:hash":                     {"type": "jarm-fingerprint",       "category": "Network activity",   "to_ids": false, "publish_class": "auto", "note": "TLS-stack fingerprint: shared by every host running the same server build."},
+      "js_bundle_sha256":              {"type": "sha256",   "category": "Payload delivery",  "to_ids": false, "publish_class": "auto",  "note": "Kit file digest — same-kit evidence, not same-operator."},
+      "media_sha256":                  {"type": "sha256",   "category": "Payload delivery",  "to_ids": false, "publish_class": "auto"},
+      "file:sha256":                   {"type": "sha256",   "category": "Payload delivery",  "to_ids": true,  "publish_class": "auto"},
+      "app:signing_sha256":            {"type": "sha256",   "category": "Payload delivery",  "to_ids": true,  "publish_class": "auto",  "note": "APK signing-certificate digest: survives a re-skin, so it is the strongest app-side IOC."},
+      "app:apk":                       {"type": "url",      "category": "Payload delivery",  "to_ids": true,  "publish_class": "auto",  "note": "Download URL of the sideloaded package."},
+      "app:desktop_installer":         {"type": "url",      "category": "Payload delivery",  "to_ids": true,  "publish_class": "auto"},
+      "app:android_package":           {"type": "text",     "category": "Payload delivery",  "to_ids": false, "publish_class": "auto",  "note": "Android package name."},
+      "apk:package":                   {"type": "text",     "category": "Payload delivery",  "to_ids": false, "publish_class": "auto",  "note": "Android package name."},
+      "app:ios_app_id":                {"type": "text",     "category": "Payload delivery",  "to_ids": false, "publish_class": "auto"},
+      "crypto:btc":                    {"type": "btc",      "category": "Financial fraud",   "to_ids": false, "publish_class": "auto",  "note": "Payment destination — high analytic value, and a processor's shared wallet must be base-rated out first."},
+      "crypto:eth":                    {"type": "text",     "category": "Financial fraud",   "to_ids": false, "publish_class": "auto",  "note": "MISP has NO `eth` attribute type — verified against a live 2.5.31 instance, whose crypto types are btc, dash and xmr only. An ETH/ERC-20/BEP-20 address therefore ships as `text` in Financial fraud, with the chain named in the attribute comment; it still correlates on the value, which is what matters for a shared wallet."},
+      "crypto:ltc":                    {"type": "text",     "category": "Financial fraud",   "to_ids": false, "publish_class": "auto",  "note": "No `ltc` type either — same treatment as ETH."},
+      "crypto:dash":                   {"type": "dash",     "category": "Financial fraud",   "to_ids": false, "publish_class": "auto"},
+      "crypto:xmr":                    {"type": "xmr",      "category": "Financial fraud",   "to_ids": false, "publish_class": "auto"},
+      "tracker:google_analytics_ga4":  {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto",  "note": "Owner-provisioned account id — the classic reverse-analytics pivot."},
+      "tracker:google_analytics_ua":   {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "tracker:google_tag_manager":    {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "tracker:facebook_pixel":        {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "tracker:yandex_metrika":        {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "tracker:sentry_dsn":            {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto",  "note": "Names the operator's own error-tracking tenant."},
+      "verification:google_search_console": {"type": "text","category": "Attribution",       "to_ids": false, "publish_class": "auto",  "note": "Proves control of the domain by whoever holds the token."},
+      "verification:ahrefs":           {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "verification:bing_webmaster":   {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "verification:facebook_domain":  {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "saas:gohighlevel_location":     {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "affiliate:affid":               {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "auto"},
+      "m365_tenant":                   {"type": "text",     "category": "Attribution",       "to_ids": false, "publish_class": "review"},
+      "etag":                          {"type": "text",     "category": "External analysis", "to_ids": false, "publish_class": "review"},
+      "whois:registrant_email":        {"type": "whois-registrant-email", "category": "Attribution", "to_ids": false, "publish_class": "review", "note": "PERSONAL DATA. A registrant email is a person; sharing it is a disclosure decision, not a technical one."},
+      "whois:registrant_phone":        {"type": "whois-registrant-phone", "category": "Attribution", "to_ids": false, "publish_class": "review", "note": "PERSONAL DATA."},
+      "whois:registrant_name":         {"type": "whois-registrant-name",  "category": "Attribution", "to_ids": false, "publish_class": "review", "note": "PERSONAL DATA."},
+      "whois:registrant_address":      {"type": "text",                   "category": "Attribution", "to_ids": false, "publish_class": "review", "note": "PERSONAL DATA."},
+      "email":                         {"type": "email-src","category": "Social network",    "to_ids": false, "publish_class": "review", "note": "PERSONAL DATA, and on a compromised host it is the VICTIM's contact address."},
+      "dmarc_contact":                 {"type": "email-src","category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "phone":                         {"type": "phone-number", "category": "Social network","to_ids": false, "publish_class": "review", "note": "PERSONAL DATA."},
+      "whois:registrar":               {"type": "whois-registrar", "category": "Attribution","to_ids": false, "publish_class": "auto"},
+      "telegram":                      {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review", "note": "An operator contact handle; still an identity, so an analyst signs it off."},
+      "social:telegram":               {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:whatsapp":               {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:zalo":                   {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:messenger":              {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:facebook":               {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:twitter":                {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:instagram":              {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:youtube":                {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:tiktok":                 {"type": "text",     "category": "Social network",    "to_ids": false, "publish_class": "review"},
+      "social:github":                 {"type": "github-username", "category": "Social network", "to_ids": false, "publish_class": "review", "fallback_type": "text"},
+      "mail_server":                   {"type": "hostname", "category": "Network activity",  "to_ids": false, "publish_class": "review", "note": "Usually a managed provider — check before it becomes anyone's indicator."}
+    }
+  },
+
+  "publish_classes": {
+    "_comment": "The three-way split every artifact lands in, applied on top of (never instead of) the base-rate noise filters. `auto` = infrastructure the operator provisioned; it goes into the event when the analyst approves the event. `review` = it may be correct and still must not leave without a human looking at THIS value: personal data, an identity handle, or a value derived from a third party rather than observed by us. `never` = it is context, an unverified candidate, or ours rather than theirs — it never enters the event at all, whatever anyone confirms. Downgrades are one-way: a case class or a noise filter may move an artifact from auto to review or never, nothing moves it back up.",
+    "entries": {
+      "auto":   "Operator-provisioned infrastructure. Included when the analyst approves the event.",
+      "review": "Included only with an explicit per-value analyst decision (--include-review / include_pii). Personal data, identity handles, and third-party-derived values live here.",
+      "never":  "Excluded from the event unconditionally. Context, unverified candidates, shared platform noise, or our own operational data."
+    }
+  },
+
+  "excluded_kinds": {
+    "_comment": "Pivot kinds that are deliberately NEVER shared, with the reason each one would be harmful or useless to a subscriber. This list is as important as the map: `third_party_host` is the single most common artifact in the corpus and is a CDN/SaaS hostname by construction — published with to_ids it would have subscribers blocking their own analytics vendor. `impersonation:candidate` is a GENERATED lookalike list that includes real, innocent registrations; publishing it as indicators defames them. The rest are page context (prose, robots rules, descriptions, route names) that identify nothing outside our own case narrative.",
+    "entries": {
+      "third_party_host":       "Shared CDN/SaaS hostname by construction — an indicator here poisons the subscriber's own stack.",
+      "spf_include":            "Mail-provider boilerplate shared by millions of domains.",
+      "tls_cert:co_san":        "Co-tenancy context; the certificate fingerprint is the shareable form.",
+      "ip:asn":                 "Network context, not an indicator.",
+      "ip:ports":               "Scan context, not an indicator.",
+      "ip:information":         "Provider context recorded for triage.",
+      "ip:ptr":                 "Resolution context; publish the address or the name, not the mapping.",
+      "ip:misconfig":           "A triage FLAG about a host, not a value anyone can detect on.",
+      "impersonation:candidate":"GENERATED lookalike candidate — unverified, and the list contains innocent registrations.",
+      "impersonation:watchlist":"Generated watchlist, unverified.",
+      "robots_disallow":        "Path disclosure from the target's own robots.txt — narrative context.",
+      "description":            "Page text.",
+      "prose":                  "Page text.",
+      "footer:copyright":       "Page text.",
+      "footer:address":         "Page text, and frequently a real third party's address.",
+      "spa_route_name":         "Application route — case narrative, not an indicator.",
+      "spa_route:funnel":       "Application route.",
+      "spa_route:admin":        "Application route.",
+      "spa_route_signature":    "Application structure.",
+      "qr:undecoded_image":     "An image we could not decode — nothing to share.",
+      "doc_software":           "Generic producer string (Word, Acrobat) — the classic false cluster.",
+      "doc_camera":             "Generic device string.",
+      "doc_xmp_docid":          "Document identifier only meaningful next to the file itself.",
+      "cors_misconfig":         "A finding about a host, not a detectable value.",
+      "build_env":              "Build-time configuration string — narrative context.",
+      "saas:google_sheet":      "A third-party document URL that frequently contains VICTIM data.",
+      "saas:make_webhook":      "Automation endpoint that may belong to a victim or an unrelated tenant."
+    }
+  },
+
+  "objects": {
+    "_comment": "MISP OBJECTS — the standard's way of saying that several attributes describe ONE thing. A loose `whois-registrant-email` attribute is a value floating in an event; a `whois` object says 'this domain's registration record, as of this date, names this registrant', which is what a receiving analyst can actually reason about, and what MISP's own correlation and export tooling expects. Template uuid/version are DATA because they are per-instance facts (read them from /objectTemplates/index on your own server; the ones here were verified against MISP 2.5.31). `relations` maps our pivot kind to the template's `object_relation` — an object_relation the template does not define is silently dropped by MISP, so it must be copied exactly. THE `min_relations` RULE IS WHAT KEEPS EVENTS READABLE: an object exists to GROUP, so a would-be object carrying a single value stays a plain attribute instead. Without it a case with twenty file hashes and nothing else known about any of them produces twenty one-attribute `file` objects, which is noise dressed as structure. `anchor` names the relation filled from the collected host itself, which is what turns a bag of registrant fields into a record ABOUT a domain. `multiple_relations` is copied from the template's own `multiple` flags: a relation NOT listed there may appear once per object, and a second value for it does not belong in the same object — two registrant emails on one `whois` object assert that a single registration record had both, when what we really have is two eras of the same domain. The extra value is emitted as a plain attribute instead, so nothing is lost and nothing is misstated.",
+    "entries": {
+      "whois": {
+        "template_uuid": "429faea1-34ff-47af-8a00-7c62d3be5a6a", "template_version": "10",
+        "meta_category": "network", "min_relations": 2, "anchor": "domain",
+        "multiple_relations": ["domain", "ip-address", "nameserver"],
+        "relations": {
+          "whois:registrant_email": "registrant-email",
+          "whois:registrant_name": "registrant-name",
+          "whois:registrant_phone": "registrant-phone",
+          "whois:registrant_address": "text",
+          "whois:registrar": "registrar",
+          "mail_server": "nameserver"
+        }
+      },
+      "domain-ip": {
+        "template_uuid": "43b3b146-77eb-4931-b4cc-b66c60f28734", "template_version": "11",
+        "meta_category": "network", "min_relations": 2, "anchor": "domain",
+        "multiple_relations": ["domain", "ip", "port"],
+        "relations": {"ip": "ip", "urlscan_ip": "ip", "subdomain": "hostname"}
+      },
+      "x509": {
+        "template_uuid": "d1ab756a-26b5-4349-9f43-765630f0911c", "template_version": "13",
+        "meta_category": "network", "min_relations": 2, "anchor": "",
+        "multiple_relations": ["dns_names", "email", "ip", "rid", "uri"],
+        "relations": {"tls_cert:fingerprint_sha256": "x509-fingerprint-sha256",
+                      "tls_cert:subject": "subject", "tls_cert:issuer": "issuer"}
+      },
+      "file": {
+        "template_uuid": "688c46fb-5edb-40a3-8273-1af7923e2215", "template_version": "25",
+        "meta_category": "file", "min_relations": 2, "anchor": "",
+        "multiple_relations": ["filename", "fullpath", "path", "pattern-in-file", "state", "text"],
+        "relations": {"file:sha256": "sha256", "file:md5": "md5", "file:sha1": "sha1",
+                      "file:filename": "filename", "app:signing_sha256": "sha256"}
+      }
+    }
+  },
+
+  "event_report": {
+    "_comment": "The EVENT REPORT — MISP's own place for the narrative that an attribute list cannot carry (a markdown document attached to the event, rendered in the UI above the attributes). This is where the honesty rules leave the building with the indicators instead of staying in our notes: what the event contains, what was DELIBERATELY held back and why, how the collection was scoped, and — the one a receiver can never reconstruct — whether the collection was exhausted or only a triage. `sections` are emitted in this order; drop one by removing it. `analyst_report_max_chars` bounds an analyst-written markdown file attached with --report, because an event report is read in a browser panel, not printed.",
+    "sections": ["summary", "contents", "not_included", "collection_basis", "handling"],
+    "name_template": "{seed} — collection summary",
+    "analyst_report_max_chars": 20000,
+    "headings": {
+      "summary": "Summary",
+      "contents": "What this event contains",
+      "not_included": "What was deliberately NOT included",
+      "collection_basis": "Collection basis and limitations",
+      "handling": "Handling"
+    }
+  },
+
+  "value_validators": {
+    "_comment": "A regex per MISP attribute type — or per pivot KIND, which wins when both match — that a value must match to be shared, applied after the mapping and before anything is offered to an analyst. This is a SHAPE check, not a truth check — it catches the malformed values that reach a case through heuristic extraction (a hash truncated by a display cut, an octet-count-wrong address, a bare word offered as a domain) and that would otherwise be published as indicators nobody can ever match. A type with no entry here is not validated. Anchoring is implicit: the whole value must match.",
+    "entries": {
+      "domain":   "(?i)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\\.[a-z]{2,24}",
+      "hostname": "(?i)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\\.[a-z]{2,24}",
+      "ip-dst":   "(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)|[0-9a-fA-F:]{3,45}",
+      "ip-src":   "(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)|[0-9a-fA-F:]{3,45}",
+      "url":      "(?i)https?://\\S{3,2000}",
+      "sha256":   "[0-9a-fA-F]{64}",
+      "sha1":     "[0-9a-fA-F]{40}",
+      "md5":      "[0-9a-fA-F]{32}",
+      "x509-fingerprint-sha256": "(?i)(?:[0-9a-f]{2}:){31}[0-9a-f]{2}|[0-9a-fA-F]{64}",
+      "jarm-fingerprint": "[0-9a-fA-F]{62}",
+      "favicon-mmh3": "-?\\d{1,12}",
+      "email-src": "(?i)[^@\\s]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,24}",
+      "whois-registrant-email": "(?i)[^@\\s]{1,64}@[a-z0-9.-]{1,255}\\.[a-z]{2,24}",
+      "phone-number": "\\+?[0-9][0-9 ()._-]{5,24}",
+      "btc": "(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{25,62})",
+      "crypto:eth": "(?i)0x[0-9a-f]{40}"
+    }
+  },
+
+  "class_policy": {
+    "_comment": "The case's INTAKE class (cases/<case>/scope.json, WebPivot/references/intake.json) re-read as a sharing decision, because who owns an artifact decides whether we may publish it at all. Two SEPARATE controls live here, and keeping them separate matters: `max_class` is an ownership REFUSAL and `requires_acknowledgement` is a CAVEAT. The dangerous class is `victim_host` — on a compromised site the WHOIS, favicon, certificate and analytics are the VICTIM's, so publishing them as operator indicators tells every subscriber to block a victim; that is a refusal (`max_class: never`), as is `benign_check`, where an event naming a legitimate site is defamatory and un-recallable once it syncs. The other classes are NOT refusals: an intake class is where the run STARTED, not what it concluded, so capping a whole suspected-scam case at `review` would only train the analyst to wave everything through with one blanket flag — and that same flag is what releases personal data. Those classes instead carry `requires_acknowledgement`, which puts the caveat in the push briefing and the `event_tags` into the event, so the receiving analyst sees exactly the reservation we had.",
+    "entries": {
+      "confirmed_scam":     {"max_class": "auto", "requires_acknowledgement": false, "event_tags": ["workflow:state=\"complete\""], "note": "Fraud evidenced independently of this run."},
+      "suspected_scam":     {"max_class": "auto", "requires_acknowledgement": true,  "event_tags": ["workflow:state=\"incomplete\"", "workflow:todo=\"review\""], "note": "The class was a HYPOTHESIS this run tested. Share only if the assessment actually supported it, and say which in the event."},
+      "threat_actor_infra": {"max_class": "auto", "requires_acknowledgement": true,  "event_tags": ["workflow:state=\"incomplete\""], "note": "Publishing may collide with somebody else's live operation and tells the actor they are being tracked. Coordinate before raising distribution."},
+      "victim_host":        {"max_class": "never", "requires_acknowledgement": true, "event_tags": ["workflow:todo=\"review\""], "note": "The host's own artifacts belong to the VICTIM. Only operator-injected artifacts (the kit path, the injected file's hash) may be shared, and each one by hand."},
+      "benign_check":       {"max_class": "never", "requires_acknowledgement": true, "event_tags": [], "note": "REFUSE. There is no version of a benign-check result that belongs in a shared indicator feed."},
+      "unknown":            {"max_class": "auto", "requires_acknowledgement": true,  "event_tags": ["workflow:state=\"incomplete\"", "workflow:todo=\"review\""], "note": "No intake was recorded, so OWNERSHIP was never established. If the host might be compromised rather than operator-owned, its WHOIS / favicon / certificate belong to somebody else."}
+    }
+  },
+
+  "distribution_levels": {
+    "_comment": "MISP's visibility ladder, with what each level actually means for recall. 0 is the only level that stays on your own instance; from 1 upward the event reaches other organisations, and from 2 upward it is pushed to servers you do not administer — at which point deleting your copy deletes nothing of theirs. This is the ladder the publish gate walks, and the wording here is what the analyst is asked to choose between.",
+    "entries": {
+      "0": {"name": "your_organisation_only", "who": "Only your own MISP organisation.", "recallable": true,  "note": "The staging level. Safe to iterate on."},
+      "1": {"name": "this_community_only",    "who": "Every organisation on this MISP instance.", "recallable": false, "note": "Other people can already act on it."},
+      "2": {"name": "connected_communities",  "who": "This instance plus the servers it synchronises with.", "recallable": false, "note": "Leaves your administrative control."},
+      "3": {"name": "all_communities",        "who": "Everyone downstream, without limit.", "recallable": false, "note": "Treat as public. Assume it will be mirrored and indexed."},
+      "4": {"name": "sharing_group",          "who": "The named sharing group only.", "recallable": false, "note": "Requires sharing_group_id; the group's membership decides the real audience."}
+    }
+  },
+
+  "event_defaults": {
+    "_comment": "Defaults for a newly built event. threat_level_id: 1 High, 2 Medium, 3 Low, 4 Undefined. analysis: 0 Initial, 1 Ongoing, 2 Completed — an open case is Ongoing, and claiming Completed on a case still collecting is a statement about OUR work, not theirs. `info` is the event's headline and is left to the analyst: the default derives from the seed host and the date and deliberately never contains the internal case id.",
+    "threat_level_id": 2,
+    "analysis": 1,
+    "tlp": "amber",
+    "info_template": "{seed} — {label} infrastructure (OSINT, {date})",
+    "default_label": "fraud"
+  },
+
+  "taxonomy_tags": {
+    "_comment": "Machine tags attached to every event. TLP governs redistribution and is the first thing a receiving analyst reads; `tlp:clear` is the modern name for what used to be tlp:white. `type:OSINT` and the osint source-type say how the material was obtained — everything here came from public collection, which is a limitation as much as a provenance. Add your organisation's own required tags here rather than in code.",
+    "entries": {
+      "tlp": {"clear": "tlp:clear", "green": "tlp:green", "amber": "tlp:amber", "amber+strict": "tlp:amber+strict", "red": "tlp:red"},
+      "always": ["type:OSINT", "osint:lifetime=\"perpetual\""],
+      "pap": "PAP:AMBER"
+    }
+  },
+
+  "confidence_map": {
+    "_comment": "Our ICD-203 estimative vocabulary (IntelAnalysis) expressed in MISP's `estimative-language` taxonomy, so the confidence in an assessment survives the trip into somebody else's instance instead of arriving as a bare list of values. A shared indicator with no stated confidence is read as certain by default, which is exactly the drift these tags exist to stop.",
+    "entries": {
+      "high":     "estimative-language:confidence-in-analyst-judgment=\"high\"",
+      "moderate": "estimative-language:confidence-in-analyst-judgment=\"moderate\"",
+      "medium":   "estimative-language:confidence-in-analyst-judgment=\"moderate\"",
+      "low":      "estimative-language:confidence-in-analyst-judgment=\"low\""
+    }
+  },
+
+  "never_publish": {
+    "_comment": "Substrings that must never appear in an event's info, comments or attribute values, because they are OURS, not the operator's. A case id names our internal filing; the persona is the synthetic identity used for an engagement, and publishing it burns it and links our operations for the adversary; a local path discloses this machine's layout; a credential is a credential wherever it came from. Matching is CASE-SENSITIVE and substring, so keep the markers precise — a loose marker like a bare `persona` would refuse every domain containing `personal`. The exporter REFUSES the export on a hit rather than silently stripping: a quiet strip would hide the fact that the value was in scope at all.",
+    "values": [
+      "CASE-",
+      "cases/",
+      "/Users/",
+      "/home/",
+      "C:\\\\Users",
+      ".claude/skills",
+      "api_key=",
+      "apikey=",
+      "password=",
+      "Authorization:",
+      "engage/persona",
+      "persona.json",
+      "@example.invalid"
+    ]
+  },
+
+  "policy": {
+    "_comment": "The two-step rail, in data. A PUSH always stages: distribution is forced to `staging_distribution` and `published` to false, whatever was requested, so an agent that decides on its own to share something can at worst create an unpublished event visible to nobody but the owning organisation. Raising distribution and publishing is the separate, separately-approved step (`publish_env_lock` is the second lock an agent loop cannot set for itself). `require_review_confirmation` keeps personal data out of an event unless a human said yes to those values specifically. `strip_case_identifiers` is why never_publish is enforced rather than advisory.",
+    "staging_distribution": 0,
+    "staged_published": false,
+    "max_distribution_without_lock": 0,
+    "publish_env_lock": "INTEL_MISP_PUBLISH",
+    "require_confirmation": true,
+    "require_review_confirmation": true,
+    "strip_case_identifiers": true,
+    "refuse_on_classes": ["benign_check"],
+    "default_to_ids": false
+  },
+
+  "request_budget": {
+    "_comment": "Politeness and blast-radius bounds, not money — a self-hosted MISP costs nothing per call. `max_attributes_per_event` is the one that matters analytically: an event with thousands of attributes is unreadable and un-actionable for the receiver, and a truncated export is reported LOUDLY (never silently) with the count that was dropped, because a shortened indicator list is indistinguishable from a case that found less.",
+    "max_requests_per_run": 40,
+    "max_attributes_per_event": 400,
+    "attribute_batch_size": 100,
+    "http_timeout_seconds": 45
+  },
+
+  "reporting": {
+    "_comment": "The sentences the layer must say rather than imply. Each one exists because its absence would let a reader draw a wrong conclusion from a correct result — an unconfigured instance reading as 'nothing to share', a staged event reading as a published one, a truncated attribute list reading as the whole case.",
+    "not_configured": "MISP is NOT configured (no MISP_URL / MISP_KEY): nothing was sent and nothing was checked. This is absence of a channel, not absence of findings.",
+    "staged_note": "STAGED ONLY — the event exists on the instance at distribution 0 (your organisation) and is NOT published. Nobody outside your organisation can see it and no sync has occurred.",
+    "publish_irreversible": "Publishing pushes the event to every server this instance synchronises with and notifies subscribers. Deleting your copy afterwards does not delete theirs.",
+    "review_pending": "Attributes classed `review` were NOT included. They are personal data or third-party-derived values and need an explicit per-value decision.",
+    "truncated": "The attribute list was TRUNCATED by max_attributes_per_event. Do not read the event as the full extent of the case.",
+    "type_downgraded": "The instance does not know this attribute type; it was downgraded to `text` so the value is still stored and correlatable, but it will not be typed as intended."
+  }
+}

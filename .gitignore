@@ -52,3 +52,7 @@ scripts/**/.env
 /intel_engine/knowledge/reports/
 # Repo-root MEMORY/ — Algorithm PRDs belong in ~/.claude/MEMORY/, never in the repo.
 /MEMORY/
+
+# guard: KB/case stores must live under intel_engine/, never the repo root (RULE 2)
+/knowledge/
+/cases/

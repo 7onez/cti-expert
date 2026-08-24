@@ -439,6 +439,39 @@ python3 "$WP/tools/pivot_extract.py" <url> --intelx           # run it inside a 
   no IntelX section has **not** established that the operator is absent from any leak, paste or
   darknet listing. Say that before presenting the result; `meta.capability` carries the sentence.
 
+## ⭐ After the first collection: EXHAUST the seed — `wp_exhaust.py` / `collection_gaps`
+
+The first `pivot_extract` on a seed is a **triage**, not a worked seed. The layers that open a
+*different search space* — IntelX's leak/stealer-log corpus, the advertising + cloaking probe,
+passive SSL, the lookalike hunt, document metadata — are all behind opt-in flags, and opt-in flags
+do not get typed once the first result looks interesting. Measured across this repo's stored
+collections: **`intelx` had run on exactly one of them.**
+
+The damage is not a thin case, it is a case that cannot tell how thin it is. Correlation over a
+triage-depth collection is scrupulous about every artifact it has and silent about the search it
+never ran, so *"no further links found"* reads as a finding when it is a statement about which
+flags were passed — the same error the keyless capability banner exists to prevent, one level up.
+
+```bash
+python3 "$WP/tools/wp_exhaust.py" CASE-0001                 # every host: exhausted or triage
+python3 "$WP/tools/wp_exhaust.py" CASE-0001 site.example    # one host, with the commands to run
+```
+
+Every collection now ends with this check: on a triage verdict it prints the layers that never
+ran, cheapest first, each with the flag that closes it. Read it as a work list, in this order:
+
+1. **the free gaps** — capture, archive timeline, URL path, document metadata, the lookalike hunt,
+   a screenshot, and the **cloaking probe** (`--cloak-probe` needs no key);
+2. **the free-account gaps** — passive DNS and passive SSL (one CIRCL login covers both);
+3. **the metered ones as a decision** — `--intelx` first, because the leak corpus is the one
+   search space the live internet cannot substitute for.
+
+A seed is `exhausted` only when every layer in `seed_policy.required_layers` has run. **If it is
+still `triage` when the assessment is written, say so in the assessment** — and never report a
+layer that did not run as a negative finding. Tune the checklist in
+`references/exhaustion.json`; add a layer there when you add a collector, or it will never appear
+in the gap list.
+
 ## §0 Intake — scope before you collect, and TEST the claim (run this first)
 
 A target rarely arrives alone; it arrives with a belief attached — *"this scam site"*, *"their

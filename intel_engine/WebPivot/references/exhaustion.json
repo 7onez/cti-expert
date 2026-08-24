@@ -1,0 +1,150 @@
+{
+  "_comment": "COLLECTION EXHAUSTION — which evidence layers have actually run against a seed, and what each one that has NOT run would have bought. This exists because of a measurable failure: across the stored collections in this repo, `intelx` appears in `enriched_with` exactly ONCE. The leak / stealer-log corpus, passive SSL, Censys and the advertising layer are all opt-in flags, so in practice a case gets the first fetch — the TRIAGE — and then moves on to correlation as though the seed had been worked out. The correlation is then honest about everything except the size of the search it was drawn from, and 'nothing further found' silently means 'nothing further was looked for'. This file is the checklist that makes the difference visible: each layer says how to tell it ran (read from the stored result — no network, no cost), what its absence removes from the case, and the exact flag that runs it. Nothing here blocks or auto-spends: it reports. Tune `seed_policy` to change what counts as an exhausted seed; add a layer here when you add a collector, or it will never appear in the gap list.",
+
+  "layers": {
+    "_comment": "One entry per evidence layer. `detect` is read against the stored pivot JSON: `enriched_with` matches a source name in meta.enriched_with, `meta` / `meta_any` test for a meta key, `result` for a top-level block, `archives` for an archive key, `pivot_prefix` for any pivot whose kind starts with that string, and `fetched` means the page itself was retrieved. `cost` is free | free_account | keyed | metered — the gap list is ordered so the FREE gaps come first, because those are the ones with no excuse. `applies_to` keeps an IP seed from being told it never ran the document-metadata layer. `without_it` is the analytic consequence, written for the assessment: it is the sentence that belongs in the report when the layer did not run.",
+    "entries": {
+      "fetch": {
+        "label": "page fetch / DOM",
+        "cost": "free", "applies_to": "any", "detect": {"fetched": true},
+        "evidence": "the page the operator actually served — every DOM-derived artifact depends on it",
+        "without_it": "no page was retrieved, so every artifact in this result came from third parties; treat the collection as second-hand",
+        "how": "pivot_extract <url>  (or --passive / --proxy on hostile infrastructure)"
+      },
+      "whois": {
+        "label": "WHOIS / RDAP",
+        "cost": "free", "applies_to": "domain", "detect": {"enriched_with": "whoisxml"},
+        "evidence": "registrar, registration and expiry dates, nameservers, registrant when not proxied",
+        "without_it": "no registration timeline, so the case cannot place this domain in a batch or an era",
+        "how": "automatic on every domain (keyless RDAP + port-43 fallback)"
+      },
+      "crtsh": {
+        "label": "certificate transparency",
+        "cost": "free", "applies_to": "domain", "detect": {"enriched_with": "crtsh"},
+        "evidence": "every name a CA has logged for this domain — subdomains the DNS never advertised",
+        "without_it": "the estate is only as big as the names we happened to be given",
+        "how": "automatic; standalone via cert_overlap"
+      },
+      "archive": {
+        "label": "Wayback / archive timeline",
+        "cost": "free", "applies_to": "any", "detect": {"meta_any": ["archived_via_wayback", "recovered_via"]},
+        "evidence": "what this host served BEFORE today — a site parked now may have been the live scam last year",
+        "without_it": "the host is judged on one moment in time, which is the moment the operator chose to leave up",
+        "how": "automatic (CDX); --archive-missing to submit a snapshot"
+      },
+      "liveness": {
+        "label": "liveness classification",
+        "cost": "free", "applies_to": "any", "detect": {"meta": "liveness", "or_fetched": true},
+        "evidence": "whether the host still serves the operator's content, decided by READING the page rather than by its status code",
+        "without_it": "a parking page or a default nginx page can be collected as though it were the operator's site, and its template artifacts clustered",
+        "how": "domain_liveness <host>  (offline from a stored capture with case=)"
+      },
+      "paths": {
+        "label": "URL path / kit identifier",
+        "cost": "free", "applies_to": "domain", "detect": {"meta_any": ["url_path", "path_template"]},
+        "evidence": "the kit directory, which survives when the hostname is disposable and rotates weekly",
+        "without_it": "an operator who carries no information in the hostname has no clusterable artifact left",
+        "how": "automatic on a URL with a path; url_paths <url>"
+      },
+      "capture": {
+        "label": "raw evidence capture",
+        "cost": "free", "applies_to": "any", "detect": {"meta": "capture"},
+        "evidence": "the bytes served — DOM plus every JS/CSS, each hashed, under one bundle digest",
+        "without_it": "every finding is an assertion about a page that will be gone in days, with nothing to re-check it against",
+        "how": "pivot_extract --case <id>  (capture is ON by default whenever --case is set)"
+      },
+      "passive_dns": {
+        "label": "passive DNS",
+        "cost": "free_account", "applies_to": "any", "detect": {"enriched_with": "pdns"},
+        "evidence": "historical name → IP, and the other names seen on those addresses",
+        "without_it": "only today's resolution is known, so an origin the operator has since hidden behind a CDN stays hidden",
+        "how": "set PDNS_USERNAME / PDNS_PASSWORD (free CIRCL account)"
+      },
+      "passive_ssl": {
+        "label": "passive SSL (cert → IP history)",
+        "cost": "free_account", "applies_to": "any", "detect": {"enriched_with": "pssl"},
+        "evidence": "every address observed serving this exact certificate over time — the ORIGIN-RECOVERY direction",
+        "without_it": "the box the operator served the certificate on before fronting it with a CDN is not recoverable",
+        "how": "same CIRCL credentials as passive DNS; passive_ssl origin <host>"
+      },
+      "urlscan": {
+        "label": "urlscan reverse",
+        "cost": "keyed", "applies_to": "any", "detect": {"enriched_with": "urlscan"},
+        "evidence": "reverse lookup by favicon hash and by the distinctive third-party resource — strong on fresh registrations",
+        "without_it": "the favicon and the kit's own script stop being reverse pivots; extract is not reverse",
+        "how": "set URLSCAN_API_KEY"
+      },
+      "fofa": {
+        "label": "FOFA reverse",
+        "cost": "keyed", "applies_to": "any", "detect": {"enriched_with": "fofa"},
+        "evidence": "reverse by icon_hash, body content and IP — the widest of the reverse indexes",
+        "without_it": "an artifact can be extracted but never turned into the estate that shares it",
+        "how": "set FOFA_KEY (+ FOFA_EMAIL for the classic API)"
+      },
+      "censys": {
+        "label": "Censys certificate / host",
+        "cost": "metered", "applies_to": "any", "detect": {"enriched_with": "censys"},
+        "evidence": "the certificate's own record and the hosts presenting it",
+        "without_it": "one corroboration path for a TLS-based link is missing; the CenQL query is still emitted for the UI",
+        "how": "censys cert <sha256>  — 100 credits a MONTH, per account; check `censys budget` first"
+      },
+      "intelx": {
+        "label": "Intelligence X — leaks, stealer logs, pastes, darknet",
+        "cost": "metered", "applies_to": "any", "detect": {"enriched_with": "intelx"},
+        "evidence": "a corpus OUTSIDE the live internet: infostealer logs indexed by the URL the malware captured (victims, non-public panel URLs, sometimes the operator's own machine), breach rows that date an identity, historical WHOIS, and the phonebook inventory of a domain's emails and subdomains",
+        "without_it": "the case has searched only what the operator is currently serving. This is the single most consequential absence in the list: an empty leak result is NOT a negative finding when the corpus was never queried",
+        "how": "pivot_extract --intelx  (or intelx_search <selector>; logs-first pass, ~50% keyless)"
+      },
+      "advertising": {
+        "label": "advertising + cloaking probe",
+        "cost": "metered", "applies_to": "domain", "detect": {"result": "advertising"},
+        "evidence": "what the operator PAID for — a Google-verified advertiser id and the legal entity funding it, the reverse to every other domain that account advertised, plus the FREE click-keyed cloaking probe",
+        "without_it": "a paying identity that WHOIS privacy cannot hide is never looked for — and on a cloaked funnel the collection may be describing the decoy page rather than the scam",
+        "how": "pivot_extract --serp --cloak-probe  (the cloaking probe alone is free and needs no key)"
+      },
+      "docmeta": {
+        "label": "document / image metadata",
+        "cost": "free", "applies_to": "domain", "detect": {"pivot_prefix": "doc_"},
+        "evidence": "author, XMP DocumentID, GPS and camera from the PDFs and images the site HOSTS — survives a re-skin",
+        "without_it": "an identity that outlives every rebrand is left unread. An empty result here is normal and is not a finding",
+        "how": "doc_metadata <url|file>"
+      },
+      "screenshot": {
+        "label": "rendered screenshot",
+        "cost": "free", "applies_to": "any", "detect": {"archives": "screenshot"},
+        "evidence": "what a victim saw, hashed and timestamped — the evidence a non-technical reader can actually judge",
+        "without_it": "the report describes a page nobody outside the team will ever see",
+        "how": "capture_screenshot <url>  (needs the Playwright venv)"
+      },
+      "impersonation": {
+        "label": "lookalike / typosquat hunt",
+        "cost": "free", "applies_to": "domain", "detect": {"pivot_prefix": "impersonation:"},
+        "evidence": "the registered lookalikes of the brand or of the seed itself, from CT plus DNS",
+        "without_it": "the estate is bounded by what was handed to us rather than by what the operator registered",
+        "how": "impersonation_hunt <seed>  (free-first: crt.sh + DNS)"
+      },
+      "sandbox": {
+        "label": "sandbox / TI lookup on the served file",
+        "cost": "metered", "applies_to": "if_file_hash", "detect": {"enriched_with": "anyrun"},
+        "evidence": "what the delivered sample DID when detonated — the runtime C2 a packed binary hides from static analysis",
+        "without_it": "a file the site serves is known only by its hash",
+        "how": "anyrun_lookup <sha256>  (READ-ONLY; submitting is separately gated)"
+      }
+    }
+  },
+
+  "seed_policy": {
+    "_comment": "What counts as an exhausted seed. `required_layers` are the ones whose absence means the seed was TRIAGED, not worked — chosen because each is a distinct SEARCH SPACE rather than another view of the page we already have: the leak corpus, the historical resolution, the reverse index, and the raw capture that lets any of it be re-checked. `free_first` is the order to close gaps in when budget is a concern. A seed that fails the check is never blocked and never auto-collected: the point is that the assessment says which search it is drawn from.",
+    "required_layers": ["fetch", "whois", "crtsh", "archive", "capture", "intelx", "passive_dns"],
+    "free_first": true,
+    "min_layers_ran": 8
+  },
+
+  "reporting": {
+    "_comment": "The sentences this layer must put in front of an analyst, phrased so that a gap cannot be read as a negative finding. The first one is the whole point of the file.",
+    "triage_note": "SEED NOT EXHAUSTED — this was a TRIAGE. The layers below never ran, so their evidence classes were not searched at all. Do not report 'nothing further found' from a collection that did not look.",
+    "exhausted_note": "Seed exhausted: every required evidence layer has run against this host.",
+    "absence_note": "A layer that did not run produces no result. That is absence of COLLECTION, not absence of evidence.",
+    "keyless_note": "Some gaps are closed by a credential rather than by a command; those are marked keyed/metered and cost money or quota."
+  }
+}

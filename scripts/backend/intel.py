@@ -103,6 +103,8 @@ DISPATCH = {
     "serp":          ("WebPivot/tools/wp_serp.py",    []),     # Ads Transparency + cloaking probe
     "pssl":          ("WebPivot/tools/wp_pssl.py",    []),     # passive SSL: historic cert -> IP
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
+    "exhaust":       ("WebPivot/tools/wp_exhaust.py", []),     # which collection layers actually
+                                                               # RAN vs silently never fired
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
     "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
@@ -142,6 +144,13 @@ DISPATCH = {
     "report":        ("IntelReport/scripts/render_report.py",  []),
     "evidence-report": ("WebPivot/tools/evidence_report.py",   []),
     "timeline":      ("IntelGraph/scripts/case_timeline.py",   []),  # infrastructure lifecycle
+    # ── disseminate (IntelShare) ─────────────────────────────────────────
+    # sh_export builds the event locally and touches nothing. sh_misp `push` STAGES it on
+    # your own instance (organisation-only, unpublished); `publish` syncs it to the
+    # community and CANNOT be recalled — a shared indicator becomes somebody else's
+    # blocking rule. Two separate ops because they are two separate decisions.
+    "misp-export":   ("IntelShare/tools/sh_export.py",  []),   # build the event from the case
+    "misp":          ("IntelShare/tools/sh_misp.py",    []),   # keycheck/budget/search/push/publish
     # ── file half of the funnel (BinaryPivot) ───────────────────────────
     "binary":        ("BinaryPivot/tools/analyze_artifact.py",  []),
     # ── authentication surface (Engage) ─────────────────────────────────
@@ -187,6 +196,7 @@ BLURB = {
     "serp": "Ads Transparency (who PAID) + the cloaking probe",
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
+    "exhaust": "which collection layers RAN vs silently never fired",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
     "kb-stats": "KB stats (positional root)",
@@ -221,6 +231,8 @@ BLURB = {
     "report": "IntelReport: assessment .md → PDF/DOCX (house style)",
     "evidence-report": "build an evidence report / MISP export for a case",
     "timeline": "infrastructure lifecycle timeline + dated evidence ledger",
+    "misp-export": "build a MISP event from the case (local only, no network)",
+    "misp": "MISP: keycheck/budget/search/push (stage) /publish (IRREVERSIBLE)",
     "binary": "BinaryPivot: static IOC extraction from APK/exe/zip",
     "login-detect": "find the login / registration form (passive, free)",
     "persona": "mint a SYNTHETIC research persona (never a real identity)",

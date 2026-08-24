@@ -309,10 +309,49 @@ def regenerate_figures(md_dir):
             cmd += ["--direction", fig["direction"]]
         if fig.get("legend"):
             cmd += ["--legend"]
+        if fig.get("inline_legend"):    # keep the legend inside the diagram (single figure)
+            cmd += ["--inline-legend"]
+        if fig.get("split_clusters"):   # one figure per cluster, for an estate too dense to read
+            cmd += ["--split-clusters"]
+        if fig.get("all_edge_labels"):
+            cmd += ["--all-edge-labels"]
+        if fig.get("scale"):
+            cmd += ["--scale", str(fig["scale"])]
+        if fig.get("width"):
+            cmd += ["--width", str(fig["width"])]
+        if fig.get("pdf", True):        # vector companion — see swap_vector_figures
+            cmd += ["--pdf"]
         if fig.get("drop_types"):
             dt = fig["drop_types"]
             cmd += ["--drop-types", dt if isinstance(dt, str) else ",".join(dt)]
         print("figure %s: %s" % ("refreshed" if run(cmd) else "FAILED", os.path.basename(stem)))
+
+
+# A raster figure is embedded at whatever pixel density it happens to have; a VECTOR one is
+# exact at every zoom level and adds no weight. mermaid renders both from the same source, so
+# when a figure has a `.pdf` beside its `_hires.png` the PDF build should use it — the DOCX
+# build cannot (Word will not place a PDF inline), which is why this rewrite happens on a
+# SEPARATE body for the PDF and never touches the shared one.
+_IMG_RE = re.compile(r"(!\[[^\]]*\]\()([^)\s]+?)_hires\.png(\s*[^)]*\))")
+
+
+def swap_vector_figures(body_lines, resource_dir):
+    """Point every `![](fig_hires.png)` at `fig.pdf` when that vector file exists."""
+    swapped, out = 0, []
+
+    def _sub(mo):
+        nonlocal swapped
+        stem = mo.group(2)
+        if os.path.isfile(os.path.join(resource_dir, stem + ".pdf")):
+            swapped += 1
+            return f"{mo.group(1)}{stem}.pdf{mo.group(3)}"
+        return mo.group(0)
+
+    for ln in body_lines:
+        out.append(_IMG_RE.sub(_sub, ln) if "![" in ln else ln)
+    if swapped:
+        print(f"figures: {swapped} embedded as VECTOR (.pdf) in the PDF build")
+    return out
 
 
 # Typography is DATA, not code (repo RULE 3): an analyst retunes the font
@@ -551,6 +590,82 @@ def warn_missing_glyphs(body, family, limit=12):
     return missing
 
 
+def warn_orphan_figures(body_lines, resource_dir, limit=6):
+    """A rendered figure sitting in the case folder that the report never embeds.
+
+    This exists for one specific case: on a multi-cluster graph IntelGraph now emits the legend
+    as a COMPANION figure (`<stem>_legend_hires.png`) instead of a box inside the diagram. If the
+    author does not embed it, the report ships a graph whose colours and shapes are never
+    explained — and nothing else would have said so. Advisory only; it never blocks a render."""
+    text = "".join(body_lines)
+    orphans = []
+    for path in sorted(glob.glob(os.path.join(resource_dir, "*_hires.png"))):
+        base = os.path.basename(path)
+        stem = base[: -len("_hires.png")]
+        if base not in text and (stem + ".pdf") not in text and (stem + ".svg") not in text:
+            orphans.append(base)
+    if not orphans:
+        return
+    sys.stderr.write(
+        "NOTE: %d rendered figure(s) are not embedded anywhere in the report: %s\n"
+        % (len(orphans), ", ".join(orphans[:limit])))
+    if any(o.endswith("_legend_hires.png") for o in orphans):
+        sys.stderr.write(
+            "      One of them is a LEGEND. Its graph no longer explains its own colours and "
+            "shapes — embed it beside the graph, or re-render that figure with "
+            "\"inline_legend\": true in figures.json.\n")
+
+
+def warn_numeric_integrity(body, limit=12):
+    """Warn about a letter typed for a digit in a numeric context, BEFORE shipping the file.
+
+    The classic 'OCR-style' intelligence-report defect: a year written 2o26, a timestamp
+    o8:52:58, an id 149o89 — a lowercase o for a 0, an l or I for a 1. A font cannot cause
+    this SELECTIVELY (a bad 0 glyph would corrupt every zero in the file, including the page
+    numbers), so it is not a rendering bug: it is an authoring typo the writer makes while
+    transcribing values read off a rendered page. xelatex sets 'o8:52' happily, so it ships
+    unless caught. In an intelligence product mechanical precision signals analytical
+    precision, so this names the smell before the PDF exists.
+
+    High precision by design — a match must be an otherwise all-digit token carrying a
+    confusable letter, and domains / urls / emails / paths / code are skipped, so a real
+    'web2o.io' or an inline hash never trips it."""
+    import re
+    text = re.sub(r"```.*?```", " ", body, flags=re.S)   # fenced code blocks
+    text = re.sub(r"`[^`]*`", " ", text)                 # inline code spans
+    hits, seen = [], set()
+    conf = "oOlI"                                          # o->0, l/I->1 (the observed classes)
+
+    def _fix(tok):
+        return tok.replace("o", "0").replace("O", "0").replace("l", "1").replace("I", "1")
+
+    # (1) A bare number smell: >=2 digits + >=1 confusable, not inside a longer word / domain
+    #     / path / email. ':' and '-' are NOT boundaries so dates/times still register.
+    for mo in re.finditer(r"(?<![\w./@])([0-9]*[oOlI][0-9oOlI]*)(?![\w./@])", text):
+        tok = mo.group(1)
+        if sum(c.isdigit() for c in tok) >= 2 and any(c in conf for c in tok) and tok not in seen:
+            seen.add(tok)
+            hits.append(tok)
+    # (2) A clock smell: HH:MM[:SS] where any position carries a confusable (catches o8:52:58,
+    #     which (1) misses because 'o8' has only one digit).
+    for mo in re.finditer(r"(?<![\w.])([0-9oOlI]{1,2}(?::[0-9oOlI]{2}){1,2})(?![\w.])", text):
+        tok = mo.group(1)
+        if any(c in conf for c in tok) and tok not in seen:
+            seen.add(tok)
+            hits.append(tok)
+    if not hits:
+        return []
+    sys.stderr.write(
+        "[IntelReport] WARNING: %d token(s) look like a letter typed for a digit — the 'OCR-style' "
+        "report defect (o for 0, l/I for 1). A font cannot cause this selectively, so these are "
+        "authoring typos that ship as-is unless fixed in the source markdown:\n" % len(hits))
+    for t in hits[:limit]:
+        sys.stderr.write("              %-16s -> probably %s\n" % (t, _fix(t)))
+    if len(hits) > limit:
+        sys.stderr.write("              ... and %d more\n" % (len(hits) - limit))
+    return hits
+
+
 def render_pdf(body, stem, m, resource_dir):
     """body = the frontmatter-stripped temp .md; resource_dir = original md's dir
     (so ![](fig.png) still resolves)."""
@@ -744,8 +859,13 @@ def main():
     outs = []
     try:
         body = write_body(body_lines, tmp)  # strip frontmatter ONCE, share both renders
+        warn_orphan_figures(body_lines, resource_dir)
         if want_pdf:
-            p = render_pdf(body, args.stem, m, resource_dir)
+            # the PDF build gets its own body so it can carry vector figures the DOCX cannot
+            pdf_body = os.path.join(tmp, "body_pdf.md")
+            with open(pdf_body, "w", encoding="utf-8") as fh:
+                fh.writelines(swap_vector_figures(body_lines, resource_dir))
+            p = render_pdf(pdf_body, args.stem, m, resource_dir)
             if p:
                 outs.append(p)
             else:

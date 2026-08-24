@@ -88,6 +88,46 @@ Use this figure with the **IntelReport** skill to build the PDF/DOCX. Both outpu
 `render_network.py` (interactive HTML) is unchanged and still the right tool for live triage.
 Rendering needs `mmdc` + headless Chrome (same as any Mermaid figure).
 
+### The legend is a SEPARATE figure on a multi-cluster graph — embed both
+
+`--legend` on a graph with two or more clusters writes a companion **`<stem>_legend.*`** and says
+so on stdout. Embed it beside the graph. An inline legend box loses the space war with the graph:
+mermaid centres a subgraph title over a box sized by its *content*, so a key with a sentence for a
+title overflows onto its own sample nodes, and dagre then treats the box as another cluster and
+gives it a full band of the figure. The companion card also explains what the **shapes** and the
+**cluster fills** mean, which the inline box never did. `--inline-legend` restores the old
+single-figure behaviour; `--split-clusters` additionally emits one figure per cluster, for an
+estate too dense to read at printed width.
+
+### Reading a dense estate figure
+
+* **Repeated edge labels are said once.** Fifteen domains sharing one registrar used to write
+  "registrar" fifteen times across one fan of curves. The relation is a property of the *target*,
+  so it is labelled once per relation→target; every edge is still drawn, in its own colour and
+  style. `--all-edge-labels` brings the repeats back.
+* **Red means the operator anchor and nothing else.** No community fill is red, so the one node a
+  reader must find first is findable.
+* **`--drop-types nameserver,registrar,regdate`** prunes the infrastructure nodes that fan out
+  without carrying the argument. Past ~45 nodes the tool says the figure will be small at printed
+  width rather than letting you find out in the PDF.
+
+### Definition — `--scale`, not `--width`
+
+`--width` is the *layout* width: raising it spreads the same drawing over more pixels and makes
+the type smaller relative to the figure. `--scale` (default 2) is the renderer's device pixel
+ratio — it rasterises the same layout at N× density, which is what keeps a figure crisp when a
+reader zooms into the PDF. `--pdf` additionally writes a **vector** `<stem>.pdf`; IntelReport
+embeds that automatically in the PDF build when it exists (the DOCX cannot take one).
+
+House styling lives in `references/diagram.css`, injected into **every** mermaid figure at render
+time — so a generated case graph and a hand-authored reasoning diagram come out of the same press.
+Two rules there are load-bearing and easy to break: mmdc appends that stylesheet *after* mermaid
+has sized every label box, so **it must never set a property that changes text metrics** (a
+font-size rule clips the label into a blank white pill); and in the `%%{init}%%` directive
+`fontFamily` works only at the config top level, while **a single quote anywhere voids the entire
+directive** and silently drops the figure to mermaid's defaults. `tests/test_diagram.py` holds
+both.
+
 ## The timeline figure — `case_timeline.py`  (run this on every case)
 
 The network graph answers *what is connected*; it cannot answer *were they connected at the same
