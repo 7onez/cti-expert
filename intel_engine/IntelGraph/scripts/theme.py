@@ -38,10 +38,87 @@ CYCLE = [PALETTE["primary"], PALETTE["brick"], PALETTE["ochre"],
 # graph_to_diagram.py (editable Mermaid) so the community/edge colors are defined
 # ONCE. COMMUNITY_CYCLE: Louvain community fill, ≤8 then wrap. EDGE_CLASS: edge
 # stroke by evidence class.
-COMMUNITY_CYCLE = ["#3b5566", "#8c2d2d", "#b0790f", "#5a6b3b",
-                   "#5a4a7a", "#2f6b6b", "#9a5b2f", "#7a2f52"]
+#
+# RED IS RESERVED. The operator anchor is the only red-filled node in a diagram, because it is
+# the one node a reader must find first. Brick therefore sits LAST in the community cycle: with
+# it second, a two-cluster case (the common shape) rendered a whole community in almost the same
+# red as the anchor, and the eye could no longer tell "this is the operator" from "these nodes
+# happen to be in cluster 1".
+#
+# The cycle must also stay DISTINGUISHABLE at the second position, which is where a two-cluster
+# case lands: two adjacent slate tones read as one cluster rendered twice.
+COMMUNITY_CYCLE = ["#3b5566", "#5a6b3b", "#b0790f", "#5a4a7a",
+                   "#2f6b6b", "#9a5b2f", "#7a2f52", "#8c2d2d"]
 EDGE_CLASS = {"operator": "#b00020", "kit": "#7b4bab",
               "infra": "#3b5566", "link": "#b9b2a4"}
+OPERATOR_FILL = "#5a1a1a"
+OPERATOR_STROKE = "#b00020"
+
+# Mermaid look, defined once so a generated case graph and a hand-authored reasoning figure are
+# the same object in the reader's eye. Emitted into the .mmd as an %%{init}%% directive by
+# graph_to_diagram; the matching CSS (references/diagram.css) is injected at render time by
+# render_mermaid for EVERY mermaid figure, including hand-authored ones.
+#
+# fontSize is 20px, not the 28px this used to carry: 28 was compensating for a downscaled raster.
+# Sharpness is now bought with the renderer's device scale (render_mermaid --scale), which
+# multiplies pixels without inflating type — so the figure keeps a printed-page type size
+# instead of looking like a slide someone shrank.
+DIAGRAM = {
+    # SINGLE-WORD FAMILIES ONLY — see the quote rule in mermaid_init(). A multi-word family
+    # would need quoting, and a quote anywhere in the init directive voids the entire directive.
+    # The generic `sans-serif` tail is what carries Vietnamese diacritics on a bare Linux
+    # container (fontconfig resolves it to DejaVu Sans), which is why it is never omitted.
+    "font_family": "Helvetica, Arial, sans-serif",
+    "font_size": "20px",
+    "node_border": "#ffffff",
+    "cluster_bkg": "#fbfaf7",
+    "cluster_border": "#d9d3c7",
+    "line": "#8d867a",
+    "edge_label_bkg": "#ffffff",
+    "text": "#1f1d1a",
+    "node_spacing": 48,
+    "rank_spacing": 88,
+    "padding": 12,
+    "diagram_padding": 26,
+    "subgraph_title_margin": {"top": 10, "bottom": 16},
+}
+
+
+def mermaid_init(extra_flowchart=None):
+    """The %%{init}%% directive line every generated .mmd opens with.
+
+    TWO MERMAID QUIRKS ARE ENCODED HERE, both established by isolating them against mmdc 11.12,
+    and both of which fail SILENTLY — the diagram still renders, just not the way it was asked to:
+
+    1. `fontFamily` is a TOP-LEVEL config key, not a themeVariable. Set inside `themeVariables`
+       (where every other appearance setting lives, and where this used to sit) it is ignored,
+       and the figure renders in mermaid's default trebuchet/verdana stack — which on a headless
+       Chrome that has none of those resolves to a SERIF face, so the diagram quietly stops
+       matching every other figure in the report.
+    2. A QUOTE CHARACTER ANYWHERE IN THE DIRECTIVE VOIDS THE WHOLE DIRECTIVE. Not just the one
+       value — mermaid discards the entire init block and falls back to defaults for font size,
+       spacing, colours, everything. That rules out quoted multi-word font families, so the stack
+       must be single-word names plus a generic. The assertion below is what keeps a future
+       edit from reintroducing it.
+    """
+    fc = {"curve": "basis", "nodeSpacing": DIAGRAM["node_spacing"],
+          "rankSpacing": DIAGRAM["rank_spacing"], "padding": DIAGRAM["padding"],
+          "diagramPadding": DIAGRAM["diagram_padding"],
+          "subGraphTitleMargin": DIAGRAM["subgraph_title_margin"],
+          "useMaxWidth": False, "htmlLabels": True}
+    fc.update(extra_flowchart or {})
+    tv = {"fontSize": DIAGRAM["font_size"],
+          "lineColor": DIAGRAM["line"], "textColor": DIAGRAM["text"],
+          "clusterBkg": DIAGRAM["cluster_bkg"], "clusterBorder": DIAGRAM["cluster_border"],
+          "edgeLabelBackground": DIAGRAM["edge_label_bkg"]}
+    import json as _json
+    line = "%%{init: " + _json.dumps({"theme": "neutral",
+                                      "fontFamily": DIAGRAM["font_family"],
+                                      "flowchart": fc,
+                                      "themeVariables": tv}) + "}%%"
+    assert "'" not in line, ("a quote in the mermaid init directive voids the whole directive "
+                             "— see quirk 2 above")
+    return line
 
 _I18N = {
     "en": {"source": "Source", "grading": "Confidence", "updated": "Updated"},

@@ -2,7 +2,7 @@
 
 This repo ships a **portable OSINT skill** (`SKILL.md`) plus a **vendored engine**
 (`intel_engine/` — WebPivot, IntelGraph, IntelReport, IntelAnalysis, BinaryPivot, Engage,
-IntelHarness, the KB and the deterministic pipeline). The skill is symlinked onto other machines
+IntelHarness, IntelShare, the KB and the deterministic pipeline). The skill is symlinked onto other machines
 and used by other people.
 Treat everything tracked here as **public-facing**.
 
@@ -60,7 +60,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (47 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (52 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an

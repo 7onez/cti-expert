@@ -234,6 +234,16 @@ attached to the domain pivot as `live_results.pdns` and counted toward corrobora
 Basic auth against `PDNS_URL` (default CIRCL `https://www.circl.lu/pdns/query`); point `PDNS_URL`
 at any COF-compatible instance. No creds → the lookup is simply skipped (keyless mode unchanged).
 
+### MISP — `MISP_URL` + `MISP_KEY` (dissemination, **not** collection)
+
+Deliberately absent from the capability banner above: these credentials buy no collection at all,
+so a run without them is not degraded. They belong to the **IntelShare** skill, which turns a
+finished case into a MISP event and — only on an explicit human yes, plus `INTEL_MISP_PUBLISH=1`
+— publishes it. Get the key from *Administration → List Auth Keys* on your instance; optional
+`MISP_ORG` labels the briefing and `MISP_VERIFY_TLS=0` allows a private CA (it warns). Check the
+channel with `IntelShare/tools/sh_misp.py keycheck`. Building and reviewing an event needs no
+credentials whatsoever — see `IntelShare/SKILL.md`.
+
 **No keys → keyless mode, unchanged.** Prefer your OS keychain over a plaintext `.env` —
 see `INSTALL.md §5` for the macOS/Linux/Windows recipes.
 

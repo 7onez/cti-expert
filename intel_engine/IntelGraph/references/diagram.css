@@ -1,0 +1,110 @@
+/* diagram.css — the house polish applied to EVERY mermaid figure at render time
+ * (render_mermaid.py passes this to mmdc with -C, so a generated case graph and a
+ * hand-authored reasoning figure come out of the same press).
+ *
+ * ══ THE ONE RULE THIS FILE MUST OBEY ══════════════════════════════════════════
+ * NEVER SET A PROPERTY THAT CHANGES TEXT METRICS. No font-size, no padding, no
+ * letter-spacing, no text-transform, no font-weight, no line-height on anything mermaid has
+ * already measured.
+ *
+ * mmdc appends this stylesheet INTO the finished SVG — after mermaid has measured every label
+ * and hard-coded a <foreignObject> of exactly that width and height. Anything here that makes
+ * the text wider or taller overflows a box that can no longer grow, and the glyphs are clipped
+ * away. That failure is silent and it looks absurd: an edge label renders as a blank white pill
+ * with the top of the letters shaved off, which is worse than the plain mermaid default it was
+ * meant to improve.
+ *
+ * So the levers here are strictly PAINT: fill, stroke, stroke-width, colour, opacity, corner
+ * radius. Anything that must change SIZE belongs in the %%{init}%% directive instead (see
+ * theme.mermaid_init) — mermaid reads that before it measures.
+ *
+ * `!important` is not decoration either: mermaid emits its own rules prefixed with the SVG's id
+ * (`#my-svg .edgeLabel {…}`), which outranks any bare class selector here.
+ *
+ * Everything is deliberately conservative — no shadows, no gradients, no animation. It has to
+ * survive being printed in greyscale and photocopied by somebody's compliance team. A selector
+ * that stops matching after a mermaid upgrade degrades to "the figure looks like plain mermaid
+ * again", never to a broken render. */
+
+/* ── nodes ────────────────────────────────────────────────────────────────── */
+/* Softened corners read as considered rather than decorative. Node type is carried by SHAPE and
+ * fill; the stroke's only job is to separate a node from a cluster box of a similar tone, so it
+ * is a hairline rather than the heavy dark outline mermaid draws by default. */
+.node rect,
+.node polygon,
+.node circle,
+.node ellipse,
+.node path {
+  rx: 7px;
+  ry: 7px;
+  stroke-width: 1.25px;
+}
+
+.node rect,
+.node polygon {
+  stroke-opacity: 0.6;
+}
+
+/* ── edges ────────────────────────────────────────────────────────────────── */
+/* Edges are context, not content: they sit visually below the nodes they connect. */
+.edgePath path,
+.flowchart-link {
+  stroke-linecap: round;
+  stroke-opacity: 0.88;
+}
+
+.marker,
+.arrowheadPath {
+  fill-opacity: 0.9;
+  stroke: none;
+}
+
+/* The single worst offender in a dense estate figure: an edge label sitting ON a line it does
+ * not belong to. Mermaid backs each label with a 50%-opaque white plate, which lets the line
+ * show straight through the words. Making that plate OPAQUE is the whole fix — and it costs no
+ * geometry, because the plate is already sized and positioned. */
+.edgeLabel rect,
+.edgeLabel .labelBkg,
+.labelBkg {
+  opacity: 1 !important;
+  fill: #ffffff !important;
+  fill-opacity: 1 !important;
+  background-color: #ffffff !important;
+}
+
+.edgeLabel,
+.edgeLabel p,
+span.edgeLabel {
+  color: #4a463f !important;
+  background-color: #ffffff !important;
+}
+
+/* ── clusters ─────────────────────────────────────────────────────────────── */
+/* A cluster is a container, so it recedes: near-paper fill, hairline border, and a title in a
+ * muted grey that cannot be mistaken for a node label. (The title's SIZE is set where it can be
+ * measured — this only recolours it.) */
+.cluster rect {
+  rx: 10px;
+  ry: 10px;
+  stroke-width: 1px;
+}
+
+.cluster-label .nodeLabel,
+.cluster-label p,
+.cluster-label span,
+.cluster span,
+.cluster text,
+.cluster tspan {
+  fill: #6f6a61 !important;
+  color: #6f6a61 !important;
+}
+
+/* ── title ────────────────────────────────────────────────────────────────── */
+/* The frontmatter title is a standalone centred text with no box to overflow, so it is the one
+ * place a size change here is safe. */
+.flowchartTitleText,
+text.flowchartTitleText {
+  font-size: 22px;
+  font-weight: 600;
+  fill: #1f1d1a;
+}

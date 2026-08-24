@@ -2043,6 +2043,213 @@ async def engage_report(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(out or "(engagement section written)")
 
 
+@tool(
+    "collection_gaps",
+    "HAS THIS SEED BEEN WORKED, OR ONLY TRIAGED? Reads the case's STORED collections — no "
+    "network, no credits, no key — and reports which evidence layers have actually run against "
+    "each host and which never did, what each absence removes from the case, and the exact "
+    "command that closes it (cheapest first). Call it after the first collection on a seed and "
+    "again before writing the assessment. Why it matters: the deep layers are opt-in flags, so a "
+    "run reliably gets the fetch, WHOIS, CT, archive and the reverse indexes, and reliably skips "
+    "the leak/stealer-log corpus (IntelX), the advertising + cloaking probe, the lookalike hunt "
+    "and document metadata — measured across this repo's stored collections, IntelX had run on "
+    "exactly one. A correlation pass over a triage-depth collection is then scrupulous about "
+    "every artifact it has and silent about the search space it never entered, so 'no further "
+    "links found' reads as a finding when it is a statement about which flags were passed. "
+    "Verdict is `exhausted` or `triage`; a `triage` verdict must be STATED in the assessment, "
+    "and a layer that did not run is absence of COLLECTION, never absence of evidence. Pass "
+    "case; optional host to check one, json for the raw structure.",
+    {"case": str},   # host:str, json:bool optional -> args.get()
+    annotations=READONLY,
+)
+async def collection_gaps(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_exhaust.py"), str(args["case"])]
+    if args.get("host"):
+        cmd.append(str(args["host"]))
+    if args.get("json"):
+        cmd.append("--json")
+    r = _run(cmd, timeout=90)
+    out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+    if r.returncode != 0 and not (r.stdout or "").strip():
+        return _err(f"collection_gaps failed for {args['case']}: {(r.stderr or '')[-300:]}")
+    return _ok(out or "collection_gaps produced no output")
+
+
+# ---------------------------------------------------------------- IntelShare (MISP dissemination)
+_SHARE = os.path.join("IntelShare", "tools")
+
+
+@tool(
+    "misp_export",
+    "BUILD the MISP event for a case — offline, sends nothing, and is the step that decides what "
+    "may be shared at all. Reads the case's collected pivots and its intake scope, maps each "
+    "artifact through IntelShare/references/misp.json and splits everything three ways: `auto` "
+    "(infrastructure the operator provisioned — domains, kit routes, file hashes, favicon/JARM/"
+    "cert fingerprints, owner-provisioned tracker ids), `review` (PERSONAL DATA — registrant name/"
+    "email/phone, page emails, identity handles — plus values derived from a third party rather "
+    "than observed by us; these are approved VALUE BY VALUE via review_value, never in bulk), and "
+    "`never` (page context, generated lookalike candidates, shared platform noise). Base rates are "
+    "a sharing control here: a parking favicon, a registrar contact, a platform tracker id and "
+    "every third_party_host are refused, because published with to_ids they become other people's "
+    "wrong blocking rules. OWNERSHIP first — a `victim_host` or `benign_check` case is REFUSED "
+    "outright (a compromised site's WHOIS/favicon/cert belong to the victim). Show the analyst "
+    "the summary, especially the review list and the to_ids count, before proposing any push. "
+    "Pass case; optional host (space/comma-separated), info (the event headline — never a case "
+    "id), label, tlp, confidence (the ICD-203 term), distribution (the level to REQUEST — the "
+    "push still stages at 0), include_review, review_value (one approved value; repeatable as a "
+    "space-separated list), threat_level, analysis.",
+    {"case": str},
+    annotations=READONLY,
+)
+async def misp_export(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_SHARE, "sh_export.py"), str(args["case"]), "--leads"]
+    for flag, key in (("--info", "info"), ("--label", "label"), ("--tlp", "tlp"),
+                      ("--confidence", "confidence")):
+        if args.get(key):
+            cmd += [flag, str(args[key])]
+    for flag, key in (("--threat-level", "threat_level"), ("--analysis", "analysis"),
+                      ("--distribution", "distribution")):
+        if args.get(key) is not None and str(args.get(key)) != "":
+            cmd += [flag, str(int(args[key]))]
+    for host in str(args.get("host") or "").replace(",", " ").split():
+        cmd += ["--host", host]
+    for val in str(args.get("review_value") or "").replace(",", " ").split():
+        cmd += ["--review-value", val]
+    if args.get("include_review"):
+        cmd += ["--include-review"]
+    r = _run(cmd, timeout=120)
+    out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+    if r.returncode != 0 and not (r.stdout or "").strip():
+        return _err(f"misp_export failed for {args['case']}: {(r.stderr or '')[-400:]}")
+    return _ok(out + "\n\nNOTHING HAS BEEN SENT. Sharing is a separate, confirmed step "
+                     "(misp_push stages; misp_publish shares).")
+
+
+@tool(
+    "misp_search",
+    "Ask the MISP instance whether an indicator is ALREADY KNOWN there — read-only, sends nothing "
+    "of the case, safe to call unattended, and the cheapest useful question before proposing to "
+    "publish anything: a value the community already holds does not need re-sharing, and a value "
+    "nobody has is the one worth the trouble. Returns the matching attributes with their event "
+    "ids, types and to_ids flags. A failure is a CHANNEL failure — absence of an answer, never "
+    "evidence the value is unknown — and with no MISP_URL/MISP_KEY it says the channel is absent "
+    "rather than reporting silence as 'not seen before'. Pass value; optional type (a MISP "
+    "attribute type such as domain/sha256/ip-dst) and limit.",
+    {"value": str},
+    annotations=READONLY,
+)
+async def misp_search(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_SHARE, "sh_misp.py"), "search", str(args["value"])]
+    if args.get("type"):
+        cmd += ["--type", str(args["type"])]
+    if args.get("limit"):
+        cmd += ["--limit", str(int(args["limit"]))]
+    r = _run(cmd, timeout=90)
+    if r.returncode != 0 and not (r.stdout or "").strip():
+        return _err(f"misp_search failed: {(r.stderr or '')[-300:]}")
+    return _ok((r.stdout or "") + (("\n" + r.stderr) if r.stderr else ""))
+
+
+@tool(
+    "misp_push",
+    "STAGE an exported event on the MISP instance. **YOU MUST ASK THE ANALYST FIRST, EVERY TIME.** "
+    "Call it with confirm=false (or omitted) to get the BRIEFING — instance, event headline, tags, "
+    "attribute counts by type, how many carry to_ids (i.e. how many become somebody's blocking "
+    "rule), what is held back, and the case's intake caveat — then show that briefing to the "
+    "analyst and only call again with confirm=true after they say yes to THIS event. Working a "
+    "case is not consent to share it. What this does and does not do: it CREATES (or updates) the "
+    "event at distribution 0 — your organisation only — and published=false, and that clamp is "
+    "enforced in code, so asking for a wider distribution here still stages. Nobody outside your "
+    "organisation sees it, no sync happens, and the event can be deleted; SHARING is the separate "
+    "misp_publish step. Values classed `review` are not included unless the export already "
+    "approved them by value. Pass case (uses the case's newest export) or event_file=<path>; "
+    "optional event_id to update an existing event, confirm, dry_run (prints the exact request "
+    "and sends nothing), and publish=true + distribution=<level> to run the sharing step in the "
+    "same call — that still needs INTEL_MISP_PUBLISH=1, and without the lock the event simply "
+    "stays staged and says so. The event is built to the MISP standard: OBJECTS where several "
+    "values describe one thing (a `whois` record, a `domain-ip` resolution), dated attributes, "
+    "and an EVENT REPORT stating what was collected, what was withheld and why, and whether the "
+    "collection was exhaustive or only a triage.",
+    {},   # case, event_file, event_id, confirm, dry_run, publish, distribution -> args.get()
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def misp_push(args: dict[str, Any]) -> dict[str, Any]:
+    path = str(args.get("event_file") or "")
+    case = str(args.get("case") or "")
+    if not path:
+        if not case:
+            return _err("misp_push needs case=<ID> or event_file=<path>.")
+        found = sorted(glob.glob(os.path.join(ROOT, "cases", case, "misp", "event-*.json")))
+        if not found:
+            return _err(f"no exported event for case {case} — run misp_export first (it is "
+                        f"offline and sends nothing).")
+        path = found[-1]
+    cmd = [PY, os.path.join(_SHARE, "sh_misp.py"), "push", path]
+    if case:
+        cmd += ["--case", case]
+    if args.get("event_id"):
+        cmd += ["--event-id", str(args["event_id"])]
+    if args.get("dry_run"):
+        cmd += ["--dry-run"]
+    if args.get("publish"):
+        cmd += ["--publish", "--distribution", str(int(args.get("distribution") or 1))]
+    confirmed = bool(args.get("confirm"))
+    if confirmed:
+        cmd += ["--confirm-push"]
+    r = _run(cmd, timeout=180)
+    body = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+    if not confirmed:
+        return _ok("NOTHING WAS SENT — confirmation required.\nShow the briefing below to the "
+                   "analyst, ask explicitly whether to stage these indicators on MISP, and only "
+                   "then call misp_push again with confirm=true.\n\n" + body)
+    return _ok(body)
+
+
+@tool(
+    "misp_publish",
+    "SHARE a staged MISP event — raise its distribution and publish it. **IRREVERSIBLE, and you "
+    "MUST ASK THE ANALYST FIRST, EVERY TIME**, including which audience they mean. Publishing "
+    "pushes the event to every server the instance synchronises with and notifies subscribers; "
+    "deleting your copy afterwards deletes nothing of theirs, and the to_ids attributes become "
+    "other people's blocking rules. Without confirm=true it returns only the BRIEFING (audience "
+    "for the requested level, attribute counts, which values are personal data, what cannot be "
+    "undone) and does nothing. The harness ALSO requires env INTEL_MISP_PUBLISH=1, which an agent "
+    "loop cannot set for itself: with confirm but no lock it says so and still sends nothing — "
+    "ask the analyst, then the run must be re-launched with the lock. Distribution: 1 this "
+    "community, 2 connected communities, 3 all communities (treat as public), 4 a named sharing "
+    "group (needs sharing_group_id). Before proposing this, misp_search the strong indicators — "
+    "re-sharing what the community already holds adds noise — and on threat-actor infrastructure "
+    "coordinate first, because publishing can collide with somebody else's live operation. Pass "
+    "event_id; distribution; optional sharing_group_id, case (for the local share ledger), "
+    "confirm, dry_run.",
+    {"event_id": str},   # distribution:int, sharing_group_id:str, case:str, confirm:bool, dry_run:bool
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def misp_publish(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join(_SHARE, "sh_misp.py"), "publish", str(args["event_id"]),
+           "--distribution", str(int(args.get("distribution") or 1))]
+    if args.get("sharing_group_id"):
+        cmd += ["--sharing-group-id", str(args["sharing_group_id"])]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    if args.get("dry_run"):
+        cmd += ["--dry-run"]
+    confirmed = bool(args.get("confirm"))
+    # confirm is honoured only alongside the env second-lock; sh_misp re-checks it and returns the
+    # briefing with `blocked_by` when the lock is absent, so the model is told WHY rather than
+    # silently retrying.
+    if confirmed:
+        cmd += ["--confirm-publish"]
+    r = _run(cmd, timeout=180)
+    body = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+    if not confirmed:
+        return _ok("NOTHING WAS PUBLISHED — confirmation required.\nShow the briefing below to "
+                   "the analyst, ask explicitly whether these indicators should be shared and "
+                   "with WHICH audience, and only then call misp_publish with confirm=true (the "
+                   "run must also have INTEL_MISP_PUBLISH=1).\n\n" + body)
+    return _ok(body)
+
+
 # ---------------------------------------------------------------- servers + names
 # Every @tool MUST appear in exactly one server below AND in that server's *_TOOLS allowlist.
 # The stdio front-end (mcp_server.py) auto-discovers @tools, so a tool missing here is visible in
@@ -2079,7 +2286,9 @@ ANALYZE_SERVER = create_sdk_mcp_server(
                       which_cases, domain_verdict, api_usage, tool_calls, case_scope,
                       case_clusters, case_frontier, case_loop, case_reopen,
                       email_permute,
-                      render_diagram, case_timeline, render_report, victim_profile])
+                      render_diagram, case_timeline, render_report, victim_profile,
+                      collection_gaps,
+                      misp_export, misp_search, misp_push, misp_publish])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__analyze_artifact",
@@ -2110,4 +2319,7 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__case_reopen",
                  "mcp__analyze__email_permute",
                  "mcp__analyze__render_diagram", "mcp__analyze__case_timeline",
-                 "mcp__analyze__render_report", "mcp__analyze__victim_profile"]
+                 "mcp__analyze__render_report", "mcp__analyze__victim_profile",
+                 "mcp__analyze__collection_gaps",
+                 "mcp__analyze__misp_export", "mcp__analyze__misp_search",
+                 "mcp__analyze__misp_push", "mcp__analyze__misp_publish"]

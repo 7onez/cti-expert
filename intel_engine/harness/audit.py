@@ -78,8 +78,9 @@ _POLICY_FALLBACK = {
     "metered_tools": ["pivot_extract", "reverse_whois", "intelx_search", "anyrun_lookup"],
     "free_only_args": ["free_only"],
     "metered_arg_triggers": ["whois_reverse", "fofa_full"],
-    "approval_required_tools": {"anyrun_submit": "HARNESS_ALLOW_SUBMIT"},
-    "mutating_tools": ["kb_ingest", "reference_add"],
+    "approval_required_tools": {"anyrun_submit": "HARNESS_ALLOW_SUBMIT",
+                                "misp_publish": "INTEL_MISP_PUBLISH"},
+    "mutating_tools": ["kb_ingest", "reference_add", "misp_push", "misp_publish"],
     "redact_args": ["key", "api_key", "token", "password", "secret"],
     "budget": {"max_metered_calls_per_run": 60, "max_arg_chars": 200},
 }
@@ -178,10 +179,11 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None) -> tuple[
     env = APPROVAL_REQUIRED.get(t)
     if env and os.environ.get(env, "").strip().lower() not in ("1", "true", "yes", "on"):
         return (False,
-                f"{t} is outbound, attributable and IRREVERSIBLE (a sandbox detonation tells the "
-                f"operator they are being analysed, and cannot be recalled). It requires an "
-                f"explicit human approval this run does not have. Ask the analyst; if they agree, "
-                f"the run must be re-launched with {env}=1. Do not retry.", classes)
+                f"{t} is attributable and IRREVERSIBLE — once it has happened nothing can recall "
+                f"it (a sandbox detonation tells the operator they are being analysed; a "
+                f"published MISP event syncs to every peer server). It requires an explicit "
+                f"human approval this run does not have. Ask the analyst; if they agree, the run "
+                f"must be re-launched with {env}=1. Do not retry.", classes)
 
     if hostile and "outbound" in classes:
         return (False,

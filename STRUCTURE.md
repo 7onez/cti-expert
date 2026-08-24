@@ -47,8 +47,8 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
 - `intel_engine/tools/` — `intel.py` (deterministic pipeline), `case_state.py` (frontier/reopen),
   `kb/*` (KB + correlation), `cert_overlap`, `case_store`, …
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
-- `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness/` — render,
-  analysis and engagement skills (their `SKILL.reference.md` are docs, not skill entrypoints —
+- `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness|IntelShare/` —
+  render, analysis, engagement and dissemination skills (their `SKILL.reference.md` are docs, not skill entrypoints —
   the repo has exactly one `SKILL.md`, at the root)
 - `intel_engine/tests/` — the vendored engine's own gates (`test_tool_registry` RULE 2,
   `test_tool_gate` submission approval, `test_engage`, …); `run_eval.py` puts both this

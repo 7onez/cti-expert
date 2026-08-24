@@ -293,6 +293,24 @@ def main():
         ("test_openai_backend", "open-weight backend (Kimi/DeepSeek/local) — the tool loop driven "
                                 "against a stubbed endpoint, optional params + enums reaching the "
                                 "schema, and a denied call returning as output not an exception"),
+        ("test_diagram", "case-graph figures — the init directive survives (a quote voids it, "
+                         "fontFamily only works at config top level), the injected stylesheet "
+                         "changes no text metric (mmdc appends it after mermaid sized every "
+                         "label box, so a font-size rule clips the words), the legend splits to "
+                         "its own figure on a multi-cluster graph, repeated edge labels are said "
+                         "once without dropping an edge, and red stays reserved for the anchor"),
+        ("test_exhaustion", "collection exhaustion — a layer counts as RUN only on positive "
+                            "evidence in the stored result (so 'asked, found nothing' never "
+                            "collapses into 'never asked'), a missing required layer forces the "
+                            "TRIAGE verdict, gaps come back cheapest-first with the command that "
+                            "closes each, and no gap is invented for a seed it cannot apply to"),
+        ("test_misp", "MISP dissemination — the only layer whose mistakes leave the building: "
+                      "nothing is sent without a human (push briefs, publish additionally needs "
+                      "the env lock), the staging clamp keeps a push organisation-only and "
+                      "unpublished however wide a distribution was requested, a victim_host / "
+                      "benign_check case and a parking favicon / CDN hostname / malformed value "
+                      "are REFUSED rather than warned about, and personal data is released one "
+                      "value at a time"),
         ("test_engage", "Engage skill — auth-surface detection classifies by FIELDS (confirm-"
                         "password = register, invite code is a pivot not an OTP), and the "
                         "engagement gate holds in code (no confirm -> preflight, non-synthetic "
