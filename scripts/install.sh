@@ -203,6 +203,15 @@ ensure_agent_browser() {
 
 apt_install() {
   local pkg="$1" cmd="${2:-$1}"
+  # Callers pass the Debian package name. Most formulae match it, but a few don't —
+  # translate those for brew, or macOS installs fail on a name that only exists in apt.
+  if [[ "$OS" == "macos" ]]; then
+    case "$pkg" in
+      poppler-utils)          pkg="poppler" ;;
+      dnsutils)               pkg="bind" ;;
+      libimage-exiftool-perl) pkg="exiftool" ;;
+    esac
+  fi
   # Linux is not only Debian/Ubuntu. Without apt-get there is nothing to run, so
   # report the state honestly instead of failing on "apt-get: command not found".
   if [[ "$OS" == "linux" ]] && ! has apt-get; then
