@@ -670,6 +670,7 @@ Reference directory: `techniques/`
 | `prompt-injection-audit.md` | AI/LLM security: prompt injection classes, agent/MCP security, permission boundary audit |
 | `stealer-log-analysis.md` | Infostealer-log triage: family fingerprinting (RedLine/Vidar/StealC/Lumma/META/traffer), victim-vs-operator profiling, cross-log actor correlation, IOC + attribution extraction (`uv run` parser, raw artifacts shown) |
 | `agent-browser.md` | Interactive browser collection & evidence capture via vercel-labs/agent-browser (CDP, accessibility-tree `@eN` snapshots, screenshots; primary interactive collector, complementary to Scrapling) |
+| `media-vision-analysis.md` | Image/A-V *content* analysis — vision OCR + sign/landmark/logo/face read (`multix gemini`, Gemini) and FFmpeg keyframe/audio preprocessing → transcription; extracted text/GPS/entities re-enter the pivot loop (standalone `npx` multix + `ffmpeg`, no AgentKit/sibling-skill dep) |
 | `phishing-domain-survival.md` | Registration/DNS strategy profiling — maliciously-registered vs **compromised** classification + takedown-survival outlook from WHOIS/DNS (`scripts/phish_domain_survival.py`, offline, zero-dep); eCrime 2026 "Built to Last?" |
 | `clickfix-clipboard-hijack.md` | ClickFix / PasteJacking clipboard-hijack detection — clipboard-write + lure + OS-command co-occurrence, decodes PowerShell `-EncodedCommand` → C2 IOCs (`scripts/clickfix_detect.py`, offline, zero-dep); eCrime 2026 "PasteJacked" |
 | `visibility-aware-html.md` | Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen brand text a naive parser misses (`scripts/html_visibility_analysis.py`, offline, zero-dep); eCrime 2026 "Visibility-Aware HTML Analysis" |
@@ -1312,6 +1313,7 @@ back via `--ingest`.
   (`.jpg`/`.png`) is itself a node — metadata/authorship→person/email/org and EXIF GPS +
   reverse-image/face→person/domain (face matches held pending corroboration) — each new node
   re-enters the loop.
+  - **Media content is analyzed, not just fingerprinted.** An image/document node is **vision-analyzed** (`multix gemini` — OCR, sign/landmark/logo read, structured extraction) and A/V is **FFmpeg-preprocessed** (keyframes + audio track) then transcribed, *before* it is treated as terminal — see §Media Evidence Analysis. Extracted text / GPS / entities re-enter the loop as new seeds; face matches stay held pending corroboration.
 - **Control flags** (all *narrowing* — the defaults are already maximal):
   `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
   **`--checkpoint`** (pause for approval after each depth level), `--depth N`, `--budget N`,
@@ -1372,7 +1374,21 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 4. Use Scrapling StealthyFetcher for: anti-bot bypass, Cloudflare-protected targets
 5. Use Scrapling Fetcher for: fast static page collection, HTML parsing (~2ms)
 6. Fall back to web search → web fetch → direct curl — no investigation blockers
-7. Tag each finding with collection method: `[browser]` · `[scrapling-dynamic]` · `[scrapling-stealth]` · `[scrapling-static]` · `[search]` · `[fetch]` · `[manual]` · `[whois-lib]` · `[whois-cli]` · `[whois-api]`
+7. Tag each finding with collection method: `[browser]` · `[scrapling-dynamic]` · `[scrapling-stealth]` · `[scrapling-static]` · `[vision]` · `[vision-local]` · `[media]` · `[search]` · `[fetch]` · `[manual]` · `[whois-lib]` · `[whois-cli]` · `[whois-api]`
+
+### Media Evidence Analysis — vision (multix/Gemini) + video (FFmpeg)
+
+Screenshots, photos, scanned documents, and audio/video are **nodes, not dead ends** — analyze the *content*, don't just fingerprint the file. These tools are **native to this skill** (no AgentKit / sibling-skill dependency, so a bare clone works): the vision layer is the standalone [`multix`](https://github.com/mrgoonie/multix-cli) CLI run via `npx`, the media layer is `ffmpeg`/`imagemagick`, provisioned by the Tool Auto-Install Policy. **Keyless by default:** with no `GEMINI_API_KEY`, OCR/sign-read/transcription fall back to the host agent's own multimodal read + `tesseract` OCR + local Whisper (`whisper-ctranslate2`) — a key only upgrades quality/scene-reading. Full workflow: [`techniques/media-vision-analysis.md`](techniques/media-vision-analysis.md). A missing key/binary logs a collection gap, never blocks.
+
+- **Images / screenshots / documents → vision** (`multix gemini`, Gemini; reads `GEMINI_API_KEY` from env or the skill's `$SKILL_DIR/.env`). Read text a parser can't (OCR a Telegram-bio screenshot), read signage / landmarks / reflected text for geolocation, describe logos and faces for correlation, or pull structured fields:
+  - `npx --yes --prefer-online --package=@mrgoonie/multix@latest -- multix gemini analyze --files EVIDENCE.png --prompt "OCR all text; describe location cues, signage, landmarks, logos, faces" --format markdown --output vision.md`
+  - `npx --yes --prefer-online --package=@mrgoonie/multix@latest -- multix gemini extract --files EVIDENCE.png --prompt "Extract handles, emails, phones, wallet/IBAN, org names as JSON" --format json --output vision.json`
+- **Video / audio → preprocess with FFmpeg, then vision.** Extract keyframes and the audio track first, then analyze/transcribe them:
+  - Keyframes → `ffmpeg -i clip.mp4 -vf "fps=1/5" frame_%03d.png`, then feed each frame to `multix gemini analyze`
+  - Audio → `ffmpeg -i clip.mp4 -vn -c:a copy audio.m4a`, then `... multix gemini transcribe --files audio.m4a --prompt "Transcript with timestamps" --format markdown --output transcript.md`
+- **Feedback into the pivot loop.** OCR'd handles/emails/phones, extracted GPS/landmarks, transcribed names, and read logos become new seeds and re-enter the Enrich loop (§Recursive pivot loop). Face matches stay **held pending corroboration**.
+- **Tags:** mark such findings `[vision]` (multix) and `[media]` (ffmpeg/imagemagick preprocessing).
+- **No Gemini key? Keyless fallback (own models).** OCR + sign/landmark/logo/face read → the **host agent's own vision** (read the image in-session — Claude Code/Codex are multimodal) plus `tesseract` for dense OCR; A/V transcription → **local Whisper** (`whisper-ctranslate2`, offline) after the same `ffmpeg` audio extraction. A `GEMINI_API_KEY` only upgrades quality. Tag these findings `[vision-local]`.
 
 ---
 
@@ -1438,8 +1454,11 @@ If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv`
 | Go toolchain | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` |
 | mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
 | **agent-browser** (interactive browser) | `npm i -g agent-browser` or `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` (or `cargo install`) → `agent-browser install` |
+| **ffmpeg, imagemagick (`magick`), rmbg-cli** — A/V + image evidence preprocessing (keyframes, audio extract, resize, bg-removal) | `winget install Gyan.FFmpeg ImageMagick.ImageMagick` + `npm i -g rmbg-cli` | `brew install ffmpeg imagemagick` + `npm i -g rmbg-cli` | `sudo apt install -y ffmpeg imagemagick` + `npm i -g rmbg-cli` |
 
 **Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga and TruffleHog → GitHub release binary per OS/arch (`go install` rejects TruffleHog's module for its `replace` directives; the PyPI `trufflehog` is the abandoned v2 Python tool and does not accept v3 syntax). **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
+
+**Vision / A-V analysis — `multix` CLI (standalone, `npx`, OS-identical):** no install step — run via `npx --yes --prefer-online --package=@mrgoonie/multix@latest -- multix ...`. Needs **Node.js 20+** (`winget install OpenJS.NodeJS.LTS` / `brew install node` / `sudo apt install -y nodejs npm`) and `GEMINI_API_KEY` (read from env or the skill's own `$SKILL_DIR/.env`; env-var override applies, same as every other key). Pre-warm the npm cache with `... multix --version` before network-restricted runs. Missing key/Node → log a collection gap and fall back to `exiftool` metadata.
 
 The exact winget IDs, brew formulae, apt packages, uv commands, import names, and Go module paths for **every** tool are tabulated in [`scripts/platform-setup.md`](scripts/platform-setup.md) §5. To provision a fresh machine in one shot, run the bundled installer for the detected OS:
 

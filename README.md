@@ -310,6 +310,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **CTI** | Infostealer-log analyzer (`/stealer-log`) | Family ID, victim-vs-operator profiling, cross-log actor correlation, IOC + raw-artifact extraction |
 | **Recon** | Admin / sensitive-endpoint detection | Subdomain-prefix + path + CJK classifier (`admin`, `adm`, `kef`, `ador`, `panel`…) |
 | **Collection** | agent-browser integration | Primary interactive browser ([vercel-labs](https://github.com/vercel-labs/agent-browser)): CDP, accessibility-tree snapshots, screenshots; complementary to Scrapling, no API key for core |
+| **Collection** | Media & vision analysis | Image/A-V evidence is content-analyzed: OCR + sign/landmark/logo/face read and A/V transcription, with FFmpeg keyframe/audio preprocessing; extracted text/GPS/entities re-enter the pivot loop. **Keyless by default** — the agent's own vision + `tesseract` OCR + local Whisper; a `GEMINI_API_KEY` upgrades quality/scene-reading. Standalone (`npx` multix + `ffmpeg`). See [`techniques/media-vision-analysis.md`](techniques/media-vision-analysis.md) |
 | **Reliability** | Fresh-VPS install hardening + CI | root/sudo + prereq bootstrap; smoke test + GitHub Actions on a minimal root Ubuntu container |
 
 <details>
@@ -617,6 +618,25 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
 ## Quick Start
 
+> [!TIP]
+> **New here, or on a fresh VPS?** The steps below take you from an empty box to a finished case in a couple of minutes. No API keys needed for core.
+
+```bash
+# 1 — install the tools (Linux/macOS): Python + ffmpeg + Node + all OSINT tools
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+# 2 — register the skill + 9 /cti* commands + MCP with Claude Code, then RESTART Claude Code
+bash ~/.claude/skills/cti-expert/scripts/register.sh
+#     (Windows: run register.sh from Git Bash / WSL — it uses symlinks. Restart Claude Code after.)
+# 3 — investigate anything (keyless, runs to closure):
+/cti example.com
+# 4 — optional: unlock reverse pivots + image vision
+/apikeys set shodan <KEY>     # host / favicon reverse
+/apikeys set gemini <KEY>     # image OCR, sign/landmark read, A-V transcription
+```
+
+Windows, `--all`, and Codex variants: see [Installation](#installation).
+
 ### How commands work — read this first
 
 There is **one command to remember: `/cti <target>`.** It looks at what you gave it — a domain, IP, email, username, phone, wallet, hash, or APK — and runs the right chain automatically. That's usually all you need.
@@ -711,6 +731,31 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /brief                              # Plain-language summary
 /workspace save                     # Save case workspace state (resume later)
 ```
+
+### 7 &mdash; Full pipeline & full harness (deepest mode)
+
+`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 52 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
+
+```bash
+/cti-expert                           # load the skill first (the commands below are convention commands)
+/backend                              # confirm the deep layer is live (Tier-1 = 52 MCP tools)
+
+# A — full DETERMINISTIC pipeline (no LLM key, reproducible, persisted to cases/<ID>/)
+printf "example.com\nsibling.com\n" > seeds.txt
+/pipeline open CASE-0001 seeds.txt    # collect → ingest → recall → risk → cluster → ICD-203 assessment
+/clusters CASE-0001                   # judge by same-operator cluster, with KB-wide prevalence
+/frontier CASE-0001                   # unresolved gaps: free next seeds + deferred metered leads
+
+# B — full LLM-driven HARNESS (whole-case orchestration to convergence)
+/harness open CASE-0001 example.com sibling.com
+/harness continue CASE-0001 --depth 4 # Collect→Correlate→Assess, cross-case, until the frontier empties
+/harness status CASE-0001             # status needs no key
+/loop CASE-0001                       # or: collect↔assess repeatedly until it converges
+
+/cti-report CASE-0001 --pdf           # deliver: relationship graph + polished PDF/DOCX
+```
+
+> **Pipeline vs harness:** `/pipeline` is the deterministic bread-and-butter chain — no LLM key, byte-reproducible. `/harness` is the LLM-driven orchestration that reasons across cases to convergence (the deepest mode); it needs the venv deps (`uv pip install -r requirements.txt`, already run by the installer) plus an LLM key for `continue`. Both persist under `cases/<ID>/`; the registered cold-prompt alias `/cti-case <ID> <seeds>` runs the deterministic pipeline.
 
 <br>
 

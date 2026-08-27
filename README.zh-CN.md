@@ -310,6 +310,7 @@
 | **CTI** | 信息窃取日志分析器（`/stealer-log`） | 家族识别、受害者与运营者画像、跨日志行为体关联、IOC 与原始数据提取 |
 | **侦察** | 管理后台／敏感端点检测 | 子域前缀 + 路径 + CJK 分类器（`admin`、`adm`、`kef`、`ador`、`panel`…） |
 | **采集** | 集成 agent-browser | 主要的交互式浏览器（[vercel-labs](https://github.com/vercel-labs/agent-browser)）：CDP、无障碍树快照、截图；与 Scrapling 互补，核心功能无需 API 密钥 |
+| **采集** | 媒体与视觉分析 | 图像/音视频证据做内容分析：OCR + 招牌/地标/logo/人脸识读与音视频转写，配合 FFmpeg 关键帧/音频预处理；提取出的文本/GPS/实体重新进入枢轴循环。**默认无需密钥** —— 智能体自身的视觉 + `tesseract` OCR + 本地 Whisper；`GEMINI_API_KEY` 提升质量/场景识读。独立运行（`npx` multix + `ffmpeg`）。参见 [`techniques/media-vision-analysis.md`](techniques/media-vision-analysis.md) |
 | **可靠性** | 全新 VPS 安装加固 + CI | root/sudo + 前置依赖引导；在最小化 root Ubuntu 容器上做冒烟测试 + GitHub Actions |
 
 <details>
@@ -593,6 +594,25 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 ## 快速入门
 
+> [!TIP]
+> **新手，或在一台全新 VPS 上？** 下面几步带你从一台空机器到一个完成的案件，只需几分钟。核心功能无需 API 密钥。
+
+```bash
+# 1 — 安装工具（Linux/macOS）：Python + ffmpeg + Node + 全部 OSINT 工具
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+# 2 — 向 Claude Code 注册技能 + 9 个 /cti* 命令 + MCP，然后重启 Claude Code
+bash ~/.claude/skills/cti-expert/scripts/register.sh
+#     （Windows：在 Git Bash / WSL 中运行 register.sh —— 它使用符号链接。之后重启 Claude Code。）
+# 3 — 调查任何东西（无密钥，运行至闭合）：
+/cti example.com
+# 4 — 可选：解锁反向枢轴 + 图像视觉（已带无密钥回退）
+/apikeys set shodan <KEY>     # 主机 / favicon 反查
+/apikeys set gemini <KEY>     # 图像 OCR、招牌/地标识读、音视频转写
+```
+
+Windows、`--all` 和 Codex 变体：见[安装](#安装)。
+
 ### 命令是怎么工作的 —— 请先读这段
 
 **只需要记住一条命令：`/cti <目标>`。** 它会看你给了什么 —— 域名、IP、邮箱、用户名、电话、钱包、哈希或 APK —— 并自动运行相应的调查链。通常这就够了。
@@ -687,6 +707,31 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 /brief                              # 通俗语言摘要
 /workspace save                     # 保存案件工作区状态（稍后恢复）
 ```
+
+### 7 &mdash; 完整流水线与完整 harness（最深模式）
+
+`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 52 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
+
+```bash
+/cti-expert                           # 先加载技能（下面是约定命令）
+/backend                              # 确认深度层在线（Tier-1 = 52 个 MCP 工具）
+
+# A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
+printf "example.com\nsibling.com\n" > seeds.txt
+/pipeline open CASE-0001 seeds.txt    # 采集 → 入库 → recall → 风险 → 聚类 → ICD-203 研判
+/clusters CASE-0001                   # 以同一运营者聚类为单位判断，附全库普遍度
+/frontier CASE-0001                   # 未解决的缺口：已发现的免费下一批种子 + 被推迟的计费线索
+
+# B — LLM 驱动的完整 HARNESS（整案编排至收敛）
+/harness open CASE-0001 example.com sibling.com
+/harness continue CASE-0001 --depth 4 # 采集→关联→研判，跨案件，直到 frontier 耗尽
+/harness status CASE-0001             # status 无需密钥
+/loop CASE-0001                       # 或：采集↔研判反复直到收敛
+
+/cti-report CASE-0001 --pdf           # 交付：关系图 + 精美 PDF/DOCX
+```
+
+> **流水线 vs harness：** `/pipeline` 是确定性的基础链（无需 LLM 密钥，逐字节可复现）。`/harness` 是 LLM 驱动、跨案件推理至收敛的编排（最深模式）；它需要 venv 依赖（`uv pip install -r requirements.txt`，安装器已运行）外加用于 `continue` 的 LLM 密钥。两者都持久化在 `cases/<ID>/` 下；已注册的冷启动别名 `/cti-case <ID> <seeds>` 运行确定性流水线。
 
 <br>
 
