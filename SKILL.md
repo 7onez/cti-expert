@@ -1,7 +1,7 @@
 ---
 name: cti-expert
 description: "Cyber threat intelligence and OSINT analysis toolkit. Runs structured investigations and delivers analyst-grade intelligence products with sourced, trust-scored findings. Use for OSINT and CTI cases, digital-footprint and exposure review, domain/subdomain/DNS/certificate recon, web-infrastructure pivoting (favicon hashes, tracker IDs, TLS certs, phishing-kit fingerprinting, campaign clustering), username/email/phone enumeration, breach and infostealer-log triage, image forensics, geolocation, crypto-wallet and IBAN/bank-account tracing, darknet search, M365/Azure and SaaS tenant recon, China/Sinophone recon (ICP filings, PRC corporate registries, Baidu/FOFA/Quake/ZoomEye), vulnerability and ransomware lookup, threat modeling, PII redaction, and structured reporting. Commands include /case, /sweep, /query, /webpivot, /username, /phone, /email-deep, /breach-deep, /icp, /cn-corp, /iban, /stealer-log, /exposure, /threat-model, /report, /brief, /redact, /apikeys."
-version: "2.8"
+version: "2.11"
 author: "Hieu Ngo - chongluadao.vn"
 ---
 
@@ -41,17 +41,25 @@ Every investigation follows four phases:
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` + `/icp` (domain/URL targets), `/cn-corp` · `/iban` · `/hash-id` on discovery |
 | **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) **automatically until the frontier is exhausted**, no approval prompts (`autonomy=auto`). Acquire↔Enrich iterate, not run once. |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)) |
-| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle** |
+| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle**. When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
 
 > **`/case` and web-infra pivoting.** For a **domain or URL** target, `/case` includes
 > web-infrastructure pivoting (`/webpivot`) in the Acquire phase. It runs **keyless by default**
 > (crt.sh + passive DNS + anonymous urlscan) and **upgrades automatically when premium keys are
-> set** via `/apikeys` (Shodan/Censys/FOFA/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML). Because
+> set** via `/apikeys` (Shodan/Censys/FOFA/Hunter.how/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML). Because
 > `/webpivot` can fetch the target directly, for hostile infrastructure it prefers passive capture
 > (urlscan/Wayback) — see [`techniques/web-pivot.md`](techniques/web-pivot.md). It is **not** run for
 > username/phone/person targets.
+>
+> **⭐ ChongLuaDao is the first-party premium upgrade.** With `CHONGLUADAO_API_KEY` set
+> (`/apikeys set chongluadao <KEY>`), Acquire/Enrich fold CLD's own datasets into `/scam-check`,
+> `/threat-check`, `/phone`, `/breach-deep`, `/email-deep`, `/vuln-check` and `/impersonate`, and
+> `/cld <target>` is the direct entry point. Your client connects **only to ChongLuaDao, never
+> to the target** (provable from `scripts/cld/cld_api.py`); for URL/AI/IP checks CLD does any
+> target fetch server-side — the safe first-touch verdict on a live scam funnel before a direct
+> pivot. Full catalog + AEAD placement: [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md).
 >
 > **Archive IOC harvest runs by default too.** For domain/URL targets the Acquire phase also runs
 > `wayback_harvest.py <domain> --indicators` (add `--urlscan` when `URLSCAN_API_KEY` is set),
@@ -87,7 +95,7 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > deep layers share one artifact shape end-to-end.
 >
 > **Self-contained & self-resolving.** `/backend` resolves to **SELF** (in-repo) — no external
-> setup. Deps: `uv venv && uv pip install -r requirements.txt` (harness SDK/MCP + IntelGraph
+> setup. The bundled installer (`scripts/install.{sh,ps1}`) provisions the deep layer; or by hand: `uv venv && uv pip install -r requirements.txt` (harness SDK/MCP + IntelGraph
 > renderers; the collector + KB + deterministic pipeline are stdlib and need none). An explicit
 > `$INTEL_HOME` still overrides for a shared external KB. Full architecture, the op map, and the
 > evidence-envelope schema: [`connectors/intel-backend.md`](connectors/intel-backend.md).
@@ -197,6 +205,59 @@ the full Wayback timeline, archive.today, and the local KB. A parked apex freque
 subdomains: enumerate CT and the Wayback CDX host histogram before writing a seed off. Report an
 empty result as empty; a collector that returned nothing is a finding, not something to omit.
 
+### Egress control — proxy / rotation
+
+On a hostile case your **egress IP is a selector too** — a direct fetch of scam
+infrastructure exposes your real address to the operator, and repeated lookups
+from one IP get you rate-limited or fingerprinted. The `/cti-proxy` layer routes
+every **HTTP(S)** request the collectors make (keyless crt.sh, Wayback/CDX,
+urlscan, the CLD connector, WHOIS, analytics reverses, `/apikeys test`) through a
+configured proxy — or a **rotation pool** with automatic failover — so collection
+egresses from an IP you choose, and successive calls can egress from different
+ones. It also tunnels the collector's raw-socket TLS cert probe (`/cert-pivot`
+leaf fingerprint) via CONNECT, **failing closed** rather than dialling direct.
+
+> **Raw-socket TLS probes are handled too — nothing dials the target directly
+> behind a proxy.** The cert-SHA probes (`wp_pssl.py`, `wp_recon.py`) and JARM
+> (`jarm.py`) all take their socket from `cti_proxy.proxied_connection`: under an
+> HTTP pool it is **CONNECT-tunnelled and fails closed** (never a direct dial);
+> under a SOCKS pool the in-process socket hook carries it (installed at import via
+> `wp_common`, and `jarm.py`'s own bootstrap) **when PySocks is present in that
+> interpreter** — if it is not (e.g. the `intel.py` pipeline runs tools under
+> `$INTEL_PY`), the hook is absent and these probes **fail closed instead of
+> leaking**, so install `pysocks` there; with no proxy it dials direct. As a
+> policy choice the `/webpivot` analyze path additionally **skips JARM under an
+> HTTP pool** (ten tunnelled handshakes are slow) and runs it under SOCKS / no
+> proxy — that gate honors the env/pool proxy, not just an explicit `--proxy`.
+
+```bash
+uv run scripts/proxy/proxy.py add http://user:pass@host:3128 --label res-1
+uv run scripts/proxy/proxy.py add 1.2.3.4:8080        # bare host:port -> http://
+uv run scripts/proxy/proxy.py rotation round-robin    # | random | sticky | off
+uv run scripts/proxy/proxy.py test                    # confirm each proxy's egress IP
+uv run scripts/proxy/proxy.py status                  # pool + policy + toggles
+uv run scripts/proxy/proxy.py disable                 # back to the real IP
+```
+
+- It is **opt-in and additive** — with no proxy configured the skill runs exactly
+  as before, from your real IP. A pool, once added, is enabled by default.
+- **No-leak default:** with a pool set, a failed pool is **not** silently retried
+  direct — turn that on deliberately with `allow-direct on`.
+- **Precedence:** env `CTI_PROXY` / `CTI_PROXIES` (and standard `HTTPS_PROXY`)
+  override the stored pool for a one-off session; the store lives in
+  `scripts/proxy/proxies.json` (gitignored, chmod-600 — it may hold credentials).
+- **Coverage:** the broad collectors (`scripts/…`) get full in-process rotation +
+  failover; the deep pipeline (`/backend`, `/pipeline`, `/harness`) inherits the
+  egress for every tool it spawns (one proxy per run). For an ad-hoc tool call or
+  the MCP server, export first: `eval "$(python3 scripts/proxy/proxy.py use)"`.
+- **Formats:** `add` accepts a full URL, a bare `host:port`, a provider
+  `host:port:user:pass` export, a `user:pass@host:port` authority, or a pasted
+  `http_proxy="…"` line. HTTP/HTTPS get the full rotation + failover + `no_proxy`
+  behavior; `socks5://`/`socks5h://` auto-install PySocks on `add` but rotate only
+  per run — no in-process failover, and `no_proxy` is not enforced (the global
+  socket hook routes everything).
+- Full reference: `/cti-proxy` (`commands/cti-proxy.md`).
+
 ---
 
 ## 3. Command Reference
@@ -208,7 +269,7 @@ email, username, phone, wallet, hash, APK — through recall → collect → clu
 English works identically ("analyze example.com and pivot the infrastructure"); the command form
 just removes ambiguity.
 
-Eight commands are **registered with Claude Code** by `bash scripts/register.sh` and work from a
+Nine commands are **registered with Claude Code** by `bash scripts/register.sh` and work from a
 cold prompt in any project:
 
 | Command | Does | Equivalent T2 op | Equivalent T1 tool |
@@ -221,6 +282,7 @@ cold prompt in any project:
 | `/cti-check <indicator>` | false-positive control | `reference check` | `reference_check`, `reference_add` |
 | `/cti-report <ID>` | render graph + PDF/DOCX | `graph`, `report` | `render_diagram`, `render_report` |
 | `/cti-status` | backend / MCP / credits health | `backend.py status` | `api_usage` |
+| `/cti-proxy [op]` | egress proxy / rotation pool for **all** outbound calls | *(none — CLI only)* | *(none — CLI only)* |
 
 > **Every other `/command` in §3 is a convention read from this file, not a registered command.**
 > Once the skill is loaded they are unambiguous instructions; typed at a cold prompt they do
@@ -249,18 +311,19 @@ Commands grouped by AEAD phase.
 | `/sweep [target]` | Multi-vector recon on any target type | `/sweep @username` |
 | `/query [subject]` | Builds 12–15 advanced search operator queries | `/query example.com` |
 | `/username [handle]` | Enumerate handle across 3000+ platforms | `/username johndoe` |
-| `/phone [number]` | Carrier, line type, reputation, public associations | `/phone +84901234567` |
-| `/email-deep [email]` | Accounts, breach history, infrastructure | `/email-deep u@domain.com` |
+| `/phone [number]` | Carrier, line type, reputation, public associations, **infostealer exposure** (Hudson Rock); **VN scam-phone reports (ChongLuaDao)** when keyed | `/phone +84901234567` |
+| `/email-deep [email]` | Accounts, breach history, infrastructure; **breach/exposure records (ChongLuaDao data-leaks)** when keyed | `/email-deep u@domain.com` |
 | `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` | `/subdomain example.com` |
-| `/breach-deep [email]` | Multi-source breach lookup with context | `/breach-deep u@domain.com` |
+| `/breach-deep [email]` | Multi-source breach lookup with context — Hudson Rock, IntelX, **ChongLuaDao data-leaks/exposure** when keyed | `/breach-deep u@domain.com` |
 | `/traffic [domain]` | Traffic estimation, ranking, audience data | `/traffic example.com` |
 | `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics | `/visitors example.com` |
 | `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) | `/techstack example.com` |
 | `/competitors [domain]` | Competitor & related site discovery | `/competitors example.com` |
 | `/secrets [target]` | Exposed credentials in repos and paste sites | `/secrets github.com/org` |
 | `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks | `/github-osint github.com/org/repo` |
-| `/threat-check [target]` | IP/domain/URL/hash threat intelligence | `/threat-check 185.1.1.1` |
-| `/scam-check [domain]` | Phishing/scam/malicious domain check | `/scam-check susp-site.xyz` |
+| `/cld [target]` ⭐ | **ChongLuaDao first-party premium connector** (`scripts/cld/cld_api.py`, needs `CHONGLUADAO_API_KEY`). Auto-routes any indicator (url/domain/ip/hash/email/phone/asn/CVE/.onion; non-indicators are skipped, never a blind metered call) to CLD's own datasets: URL verdict vs a ~20M denylist, deep **AI URL analysis** (risk 1–10 + findings), IoC verdict+evidence, denylist/brand-lookalike search, data-leak/breach **exposure + full data-leak module** (machines, stolen/exposed creds, cookies, leaked-accounts, devices, full-export — async start→poll), CVE/KEV + actor feeds, STIX/MISP export. Your client connects **only to CLD, never to the target**; CLD fetches server-side. **30-min timeout ceiling** (`--timeout`); **403/404 → skip, not fail**. Subcmds: `route\|checkurl\|analyze\|denylist\|checkphone\|whois\|burner\|ioc\|exposure\|leaks\|breaches\|machines\|stolen-credentials\|exposed-credentials\|cookies\|leaked-accounts\|devices\|device-detail\|device-credentials\|full-export\|brand-domains\|vulns\|actors\|onion\|feed`. See `connectors/chongluadao-api.md` | `/cld https://scam-site.top` |
+| `/threat-check [target]` | IP/domain/URL/hash threat intelligence — **ChongLuaDao IoC verdict + evidence** (registration, reputation, threat feeds/reports) when keyed | `/threat-check 185.1.1.1` |
+| `/scam-check [domain]` | Phishing/scam/malicious domain check — upgraded by **ChongLuaDao** `checkurl` (20M-URL denylist verdict) + `analyze` (deep AI, risk 1–10); client talks only to CLD, which fetches the target server-side | `/scam-check susp-site.xyz` |
 | `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) | `/webpivot https://scam-site.top` |
 | *(automatic — no flag)* | Four layers now run on **every** collection and need no command. **Asset layer:** fetches the page's own JS bundles and re-runs every extractor over the source — the fix for SPA/white-label kits where the shell HTML is empty; yields off-apex `api_endpoint`/`websocket_endpoint` (the backend survives a front-end re-skin), `build_env:<KEY>` tenant tokens, `js_bundle_sha256`, and via `sourceMappingURL` the operator's own `dev_username`/`dev_project`. **SPA route table:** reads the app's router literals — `spa_route:admin`, `spa_route:funnel`, and a `spa_route_signature` that survives a re-skin. Zero extra requests, routes are leads only and are never fetched. **Well-known/policy files:** a fixed standards list (never a wordlist, no path brute-forcing) → `adstxt_publisher`, `apple_team_id`, `security_contact`. **JARM:** TLS-stack fingerprint of the server. Suppress with `--no-assets` / `--no-well-known`; cap fetches with `--assets-max N` | *(runs inside `/cti-pivot`)* |
 | `/capabilities` | **Run this first, and again before reporting any "nothing found".** Which optional API keys are configured, and for each absent one the *evidence class that went unqueried* plus the free path that substitutes. A keyless run extracts every artifact but cannot **reverse** most of them — so "no sibling domains" with no FOFA/urlscan key is a fact about the credentials, not about the operator. Every collection also records this in `meta.capability`; carry the limitation statement into the assessment and cap confidence accordingly. T2: `capabilities` · T1: `capability_check` | `/capabilities` |
@@ -272,7 +335,7 @@ Commands grouped by AEAD phase.
 | `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys) | `/cert-pivot scam-site.top` |
 | `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline | `/sensitive-paths waymore_index.txt` |
 | `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable/MX/free/role) | `/email-hygiene admin@site.top` |
-| `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
+| `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD; **ChongLuaDao CVE/KEV threat-feed** when keyed) | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
 | `/ransomware-check [org]` | Check if org is a ransomware victim | `/ransomware-check "Acme Corp"` |
 | `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
 | `/gdoc [url]` | Extract metadata/owner from Google document | `/gdoc https://docs.google.com/...` |
@@ -291,13 +354,13 @@ Commands grouped by AEAD phase.
 <!-- dork-integration:phase-05 end -->
 | `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS | `/dns-history example.com` |
 | `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) | `/cert-history example.com` |
-| `/email-permute [name] [domain]` | Generate email permutations from name + domain | `/email-permute "John Smith" company.com` |
 | `/proton-check [email]` | Proton Mail account creation date via PGP key | `/proton-check user@proton.me` |
 | `/pgp-lookup [email]` | PGP key search — creation date, UIDs, signatures | `/pgp-lookup dev@example.com` |
 | `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net | `/wifi "HomeNetwork"` |
 | `/wifi --bssid [mac]` | Exact AP lookup by MAC address | `/wifi --bssid AA:BB:CC:DD:EE:FF` |
 | `/register [name]` | Add a subject to the case workspace | `/register JohnDoe` |
 | `/snapshots [url]` | List/fetch archived Wayback snapshots. **Note: WebFetch is blocked from web.archive.org (robots.txt) — use `scripts/webpivot/wayback_fetch.py` to list captures and pull archived content.** See `analysis/archive-explorer.md` | `/snapshots example.com` |
+| `/fallback [domain]` | **Dead-seed recovery** (§2.5) — crt.sh + full Wayback timeline + archive.today + local KB when a seed returns zero pivots / parked / NXDOMAIN; enumerates CT + Wayback host history before a seed is written off. T2: `fallback` · T1: `fallback_probe` | `/fallback scam-site.top` |
 
 ### Enrich
 
@@ -335,7 +398,6 @@ Commands grouped by AEAD phase.
 | `/modify [name]` | Update a subject record | `/modify JohnDoe` |
 | `/archive-subject [name]` | Remove subject from active tracking | `/archive-subject JohnDoe` |
 | `/find [query]` | Search across all subjects | `/find domain:example.com` |
-| `/show-trail [subject]` | Full evidence trail | `/show-trail JohnDoe` |
 | `/blind-spots` | Prioritized investigation gap analysis | `/blind-spots` |
 | `/source-check` | Batch source URL accessibility check | `/source-check` |
 | `/drift [subject]` | Temporal risk score tracking | `/drift example.com` |
@@ -386,7 +448,7 @@ Commands grouped by AEAD phase.
 
 | Command | What It Does | Example |
 |---------|-------------|---------|
-| `/apikeys` | Manage premium/pro API keys (Shodan, Censys, FOFA, SecurityTrails, DNSLytics, urlscan-PRO, WhoisXML, Hudson Rock, IntelX, GitHub, SerpAPI…) — `status`/`set`/`unset`/`test`/`unlocks`. Keys **upgrade existing techniques** (especially `/webpivot`); keyless/free stays the default. Stored chmod-600 in `$SKILL_DIR/.env` (gitignored), env-var override. See `handbook/api-keys.md` | `/apikeys set shodan <KEY>` |
+| `/apikeys` | Manage premium/pro API keys (**ChongLuaDao ⭐ first-party**, Shodan, Censys, FOFA, SecurityTrails, DNSLytics, urlscan-PRO, WhoisXML, Hudson Rock, IntelX, GitHub, SerpAPI…) — `status`/`set`/`unset`/`test`/`unlocks`. Keys **upgrade existing techniques** (especially `/cld` + `/webpivot`); keyless/free stays the default. Stored chmod-600 in `$SKILL_DIR/.env` (gitignored), env-var override. See `handbook/api-keys.md` | `/apikeys set chongluadao <KEY>` |
 | `/backend` | Detect/report the optional persistent-intelligence backend and pick the tier — **Tier 1** typed MCP (`intel-harness`) → **Tier 2** CLI → **Tier 3** stateless. Runs `scripts/backend/backend.py` to resolve `$INTEL_HOME` (env → `.mcp.json` → sibling dir → symlink) and print the tier line. All the backend commands below dispatch through `scripts/backend/intel.py <op>` at Tier 2 (or the typed MCP tool at Tier 1). `intel.py list` maps **all 73 engine ops** (full CLI parity — CDN ranges, graph-build, hypothesize, calibration, evidence-report, case-store, cost, deterministic `pipeline`, …); `intel.py mcp` prints/writes the `.mcp.json` that enables Tier 1 ("the server"). See `connectors/intel-backend.md` | `/backend` · `/backend check` |
 | `/kb [query]` | **Built-in.** Query the shared knowledge base. **T2:** `intel.py kb --stats`/`--entity <v>`/`--cluster <domain>`/`--shared --min N`; `intel.py operators list`. **T1:** `kb_entity`/`kb_cluster`/`kb_query_shared` | `/kb --entity example.com` |
 | `/recall [seed]` | **Built-in.** "Have I seen this before?" — check a seed against every prior case before collecting. **T1:** `which_cases`/`domain_verdict` (typed MCP). **T2:** `intel.py recall <seed>` (query.py `--entity`; which_cases/domain_verdict are MCP-only). Surfaces known operators up front | `/recall scam-site.top` |
@@ -608,6 +670,13 @@ Reference directory: `techniques/`
 | `prompt-injection-audit.md` | AI/LLM security: prompt injection classes, agent/MCP security, permission boundary audit |
 | `stealer-log-analysis.md` | Infostealer-log triage: family fingerprinting (RedLine/Vidar/StealC/Lumma/META/traffer), victim-vs-operator profiling, cross-log actor correlation, IOC + attribution extraction (`uv run` parser, raw artifacts shown) |
 | `agent-browser.md` | Interactive browser collection & evidence capture via vercel-labs/agent-browser (CDP, accessibility-tree `@eN` snapshots, screenshots; primary interactive collector, complementary to Scrapling) |
+| `phishing-domain-survival.md` | Registration/DNS strategy profiling — maliciously-registered vs **compromised** classification + takedown-survival outlook from WHOIS/DNS (`scripts/phish_domain_survival.py`, offline, zero-dep); eCrime 2026 "Built to Last?" |
+| `clickfix-clipboard-hijack.md` | ClickFix / PasteJacking clipboard-hijack detection — clipboard-write + lure + OS-command co-occurrence, decodes PowerShell `-EncodedCommand` → C2 IOCs (`scripts/clickfix_detect.py`, offline, zero-dep); eCrime 2026 "PasteJacked" |
+| `visibility-aware-html.md` | Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen brand text a naive parser misses (`scripts/html_visibility_analysis.py`, offline, zero-dep); eCrime 2026 "Visibility-Aware HTML Analysis" |
+| `apk-permission-scope.md` | APK permission-scope risk scoring — dangerous-permission combos (accessibility+overlay+SMS) = on-device-fraud capability; combination is the signal, capability≠guilt (`scripts/apk_permission_scope.py`, offline, zero-dep); eCrime 2026 "The 'Allow' Reflex" |
+| `kit-template-attribution.md` | Phishing kit/template structural fingerprint + similarity → same-kit lineage; commodity-template match graded as noise, never auto-merged (`scripts/kit_template_fingerprint.py`, offline, zero-dep); eCrime 2026 tree-structured attribution |
+| `renderer-confirmation.md` | Renderer-level confirmation of ClickFix + visibility — feeds runtime clipboard writes / computed-hidden elements into the static detectors and reconciles (`scripts/render_confirm.py`; renderer optional, degrades to a note); eCrime 2026 PasteJacked + Visibility-Aware HTML |
+| `phishtrace-dynamic-features.md` | Runtime-trace phishing characterization — redirects / exfil endpoints / cloaking; exfil hosts are IOCs not attribution; thin trace on a flagged page = cloaked, never benign (`scripts/phishtrace_features.py`, offline, zero-dep); eCrime 2026 "PhishTrace" |
 
 ---
 
@@ -680,6 +749,12 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
 - **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
 - **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). HTML **"Print → Save as PDF"** covers most PDF needs for free.
 - Explicit machine-format subcommands always emit that format directly: `/report json`, `/report csv`, `/report ioc`.
+- **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
+  ```bash
+  S="$SKILL_DIR/scripts"; R="CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]"
+  uv run "$S/cti_text_normalize.py" "$R.md" "$R.json"   # rewrites — → - in place; no-op if clean
+  ```
+  Prefer writing plain `-` while drafting so this step is a no-op. It rewrites only when a dash is present and is safe for .md/.json/.csv alike (typographic dashes occur only inside string content, never in structural syntax).
 
 **The HTML, JSON, CSV and IOC outputs all derive from one `report JSON`.** Build it once, then run the generators below.
 
@@ -862,6 +937,7 @@ The **interactive HTML report** (default deliverable) renders all of these as li
 | Obsidian | `connectors/obsidian-setup.md` | Linked markdown notes |
 | Notion | `connectors/notion-schema.md` | Structured database |
 | Intel backend | `connectors/intel-backend.md` | **Optional** persistent KB + cross-case correlation via the `intel_engine` engine (MCP/CLI). Absent → stateless as normal. Enables `/backend`, `/kb`, `/recall`, `/binary` |
+| **ChongLuaDao** ⭐ | `connectors/chongluadao-api.md` | **First-party** premium connector (`scripts/cld/cld_api.py`) — IoC/denylist/breach/data-leak/AI/feeds. Enables `/cld`; upgrades `/scam-check`,`/threat-check`,`/phone`,`/breach-deep`,`/email-deep`,`/email-hygiene`,`/vuln-check`,`/impersonate`. Needs `CHONGLUADAO_API_KEY` |
 
 ---
 
@@ -1053,6 +1129,14 @@ cti-expert/
 │   ├── install.sh                   macOS/Linux/Git-Bash/WSL installer (uv-first; brew/apt + pip/pipx fallback)
 │   ├── stealer_log_parse.py         Infostealer-log analyzer — attribution, profiling, IOCs (PEP 723 / `uv run`, zero-dep)
 │   ├── iban_analyze.py              IBAN validate + decompose (ISO 13616/7064) → bank code, risk signals (PEP 723, zero-dep)
+│   ├── phish_domain_survival.py     Phishing-domain registration/DNS profiling → maliciously-registered vs compromised + survival outlook (PEP 723, zero-dep)
+│   ├── clickfix_detect.py           ClickFix / PasteJacking clipboard-hijack detector + `-enc` decode → C2 IOCs (PEP 723, zero-dep)
+│   ├── html_visibility_analysis.py  Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen text (PEP 723, zero-dep)
+│   ├── apk_permission_scope.py      APK permission-scope risk scoring (BinaryPivot ext) — combo-based on-device-fraud capability; UTF-8/UTF-16 AXML decode (PEP 723, zero-dep)
+│   ├── kit_template_fingerprint.py  Phishing kit/template structural fingerprint + similarity + commodity-trap grading (PEP 723, zero-dep)
+│   ├── render_confirm.py            Renderer-level confirmation — reconciles static + rendered ClickFix/visibility evidence (PEP 723; optional Playwright/agent-browser)
+│   ├── phishtrace_features.py       PhishTrace dynamic-feature characterization from a runtime trace → verdict + exfil IOCs (PEP 723, zero-dep)
+│   ├── cld/cld_api.py               ChongLuaDao premium API client — IoC / denylist / breach + full data-leak module (async jobs) / AI URL analysis / STIX-MISP feeds (PEP 723 / `uv run`, zero-dep, X-API-Key)
 │   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
 │   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
 │   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
@@ -1080,6 +1164,7 @@ cti-expert/
 │   ├── report-template.md      INTSUM format specification
 │   ├── admin-endpoint-indicators.md  Admin-panel / sensitive-endpoint detection vocab & rules
 │   ├── analytic-standards.md    Likelihood bands, 5W1H coverage overlay, ACH (competing hypotheses)
+│   ├── aam-actor-modeling.md   AAM actor-state overlay for /threat-model — OODA faces + Mirror/Twin/Opposite/Lever (eCrime 2026 "Modeling Adversaries Through Chaos")
 │   ├── pivot-artifacts.md      Pivot-artifact catalog (favicon, trackers, wallets, certs…)
 │   ├── pivot-services.md       Reverse-lookup engines per artifact — hash algo, cost, API/key notes
 │   ├── api-keys.md             Premium/pro API key management and unlocks
@@ -1099,7 +1184,9 @@ cti-expert/
 └── connectors/                 External tool integrations
     ├── maltego-export.md
     ├── obsidian-setup.md
-    └── notion-schema.md
+    ├── notion-schema.md
+    ├── intel-backend.md
+    └── chongluadao-api.md
 ```
 
 ---
@@ -1122,6 +1209,9 @@ Which techniques activate per target type in a `/case` run:
 | `/secrets` | — | ✅ | ✅ | ✅ | — | — |
 | `/github-osint` | ✅* | ✅ | ✅ | ✅ | ✅* | — |
 | `/scam-check` | — | ✅ | ✅ | — | — | — |
+| `phish-domain-survival` (registration/DNS class) | — | ✅ | ✅ | — | — | — |
+| `clickfix-detect` (page clipboard-hijack) | — | ✅ | ✅ | — | — | — |
+| `html-visibility` (hidden-content evasion) | — | ✅ | ✅ | — | — | — |
 | `/branch` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `/gdoc` | — | ✅ | ✅ | — | — | — |
 | `/sharelink` | ✅ | — | ✅ | ✅ | ✅ | — |

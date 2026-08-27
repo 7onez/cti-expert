@@ -4,7 +4,7 @@
 
 ### 网络威胁情报与开源情报分析工具箱
 
-**把 Claude 变成一名训练有素的情报分析师 —— 74+ 条命令、49 种技术，核心功能零 API 密钥。**
+**把 Claude 变成一名训练有素的情报分析师 —— 120+ 条命令、56 种技术，核心功能零 API 密钥。**
 
 <br>
 
@@ -16,10 +16,10 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.8-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.8"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
-  <a href="#命令参考"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
-  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
+  <a href="#命令参考"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
+  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-56-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="56 Techniques"></a>&nbsp;
   <a href="#安装"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -43,6 +43,8 @@
 <br>
 
 <sub>作者 <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><b>Hieu Ngo</b></a> &bull; <a href="mailto:hieu.ngo@chongluadao.vn">hieu.ngo@chongluadao.vn</a> &bull; <a href="https://chongluadao.vn">chongluadao.vn</a></sub>
+<br>
+<sub>核心贡献者 &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a></sub>
 
 </div>
 
@@ -68,17 +70,32 @@
   <a href="https://zetalytics.com"><img src="https://img.shields.io/badge/ZETAlytics-被动_DNS-0B7285?style=for-the-badge" alt="ZETAlytics"></a>&nbsp;
   <a href="https://intelx.io"><img src="https://img.shields.io/badge/IntelX-泄露与暗网检索-2B6E6B?style=for-the-badge" alt="Intelligence X"></a>
 </p>
+<p>
+  <a href="https://www.shodan.io"><img src="https://img.shields.io/badge/Shodan-主机与服务情报-C6252B?style=for-the-badge" alt="Shodan"></a>&nbsp;
+  <a href="https://censys.com"><img src="https://img.shields.io/badge/Censys-互联网扫描-3A2FB0?style=for-the-badge" alt="Censys"></a>&nbsp;
+  <a href="https://urlscan.io"><img src="https://img.shields.io/badge/URLScan.io-被动网站扫描-2F6FEB?style=for-the-badge" alt="URLScan.io"></a>
+</p>
+<p>
+  <a href="https://serpapi.com"><img src="https://img.shields.io/badge/SerpApi-搜索与广告结果-5A67D8?style=for-the-badge" alt="SerpApi"></a>&nbsp;
+  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-开放存储桶检索-374151?style=for-the-badge" alt="GrayHatWarfare"></a>
+</p>
 
 </div>
 
 | 支持方 | 他们带来什么 | 在工具链中的位置 |
 |--------|--------------|------------------|
 | [**Rexxfield**](https://rexxfield.com) | 自 2008 年起从事网络犯罪调查与受害者侧办案——本技能的办案流程与归因标准正是以其实战方法论为蓝本 | 调查方法论 |
+| [**ChongLuaDao**](https://chongluadao.vn) ⭐ | **第一方**——本项目的母机构。越南高级威胁情报：约 2000 万 URL 黑名单裁定、深度 AI URL 分析、IoC 与数据泄露/失陷暴露、仿冒域名及 CVE/KEV 情报源——客户端只连 CLD，由 CLD 在服务器侧抓取目标（不经你的出口） | `/cld` · `/scam-check` · `/threat-check` · `/breach-deep` |
 | [**Hudson Rock**](https://www.hudsonrock.com) | 信息窃取器感染情报——哪台主机泄露了哪些凭据、在什么时间 | `/breach-deep` · `/stealer-log` |
 | [**ParanoidLab**](https://paranoidlab.com) | 覆盖论坛、交易市场与私密 Telegram 的暗网、初始访问代理（IAB）与窃取器日志监控 | 暗网采集与研判 |
 | [**ANY.RUN**](https://any.run) | 交互式恶意软件沙箱 + **TI Lookup**——从加壳样本中获取沙箱实测的 C2 与真实端点 | `/binary` · `/hash-id` |
 | [**ZETAlytics**](https://zetalytics.com) | 具备罕见地理多样性的全球被动 DNS——历史解析与同址共存枢轴 | `/webpivot` · `/cti-pivot` |
 | [**IntelX**](https://intelx.io) | Intelligence X——粘贴站、泄露库、暗网与 phonebook 选择符检索 | `/webpivot` · `/email-deep` |
+| [**Shodan**](https://www.shodan.io) | 互联网主机与服务情报——开放端口、Banner、标签与已知 CVE，经 InternetDB 被动优先获取 | `/webpivot` · `/appliance-scan` · `/cert-pivot` |
+| [**Censys**](https://censys.com) | 全网主机与证书扫描——服务器侧视角；返回同一叶证书上的每个主机（免费版即可用） | `/censys` · `/cert-pivot` |
+| [**URLScan.io**](https://urlscan.io) | 被动网站扫描——页面提供了什么、与谁通信，无需触碰目标即可抓取 | `/webpivot` · `/impersonate` |
+| [**SerpApi**](https://serpapi.com) | 搜索引擎 + Google 广告透明度结果 API——谁**付费**引流，以及多引擎 dork 结果 | `/serp` · `/search-pivot` |
+| [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）——评级为**暴露**，并非同一运营者枢轴 | `/secrets` · `/docleak` |
 
 > [!IMPORTANT]
 > **ANY.RUN 仅以只读方式使用。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。本技能**从不提交样本**——公开沙箱任务全网可读且不可撤回。该边界由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
@@ -93,13 +110,13 @@
 
 ## 什么是 CTI Expert？
 
-一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **74+ 条命令**、**49 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
+一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **120+ 条命令**、**56 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
 > [!TIP]
 > **默认无密钥，有你的密钥则更强。** 每一项核心技术都能零密钥运行。把任意免费或付费密钥放入 `.env`（或运行 `/apikeys set <service> <KEY>`），技能会自动检测并解锁更高层级的枢轴：反向 favicon→主机、被动 DNS、证书检索、兄弟域名发现。缺失或失效的密钥绝不会中断运行 —— 它只会降级为一条提示。配置指南：[handbook/api-keys.md](handbook/api-keys.md)。
 
 > [!TIP]
-> **一个技能，两个层次。** cti-expert 是*广度采集器* —— 撒下大网（`/sweep`、`/webpivot`、`/subdomain`、`/username`、`/email-deep`…）。仓库内还内置了一条*深度流水线*（`intel_engine/`），把原始采集变成一个真正的案件：持久化知识库、带版本的案件、跨案件关联，以及经过校准的研判。整个流程读起来像一句话 —— **广泛采集 → "这个运营者以前见过吗？" → 聚类 → 过滤误报 → 研判。** 无需任何外部配置：后端解析为 `SELF`；深度层依赖只需安装一次 `uv venv && uv pip install -r requirements.txt`。架构说明：[connectors/intel-backend.md](connectors/intel-backend.md)。
+> **一个技能，两个层次。** cti-expert 是*广度采集器* —— 撒下大网（`/sweep`、`/webpivot`、`/subdomain`、`/username`、`/email-deep`…）。仓库内还内置了一条*深度流水线*（`intel_engine/`），把原始采集变成一个真正的案件：持久化知识库、带版本的案件、跨案件关联，以及经过校准的研判。整个流程读起来像一句话 —— **广泛采集 → "这个运营者以前见过吗？" → 聚类 → 过滤误报 → 研判。** 无需任何外部配置：后端解析为 `SELF`，**自 v2.9 起，内置安装器（`scripts/install.{sh,ps1}`）会自动配置深度层**（手动兜底：`uv venv && uv pip install -r requirements.txt`）。架构说明：[connectors/intel-backend.md](connectors/intel-backend.md)。
 
 <table>
 <tr>
@@ -160,6 +177,45 @@
 
 <br>
 
+## v2.11 新功能
+
+> **eCrime 2026 后续批次 —— 先规划，再实现。** v2.10 研究批次中推迟的四个阶段现已作为无密钥、离线、带测试的模块交付（在 `plans/260826-1935-ecrime-2026-followup-analyzers/` 中规划，通过 `/ak:cook` 实现）。契约不变：`audit.sh` 中的零依赖测试、归因安全（RULE 5）。完整映射见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6。
+
+| 类别 | 新增内容 | 详情 |
+|------|---------|------|
+| **APK 权限范围评分** | 从清单推断设备端欺诈能力 | [`scripts/apk_permission_scope.py`](scripts/apk_permission_scope.py) 对危险权限**组合**评分（无障碍+悬浮窗+短信 = 银行木马画像）—— 信号在于组合，而非单个权限，因此银行/杀软类应用不会被盲目标记；结论是**能力，而非罪证**。支持明文清单与二进制 AXML（UTF-8 与 UTF-16 字符串池；零权限解码降级为提示，绝不误报为"干净"）。扩展 BinaryPivot。源自 *"The 'Allow' Reflex"*（Kandagadla Srinivasamurthy、Dupuis —— 华盛顿大学）。参见 [`techniques/apk-permission-scope.md`](techniques/apk-permission-scope.md) |
+| **套件模板归因** | 跨轮换主机识别同一套件谱系 | [`scripts/kit_template_fingerprint.py`](scripts/kit_template_fingerprint.py) 对 DOM 结构 + 收割表单字段集 + 资产骨架做指纹并给相似度分级 —— 但**商品化模板**（WordPress/Wix/Shopify）的匹配被判为*噪声*，而非同一运营者链接（§2.5 陷阱），且任何等级都不会自动合并。源自 Vicomtech 的*树状结构归因*论文。参见 [`techniques/kit-template-attribution.md`](techniques/kit-template-attribution.md) |
+| **渲染器级确认** | 对静态 ClickFix/可见性判断做动态确认 | [`scripts/render_confirm.py`](scripts/render_confirm.py) 把渲染器捕获的**运行时剪贴板写入**与**计算样式隐藏元素**喂回既有检测器（经新增的加性接缝），并调和静态与渲染结果 —— 提升静态漏过的 JS 拼装载荷，或权衡仅静态命中的 HIGH。渲染器（Playwright/agent-browser）为可选，**降级为提示**。源自 *PasteJacked* + *Visibility-Aware HTML*。参见 [`techniques/renderer-confirmation.md`](techniques/renderer-confirmation.md) |
+| **PhishTrace 动态特征** | 从运行时轨迹刻画页面 | [`scripts/phishtrace_features.py`](scripts/phishtrace_features.py) 把运行时轨迹（请求、跳转、表单 POST、cloaking）转化为判断 + **外传端点 IOC** —— 被标记页面上的稀薄/cloaked 轨迹读作**cloaked，而非 benign**，且外传主机是枢轴线索而非归因。源自 *"PhishTrace"*（Islam、Mannan）。参见 [`techniques/phishtrace-dynamic-features.md`](techniques/phishtrace-dynamic-features.md) |
+| **AAM 行为体建模叠加层** | 预判下一步，而不仅归因过去 | [`handbook/aam-actor-modeling.md`](handbook/aam-actor-modeling.md) 为 `/threat-model` 增加一个可选叠加层（OODA 面 + Mirror/Twin/Opposite/Lever），与 ACH 并列。源自 ISECOM 的 *"Modeling Adversaries Through Chaos"* 培训。仅文档 |
+| **已测试并纳入关卡** | `audit.sh` 中再添四套零依赖测试 | `test_apk_permission_scope`（组合 vs 单项 + 良性对照 + AXML 零权限降级）、`test_kit_template_fingerprint`（商品化陷阱 RULE 5 守卫 + 绝不自动合并）、`test_render_confirm`（提升 + 接缝加性 + 无渲染器降级）、`test_phishtrace_features`（cloaked 非 benign） |
+
+## v2.10 新功能
+
+> **这是把 APWG eCrime 2026 研究转化为可用、带测试检测器的版本。** 三个无密钥、离线、确定性测试的分析器落在 Enrich→Assess 边界，各自对应一篇具名的 eCrime 2026 论文 —— 堵上两个经审计的缺口：页面内容威胁分类，以及明确的"恶意注册 vs 被入侵"判定。完整映射与仓库审计见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md)。
+
+| 类别 | 新增内容 | 详情 |
+|------|---------|------|
+| **钓鱼域名存活画像** | 注册/DNS 策略 → 恶意注册 vs **被入侵**，及被下架的韧性 | [`scripts/phish_domain_survival.py`](scripts/phish_domain_survival.py) 把采集到的 WHOIS/DNS 转化为一个双轴、完全可审计的判断（每个信号带权重+理由；种子清单可用 `--refs` 调整）。被入侵/恶意的划分事关归因安全：一个老域名、老牌注册商、承载无关正当内容者是**受害者**，绝不点名为运营者（RULE 5）。源自 *"Built to Last?"*（Lim 等，eCrime 2026）。参见 [`techniques/phishing-domain-survival.md`](techniques/phishing-domain-survival.md) |
+| **ClickFix / PasteJacking 检测** | 剪贴板劫持诱饵 + `-EncodedCommand` 解码 → C2 IOC | [`scripts/clickfix_detect.py`](scripts/clickfix_detect.py) 对三个共现族（剪贴板写入 · 社工诱饵 · 操作系统命令载荷）评分，因此优惠码"复制"按钮或正文里的 *powershell* 一词绝不会读作 HIGH；它解码 PowerShell `-enc` 的 UTF-16LE base64 以暴露隐藏的 C2 URL，并映射到 ATT&CK T1204.004/T1059。源自 *"PasteJacked"*（Nabeel、Melicher、Starov —— Palo Alto，eCrime 2026）。参见 [`techniques/clickfix-clipboard-hijack.md`](techniques/clickfix-clipboard-hijack.md) |
+| **可见性感知的 HTML 分析** | 揭出隐藏的凭据表单 / 跨源链接 / 屏外品牌文本 | [`scripts/html_visibility_analysis.py`](scripts/html_visibility_analysis.py) 捕获朴素解析器漏掉的内联+类隐藏，按隐藏意图+来源分级（隐藏的跨源凭据表单为 HIGH；良性的 `type=hidden` CSRF 字段**不**标记）。为静态近似，并把渲染器级路径（agent-browser/Playwright）标注为升级方向。源自 *"Visibility-Aware HTML Analysis through Renderer-Level Extraction"*（Betts 等，奥克兰大学，eCrime 2026）。参见 [`techniques/visibility-aware-html.md`](techniques/visibility-aware-html.md) |
+| **已测试并纳入关卡** | 三套零依赖测试纳入 `audit.sh` | [`tests/test_phish_domain_survival.py`](tests/test_phish_domain_survival.py)、[`tests/test_clickfix_detect.py`](tests/test_clickfix_detect.py)、[`tests/test_html_visibility_analysis.py`](tests/test_html_visibility_analysis.py) —— 带显式误报守卫（优惠码复制、正文提及、CSRF 字段）与 RULE 5 被入侵/恶意划分 —— 在 [`scripts/audit.sh`](scripts/audit.sh) §6 运行 |
+
+## v2.9 新功能
+
+> **这是"装一次"与"装全部"合并成同一条命令的版本 —— 而枢轴循环也终于不再把标识符落在地上。** v2.8 把安全护栏挪到了 harness 真正看得见的地方。v2.9 修的是采集器*底下*那一层：内置安装器现在会配置整套双层堆栈，而不只是那个轻量采集器 —— 而最后四个自动枢轴的死胡同（一个被采集到的标识符被识别却从未被追查）也已经堵上。
+
+| 类别 | 新增内容 | 详情 |
+|------|---------|------|
+| **安装器现在配置深度层** | "装一次"现在装的是整条流水线，而不只是采集器 | `scripts/install.{sh,ps1}` 此前**只**安装 `scripts/requirements.txt`（轻量采集器），从未安装**根目录**的 `requirements.txt` —— 于是 IntelHarness 的 Agent-SDK 流水线（`claude-agent-sdk`、`pydantic`、`rich`）、带类型的 MCP server，以及 IntelGraph 的 `graphviz` 渲染路径都被声明、被导入，却在一台全新机器上**悄无声息地缺失**。安装器现在无条件运行根目录清单（体量小、纯 Python），因此 `/harness`、MCP 接口面与关系图渲染开箱即用 |
+| **`--all` = 全部，包括重型渲染器** | pandoc/IntelGraph 会外调的引擎现在都能装了 | `dot`（Graphviz 二进制文件 —— IntelGraph 的关系图）与 `gh`（整条 `/github-osint` 工作流都要调用的 GitHub CLI）现在**每个平台**都能安装 —— 此前 `gh` 只在 Windows 上装。`--headless` 额外安装 **Playwright + Chromium**（JS 渲染后抓取、截图取证、Engage 自动化 —— 此前是一个没人兜底的 `ModuleNotFoundError`）。`--all` 再加上两个重量级选项 —— **mermaid-cli**（`mmdc`，流程/杀伤链图）与 **xelatex**（IntelReport PDF）—— 之所以放在这个开关背后，是因为二者各有几百 MB，而 DOCX/HTML 两者都用不到 |
+| **自动枢轴：最后几个死胡同被堵上了** | 一个被识别却从不触发枢轴的标识符，就是蛛网地图上一个悄无声息的洞 | [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py) 中的四处修复：(1) **山寨币钱包** —— TRON/LTC/XMR 已被 `pivot_extract` 抓取、也能被 `crypto_balance.py` 追踪链上流水，但此前只有 BTC/ETH 被识别归类；现在三者都会分类、重新进入前沿并跑链上流水。(2) **泄露密码不再错误播种** —— 一个被找回的密码此前会落进用户名正则，被拿去在 3000+ 平台上枚举；现在它会从泄露产出中被剔除。(3) **`/email-deep`** 的基础设施（域名/IP）与 (4) **`/gdoc`** 的分享链接现在都带上了边矩阵条目，于是二者都会把发现回灌进循环，而不是止步于一个叶子节点。公司名现在有一条写明的 `type:"org"` 标记规则 —— `classify()` 分不清一个组织和一个人 |
+| **46 → 52 个 MCP 工具** | 类型化的情报接口面又长大了；这次 changelog 里记下来了 | `intel_engine/harness/tools.py` 现在注册了 **52** 个 `@tool`（24 个采集 + 28 个研判）—— 比 v2.8 的数字多六个，是随引擎同步一起加进来的，但当时没有记入 changelog。无需任何新增安装步骤；它们通过同一个 `intel` MCP server 暴露出来 |
+| **命令数量已更正** | 徽章此前低估了这套工具箱 | §3 现在收录 **120+** 条命令（实测：145 行，约 123 条唯一的基础命令）—— "75+" 那块徽章已经落后了三个发布版本的新增内容 |
+
+<details>
+<summary><b>v2.8 新功能</b></summary>
+
 ## v2.8 新功能
 
 > **这是引擎追上上游、并把安全护栏挪到 harness 真正看得见的位置的版本。** v2.7 让深度流水线落了地；v2.8 把 vendor 进来的引擎**向前推进了约 30 个 commit** —— **24 → 46 个 MCP 工具**、一项全新的交互技能，以及一个跑到收敛为止的案件循环 —— 然后修好了它底下那一层：有两项安全属性此前被执行在 Claude Code 根本触及不到的时刻。现在两者都在真正干活的地方生效。
@@ -176,6 +232,8 @@
 | **可以作为 Claude Code 插件安装** | 技能 + 命令 + MCP + hook 打成**一个**整体 | `register.sh` 为技能、命令和 MCP server 建立符号链接 —— 但它装不了 **hook**，而上面那两道护栏恰恰住在那里。[`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) 把四者打包在一起：`/plugin marketplace add <clone>`，然后 `/plugin install cti-expert`。hook 路径采用带 `${CLAUDE_PLUGIN_ROOT}` 的 exec 形式，因此没有任何东西被写死到某一台机器上，也没有任何路径会被 shell 解析。两个 PreToolUse hook 都**向开放方向失败** —— 一个 hook 的 bug 绝不能把你的仓库搞瘫；`audit.sh` 与 git 的 pre-commit hook 仍然是兜底 |
 | **OPSEC 关卡是被满足的，不是被放宽的** | 上游长出了一条提交样本的通路，所以这项测试必须被诚实地满足 | ANY.RUN 的 API 大半是一套*提交*用的 API，而上游引擎为它加了一条带闸门的通路 —— 这按设计就会让 [`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py) 失败。修法不是削弱断言：`REQUIRES_ANALYST_CONFIRMATION` 标记被放在 `submit()` 函数本身上，四个属于提交生命周期的 endpoint 被**逐一列出**（一个未经审阅的新 key 仍然会让测试变红），并且测试现在同时要求这个标记**以及它所声称的那次拒绝** —— 于是标记无法退化成一句咒语式的魔法字符串。已通过逐项植入故障验证：拿掉标记 → 红；拿掉拒绝逻辑 → 红；恢复 → 绿 |
 | **真正会把仓库搞坏的，正是那份重新同步流程** | 写下来却会*悄悄*失败的指引，比没有指引更糟 | [STRUCTURE.md](STRUCTURE.md) 曾告诉下一个人"复制进 `intel_engine/`，然后把 5 个 shim 重新贴回去"。这是错的，而且它的失败没有任何报错：采集器照样在跑，只是什么都找不到了。现在它记录的是站得住的流程 —— 按 **blob 同一性**分类、以距离最小的基线做三方合并、检查旧基线会造出的重复 `@tool` 块 —— 外加 `zsh` 的分词陷阱：一份没加引号的 `rsync` 排除列表会变成**什么都不排除**。vendor 引擎自带的 **17 道关卡**现在也随包提供，并与 cti-expert 自己的 6 道一起运行；`audit.sh` 还新增了一项检查：`hooks.json` 注册的每条路径都必须仍然可解析，因为一个被改名的脚本会在沉默中让它的 hook 失效 |
+
+</details>
 
 <details>
 <summary><b>v2.7 新功能</b></summary>
@@ -227,7 +285,7 @@
 | **归档访问** | 抓取 Claude Code 的 WebFetch 够不到的归档页面 | WebFetch 被 `web.archive.org` 阻止（抓取层的 robots.txt）。[`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py) 绕过了它 —— CDX 查询 → 解析最近快照 → 拉取原始 `id_`，带重试／退避（`--near`、`--list`、`--url-only`、`--json`） |
 | **Web 枢轴** | `/webpivot` —— 测绘页面背后的基础设施 | 从页面 DOM 提取 favicon **mmh3**、GA/GTM/AdSense ID、钱包与 SaaS 运营者令牌 → 排序后的枢轴；通过 `/rank-relations`（加权评分 + 噪声黑名单）、`/cert-pivot`、`/pivot-suggest`、`/crypto-balance`、`/email-hygiene`、`/sensitive-paths` 做同一运营者关联。对域名/URL 目标在 `/case` 中自动运行 |
 | **默认无密钥** | 100% 免费 —— 无需密钥，无需注册 | crt.sh（证书透明度）+ 被动 DNS + 匿名 urlscan **始终运行**；零成本完成完整枢轴，无需任何配置 |
-| **付费密钥自动检测** | 放入一个密钥 → 它自行升级 | `/webpivot` **自动检测**你设置的任何付费密钥（Shodan、Censys、FOFA、DNSLytics、SecurityTrails、urlscan-PRO、WhoisXML）并解锁其更高层级 —— 无需参数，无需重跑；缺失／失效的密钥降级为一条提示，绝不中断运行。用 `/apikeys` 管理密钥 |
+| **付费密钥自动检测** | 放入一个密钥 → 它自行升级 | `/webpivot` **自动检测**你设置的任何付费密钥（Shodan、Censys、FOFA、Hunter.how、DNSLytics、SecurityTrails、urlscan-PRO、WhoisXML）并解锁其更高层级 —— 无需参数，无需重跑；缺失／失效的密钥降级为一条提示，绝不中断运行。用 `/apikeys` 管理密钥 |
 | **攻击面** | `/appliance-scan` —— 边界／VPN 设备 → KEV 映射 | 以被动优先的方式指纹识别面向互联网的 Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange 设备（Shodan InternetDB/Censys）→ 匹配出 **CISA KEV/CVE** 清单；为 `/vuln-check` + `/threat-model` 提供输入 |
 | **身份织网** | `/saas-map` —— SaaS 租户 + IdP 暴露面 | DNS-TXT 租户令牌（Google/Atlassian/Zscaler/Salesforce/Workday…）、非微软 IdP 指纹（Okta/Auth0/OneLogin/Ping/Keycloak/ADFS）、无需认证的 API/GraphQL/OpenAPI 规范发现 |
 | **凭据** | 只读存活验证 | 发现的密钥通过仅查询身份的端点（AWS STS、GitHub scopes、Slack `auth.test`、`…/v1/models`）确认为有效 —— 绝不调用写入型接口 —— 并凭账户／权限证据升级为 CRITICAL |
@@ -431,10 +489,10 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + �
 
 ### 第三步 &mdash; 把命令注册到 Claude Code
 
-`install.sh` 安装的是 OSINT **工具**。这一步只需做一次，它把**技能、8 条 `/cti*` 斜杠命令以及 MCP 工具**接入 Claude Code，使它们在任意项目的冷启动提示符下都能用 —— 它会把 `commands/*.md` 软链接进 `~/.claude/commands/`，并写出这台机器专属的 `.mcp.json`。该步骤是幂等的，`git pull` 之后重跑也安全。
+`install.sh` 安装的是 OSINT **工具**。这一步只需做一次，它把**技能、9 条 `/cti*` 斜杠命令以及 MCP 工具**接入 Claude Code，使它们在任意项目的冷启动提示符下都能用 —— 它会把 `commands/*.md` 软链接进 `~/.claude/commands/`，并写出这台机器专属的 `.mcp.json`。该步骤是幂等的，`git pull` 之后重跑也安全。
 
 ```bash
-# 注册技能 + 8 条命令 + 写出本机专属的 .mcp.json
+# 注册技能 + 9 条命令 + 写出本机专属的 .mcp.json
 bash ~/.claude/skills/cti-expert/scripts/register.sh
 
 # 推荐：把内置深度流水线（intel_engine）的依赖安装一次
@@ -499,7 +557,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
    ```bash
    bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT 工具
-   bash ~/.claude/skills/cti-expert/scripts/register.sh     # 技能 + 8 条命令 + MCP
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # 技能 + 9 条命令 + MCP
    ```
 
    或在 Windows PowerShell 上（仅 Python 依赖；`register.sh` 请从 Git Bash/WSL 运行）：
@@ -539,7 +597,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 **只需要记住一条命令：`/cti <目标>`。** 它会看你给了什么 —— 域名、IP、邮箱、用户名、电话、钱包、哈希或 APK —— 并自动运行相应的调查链。通常这就够了。
 
-它之下还有 **8 条已注册命令**，Claude Code 在任意项目的冷启动提示符下都能识别（无需先加载技能）：
+它之下还有 **9 条已注册命令**，Claude Code 在任意项目的冷启动提示符下都能识别（无需先加载技能）：
 
 | 命令 | 作用 |
 |---------|--------------|
@@ -551,8 +609,21 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 | `/cti-check <indicator>` | 误报控制 —— 是真实的同一运营者链接，还是共享噪声？ |
 | `/cti-report <ID>` | 渲染关系图 + 一份精美的 PDF/DOCX |
 | `/cti-status` | 健康检查 —— 后端、MCP 工具、API 额度余额 |
+| `/cti-proxy [op]` | 为**所有**出站调用提供出口代理 / 轮换池 |
 
 本页上**其余每一条**命令（`/case`、`/webpivot`、`/report`、`/sweep`…）都是**约定命令**：技能加载之后可用的简写 —— 通过 `/cti`，或直接输入 `/cti-expert` 打开技能。在冷启动提示符下，请使用上面的已注册命令，或者干脆用自然语言描述你的目标 —— 效果完全相同。
+
+### 最初 60 秒 —— 开启全部能力
+
+在第一个真实案件之前，先在 Claude Code 里各跑一次这些命令，避免在无密钥/降级状态下悄悄运行：
+
+```bash
+/cti-expert      # 先加载技能 —— 下面四条是约定命令
+/onboard         # 交互式首次运行引导
+/capabilities    # 当前缺失哪些证据类别 + 可替代的免费路径
+/backend         # 确认 Tier-1 类型化 MCP（52 个工具）在跑，而非 Tier-3 无状态
+/apikeys status  # 无密钥也能跑；添加免费/付费密钥以解锁反向枢轴
+```
 
 ### 1 &mdash; 调查任何东西
 
@@ -779,7 +850,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 49 项技术与 24 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
+**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 56 项技术与 52 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -814,7 +885,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 
 ## 命令参考
 
-> 下面的表格都是**约定命令** —— 技能加载之后（通过 `/cti` 或 `/cti-expert`）可用的完整技术词汇表。那 8 条已注册的入口命令（`/cti`、`/cti-recall`、`/cti-case`…）在上面的 [快速入门](#快速入门) 中。权威参考请见 **[SKILL.md](SKILL.md)**。
+> 下面的表格都是**约定命令** —— 技能加载之后（通过 `/cti` 或 `/cti-expert`）可用的完整技术词汇表。那 9 条已注册的入口命令（`/cti`、`/cti-recall`、`/cti-case`…）在上面的 [快速入门](#快速入门) 中。权威参考请见 **[SKILL.md](SKILL.md)**。
 
 <details>
 <summary><b>Acquire 采集</b> —— 数据收集类命令</summary>
@@ -830,6 +901,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 | `/email-deep [email]` | 账号、泄露、基础设施 |
 | `/subdomain [domain]` | CT 日志 + 被动枚举 |
 | `/github-osint [target]` | GitHub 用户／组织／仓库资料、代码、提交、分叉 |
+| `/cld [target]` ⭐ | ChongLuaDao 第一方高级——URL／AI／IoC／泄露／CVE 裁定；客户端只连 CLD，由 CLD 在服务器侧抓取（需密钥） |
 | `/threat-check [target]` | IP／域名／URL／哈希威胁情报 |
 | `/breach-deep [email]` | 多源泄露查询 |
 
@@ -998,7 +1070,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 ## 技术目录
 
 <details>
-<summary><b>49 种技术</b> —— 点击展开完整目录</summary>
+<summary><b>56 种技术</b> —— 点击展开完整目录</summary>
 <br>
 
 | 技术 | 覆盖范围 | 是否需要 API 密钥？ |
@@ -1052,6 +1124,13 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 | `stealer-log-analysis.md` | 信息窃取日志分流 —— 家族识别、受害者与运营者画像、跨日志关联、IOC | 否 |
 | `fx-dork-sweep.md` | 零认证 dork 扫描 —— Telegram 生态、文档托管站、文件类型族 | 否 |
 | `fx-document-leak-hunt.md` | 覆盖 18 个平台的文档泄露搜寻，并做严重度分级 | 否 |
+| `phishing-domain-survival.md` | 注册/DNS 策略 → 恶意注册 vs 被入侵 + 存活预期（eCrime 2026 "Built to Last?"） | 否 |
+| `clickfix-clipboard-hijack.md` | ClickFix / PasteJacking 剪贴板劫持检测 + `-enc` 解码 → C2 IOC（eCrime 2026 "PasteJacked"） | 否 |
+| `visibility-aware-html.md` | 隐藏凭据表单 / 跨源链接 / 屏外品牌文本（eCrime 2026 "Visibility-Aware HTML Analysis"） | 否 |
+| `apk-permission-scope.md` | APK 权限范围评分 —— 设备端欺诈权限组合，能力≠罪证（eCrime 2026 "The 'Allow' Reflex"） | 否 |
+| `kit-template-attribution.md` | 钓鱼套件/模板结构指纹 + 相似度；商品化模板匹配判为噪声（eCrime 2026 树状结构归因） | 否 |
+| `renderer-confirmation.md` | ClickFix + 可见性的渲染器级确认（运行时剪贴板 / 计算隐藏 → 调和）；渲染器可选（eCrime 2026 PasteJacked + Visibility-Aware HTML） | 否 |
+| `phishtrace-dynamic-features.md` | 运行时轨迹钓鱼刻画 → 判断 + 外传 IOC；被标记页面的稀薄轨迹 = cloaked（eCrime 2026 "PhishTrace"） | 否 |
 
 </details>
 
@@ -1135,10 +1214,10 @@ cti-expert/
 ├── AGENTS.md                   跨代理运行时契约（Claude Code + Codex）
 ├── CLAUDE.md                   贡献者规则（仅在构建本仓库时加载）
 │
-├── commands/                   8 条已注册斜杠命令 —— 冷启动即可用
+├── commands/                   9 条已注册斜杠命令 —— 冷启动即可用
 │   ├── cti.md                  /cti —— 入口，按目标类型路由
 │   ├── cti-recall.md · cti-case.md · cti-pivot.md · cti-cluster.md
-│   └── cti-check.md · cti-report.md · cti-status.md
+│   └── cti-check.md · cti-report.md · cti-status.md · cti-proxy.md
 │
 │  ── LAYER 1 · 广度采集层 —— cti-expert 自有工具 ───────────────────
 ├── scripts/                    采集器、后端调度器、报告生成器
@@ -1290,7 +1369,7 @@ CTI Expert 站在开源社区与免费公益数据提供方的肩膀上。在此
 | **代理与运行时** | [Anthropic — Claude Code](https://claude.com/claude-code) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) |
 | **浏览器与网页采集** | [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Chromium](https://www.chromium.org) |
 | **用户名、人物与社交** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [LeakCheck](https://leakcheck.io) |
+| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
 | **域名、DNS 与基础设施** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Whoxy](https://www.whoxy.com) · [ViewDNS](https://viewdns.info) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [Shodan InternetDB](https://internetdb.shodan.io) · [ipwho.is](https://ipwho.is) |
 | **威胁情报** | [VirusTotal](https://www.virustotal.com) · [URLScan.io](https://urlscan.io) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) |
 | **凭据与代码** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) |
@@ -1324,7 +1403,8 @@ CTI Expert 站在开源社区与免费公益数据提供方的肩膀上。在此
   <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><img src="https://img.shields.io/badge/LinkedIn-Hieu_Ngo-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>&nbsp;
   <a href="mailto:hieu.ngo@chongluadao.vn"><img src="https://img.shields.io/badge/Email-hieu.ngo%40chongluadao.vn-0080ff?style=for-the-badge&logo=gmail&logoColor=white" alt="Email"></a>&nbsp;
   <a href="https://chongluadao.vn"><img src="https://img.shields.io/badge/Web-chongluadao.vn-00c853?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a>&nbsp;
-  <a href="https://github.com/7onez"><img src="https://img.shields.io/badge/GitHub-7onez-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://github.com/7onez"><img src="https://img.shields.io/badge/GitHub-7onez-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>&nbsp;
+  <a href="https://github.com/Zeroska"><img src="https://img.shields.io/badge/Contributor-Zeroska-6f42c1?style=for-the-badge&logo=github&logoColor=white" alt="Contributor: Zeroska"></a>
 </p>
 
 <sub>如果这个工具对你的工作有帮助，欢迎点个 star。它能帮更多人发现它。</sub>
