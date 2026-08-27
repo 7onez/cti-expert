@@ -144,10 +144,18 @@ def _report_cost(phases: dict[str, object], case: str | None = None) -> None:
 
 
 def _skill(name: str) -> str:
-    """Load a SKILL.md body to use as a phase system prompt (inlined for portability;
-    the SDK can also auto-load skills from .claude/ via setting_sources)."""
-    with open(os.path.join(ROOT, name, "SKILL.md"), encoding="utf-8") as f:
-        return f.read()
+    """Load a SKILL body to use as a phase system prompt (inlined for portability;
+    the SDK can also auto-load skills from .claude/ via setting_sources).
+    cti-expert vendoring renames each component's SKILL.md to SKILL.reference.md
+    (the repo keeps exactly one SKILL.md — the root entrypoint), so try the vendored
+    name first, then the upstream one (mirrors agents._load_skill)."""
+    for fname in ("SKILL.reference.md", "SKILL.md"):
+        p = os.path.join(ROOT, name, fname)
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8") as f:
+                return f.read()
+    raise FileNotFoundError(
+        f"no SKILL.reference.md or SKILL.md for component {name!r} under {ROOT}")
 
 
 def _prompt(name: str, **kw: object) -> str:
