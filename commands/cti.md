@@ -50,6 +50,26 @@ python3 scripts/backend/intel.py pipeline open <CASE-ID> <seeds-file>
 Hand-running a collector is a fallback, not the default. If you do it, **say so in the write-up**
 — evidence archiving, the versioned assessment and the convergence check will not have run.
 
+## Step 2b — persist the versioned case, then deepen if it hasn't converged
+
+`/case` is an **alias of `/cti`**, so `/cti` runs the *same* full pipeline — including the
+deep layer. When `/backend` is live (Tier 1/2) and the run produced ≥1 host seed, persist a
+**versioned** case with **zero extra egress** by reusing the pivots already collected (do **not**
+re-fetch):
+
+```bash
+python3 scripts/backend/intel.py pipeline open <CASE-ID> <seeds> --no-collect
+```
+
+That runs ingest → recall → risk → clusters → `case_graph.json` → ICD-203 `assessment.md` over
+`cases/<CASE-ID>/raw/`. Then check convergence — `intel.py convergence <CASE-ID>` (status ≠
+`converged`, or `intel.py frontier <CASE-ID>` still lists open leads). If it has **not converged**
+and posture is active (not `--passive`, infra not classified hostile), **auto-escalate to the
+`/harness` deepening loop** — keyless-first (it uses the CLI's own model on your subscription; no
+separate LLM key), egress **hard-gated** on hostile infra, `--no-harness` opts out. Full contract:
+SKILL.md §2 (AEAD deep-layer note) and the technique-activation / auto-fire matrices for the
+`/webpivot`·`/icp`·`/iban`·`/hash-id` auto-fires that also run in a full `/cti` (= `/case`) run.
+
 ## Step 3 — Dead seed? Do not stop
 
 Zero pivots, a parked page or NXDOMAIN is not an answer. Run `fallback_probe` (crt.sh, full
@@ -74,6 +94,7 @@ Read SKILL.md §2.5 (Pivot Priority & False-Positive Control) and obey it:
   new seed, one sub-agent per seed, until the frontier is exhausted
 - `--passive` — no live contact with the target; work from Wayback/urlscan captures only.
   **Use this for any hostile target.**
+- `--no-harness` — skip the Step 2b non-convergence auto-escalation to the `/harness` deepening loop
 
 ## Deep mode — parallel sub-agent fan-out (`--deep`)
 

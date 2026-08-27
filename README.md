@@ -966,7 +966,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 
 | Command | Purpose |
 |---------|---------|
-| `/case [target]` | Full pipeline — every applicable technique |
+| `/case [target]` | Full pipeline — every applicable technique (**alias of `/cti`**; prefer `/cti`) |
 | `/sweep [target]` | Multi-vector recon (person/domain/org/username/email/IP) |
 | `/query [subject]` | 12-15 advanced search operator queries |
 | `/username [handle]` | 3000+ platform enumeration |

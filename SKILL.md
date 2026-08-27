@@ -309,6 +309,8 @@ email, username, phone, wallet, hash, APK — through recall → collect → clu
 English works identically ("analyze example.com and pivot the infrastructure"); the command form
 just removes ambiguity.
 
+**`/case <target>` is an alias of `/cti <target>`** — the same full pipeline run; `/cti` is the canonical entry (and the only form that works from a cold prompt). Prefer `/cti`.
+
 Nine commands are **registered with Claude Code** by `bash scripts/register.sh` and work from a
 cold prompt in any project:
 
@@ -347,7 +349,7 @@ Commands grouped by AEAD phase.
 
 | Command | What It Does | Example |
 |---------|-------------|---------|
-| `/case [target]` | Full pipeline — runs every applicable technique | `/case example.com` |
+| `/case [target]` | Full pipeline — runs every applicable technique (**alias of `/cti`**) | `/case example.com` |
 | `/sweep [target]` | Multi-vector recon on any target type | `/sweep @username` |
 | `/query [subject]` | Builds 12–15 advanced search operator queries | `/query example.com` |
 | `/username [handle]` | Enumerate handle across 3000+ platforms | `/username johndoe` |

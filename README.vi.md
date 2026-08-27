@@ -940,7 +940,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 
 | Lệnh | Mục đích |
 |---------|---------|
-| `/case [target]` | Pipeline đầy đủ — mọi kỹ thuật áp dụng được |
+| `/case [target]` | Pipeline đầy đủ — mọi kỹ thuật áp dụng được (**bí danh của `/cti`**; nên dùng `/cti`) |
 | `/sweep [target]` | Trinh sát đa vector (cá nhân/tên miền/tổ chức/username/email/IP) |
 | `/query [subject]` | 12-15 truy vấn dùng toán tử tìm kiếm nâng cao |
 | `/username [handle]` | Liệt kê 3000+ nền tảng |
