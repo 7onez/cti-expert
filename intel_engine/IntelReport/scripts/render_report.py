@@ -420,13 +420,20 @@ def pick_fonts(lang=DEFAULT_LANG):
         return (next((f for f in prefs if f in vi), None)
                 or next((f for f in prefs if f in allf), default))
 
-    serif, sans = first(SERIF_PREF, "Latin Modern Roman"), first(SANS_PREF, "Latin Modern Sans")
+    # Defaults matter when detection finds nothing — notably Windows, which has no `fc-list`
+    # (fontconfig), so `allf` is empty and `first()` always returns the default. Latin Modern does
+    # NOT cover Vietnamese, so defaulting to it there ships a silent tofu PDF. xelatex on Windows
+    # resolves system fonts by name via its own backend (no fontconfig needed), and Times New Roman
+    # / Arial ship on every Windows box and cover Vietnamese — so pin those as the Windows defaults.
+    _win = sys.platform.startswith("win")
+    serif = first(SERIF_PREF, "Times New Roman" if _win else "Latin Modern Roman")
+    sans = first(SANS_PREF, "Arial" if _win else "Latin Modern Sans")
     # Mono is chosen from what is INSTALLED only, never filtered by :lang=vi. Inline
     # code in these reports is domains, hashes, IPs and endpoints — ASCII — and
     # filtering on Vietnamese coverage would discard the good hash faces (Source Code
     # Pro, Menlo) in favour of a worse one for no benefit. Body/heading text, which
     # does carry diacritics, is filtered above.
-    mono = next((f for f in MONO_PREF if f in allf), "Latin Modern Mono")
+    mono = next((f for f in MONO_PREF if f in allf), "Consolas" if _win else "Latin Modern Mono")
     if lang == "vi" and not (serif in vi and sans in vi):
         sys.stderr.write(
             "WARNING: --lang vi but no installed family DECLARES Vietnamese coverage "
