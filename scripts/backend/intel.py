@@ -441,11 +441,8 @@ def main(argv):
         print(f"cd {root} && {' '.join(cmd)}")
         return 0
     try:
-        # Run FROM the engine root so knowledge/, WebPivot/tools/… resolve. Export
-        # CTI_EXPERT_HOME so the engine's pipeline drives cti-expert's collector (§ engine
-        # is the controller; cti-expert supplies the richer tools).
-        env = dict(os.environ, CTI_EXPERT_HOME=backend.SKILL_DIR)
-        return subprocess.run(cmd, cwd=root, env=env).returncode
+        # Run FROM the engine root so knowledge/, WebPivot/tools/… resolve.
+        return subprocess.run(cmd, cwd=root).returncode
     except FileNotFoundError:
         print(f"intel.py: cannot exec {PY} — set INTEL_PY to a working interpreter.",
               file=sys.stderr)

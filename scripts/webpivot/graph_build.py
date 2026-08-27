@@ -474,7 +474,7 @@ def assemble(g, algo="louvain"):
     if comm is None:
         comm = louvain(adj)
     deg = {n: len(adj[n]) for n in node_ids}
-    maxdeg = max(deg.values()) if deg else 1
+    maxdeg = max(deg.values(), default=1) or 1   # `or 1`: edgeless case (all degrees 0) must not /0
     bc = betweenness(adj)
 
     out_nodes = []
