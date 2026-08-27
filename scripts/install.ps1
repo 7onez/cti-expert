@@ -430,7 +430,7 @@ Write-Host "Venv:      $VenvDir"
 Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
 if ($Headless) { Write-Host "Mode:      +headless" }
 if ($Go) { Write-Host "Mode:      +go" }
-if ($All) { Write-Host "Mode:      +all (report render engines)" }
+if ($All) { Write-Host "Mode:      +all (mermaid-cli diagrams)" }
 
 Write-Section "uv (Astral package manager)"
 Install-Uv
@@ -516,6 +516,21 @@ else { Log-Skip "rmbg-cli (needs npm; optional)" }
 if (Test-Command "whisper-ctranslate2") { Log-Skip "whisper-ctranslate2 (present)" }
 elseif (Test-Command "uv") { uv tool install whisper-ctranslate2 2>&1 | Out-Null; if (Test-Command "whisper-ctranslate2") { Log-Ok "whisper-ctranslate2 (local transcription fallback)" } else { Log-Skip "whisper-ctranslate2 (optional; install failed)" } }
 else { Log-Skip "whisper-ctranslate2 (optional local transcription fallback; needs uv)" }
+
+Write-Section "Report PDF engine (xelatex / MiKTeX)"
+# IntelReport's PDF render (intel.py report ... --pdf) shells out to pandoc + xelatex. This is a
+# hard requirement for the PDF deliverable, so MiKTeX installs UNCONDITIONALLY (not gated on -All).
+# Windows has no fontconfig/fc-list, so render_report cannot auto-detect fonts there; it now
+# defaults to Times New Roman / Arial / Consolas (pinned in pick_fonts for win32) — all ship on
+# Windows, cover Vietnamese, and xelatex loads them by name via the OS backend. So VN/CN PDFs
+# render with no extra fonts. MiKTeX is large (hundreds of MB) and auto-fetches LaTeX packages on demand.
+Install-WingetPackage "MiKTeX (xelatex)" "xelatex" "MiKTeX.MiKTeX"
+if (Test-Command "initexmf") {
+    # Enable unattended package installation so xelatex does not block on a first-use prompt.
+    initexmf --set-config-value "[MPM]AutoInstall=1" 2>&1 | Out-Null
+    Log-Ok "MiKTeX auto-install of missing LaTeX packages enabled"
+}
+else { Log-Skip "MiKTeX autoinstall config (run once: initexmf --set-config-value [MPM]AutoInstall=1)" }
 
 Write-Section "Python: core skill requirements"
 $requirements = Join-Path $SkillDir "scripts\requirements.txt"
@@ -701,9 +716,9 @@ else {
     Write-Host "  --  Skipped (add -Go to install Go tools, requires Go 1.21+)" -ForegroundColor Yellow
 }
 
-Write-Section "Report render engines (mermaid-cli + xelatex)"
-# mmdc (IntelGraph flow diagrams) and xelatex (IntelReport PDF via pandoc) are large — mmdc
-# pulls a headless Chrome, MiKTeX is hundreds of MB — so they ride with -All. DOCX/HTML need neither.
+Write-Section "Report diagram engine (mermaid-cli)"
+# mmdc (IntelGraph flow diagrams) pulls a headless Chrome, so it rides with -All. The xelatex
+# PDF engine (MiKTeX) is installed UNCONDITIONALLY above; only mmdc is gated here.
 if ($All) {
     if (Test-Command "npm") {
         Invoke-Step "mermaid-cli" { npm install -g '@mermaid-js/mermaid-cli' | Out-Host; if ($LASTEXITCODE -ne 0) { throw "npm install -g @mermaid-js/mermaid-cli failed" }; Log-Ok "mermaid-cli (mmdc)" } | Out-Null
@@ -711,10 +726,9 @@ if ($All) {
     else {
         Log-Skip "mermaid-cli (needs npm — install Node.js)"
     }
-    Install-WingetPackage "MiKTeX (xelatex)" "xelatex" "MiKTeX.MiKTeX"
 }
 else {
-    Write-Host "  --  Report render engines not requested (add -All for mermaid-cli + xelatex; DOCX/HTML need neither)" -ForegroundColor Yellow
+    Write-Host "  --  mermaid-cli not requested (add -All; pulls a headless Chrome. PDF/DOCX/HTML need neither)" -ForegroundColor Yellow
 }
 
 Write-Section "ASN lookup (native asn command)"

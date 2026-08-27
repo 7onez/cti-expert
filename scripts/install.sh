@@ -203,7 +203,10 @@ ensure_agent_browser() {
 }
 
 apt_install() {
-  local pkg="$1" cmd="${2:-$1}"
+  # $1 apt package · $2 command to probe (default $1) · $3 brew formula (default $1).
+  # apt and Homebrew disagree on names for several packages (dnsutils->bind, poppler-utils->poppler,
+  # libimage-exiftool-perl->exiftool); passing $3 lets one call install correctly on both OSes.
+  local pkg="$1" cmd="${2:-$1}" brew_pkg="${3:-$1}"
   # Linux is not only Debian/Ubuntu. Without apt-get there is nothing to run, so
   # report the state honestly instead of failing on "apt-get: command not found".
   if [[ "$OS" == "linux" ]] && ! has apt-get; then
@@ -222,10 +225,10 @@ apt_install() {
         log_skip "$pkg"
       fi
     elif [[ "$OS" == "macos" ]]; then
-      if has brew && brew upgrade "$pkg" &>/dev/null 2>&1; then
-        log_ok "$pkg updated"
+      if has brew && brew upgrade "$brew_pkg" &>/dev/null 2>&1; then
+        log_ok "$brew_pkg updated"
       else
-        log_skip "$pkg"
+        log_skip "$brew_pkg"
       fi
     else
       log_skip "$pkg"
@@ -237,10 +240,10 @@ apt_install() {
       log_fail "$pkg" "try: sudo apt-get update && sudo apt install $pkg"
     fi
   elif [[ "$OS" == "macos" ]]; then
-    if has brew && brew install "$pkg" &>/dev/null 2>&1; then
-      log_ok "$pkg"
+    if has brew && brew install "$brew_pkg" &>/dev/null 2>&1; then
+      log_ok "$brew_pkg"
     else
-      log_fail "$pkg" "try: brew install $pkg"
+      log_fail "$brew_pkg" "try: brew install $brew_pkg"
     fi
   else
     log_fail "$pkg" "Windows: install manually (winget or choco)"
@@ -472,7 +475,7 @@ echo "Venv:      $HOME/.claude/skills/.venv"
 echo "Installer: uv-first (pip/pipx/venv fallback)"
 [[ "$OPT_HEADLESS" == true ]] && echo "Mode:     +headless"
 [[ "$OPT_GO" == true ]]       && echo "Mode:     +go"
-[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (report render engines)"
+[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (mermaid-cli diagrams)"
 
 # ── uv bootstrap ────────────────────────────────────────────
 section "uv (Astral package manager)"
@@ -515,10 +518,10 @@ fi
 # ── System tools ─────────────────────────────────────────────
 section "System tools"
 apt_install whois whois
-apt_install dnsutils dig
+apt_install dnsutils dig bind                          # brew: dig ships in the `bind` formula
 apt_install jq jq
-apt_install libimage-exiftool-perl exiftool
-apt_install poppler-utils pdfinfo
+apt_install libimage-exiftool-perl exiftool exiftool   # brew formula is `exiftool`
+apt_install poppler-utils pdfinfo poppler              # brew formula is `poppler`
 apt_install qpdf qpdf
 if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
@@ -528,7 +531,7 @@ apt_install graphviz dot            # IntelGraph link graphs need the `dot` bina
 # vision CLI (npx @mrgoonie/multix) and agent-browser. See techniques/media-vision-analysis.md.
 apt_install ffmpeg ffmpeg
 apt_install imagemagick convert            # `convert` on IM6, `magick` on IM7; package is imagemagick
-if [[ "$OS" == "macos" ]]; then apt_install tesseract tesseract; else apt_install tesseract-ocr tesseract; fi   # keyless OCR fallback — brew formula is `tesseract`, apt pkg is `tesseract-ocr`
+apt_install tesseract-ocr tesseract tesseract   # keyless OCR fallback — apt pkg `tesseract-ocr`, brew formula `tesseract`
 # OCR language packs — cti-expert is VN-first + heavy CN recon; bare tesseract is eng-only.
 if [[ "$OS" == "linux" ]] && has apt-get; then
   $SUDO apt-get install -y tesseract-ocr-vie tesseract-ocr-chi-sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract-ocr-vie/chi-sim"
@@ -583,6 +586,47 @@ fi
 # libcairo2-dev needed by maigret on Linux
 if [[ "$OS" == "linux" ]] && ! dpkg -l libcairo2-dev &>/dev/null 2>&1; then
   $SUDO apt-get install -y libcairo2-dev &>/dev/null 2>&1 && log_ok "libcairo2-dev (maigret dep)" || true
+fi
+
+# ── Report PDF engine: xelatex + fonts (ALWAYS) ───────────────
+# IntelReport's PDF render (`intel.py report … --pdf` → render_report.py) shells out to
+# pandoc + xelatex with the Noto family (VN-first + CN recon). This is a hard requirement for
+# the PDF deliverable, so it installs UNCONDITIONALLY (not gated on --all). The DOCX/HTML
+# reports do not need it, but a user asking for a PDF must never hit a missing-engine wall.
+# texlive is large (hundreds of MB); that is the deliberate cost of shipping a working PDF path.
+section "Report PDF engine (xelatex + Noto fonts)"
+if [[ "$OS" == "linux" ]] && has apt-get; then
+  # fontconfig provides `fc-list`, which render_report.py uses to DETECT an installed
+  # Vietnamese-capable family. Without it, detection returns empty and the render silently
+  # falls back to Latin Modern (no VN coverage) -> a tofu PDF with no warning. Install it first.
+  $SUDO apt-get install -y fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list — VN font detection)" || log_fail "fontconfig" "sudo apt install fontconfig"
+  # texlive-latex-recommended carries the LaTeX packages pandoc's default PDF template loads
+  # (fancyvrb, etc.); lmodern is the fallback body font; fonts-noto-core covers Vietnamese and
+  # fonts-noto-cjk (best-effort) covers Chinese for the CN-recon reports.
+  if $SUDO apt-get install -y texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern &>/dev/null 2>&1; then
+    log_ok "texlive-xetex + Noto (PDF report engine)"
+  else
+    log_fail "texlive-xetex" "sudo apt install texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern"
+  fi
+  $SUDO apt-get install -y fonts-noto-cjk &>/dev/null 2>&1 && log_ok "fonts-noto-cjk (CN report glyphs)" || log_skip "fonts-noto-cjk (optional; CN glyphs in PDF)"
+  fc-cache -f &>/dev/null 2>&1 || true   # register newly-installed fonts so fc-list sees them this run
+elif [[ "$OS" == "macos" ]] && has brew; then
+  if has xelatex; then
+    log_skip "mactex/xelatex (present)"
+  elif brew install --cask mactex-no-gui &>/dev/null 2>&1; then
+    log_ok "mactex-no-gui (xelatex PDF engine)"
+  else
+    log_fail "mactex" "brew install --cask mactex-no-gui"
+  fi
+  # fontconfig gives macOS an `fc-list` (not present by default) so render_report can detect the
+  # Noto/Georgia/Times VN family; without it the render silently falls back to Latin Modern (tofu).
+  brew install fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list — VN font detection)" || log_skip "fontconfig (brew install fontconfig)"
+  brew install --cask font-noto-sans font-noto-serif font-noto-sans-cjk &>/dev/null 2>&1 && log_ok "Noto fonts (brew casks)" || log_skip "Noto font casks (optional)"
+  fc-cache -f &>/dev/null 2>&1 || true
+elif [[ "$OS" == "windows" ]]; then
+  log_skip "xelatex (Windows: install.ps1 handles MiKTeX + Noto)"
+else
+  if has xelatex; then log_ok "xelatex (present)"; else log_fail "xelatex" "install TeX Live (texlive-xetex) + Noto fonts with your package manager"; fi
 fi
 
 # ── Python: core skill deps ───────────────────────────────────
@@ -781,26 +825,18 @@ else
   echo -e "  ${YELLOW}–${NC} Skipped (add --go to install Go tools, requires Go 1.21+)"
 fi
 
-# ── Report render engines: mermaid-cli + xelatex (--all) ──────
-# mmdc (IntelGraph flow/kill-chain diagrams) and xelatex (IntelReport PDF via pandoc) are
-# large — mmdc pulls a headless Chrome, texlive is hundreds of MB — so they ride with --all.
-# DOCX and interactive HTML reports need neither and work after a plain install.
-section "Report render engines (mermaid-cli + xelatex)"
+# ── Report diagram engine: mermaid-cli (--all) ────────────────
+# mmdc (IntelGraph flow/kill-chain diagrams) pulls a headless Chrome, so it rides with --all.
+# The xelatex PDF engine is installed UNCONDITIONALLY above; only mmdc is gated here.
+section "Report diagram engine (mermaid-cli)"
 if [[ "$OPT_ALL" == true ]]; then
   if has npm; then
     npm install -g @mermaid-js/mermaid-cli &>/dev/null 2>&1 && log_ok "mermaid-cli (mmdc)" || log_fail "mermaid-cli" "npm install -g @mermaid-js/mermaid-cli failed"
   else
     log_skip "mermaid-cli (needs npm — install Node.js, then: npm i -g @mermaid-js/mermaid-cli)"
   fi
-  if [[ "$OS" == "linux" ]] && has apt-get; then
-    $SUDO apt-get install -y texlive-xetex texlive-fonts-recommended fonts-noto-core &>/dev/null 2>&1 && log_ok "texlive-xetex (PDF engine)" || log_fail "texlive-xetex" "sudo apt install texlive-xetex texlive-fonts-recommended"
-  elif [[ "$OS" == "macos" ]] && has brew; then
-    brew install --cask mactex-no-gui &>/dev/null 2>&1 && log_ok "mactex (xelatex)" || log_skip "mactex (brew install --cask mactex-no-gui)"
-  else
-    log_skip "xelatex (install TeX Live / MiKTeX for PDF reports)"
-  fi
 else
-  echo -e "  ${YELLOW}–${NC} Report render engines not requested (add --all for mermaid-cli + xelatex; DOCX/HTML need neither)"
+  echo -e "  ${YELLOW}–${NC} mermaid-cli not requested (add --all; pulls a headless Chrome. PDF/DOCX/HTML need neither)"
 fi
 
 # ── ASN lookup tool (nitefood/asn) ────────────────────────────
