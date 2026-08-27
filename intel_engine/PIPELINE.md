@@ -187,6 +187,7 @@ The skills persist to the same `cases/` + `knowledge/` folders, so CLI and chat 
 |---|---|
 | `--render` | also build + render the interactive **network graph** |
 | `--no-graph` | skip the graph build |
+| `--no-collect` | **reuse mode** — skip the live fetch and run the whole chain (ingest → prior-overlap → risk → shared → clusters → graph → assessment) over pivot JSONs already in `cases/<case>/raw/`. **Zero egress, zero metered calls.** For handing a case off from a collector that already fetched (e.g. cti-expert's `/case`); requires the raw files + a seeds file listing the same hosts to exist first |
 | `--operator NAME` | add an operator persona node to the graph |
 | `--operator-links a.com,b.com` | domains tied to that operator |
 | `--whois-reverse` | run reverse-WHOIS live (costs WhoisXML credits) |

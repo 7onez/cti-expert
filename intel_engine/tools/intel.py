@@ -257,11 +257,19 @@ def cmd_open(a):
         print(f"   [{'ok ' if good else 'MISS'}] {res['host']}  {note}")
         (ok if good else failed).append(res["host"])
 
-    collect_core.collect_many(
-        [f"https://{h}" for h in hosts], a.case,
-        max_workers=max(1, a.jobs), on_result=_status, retry_misses=1,
-        root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
-        timeout=a.timeout, force=a.force, no_archive=(not a.archive), extra_flags=extra)
+    if getattr(a, "no_collect", False):
+        # Handoff mode: a collector (e.g. cti-expert's /case) has already fetched every host and
+        # written cases/<case>/raw/<host>.json. Everything below operates purely on those raw files,
+        # so we skip the live fetch entirely — a COMPLETE persisted case with ZERO extra egress.
+        print("   --no-collect: reusing pivot JSONs already in "
+              f"{os.path.relpath(os.path.join(case_dir, 'raw'), ROOT)}/ (zero egress)")
+        ok = [h for h in hosts if os.path.isfile(os.path.join(case_dir, "raw", h + ".json"))]
+    else:
+        collect_core.collect_many(
+            [f"https://{h}" for h in hosts], a.case,
+            max_workers=max(1, a.jobs), on_result=_status, retry_misses=1,
+            root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
+            timeout=a.timeout, force=a.force, no_archive=(not a.archive), extra_flags=extra)
 
     raw_glob = os.path.join(case_dir, "raw")
     raw_files = [os.path.join(raw_glob, f) for f in os.listdir(raw_glob) if f.endswith(".json")]
@@ -818,6 +826,9 @@ def main():
     o = sub.add_parser("open", help="run the full extract->ingest->shared[->graph] pipeline")
     o.add_argument("case")
     o.add_argument("domains", help="file with one domain/URL per line")
+    o.add_argument("--no-collect", action="store_true",
+                   help="skip the live fetch and reuse pivot JSONs already in cases/<case>/raw/ "
+                        "(zero egress — for a handoff from a collector that already fetched, e.g. /case)")
     o.add_argument("--jobs", type=int, default=4)
     o.add_argument("--whois-reverse", action="store_true")
     o.add_argument("--fofa-full", action="store_true",

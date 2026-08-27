@@ -77,7 +77,8 @@
 </p>
 <p>
   <a href="https://serpapi.com"><img src="https://img.shields.io/badge/SerpApi-Search_%26_Ads_Results-5A67D8?style=for-the-badge" alt="SerpApi"></a>&nbsp;
-  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Open_Bucket_Search-374151?style=for-the-badge" alt="GrayHatWarfare"></a>
+  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Open_Bucket_Search-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
+  <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_Investigation_Platform-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 
 </div>
@@ -96,6 +97,7 @@
 | [**URLScan.io**](https://urlscan.io) | Passive website scanning — what a page served and who it talked to, captured without touching the target | `/webpivot` · `/impersonate` |
 | [**SerpApi**](https://serpapi.com) | Search-engine + Google Ads Transparency results API — who *paid* to send traffic, plus multi-engine dork results | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Open cloud-bucket &amp; exposed-file search (S3/Azure/GCS/Spaces) — graded **exposure**, not a same-operator pivot | `/secrets` · `/docleak` |
+| [**Social Links**](https://sociallinks.io) | OSINT investigation platform — 1000+ methods across social media, blockchain and the dark web (SL Professional / Crimewall, Maltego transforms) | OSINT methodology &amp; data |
 
 > [!IMPORTANT]
 > **ANY.RUN is used read-only.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. This skill **never submits a sample** — a public sandbox task is world-readable and irreversible. That boundary is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.
@@ -736,6 +738,8 @@ Before your first real case, run these once in Claude Code so you're not silentl
 
 `/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 52 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
 
+> **`/case` already persists a versioned case — with NO extra egress on the persist step.** When `/backend` is live (Tier 1/2), a `/case` run **reuses the pivots it just collected** (it does **not** re-fetch): it writes them under `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` and runs the deterministic pipeline in reuse mode — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — which skips the live fetch and runs the whole chain (ingest → recall → risk → clusters → `case_graph.json` → ICD-203 `assessment.md`) over that raw. The complete versioned case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**not your CWD**) and is correlated across every prior case. **If the case has not converged** (`intel.py convergence <ID>` reports status ≠ `converged`, or `/frontier` still lists open leads) **and** posture is active, `/case` then **auto-escalates to the `/harness` deepening loop** — keyless-first (it uses the CLI's own model), egress **hard-gated** on hostile infra (the harness `audit.py` denies outbound collection on `hostile=True`), `--no-harness` opts out. Plain `/pipeline open` (without `--no-collect`) and `/cti-case` still **collect** — they re-fetch every seed directly — so run those by hand only for a **fresh** case with no prior collection, after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive` for hostile infra). Tier 3 / no host seeds → `/case` skips the handoff silently.
+
 ```bash
 /cti-expert                           # load the skill first (the commands below are convention commands)
 /backend                              # confirm the deep layer is live (Tier-1 = 52 MCP tools)
@@ -746,7 +750,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /clusters CASE-0001                   # judge by same-operator cluster, with KB-wide prevalence
 /frontier CASE-0001                   # unresolved gaps: free next seeds + deferred metered leads
 
-# B — full LLM-driven HARNESS (whole-case orchestration to convergence)
+# B — full HARNESS (agent-driven; also auto-escalates inside /case when a case has not converged)
 /harness open CASE-0001 example.com sibling.com
 /harness continue CASE-0001 --depth 4 # Collect→Correlate→Assess, cross-case, until the frontier empties
 /harness status CASE-0001             # status needs no key
@@ -755,7 +759,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /cti-report CASE-0001 --pdf           # deliver: relationship graph + polished PDF/DOCX
 ```
 
-> **Pipeline vs harness:** `/pipeline` is the deterministic bread-and-butter chain — no LLM key, byte-reproducible. `/harness` is the LLM-driven orchestration that reasons across cases to convergence (the deepest mode); it needs the venv deps (`uv pip install -r requirements.txt`, already run by the installer) plus an LLM key for `continue`. Both persist under `cases/<ID>/`; the registered cold-prompt alias `/cti-case <ID> <seeds>` runs the deterministic pipeline.
+> **Pipeline vs harness:** `/pipeline` is the deterministic bread-and-butter chain — no LLM key, byte-reproducible. `/harness` is the **agent-driven** whole-case orchestration that reasons across cases to convergence (the deepest mode), and **auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription (no separate LLM key); `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. Both persist under `cases/<ID>/`; the registered cold-prompt alias `/cti-case <ID> <seeds>` runs the deterministic pipeline.
 
 <br>
 
@@ -1074,7 +1078,7 @@ Built into the skill under `intel_engine/` (`intel_engine/harness/`, `tools/`, `
 | `/reverse-whois [email\|name]` | Reverse-WHOIS a registrant → high-value pivots only (privacy/bulk filtered) |
 | `/cert-overlap [d1 d2 …]` | KB-aware TLS/SAN same-operator verdict across domains |
 | `/reference [check\|add\|list]` | False-positive control ledger — BENIGN vs SIGNAL fingerprints |
-| `/harness [open\|continue\|status]` | Whole-case orchestration — persistent, versioned, cross-case to convergence |
+| `/harness [open\|continue\|status]` | Agent-driven whole-case orchestration — persistent, versioned, cross-case to convergence; **auto-escalates inside `/case`** (keyless-first) |
 | `/graph --render` | IntelGraph publication-quality case-graph render → PNG/SVG |
 | `/report pdf` | IntelReport pandoc render of an assessment → polished PDF/DOCX |
 | `/binary [file\|url]` | Static IOC extraction from a scam APK/exe (signing cert, package, C2 hosts, wallets) → clusters with web infra |

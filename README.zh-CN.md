@@ -77,7 +77,8 @@
 </p>
 <p>
   <a href="https://serpapi.com"><img src="https://img.shields.io/badge/SerpApi-搜索与广告结果-5A67D8?style=for-the-badge" alt="SerpApi"></a>&nbsp;
-  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-开放存储桶检索-374151?style=for-the-badge" alt="GrayHatWarfare"></a>
+  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-开放存储桶检索-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
+  <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_调查平台-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 
 </div>
@@ -96,6 +97,7 @@
 | [**URLScan.io**](https://urlscan.io) | 被动网站扫描——页面提供了什么、与谁通信，无需触碰目标即可抓取 | `/webpivot` · `/impersonate` |
 | [**SerpApi**](https://serpapi.com) | 搜索引擎 + Google 广告透明度结果 API——谁**付费**引流，以及多引擎 dork 结果 | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）——评级为**暴露**，并非同一运营者枢轴 | `/secrets` · `/docleak` |
+| [**Social Links**](https://sociallinks.io) | OSINT 调查平台——覆盖社交媒体、区块链与暗网的 1000+ 方法（SL Professional / Crimewall、Maltego transforms） | OSINT 方法论与数据 |
 
 > [!IMPORTANT]
 > **ANY.RUN 仅以只读方式使用。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。本技能**从不提交样本**——公开沙箱任务全网可读且不可撤回。该边界由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
@@ -722,7 +724,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /clusters CASE-0001                   # 以同一运营者聚类为单位判断，附全库普遍度
 /frontier CASE-0001                   # 未解决的缺口：已发现的免费下一批种子 + 被推迟的计费线索
 
-# B — LLM 驱动的完整 HARNESS（整案编排至收敛）
+# B — 完整 HARNESS（智能体驱动；案件未收敛时也会在 /case 内自动升级）
 /harness open CASE-0001 example.com sibling.com
 /harness continue CASE-0001 --depth 4 # 采集→关联→研判，跨案件，直到 frontier 耗尽
 /harness status CASE-0001             # status 无需密钥
@@ -731,7 +733,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /cti-report CASE-0001 --pdf           # 交付：关系图 + 精美 PDF/DOCX
 ```
 
-> **流水线 vs harness：** `/pipeline` 是确定性的基础链（无需 LLM 密钥，逐字节可复现）。`/harness` 是 LLM 驱动、跨案件推理至收敛的编排（最深模式）；它需要 venv 依赖（`uv pip install -r requirements.txt`，安装器已运行）外加用于 `continue` 的 LLM 密钥。两者都持久化在 `cases/<ID>/` 下；已注册的冷启动别名 `/cti-case <ID> <seeds>` 运行确定性流水线。
+> **流水线 vs harness：** `/pipeline` 是确定性的基础链（无需 LLM 密钥，逐字节可复现）。`/harness` 是**智能体驱动**、跨案件推理至收敛的整案编排（最深模式），并会在确定性流水线**未收敛**且姿态为主动时**在 `/case` 内自动升级**（用 `--no-harness` 关闭）。**免密钥优先：** 在 Claude Code 交互式运行时，它使用 CLI 自身的模型、走你的订阅（无需单独的 LLM 密钥）；仅无人值守的 SDK `continue` 才需要 `HARNESS_BACKEND=local`（Ollama/vLLM/LM Studio，免密钥）或一个 API 密钥。两者都持久化在 `cases/<ID>/` 下；已注册的冷启动别名 `/cti-case <ID> <seeds>` 运行确定性流水线。
 
 <br>
 
@@ -1050,7 +1052,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 | `/reverse-whois [email\|name]` | 对注册人做反向 WHOIS → 只保留高价值枢轴（过滤隐私代理与批量注册） |
 | `/cert-overlap [d1 d2 …]` | 跨域名的、知识库感知的 TLS/SAN 同一运营者判定 |
 | `/reference [check\|add\|list]` | 误报控制账本 —— BENIGN 与 SIGNAL 指纹 |
-| `/harness [open\|continue\|status]` | 全案件编排 —— 持久、带版本、跨案件直至收敛 |
+| `/harness [open\|continue\|status]` | 智能体驱动的全案件编排 —— 持久、带版本、跨案件直至收敛；**在 `/case` 内自动升级**（免密钥优先） |
 | `/graph --render` | IntelGraph 出版级案件图渲染 → PNG/SVG |
 | `/report pdf` | IntelReport 用 pandoc 渲染研判报告 → 精美 PDF/DOCX |
 | `/binary [file\|url]` | 从诈骗 APK/exe 提取静态 IOC（签名证书、包名、C2 主机、钱包）→ 与 Web 基础设施聚类 |
