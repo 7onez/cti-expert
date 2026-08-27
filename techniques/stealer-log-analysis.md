@@ -97,6 +97,7 @@ actor.) Use clusters to merge subjects in the case workspace.
 - Seller/traffer Telegram & Jabber, actor emails/aliases → `/branch`, `/username`, `/email-deep`, `/case`
 - Dropper paths / random processes / hashes → `/threat-check`, `/report ioc` (STIX)
 - Register operator clusters as subjects; feed IPs/domains into `/exposure`, `/timeline`, `/report`
+- Victim's corporate domain → corroborate at org scale: HudsonRock `search-by-domain`/`urls-by-domain` (per-URL) + Lunar domain-exposure (`uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" <domain>`) for 12-mo trend, matching malware families/OS, and exposed VPN/SSO services. EXPOSURE evidence — corroboration, not operator attribution.
 
 ---
 

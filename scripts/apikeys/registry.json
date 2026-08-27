@@ -8,8 +8,8 @@
       "test": {"url": "https://api.shodan.io/api-info?key={key}", "expect_json": "query_credits"}
     },
     {
-      "id": "censys", "name": "Censys", "env": "CENSYS_API_KEY", "extra": ["CENSYS_ORG_ID", "CENSYS_API_ID"],
-      "aliases": ["CENSYS_API_SECRET"], "category": "infra", "tier": "freemium",
+      "id": "censys", "name": "Censys", "env": "CENSYS_API_KEY", "extra": ["CENSYS_ORG_ID"],
+      "aliases": ["CENSYS_PAT", "CENSYS_TOKEN", "CENSYS_API_SECRET"], "category": "infra", "tier": "freemium",
       "url": "https://accounts.censys.io/settings/personal-access-tokens",
       "unlocks": "/webpivot: reverse favicon MD5 -> hosts; /cert-pivot: cert fingerprint_sha256 -> hosts; certificate + host search",
       "test": {"url": "https://search.censys.io/api/v1/account", "bearer": true, "expect_status": 200}
@@ -72,9 +72,10 @@
       "unlocks": "/breach-deep + /stealer-log: infostealer-breach feed lookups"
     },
     {
-      "id": "chongluadao", "name": "ChongLuaDao", "env": "CHONGLUADAO_API_KEY", "aliases": ["BURNER_API_KEY"], "category": "breach",
-      "tier": "free-tier", "url": "https://chongluadao.vn",
-      "unlocks": "/scam-check + /breach-deep: Vietnamese phishing/scam + breach feed; /email-hygiene: disposable/burner email detection"
+      "id": "chongluadao", "name": "ChongLuaDao", "env": "CHONGLUADAO_API_KEY", "aliases": ["CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY"], "category": "breach",
+      "tier": "premium", "url": "https://chongluadao.vn",
+      "unlocks": "/cld + /scam-check + /threat-check + /phone + /breach-deep + /email-deep + /email-hygiene + /vuln-check + /impersonate + /webpivot --whois: first-party VN threat intel — URL/IP/hash/email/phone/bank IoC verdicts (client talks only to CLD; CLD fetches target server-side), 20M-URL denylist search, data-leak/breach exposure + full-export, deep AI URL analysis, brand-protection lookalikes, CVE/KEV + threat-actor feeds, STIX/MISP feeds. See connectors/chongluadao-api.md",
+      "test": {"url": "https://feeds.chongluadao.vn/external/checkburneremail?q=mailinator.com", "header": {"X-API-Key": "{key}"}, "expect_json": "is_burner_email"}
     },
     {
       "id": "intelx", "name": "Intelligence X (IntelX)", "env": "INTELX_API_KEY", "category": "breach",
@@ -107,6 +108,44 @@
       "id": "subscan", "name": "Subscan", "env": "SUBSCAN_API_KEY", "category": "crypto",
       "tier": "free-tier", "url": "https://support.subscan.io/",
       "unlocks": "/crypto-balance: higher-rate Polkadot (DOT) balance lookups"
+    },
+    {
+      "id": "hunterhow", "name": "Hunter.how", "env": "HUNTERHOW_API_KEY",
+      "aliases": ["HUNTER_HOW_API_KEY", "HUNTERHOW_KEY"], "category": "infra", "tier": "freemium",
+      "url": "https://hunter.how/search-api",
+      "unlocks": "/webpivot + /cert-pivot: independent CN cyberspace index — reverse favicon_hash (mmh3) / cert / web.body / domain / ip -> hosts (a FOFA/Quake/ZoomEye peer; strongest when FOFA quota is spent or for CN-hosted infra)"
+    },
+    {
+      "id": "grayhatwarfare", "name": "GrayHatWarfare", "env": "GRAYHATWARFARE_API_KEY",
+      "aliases": ["GRAYHAT_API_KEY", "GHW_API_KEY"], "category": "breach", "tier": "freemium",
+      "url": "https://grayhatwarfare.com/account",
+      "unlocks": "/secrets + /docleak: scriptable open-bucket (S3/Azure/GCS/DO Spaces) + exposed-file keyword/domain search — upgrades the keyless site:buckets.grayhatwarfare.com dork to a filterable, paginated API. Graded EXPOSURE, not a same-operator pivot",
+      "test": {"url": "https://buckets.grayhatwarfare.com/api/v2/buckets?limit=1", "bearer": true, "expect_status": 200}
+    },
+    {
+      "id": "anyrun", "name": "ANY.RUN", "env": "ANYRUN_API_KEY",
+      "aliases": ["ANY_RUN_API_KEY", "ANYRUN_KEY"], "category": "breach", "tier": "freemium",
+      "url": "https://app.any.run/profile",
+      "unlocks": "/anyrun + /binary: ANY.RUN TI Lookup over prior detonations (contacted domains/IPs/URLs, family label) — the only way to recover a PACKED sample's runtime endpoints. NOTE: a sandbox key is a SEPARATE licence from TI Lookup; settle it with `bp_anyrun.py keycheck --probe` (the plain license check false-greens a sandbox key). This key never submits a sample",
+      "test": {"url": "https://api.any.run/v1/user", "header": {"Authorization": "API-KEY {key}"}, "expect_json": "data"}
+    },
+    {
+      "id": "pdns", "name": "Passive DNS / Passive SSL (CIRCL COF)", "env": "PDNS_PASSWORD",
+      "extra": ["PDNS_USERNAME", "PDNS_URL"], "category": "dns", "tier": "freemium",
+      "url": "https://www.circl.lu/services/passive-dns/",
+      "unlocks": "/webpivot: historical A/AAAA (the IPs a host used before its current CDN front) + co-hosted domains, and the cert->IP passive-SSL direction that recovers an origin from behind a CDN (one CIRCL account covers both). Needs PDNS_USERNAME + PDNS_PASSWORD (+ optional PDNS_URL for a COF-compatible instance)"
+    },
+    {
+      "id": "ipinfo", "name": "IPinfo", "env": "IPINFO_TOKEN",
+      "aliases": ["IPINFO_API_KEY"], "category": "infra", "tier": "freemium",
+      "url": "https://ipinfo.io/account/token",
+      "unlocks": "/webpivot + IP enrichment: ASN/org, reverse hostname, geo, and privacy flags (hosting/proxy/vpn/tor/relay) for an IP"
+    },
+    {
+      "id": "flaresolverr", "name": "FlareSolverr", "env": "FLARESOLVERR_URL",
+      "category": "infra", "tier": "free",
+      "url": "https://github.com/FlareSolverr/FlareSolverr",
+      "unlocks": "/webpivot: routes fetches through a local FlareSolverr proxy to solve Cloudflare/JS interstitials when a target sits behind a challenge page. This is a service URL, not an API key"
     }
   ]
 }

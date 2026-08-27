@@ -112,7 +112,8 @@ def load_data(json_path: str) -> dict:
     case.setdefault("subject", "N/A")
     case.setdefault("status", "active")
 
-    return data
+    from cti_text_normalize import normalize_obj
+    return normalize_obj(data)
 
 
 def generate_output_path(data: dict, output_path: str = None) -> str:

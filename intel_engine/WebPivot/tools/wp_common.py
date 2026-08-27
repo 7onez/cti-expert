@@ -29,6 +29,29 @@ import urllib.request
 import urllib.error
 from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA in references/*.json
 
+# --- egress proxy / rotation: install IN THIS PROCESS so a SOCKS pool's socket
+# hook also covers raw TLS dials (WebPivot tools run as their own subprocess under
+# intel.py and would otherwise only inherit env, leaving raw sockets direct). ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    while True:
+        for _sub in ("scripts/proxy", "proxy"):
+            _c = _o.path.join(_b, _sub, "cti_proxy.py")
+            if _o.path.isfile(_c):
+                _s.path.insert(0, _o.path.dirname(_c))
+                try:
+                    import cti_proxy
+                    cti_proxy.install()
+                except Exception:
+                    pass
+                return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 # DATA: how we present ourselves when fetching, and the public-suffix table. Both go stale on a
 # schedule nobody controls (browser releases; new ccTLD second levels), so both are tunable.
 _FP_FALLBACK = {"ua_pool": ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

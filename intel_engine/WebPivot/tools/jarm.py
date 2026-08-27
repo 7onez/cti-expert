@@ -25,6 +25,29 @@ import os
 import random
 import hashlib
 
+# --- egress proxy / rotation: install IN THIS PROCESS so a SOCKS pool routes the
+# raw JARM handshake sockets below (an HTTP proxy can't carry them — the caller
+# already suppresses JARM under --proxy for that case). ------------------------
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    while True:
+        for _sub in ("scripts/proxy", "proxy"):
+            _c = _o.path.join(_b, _sub, "cti_proxy.py")
+            if _o.path.isfile(_c):
+                _s.path.insert(0, _o.path.dirname(_c))
+                try:
+                    import cti_proxy
+                    cti_proxy.install()
+                except Exception:
+                    pass
+                return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 # ---- canonical Salesforce JARM algorithm (vendored verbatim) ----
 def choose_grease():
     grease_list = [b"\x0a\x0a", b"\x1a\x1a", b"\x2a\x2a", b"\x3a\x3a", b"\x4a\x4a", b"\x5a\x5a", b"\x6a\x6a", b"\x7a\x7a", b"\x8a\x8a", b"\x9a\x9a", b"\xaa\xaa", b"\xba\xba", b"\xca\xca", b"\xda\xda", b"\xea\xea", b"\xfa\xfa"]
@@ -425,11 +448,29 @@ def _send_packet(packet, host, port, timeout):
     """Open one TCP connection, send the crafted hello, read the server hello."""
     sock = None
     try:
-        family = socket.AF_INET6 if ":" in host else socket.AF_INET
-        sock = socket.socket(family, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect((host, port, 0, 0) if family == socket.AF_INET6 else (host, port))
-        ip = sock.getpeername()[0]
+        # Route the raw TLS hello through the configured proxy so a direct jarm
+        # call can't leak the real IP: CONNECT-tunnel under an HTTP pool (fail closed
+        # — never dial direct when a proxy is set), or fall through to socket.socket
+        # which install() has already hooked to SOCKS when a SOCKS pool is active.
+        _cp = None
+        try:
+            import cti_proxy as _cp
+        except Exception:
+            _cp = None               # proxy layer absent -> behave exactly as before
+        if _cp is not None:
+            try:
+                sock = _cp.proxied_connection(host, port, timeout)  # None -> go direct
+            except Exception:
+                return None, None    # proxy configured but CONNECT failed -> no leak
+        if sock is None:
+            family = socket.AF_INET6 if ":" in host else socket.AF_INET
+            sock = socket.socket(family, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect((host, port, 0, 0) if family == socket.AF_INET6 else (host, port))
+            ip = sock.getpeername()[0]
+        else:
+            sock.settimeout(timeout)
+            ip = None                # tunneled: the peer socket is the proxy, not the target
         sock.sendall(packet)
         data = sock.recv(1484)
         try:

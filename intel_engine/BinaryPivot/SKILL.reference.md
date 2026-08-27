@@ -113,13 +113,13 @@ Everything above is **static**: it reads the file. ANY.RUN runs it. The API is, 
 **submission API** — send a file or URL, get an interactive detonation with the network log, dropped
 files and a verdict. **Threat Intelligence Lookup** (searching *other people's* detonations without
 running your own) is a **separate, comparatively limited product**: its own licence, a small
-allowance, and **not included with a plain sandbox subscription** — so `keycheck` first, and treat a
-403 there as *"not entitled"*, never as *"nothing known"*.
+allowance, and **not included with a plain sandbox subscription** — so `keycheck --probe` first (the
+plain license check false-greens a sandbox key), and treat a 403 there as *"not entitled"*, never as *"nothing known"*.
 
 ```bash
 BP=~/.claude/skills/BinaryPivot
 python3 "$BP/tools/bp_anyrun.py" query file:sha256 <sha256>     # OFFLINE: build the query, no key
-python3 "$BP/tools/bp_anyrun.py" keycheck                       # entitled to TI Lookup at all?
+python3 "$BP/tools/bp_anyrun.py" keycheck --probe               # entitled to TI Lookup? (free unless entitled)
 python3 "$BP/tools/bp_anyrun.py" lookup --sha256 <sha256>       # TI Lookup (separate licence)
 python3 "$BP/tools/bp_anyrun.py" history                        # YOUR OWN past tasks (sandbox key)
 python3 "$BP/tools/bp_anyrun.py" report <task-uuid> [--iocs]    # one task's report / IOCs

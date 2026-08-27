@@ -53,6 +53,27 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# --- egress proxy / rotation: export HTTP(S)_PROXY so every subprocess tool
+# this dispatcher spawns (env=dict(os.environ,...)) inherits the same egress ---
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 # Engine interpreter: $INTEL_PY → the skill's own .venv (harness SDK/MCP + IntelGraph deps
 # live there, installed via `uv pip install -r requirements.txt`) → whatever runs this file.
 # The stdlib layers (collectors, KB, deterministic pipeline) work under any of these; only the
@@ -338,6 +359,40 @@ def _cmd_cases(rest):
     return 0
 
 
+def _normalize_report_md(rest):
+    """For the pandoc `report` op, hand the engine a dash-normalized copy of the
+    assessment `.md` so the rendered PDF/DOCX carries plain hyphens (em/en dashes read as
+    LLM-authored). The copy is written beside the original — keeping relative image paths
+    valid — and the analyst's source file is never mutated. Returns (rest, temp_path|None)."""
+    scripts_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        from cti_text_normalize import normalize_dashes
+    except Exception:
+        return rest, None
+    for i, arg in enumerate(rest):
+        if not (isinstance(arg, str) and arg.lower().endswith(".md") and os.path.isfile(arg)):
+            continue
+        try:
+            with open(arg, "r", encoding="utf-8") as f:
+                original = f.read()
+        except OSError:
+            return rest, None
+        normalized = normalize_dashes(original)
+        if normalized == original:
+            return rest, None
+        d = os.path.dirname(os.path.abspath(arg))
+        stem = os.path.splitext(os.path.basename(arg))[0]
+        tmp = os.path.join(d, f".{stem}.dashnorm.{os.getpid()}.md")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(normalized)
+        new_rest = list(rest)
+        new_rest[i] = tmp
+        return new_rest, tmp
+    return rest, None
+
+
 def main(argv):
     dry = False
     if argv and argv[0] in ("--dry-run", "-n"):
@@ -376,6 +431,10 @@ def main(argv):
               file=sys.stderr)
         return 4
 
+    md_cleanup = None
+    if op == "report" and not dry:
+        rest, md_cleanup = _normalize_report_md(rest)
+
     cmd = [PY, script_abs, *prefix, *rest]
     if dry:
         # Show it exactly as it would run (cwd matters for the engine's relative paths).
@@ -393,6 +452,12 @@ def main(argv):
         return 5
     except KeyboardInterrupt:
         return 130
+    finally:
+        if md_cleanup:
+            try:
+                os.unlink(md_cleanup)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

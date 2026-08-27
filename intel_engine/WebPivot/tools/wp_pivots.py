@@ -33,6 +33,7 @@ from wp_extract import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_censys import censys_queries, attach_censys_queries  # CenQL builder (keyless — no PAT needed)
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
+from wp_hunterhow import attach_hunterhow_queries  # Hunter.how query builder (keyless — no key needed)
 from wp_email import ESP_DOMAINS  # sending-infra domains — ESP mailers, not the operator
 
 # ---------------------------------------------------------------- reference data (RULE 3)
@@ -948,7 +949,7 @@ def build_pivots(art: dict, base_host: str):
     # see references/censys_queries.json -> pivot_kind_map. A second pass adds the IntelX selector
     # (+ its UI URL) to every kind IntelX searches — emails, phones, domains, IPs, wallets — so the
     # leak/paste/darknet corpus is reachable from the same pivot list even with no key at all.
-    return sort_pivots(attach_intelx_queries(attach_censys_queries(pivots)))
+    return sort_pivots(attach_hunterhow_queries(attach_intelx_queries(attach_censys_queries(pivots))))
 
 
 __all__ = [_n for _n in dir() if not _n.startswith("__")]

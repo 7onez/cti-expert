@@ -86,6 +86,7 @@ import wp_assets   # noqa  (asset layer: JS bundles / source maps / well-known f
 from wp_assets import *  # noqa
 import wp_docmeta  # noqa  (document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF)
 import wp_censys   # noqa  (Censys Platform: lookups + CenQL builder; --no-censys flips ENABLED)
+import wp_hunterhow  # noqa  (Hunter.how reverse search; --no-hunterhow flips ENABLED)
 import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin behind a CDN)
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
 import wp_exhaust  # noqa  (collection-exhaustion checklist: which evidence layers never ran)
@@ -258,6 +259,11 @@ def main():
                          "not roll over), so this is the switch for conserving them. The Censys "
                          "CenQL queries are still emitted on every pivot — they are built offline "
                          "and cost nothing.")
+    ap.add_argument("--no-hunterhow", action="store_true",
+                    help="do NOT call the Hunter.how API even if HUNTERHOW_API_KEY is set. "
+                         "Hunter.how is metered and query-rate-limited (a free account has a small "
+                         "quota), so this is the switch for conserving it. The Hunter.how query is "
+                         "still emitted on every reversible pivot — built offline, costing nothing.")
     ap.add_argument("--no-pssl", action="store_true",
                     help="do NOT query CIRCL passive SSL even when the CIRCL credentials "
                          "(PDNS_USERNAME/PDNS_PASSWORD) are set. Passive SSL is the historical "
@@ -432,6 +438,7 @@ def main():
         args.render = True   # a screenshot requires the rendered (Playwright) page
     wp_extract.QR_DECODE_IMAGES = bool(args.decode_qr)
     wp_censys.ENABLED = not args.no_censys   # offline CenQL builder is unaffected — it costs nothing
+    wp_hunterhow.ENABLED = not args.no_hunterhow  # offline query builder unaffected — costs nothing
     wp_pssl.ENABLED = not args.no_pssl       # passive SSL: historical cert->IP (origin recovery)
     # Asset layer (JS bundles / source maps / well-known files) — on by default, per-half opt-out.
     wp_assets.COLLECT_ASSETS = not args.no_assets

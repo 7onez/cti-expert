@@ -38,6 +38,7 @@ import wp_extract  # for the QR_DECODE_IMAGES toggle main() sets
 import wp_assets   # asset layer: JS bundles, source maps, well-known files, API endpoints
 import wp_docmeta  # document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF
 from wp_censys import censys_configured, censys_webproperty, censys_certificate
+from wp_hunterhow import hunterhow_configured, search as hunterhow_search  # Hunter.how reverse (metered)
 import wp_pssl     # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
@@ -190,14 +191,27 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     if probe_tls and effective_url and not is_archived:
         parsed = urlparse(effective_url)
         if parsed.scheme == "https" and parsed.hostname:
-            if proxy:
-                _suppressed = {"skipped": "proxy configured — direct TLS probe suppressed (OPSEC)"}
+            import os as _os
+            _envp = (_os.environ.get("HTTPS_PROXY") or _os.environ.get("https_proxy")
+                     or _os.environ.get("ALL_PROXY") or _os.environ.get("all_proxy")
+                     or _os.environ.get("HTTP_PROXY") or _os.environ.get("http_proxy") or "")
+            _socks = _envp.lower().startswith("socks")
+            # What actually protects a RAW ssl/JARM socket is the env/pool proxy that
+            # cti_proxy.install() exported: fetch_tls_cert CONNECT-tunnels it and fails
+            # closed, and a SOCKS pool hooks this process's sockets. An explicit --proxy
+            # arg alone does NOT (proxied_connection reads the env), so treat that as no
+            # protection and suppress. JARM's raw ClientHello can't tunnel, so it runs
+            # only with no proxy or a SOCKS pool.
+            if _envp:
+                tls_cert = fetch_tls_cert(parsed.hostname, parsed.port or 443, timeout=8)
+                jarm = (fetch_jarm(parsed.hostname, parsed.port or 443, timeout=8) if _socks
+                        else {"skipped": "HTTP proxy — raw JARM probe suppressed (OPSEC); use a SOCKS pool"})
+            elif proxy:
+                _suppressed = {"skipped": "proxy configured — direct TLS/JARM probe suppressed (OPSEC)"}
                 tls_cert = _suppressed
                 jarm = _suppressed
             else:
                 tls_cert = fetch_tls_cert(parsed.hostname, parsed.port or 443, timeout=8)
-                # JARM: active TLS-stack fingerprint (10 handshakes) — same gating as the
-                # cert probe (primary live host, never under proxy). Pivots on Shodan ssl.jarm.
                 jarm = fetch_jarm(parsed.hostname, parsed.port or 443, timeout=8)
 
     # --- CORS policy (which origins/backends the server trusts) ---
@@ -571,6 +585,11 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # gated exactly like FOFA. Only the two LOOKUP endpoints are used here — they work on the free
     # plan, unlike /search/query, which needs Starter.
     have_censys = censys_configured() and not free_only
+    # Hunter.how is metered (a free account has a small quota) and query-rate-limited, so it is
+    # gated exactly like FOFA: skipped under --free-only, and it only fires on the handful of
+    # pivots it can reverse. It is an INDEPENDENT (CN-dense) index, so its hits corroborate or
+    # extend FOFA's rather than duplicate them.
+    have_hunterhow = hunterhow_configured() and not free_only
     # Passive SSL rides the SAME CIRCL credential pair as passive DNS. The two are the historical
     # name->IP and cert->IP halves of one question, so a run that has pDNS should always have
     # pSSL as well — before this layer existed the cert->IP direction was simply never asked.
@@ -590,6 +609,8 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("ipinfo")
     if have_censys:
         sources.append("censys")
+    if have_hunterhow:
+        sources.append("hunterhow")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -695,6 +716,20 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 f = fofa_search(fofa_q, full=fofa_full)
                 if f is not None:
                     lr["fofa"] = f
+            # Hunter.how reverse — the favicon-hash and body/tracker artifacts FOFA reverses, run
+            # against an independent index so a sibling FOFA missed still surfaces. search() never
+            # raises and self-reports rate-limit/quota in its `code`, so a throttled call degrades
+            # to a note rather than breaking enrichment.
+            if have_hunterhow:
+                hh_q = None
+                if kind == "favicon_hash":
+                    hh_q = f'favicon_hash="{val}"'
+                elif kind.startswith(("tracker:", "verification:")) or kind == "keyword":
+                    hh_q = f'web.body="{val}"'
+                if hh_q:
+                    hh = hunterhow_search(hh_q)
+                    if hh is not None:
+                        lr["hunterhow"] = hh
             # --- urlscan reverses — query form matches how urlscan indexes each artifact:
             #   tracker/verification IDs → page CONTENT search ("<id>")
             #   favicon                  → resource-HASH search (hash:<sha256>)

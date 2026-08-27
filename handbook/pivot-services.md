@@ -13,6 +13,7 @@ requirements. ⚠️ marks services that recently changed — verify before rely
 | **FOFA** | `icon_hash="<int>"` | **mmh3** | Freemium (heavy paid gating) | REST, key |
 | **ZoomEye** (zoomeye.ai) | `iconhash:"<mmh3>"` | **mmh3** | Freemium credits | REST, key |
 | **Quake** (360, quake.360.net) | `favicon:"<mmh3>"` | **mmh3** | Freemium credits | REST, key — independent CN index |
+| **Hunter.how** (hunter.how) | `favicon_hash="<mmh3>"` | **mmh3** | Freemium quota | REST, key — independent CN index |
 | **Censys** (Platform API) | `services.http.response.favicons.md5_hash` | **MD5** | Freemium | REST, key ⚠️ classic Search API retired |
 | **Netlas** | `http.favicon.hash_sha256` | **SHA-256** | Freemium + 14-day trial | REST, key |
 | **Validin** | favicon in host-response graph | body hashes | Free community + free API | REST, free key |
@@ -40,6 +41,7 @@ Helper tools that build cross-engine queries: `favihunter`, `favihash`, osint.sh
 | **PublicWWW** — literal HTML/JS/CSS string | Freemium | REST, key |
 | **NerdyData** — source + company data | Paid (trial) | REST, key |
 | **Intelligence X** (intelx.io) — code/tracker selectors, bundles AnalyzeID GA/AdSense tabs | Freemium | REST, key |
+| **Hunter.how** — live-asset source via `web.body="<string>"` / `header.*` | Freemium | REST, key |
 
 ## 4. Certificate Transparency
 | Service | Query | Cost | API |
@@ -48,10 +50,20 @@ Helper tools that build cross-engine queries: `favihunter`, `favihash`, osint.sh
 | **Certspotter** (SSLMate) | domain | Free tier + paid | REST, free key (low quota) |
 | **Censys** | cert fields | Freemium | Platform API, key |
 | **Cloudflare Merkle Town / Azul** | dashboard | Free | limited |
+| **crt.name** (aggregated index) | `apex=<eTLD+1>` | Free | `/v1/search`, no token, 100/IP/day — **text one-per-line by default; add `&format=json`**; **fallback below crt.sh only** |
 
 > **CT is free/keyless.** crt.sh needs no key (just often overloaded); **CertSpotter**'s key is an
 > *optional* reliability + rate-limit upgrade and a crt.sh fallback — its free tier also works keyless
 > at a low rate. CT lookups never require payment.
+
+> **crt.name is a fallback, not a peer of crt.sh.** It is an **aggregated** subdomain index
+> (CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi), so a name it
+> returns is **not CT-log-attributable evidence** the way a crt.sh row is. Rank it *below* crt.sh,
+> tag results `source:crt.name(aggregated)`, and validate before any such name enters a report.
+> **OPSEC:** querying it discloses the target apex to an unknown third-party operator — crt.sh and
+> CertSpotter are established CT operators; crt.name is not. Its remote `/mcp` endpoint is
+> deliberately **not** wired in — an unvetted remote MCP server is exactly the supply-chain /
+> prompt-injection surface `../techniques/prompt-injection-audit.md` warns against.
 
 ### 4b. Cert-fingerprint pivots — find OTHER hosts serving the SAME cert
 
@@ -81,6 +93,7 @@ searches server-side.
 | **Netlas** — DNS + host responses | Freemium | REST, key |
 | **Silent Push** — infra pivots, live scans, attack clustering | Mostly paid + community | REST, key |
 | **HackerTarget** — reverse IP / DNS | Free (limited) + paid | REST |
+| **Hunter.how** — domain/ip/cert/favicon/body asset search, CN-dense | Freemium | REST, key |
 
 ## 6. URL/page scan & historical DOM
 | Service | Cost | API |
@@ -122,7 +135,7 @@ Full tradecraft in [`techniques/china-recon.md`](../techniques/china-recon.md). 
 
 ## Scriptable-API cheat sheet
 - **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web), Cninfo, 信用中国.
-- **Free-tier key:** Shodan, FOFA, **Quake**, ZoomEye, Censys, Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **Free-tier key:** Shodan, FOFA, **Quake**, ZoomEye, **Hunter.how**, Censys, Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
 - **Free but not scriptable (CAPTCHA / manual):** beian.miit.gov.cn, GSXT.
 - **Geo-gated:** TianYanCha, QCC, Aiqicha — CN egress required; log a collection gap otherwise.
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.

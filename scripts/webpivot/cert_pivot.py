@@ -47,6 +47,26 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# --- egress proxy / rotation: route outbound HTTP through the /proxy pool ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 _UA = "cti-expert/1.0 (+cert-pivot)"
 
 # --------------------------------------------------------------- shared key store
@@ -82,18 +102,23 @@ def _secret(*names):
     return None
 
 
-def _get(url, timeout=20, headers=None, retries=4, backoff=3):
+def _get(url, timeout=1800, headers=None, retries=4, backoff=3):
     """GET → (text, error). Never raises.
 
-    Transient failures (429/5xx, timeouts, resets, empty bodies) are retried with
-    exponential backoff — crt.sh in particular is frequently overloaded. Only the
-    final failure is returned as an error string. Non-retryable 4xx bail early.
+    `timeout` is a TOTAL wall-clock budget across ALL retries + backoff (not per
+    attempt), so the 30-min ceiling holds even though crt.sh is frequently overloaded
+    and retried. Transient failures (429/5xx, timeouts, resets, empty bodies) retry;
+    non-retryable 4xx bail early.
     """
     last = None
+    deadline = time.monotonic() + timeout
     for attempt in range(retries):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             req = Request(url, headers={"User-Agent": _UA, **(headers or {})})
-            with urlopen(req, timeout=timeout) as r:
+            with urlopen(req, timeout=remaining) as r:
                 text = r.read().decode("utf-8", "replace")
             if not text.strip():
                 raise ValueError("empty response")  # overloaded — worth retrying
@@ -105,7 +130,10 @@ def _get(url, timeout=20, headers=None, retries=4, backoff=3):
         except Exception as e:  # noqa: BLE001
             last = f"{type(e).__name__}: {e}"
         if attempt < retries - 1:
-            time.sleep(backoff * (attempt + 1))
+            nap = min(backoff * (attempt + 1), max(0.0, deadline - time.monotonic()))
+            if nap <= 0:
+                break
+            time.sleep(nap)
     return None, last or "request failed"
 
 
@@ -120,7 +148,23 @@ def fetch_leaf_fingerprints(host, port=443, timeout=15):
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        # Respect a configured proxy — a raw socket here would leak the real IP to
+        # the target. proxied_connection tunnels via CONNECT (HTTP proxy) or returns
+        # None when going direct is safe (no proxy, or SOCKS already hooks sockets).
+        sock = None
+        _cp = None
+        try:
+            import cti_proxy as _cp
+        except Exception:
+            _cp = None              # proxy layer absent -> connect directly, as before
+        if _cp is not None:
+            try:
+                sock = _cp.proxied_connection(host, port, timeout)
+            except Exception as e:  # proxy configured but tunnel failed -> do NOT leak
+                return {"error": f"proxy tunnel failed: {type(e).__name__}: {e}"}
+        if sock is None:
+            sock = socket.create_connection((host, port), timeout=timeout)
+        with sock:
             with ctx.wrap_socket(sock, server_hostname=host) as ss:
                 der = ss.getpeercert(binary_form=True)
         if not der:
@@ -134,7 +178,7 @@ def fetch_leaf_fingerprints(host, port=443, timeout=15):
 
 
 # ------------------------------------------------------------------------ crt.sh
-def crtsh_history(domain, timeout=30, cap=40):
+def crtsh_history(domain, timeout=1800, cap=40):
     """crt.sh JSON → recent certs (id/serial/validity/issuer) + SAN sibling hostnames."""
     url = f"https://crt.sh/?q={quote(domain)}&output=json"
     text, err = _get(url, timeout=timeout)
@@ -217,7 +261,7 @@ def shodan_pivot(sha256, sha1, cap=20):
     for fp in [f for f in (sha256, sha1) if f]:
         url = (f"https://api.shodan.io/shodan/host/search?key={key}"
                f"&query=ssl.cert.fingerprint:{fp}")
-        text, err = _get(url, timeout=30)
+        text, err = _get(url, timeout=1800)
         if err or not text:
             continue
         try:
@@ -248,7 +292,7 @@ def censys_pivot(sha256, cap=20):
         headers = {"Authorization": f"Basic {auth}"}
     else:
         headers = {"Authorization": f"Bearer {bearer}"}
-    text, err = _get(url, timeout=30, headers=headers)
+    text, err = _get(url, timeout=1800, headers=headers)
     if err or not text:
         return [], err or "empty response"
     try:

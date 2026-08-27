@@ -477,6 +477,41 @@ def _discover_new_seeds(case: str, known: list[str], max_new: int) -> list[str]:
     return sorted(scores, key=lambda p: -scores[p])[:max_new]
 
 
+def _binary_round(case: str, seen: set) -> int:
+    """--auto-binary: after a collect+ingest round, run BinaryPivot on any app:apk /
+    app:desktop_installer download the round surfaced (deduped via `seen`), writing each into
+    cases/<case>/raw/ so the NEXT ingest folds the app's signing cert / backend host / firebase
+    tenant into the SAME cluster and the new hosts join the frontier. Returns how many were newly
+    analysed. A hostile target's direct binary download is refused by collect_binary itself, so this
+    honours the run's egress posture — nothing here bypasses a gate."""
+    raw = os.path.join(ROOT, "cases", case, "raw")
+    if not os.path.isdir(raw):
+        return 0
+    urls = []
+    for p in glob.glob(os.path.join(raw, "*.json")):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except Exception:  # noqa: BLE001 — a half-written raw file must never abort the loop
+            continue
+        for piv in (doc.get("pivots") or []):
+            if piv.get("kind") in ("app:apk", "app:desktop_installer"):
+                u = piv.get("value")
+                if u and u not in seen:
+                    urls.append(u)
+    n = 0
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)                                  # never retry the same URL (incl. a hostile refusal)
+        res = T.collect_binary(u, case)
+        ok = not (isinstance(res, dict) and res.get("error"))
+        _log(f"  binary: {u} → "
+             f"{'analysed' if ok else (res.get('error') if isinstance(res, dict) else 'skipped')}")
+        n += 1 if ok else 0
+    return n
+
+
 # Stop reason -> the state.json status vocabulary the deterministic loop already uses
 # (tools/case_state.py: expanding | converged | cold | awaiting-analyst | error). ONE vocabulary,
 # ONE state file: `./intel status`, `case_state.py reopen` and `intel.py loop` all read what an
@@ -572,13 +607,15 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
 
 
 async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
-                   stale: int, max_new: int, collect_conc: int = 1) -> Assessment:
+                   stale: int, max_new: int, collect_conc: int = 1,
+                   auto_binary: bool = False) -> Assessment:
     """One or more Collect→Correlate→Assess rounds. Each round snapshots an immutable assessment
     (r1, r2, …); between rounds it expands the seed set with newly-discovered cluster peers and
     stops when convergence.py reports CONVERGED, the depth cap is hit, or nothing new is found.
     collect_conc>1 fans the collect phase into one reactive collector agent per seed (see
     collect_fanout); the default (1) keeps the single sequential collect session."""
     current, final, stop, rnd = list(seeds), None, "depth-cap", 0
+    _bin_seen: set = set()
     for rnd in range(1, depth + 1):
         _log(f"\n===== ROUND {rnd}/{depth} · {len(current)} seed(s): {', '.join(current)} =====")
         try:
@@ -587,6 +624,8 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
             _log(f"round {rnd} failed: {e}")
             stop = "failed"
             break
+        if auto_binary and _binary_round(case, _bin_seen):
+            T.ingest(case)   # fold the binaries' IOCs in before this round's snapshot counts them
         table_md = _domain_table(case)
         render.render_terminal(final, table_md=table_md)
         snap = _persist_assessment(final, case, table_md)
@@ -695,7 +734,8 @@ def _cluster_prior_verdict(members: list[str]) -> str | None:
 
 
 async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_conc: int,
-                            judge_conc: int, depth: int = 1, stale: int = 2, max_new: int = 8) -> list:
+                            judge_conc: int, depth: int = 1, stale: int = 2, max_new: int = 8,
+                            auto_binary: bool = False) -> list:
     """Phase 3 — scale. Collect concurrently (deterministic, no LLM). With depth>1 (--continue) keep
     expanding the frontier and re-collecting CHEAPLY until the case converges — judgment does NOT run
     per round. Then partition into same-operator clusters and judge each ONCE, in parallel; clusters
@@ -703,6 +743,7 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
     _log(f"\n===== PARALLEL CASE · {len(seeds)} seeds · collect≤{max_conc} · judge≤{judge_conc}"
          f"{' · continue depth ' + str(depth) if depth > 1 else ''} =====")
     current, stop, rnd = list(seeds), "depth-cap", 0
+    _bin_seen: set = set()
     for rnd in range(1, depth + 1):                                                  # 1. expand-collect loop
         t0 = time.time()
         res = T.collect_many(current, case, hostile=hostile, max_workers=max_conc)
@@ -712,6 +753,8 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
              f"({sum(1 for r in ok if r.get('reused'))} cached)"
              + (f" · failures: {', '.join(fails)}" if fails else ""))
         T.ingest(case)                                                               # ingest each round
+        if auto_binary and _binary_round(case, _bin_seen):
+            T.ingest(case)   # fold the binaries' IOCs in before this round's snapshot counts them
         conv = _convergence_snapshot(case)
         if conv:
             _log("convergence · " + conv.splitlines()[0])
@@ -807,10 +850,12 @@ def _main() -> None:
     cont = "--continue" in argv
     parallel = "--parallel" in argv
     fanout = "--fanout" in argv
+    auto_binary = "--auto-binary" in argv
     if "--no-verify" in argv:
         globals()["VERIFY_ON"] = False   # per-run override of the adversarial-verify default
     argv = [a for a in argv
-            if a not in ("--hostile", "--continue", "--parallel", "--fanout", "--no-verify")]
+            if a not in ("--hostile", "--continue", "--parallel", "--fanout", "--no-verify",
+                         "--auto-binary")]
     depth = int(_pop_val(argv, "--depth", "4" if cont else "1"))
     stale = int(_pop_val(argv, "--stale", "2"))
     max_new = int(_pop_val(argv, "--max-new", "8"))
@@ -825,7 +870,7 @@ def _main() -> None:
                  "[--parallel [--collect-conc N] [--judge-conc N]] "
                  "[--target-class C] [--purpose P] [--claim TEXT] [--basis TEXT] [--brand NAME] "
                  "[--how TEXT] [--window TEXT] [--falsifier TEXT] [--no-direct-contact] "
-                 "[--no-spend] [--scope FILE] <seed-url> ...\n"
+                 "[--no-spend] [--auto-binary] [--scope FILE] <seed-url> ...\n"
                  "  intake flags are optional: an unscoped run proceeds as `unknown` and says so "
                  "(python3 harness/case_scope.py questions).")
     # INTAKE — resolved before anything is collected, and BEFORE the seed list is split off, since
@@ -853,12 +898,13 @@ def _main() -> None:
         # --continue → cheap expand-collect until convergence, then judge once (depth from --depth).
         pdepth = depth if cont else 1
         asyncio.run(run_case_parallel(seeds, case, hostile=hostile, max_conc=collect_conc,
-                                      judge_conc=judge_conc, depth=pdepth, stale=stale, max_new=max_new))
+                                      judge_conc=judge_conc, depth=pdepth, stale=stale,
+                                      max_new=max_new, auto_binary=auto_binary))
     else:
         # --fanout → one reactive collector agent per seed, concurrently (collect_conc); default is
         # the single sequential collect session. Judgment is unchanged.
         asyncio.run(run_case(seeds, case, hostile=hostile, depth=depth, stale=stale, max_new=max_new,
-                             collect_conc=collect_conc if fanout else 1))
+                             collect_conc=collect_conc if fanout else 1, auto_binary=auto_binary))
 
 
 def _persist_assessment(assessment: Assessment, case: str, table_md: str) -> dict:

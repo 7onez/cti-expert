@@ -20,8 +20,19 @@ rich>=13.0                # harness console output
 matplotlib>=3.7           # charts, timelines, gantt (theme.py house style)
 graphviz>=0.20            # entity/infrastructure link graphs (also needs the `dot` binary)
 
+# --- collector extras (light; close silent-degrade paths) ---
+openpyxl>=3.1             # .xlsx master evidence ledger (else CSV-only fallback)
+pyzbar>=0.1.9            # QR decode for /webpivot --decode-qr (needs system libzbar0/zbar)
+pillow>=10.0             # image handling for the pyzbar QR path
+
 # --- authentication surface (Engage) — OPTIONAL, and deliberately not pinned above ---
 # Engage's detection half (en_forms) is stdlib+requests and needs nothing extra. Driving a real
 # browser to register/log in on a synthetic persona needs Playwright; without it en_engage falls
 # back to a manual runbook rather than failing, so this stays opt-in:
 #   uv pip install playwright && playwright install chromium
+
+# --- egress proxy / rotation (/proxy) — OPTIONAL ---
+# HTTP/HTTPS proxies work with the stdlib and need nothing. SOCKS proxies
+# (socks5://, socks5h://) need PySocks; `/proxy add socks5://…` auto-installs it,
+# or do it yourself:  uv pip install pysocks
+# pysocks>=1.7            # only for SOCKS proxies

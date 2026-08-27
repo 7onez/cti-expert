@@ -376,7 +376,20 @@ def fetch_tls_cert(host: str, port: int = 443, timeout: int = 15):
     # pass 1 — validating: yields the parsed dict when the cert chains + matches
     try:
         ctx = ssl.create_default_context()
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock = None
+        _cp = None
+        try:
+            import cti_proxy as _cp
+        except Exception:
+            _cp = None
+        if _cp is not None:
+            try:
+                sock = _cp.proxied_connection(host, port, timeout)  # None => go direct
+            except Exception as _e:
+                return {"host": host, "port": port, "error": f"proxy tunnel failed: {_e}"}
+        if sock is None:
+            sock = socket.create_connection((host, port), timeout=timeout)
+        with sock:
             with ctx.wrap_socket(sock, server_hostname=host) as ss:
                 cert = ss.getpeercert()
                 der = ss.getpeercert(binary_form=True)
@@ -397,7 +410,21 @@ def fetch_tls_cert(host: str, port: int = 443, timeout: int = 15):
     # pass 2 — unverified: cert is present but didn't validate; keep DER-derived facts
     try:
         ctx = ssl._create_unverified_context()
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock = None
+        _cp = None
+        try:
+            import cti_proxy as _cp
+        except Exception:
+            _cp = None
+        if _cp is not None:
+            try:
+                sock = _cp.proxied_connection(host, port, timeout)
+            except Exception:
+                return {"host": host, "port": port, "validated": False,
+                        "validation_error": verr}
+        if sock is None:
+            sock = socket.create_connection((host, port), timeout=timeout)
+        with sock:
             with ctx.wrap_socket(sock, server_hostname=host) as ss:
                 der = ss.getpeercert(binary_form=True)
         return {"host": host, "port": port, "validated": False,

@@ -31,6 +31,9 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cti_text_normalize import normalize_obj
+
 PLACEHOLDER = "__CTI_CASE_DATA__"
 
 
@@ -70,7 +73,7 @@ def main(argv):
         print("error: placeholder %s not found in template" % PLACEHOLDER)
         return 1
 
-    html = tpl.replace(PLACEHOLDER, embed(data))
+    html = tpl.replace(PLACEHOLDER, embed(normalize_obj(data)))
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
     if out_dir and not os.path.isdir(out_dir):

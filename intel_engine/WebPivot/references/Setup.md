@@ -104,7 +104,7 @@ sandbox** — a sandbox-only key answers 401/403 on `/intelligence/*`, so check 
 
 ```bash
 printf 'ANYRUN_API_KEY=…\n' >> .env && chmod 600 .env
-python3 BinaryPivot/tools/bp_anyrun.py keycheck   # entitled to TI Lookup?
+python3 BinaryPivot/tools/bp_anyrun.py keycheck --probe   # settle TI-Lookup entitlement (free unless entitled; plain keycheck false-greens a sandbox key)
 python3 BinaryPivot/tools/bp_anyrun.py budget     # this month's request spend (offline, free)
 ```
 

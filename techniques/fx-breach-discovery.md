@@ -23,7 +23,7 @@ Locate compromised credential sets and exposed PII tied to a subject across know
 ## Methodology
 1. Query HIBP (`haveibeenpwned.com`) with subject email — note breach names and data classes
 2. Query HudsonRock Cavalier API with subject email — check infostealer exposure
-3. If org case: run HudsonRock domain lookup to find compromised employee URLs
+3. If org case: run BOTH HudsonRock domain endpoints (`search-by-domain` impact + `urls-by-domain` attack surface) for compromised employee/client URLs, and run Lunar domain-exposure (see below) for org-level exposure trend + malware-family/service breakdown
 4. Sweep domain variant (`@domain.com`) via HIBP domain search if org case
 5. Run operator queries against paste aggregators: `site:pastebin.com "subject@domain.com"`
 6. Check secondary paste indexes (psbdmp.ws, pastebinsearch.com) for dump fragments
@@ -36,49 +36,67 @@ Locate compromised credential sets and exposed PII tied to a subject across know
 | Priority | Tool | Install | Notes |
 |----------|------|---------|-------|
 | 1 | HaveIBeenPwned | haveibeenpwned.com | Free tier; API key for bulk |
-| 2 | **HudsonRock Cavalier** | hudsonrock.com (free API) | **Infostealer data — no API key** |
+| 2 | **HudsonRock Cavalier** | cavalier.hudsonrock.com (free API) | **Infostealer data — no API key** (50 req/10s; premium key optional) |
 | 3 | DeHashed | dehashed.com | Paid; broader breach coverage |
 | 4 | **LeakCheck Public API** | https://leakcheck.io | Free public API — email/username/domain breach lookup |
 | 5 | Pastebin operator query | Browser | Free; cover pastebin.com, gist.github.com |
 | 6 | psbdmp.ws | Browser | Indexes deleted Pastebin content |
 | 7 | IntelligenceX | intelx.io | Paid; dark web paste index |
+| 8 | **Lunar Domain Exposure** | api.lunarcyber.com (free API) | **Domain-only** org-level infostealer + breach exposure, 12-mo trend, malware-family & VPN/SSO breakdown — no API key |
 
-### HudsonRock Cavalier API (Free, No Key Required)
+### HudsonRock Cavalier Community API (Free, No Key Required)
 
-Checks if an email or domain appears in infostealer malware logs. Returns compromised machine details, associated credentials count, and affected services.
+Checks if an email, username, IP, or domain appears in **infostealer** malware logs. Free,
+open, unrestricted — no key, no approval. **Rate limit: 50 requests / 10 seconds.** A
+premium/commercial key exists for higher tiers (see `handbook/api-keys.md`), but every
+endpoint below is fully usable keyless.
+
+**Canonical base:** `https://cavalier.hudsonrock.com/api/json/v2/osint-tools/`
+Use the **osint-tools** base above for `search-by-email` / `search-by-username` / `search-by-ip` / `search-by-domain` / `urls-by-domain`. One deliberate exception: the **full, uncapped** domain login-URL list lives on the older `stats` host (row below) — it is a richer superset of `urls-by-domain`, not drift, so keep it.
 
 **Endpoints:**
 
 | Query Type | URL | Use Case |
 |-----------|-----|----------|
-| Email lookup | `https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email={EMAIL}` | Check if email found in infostealer logs |
-| Domain lookup | `https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/{DOMAIN}` | Find compromised employee URLs for domain |
+| Email | `.../search-by-email?email={EMAIL}` | Is this email on an infected machine? |
+| Username | `.../search-by-username?username={USER}` | Is this username on an infected machine? |
+| IP | `.../search-by-ip?ip={IP}` | Is this IP tied to an infostealer infection? |
+| Domain — impact | `.../search-by-domain?domain={DOMAIN}` | Infostealer impact stats for a domain |
+| Domain — attack surface | `.../urls-by-domain?domain={DOMAIN}` | Employee/client login URLs from stealer logs |
+| Domain — full URL list | `https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/{DOMAIN}` | **Uncapped** superset of `urls-by-domain` — full long-tail incl. `occurrence:1` login/reset URLs (best for attack-surface enumeration) |
 
 **Email lookup — example:**
 ```bash
-curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email=target@example.com"
+curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=target@example.com"
 ```
+Top-level fields: `message`, `stealers[]`, `total_corporate_services`, `total_user_services`.
+Each `stealers[]` entry carries `computer_name`, `date_compromised`, and the stolen
+corporate/user service lists.
 
-**Response fields:**
-- `computer_name` — infected machine identifier
-- `date_compromised` — when infection occurred
-- `total_corporate_services` — corporate services with stolen creds
-- `total_user_services` — personal services with stolen creds
-
-**Domain lookup — example:**
+**Domain lookup — examples:**
 ```bash
+# Impact stats (richest): totals, passwords, stealerFamilies, antiviruses, applications
+curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain?domain=example.com"
+# External attack surface: employee/client login URLs seen in stealer logs
+curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/urls-by-domain?domain=example.com"
+# Full/uncapped URL list (superset — richer for attack-surface/admin-endpoint pivots):
 curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/example.com"
 ```
-
-**Response fields:**
-- `data.employees_urls` — list of corporate URLs with occurrence counts from stealer logs
-- Each entry: `url`, `occurrence` count, `type` (Employee/Client)
+`search-by-domain` fields include `total`, `totalStealers`, `employees`, `users`,
+`third_parties`, `totalUrls`, `stealerFamilies`, `employeePasswords`, `userPasswords`,
+`last_employee_compromised`, `last_user_compromised`, and
+`data.{employees_urls,clients_urls,all_urls}`. Both URL forms return
+`data.{employees_urls,clients_urls}` (each entry: `url`, `occurrence`, `type`), but they
+differ: `urls-by-domain` is **top-20 capped per list** with `type` **lowercase**
+(`"employee"`); the `stats/website-results/urls/` form is the **full** list (plus `stats`
+and `totalUrls`) with `type` **capitalized** (`"Employee"`). **Normalize `type`
+case-insensitively**, and prefer the full list when enumerating attack surface.
 
 **Integration into methodology:**
-- Run HudsonRock email check as step 1b (after HIBP, before paste sweeps)
-- Run HudsonRock domain check during org cases to identify compromised employee access
-- If HudsonRock returns data → mark finding as CRITICAL (infostealer = active credential theft)
-- Record `date_compromised` in exposure timeline
+- Run the email check as step 1b (after HIBP, before paste sweeps).
+- On org cases run the domain endpoints: `search-by-domain` for impact stats, and for the login-URL attack surface prefer the **uncapped** `stats/website-results/urls/` list (use `urls-by-domain` for a quick top-20).
+- If HudsonRock returns data → mark finding CRITICAL (infostealer = active credential theft).
+- Record `date_compromised` / `last_*_compromised` in the exposure timeline.
 
 ### LeakCheck Public API (Free, No Key Required for Public Endpoint)
 
@@ -112,6 +130,40 @@ curl -s "https://leakcheck.io/api/public?check=target@example.com"
 **Rate limits:** Public API is rate-limited; add 2-second delay between requests. For bulk queries, a paid API key is available at https://wiki.leakcheck.io/en/api/public
 
 **Docs:** https://wiki.leakcheck.io/en/api/public
+
+### Lunar Domain Exposure API (Free, No Key Required) — domain only
+
+Org-level aggregate view of a **domain's** infostealer + data-breach exposure over the last
+12 months. Complements HudsonRock (per-URL/per-subject) with posture, trend, and breakdowns
+HudsonRock's free tier does not give: malware-family attribution with dates, VPN/SSO
+**service classification**, top login URLs, employee-vs-client split, combolist-vs-dump split.
+
+**Canonical fetch (poll-aware, single implementation):**
+```bash
+uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" example.com          # analyst summary
+uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" example.com --json    # full report JSON
+```
+The API is **asynchronous**: a cold/unseen domain returns HTTP 200 with
+`{"status":"GENERATING_REPORT","report":null}` and only populates on a later request. The
+script polls until `REPORT_READY` (bounded `--max-wait`, default 90s) so callers never parse a
+null report. Raw endpoint (reference only — prefer the script):
+`https://api.lunarcyber.com/domain-exposure?domain={DOMAIN}`.
+
+**Report fields:** `summary`, `exposure_subject_breakdown`, `monthly_timeline`,
+`event_family_breakdown`, `infostealer_summary`, `malware_family_breakdown`, `os_breakdown`,
+`antivirus_breakdown`, `data_breach_summary`, `data_breach_source_type_breakdown`,
+`service_classification_breakdown`, `top_login_urls`, `country_breakdown`.
+
+**Grading (mandatory):** a Lunar hit is **EXPOSURE**, NOT clusterable / same-operator — same
+rule as IntelX. Two domains in one combolist share victims, not an operator. Feed findings to
+exposure/trend and attack-surface leads, never to attribution edges.
+
+**Integration into methodology:**
+- Run on org/domain cases alongside the HudsonRock domain endpoints (run all three; merge, dedup).
+- `service_classification_breakdown` + `top_login_urls` (VPN/Citrix/AnyConnect/Pulse/Fortinet/Okta/Entra/ADFS) → register as `attack_surface` leads; feed to `/msftrecon` + edge-appliance recon.
+- `monthly_timeline` → feed `analysis/risk-trend-tracker.md`, `analysis/exposure-model.md`.
+- Corroborate `malware_family_breakdown` / `os_breakdown` against `/stealer-log` and HudsonRock.
+- **Absence ≠ clean:** a domain stuck in `GENERATING_REPORT` after the poll cap is unknown, not clear.
 
 ---
 

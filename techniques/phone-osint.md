@@ -82,6 +82,24 @@ python3 moriarty.py
 curl "http://apilayer.net/api/validate?access_key=YOUR_FREE_KEY&number=+12025551234&format=1"
 ```
 
+### Septenary — Hudson Rock Cavalier (infostealer exposure — free, no key)
+```bash
+# Free, no API key (50 req/10s). Exact-string match on stealer-log username fields, so query
+# MULTIPLE formats — one variant false-negatives. "+" MUST be %2B-encoded (a literal "+"
+# decodes to a space), or use --data-urlencode.
+for u in "%2B12025551234" "12025551234" "2025551234"; do   # +E164, bare-digits E164, national
+  curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-username?username=$u"
+done
+# equivalently: curl -s -G ".../search-by-username" --data-urlencode "username=+12025551234"
+```
+Checks whether the number appears in **infostealer** malware logs. A hit (`stealers[]`
+non-empty) means the number's **owner is a victim** — grade it **EXPOSURE, never attribution**
+(see `techniques/fx-breach-discovery.md`); a shared combolist proves shared victims, not a
+shared operator. On a hit: mark **CRITICAL** (active credential theft) and record
+`date_compromised` / `stealer_family`. **Exact-match limitation:** the endpoint matches the
+stored username string literally, so a miss across all variants means **"not found in these
+formats," not "clean"** (absence ≠ clean).
+
 ### Web Fallback — Google Dork
 ```
 No install required; manual browser search
@@ -109,6 +127,11 @@ Step 4: Reverse person lookup (US numbers)
 
 Step 5: Check NumVerify for line type classification
   └─ Distinguishes mobile / landline / VoIP / toll-free
+
+Step 5b: Infostealer exposure check (Hudson Rock — free, no key)
+  └─ curl ".../search-by-username?username=%2B{E164}"  (literal "+" decodes to a space → use %2B)
+  └─ Exact-match endpoint → also query bare-digits E164 and national format; a miss ≠ clean
+  └─ Hit (stealers[] non-empty) = owner is an infostealer VICTIM → EXPOSURE, CRITICAL; record date_compromised
 
 Step 6: Run Moriarty for social/app registrations
   └─ Checks WhatsApp, Telegram, Signal presence
@@ -206,6 +229,11 @@ CallerID/carrier found but need identity?
   └─> USPhoneBook reverse lookup (US): cloudscraper → usphonebook.com/{phone}
   └─> Returns: name, addresses, relatives, emails — excellent for pivot chaining
 
+Number tied to a person and you want exposure risk?
+  └─> Hudson Rock Cavalier (free, no key): search-by-username?username=%2B{E164} ("+" decodes to space → use %2B)
+  └─> Exact-match → also try bare-digits E164 and national; a miss across all = "not found," not clean
+  └─> stealers[] non-empty = owner is an infostealer victim → EXPOSURE, CRITICAL
+
 NumVerify quota exhausted?
   └─> Use Twilio Lookup (free trial credits)
        curl -X GET "https://lookups.twilio.com/v1/PhoneNumbers/+12025551234" \
@@ -286,6 +314,7 @@ Rule: strip all non-digits, prepend "+" and country code
 | Owner identity | LOW | Requires public records |
 | Social app registration | MEDIUM | App-dependent; may be stale |
 | Disposable number flag | MEDIUM | Known carrier list only |
+| Infostealer exposure (Hudson Rock) | HIGH | Cavalier hit = owner is a victim; EXPOSURE, not attribution |
 
 ---
 

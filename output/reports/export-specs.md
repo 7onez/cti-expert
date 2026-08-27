@@ -172,16 +172,22 @@ Used by the HTML report and the IOC export when present; safely ignored otherwis
 
 ### Generation Method
 
-**Primary: Python DOCX generator** (rich formatting with charts, diagrams, styled sections):
+**Primary: hybrid generator** (`generate-cti-docx-hybrid.py`) — full narrative from the Markdown **plus** charts/diagrams from the JSON (zero content loss). This is the DOCX path `SKILL.md` and `AGENTS.md` prescribe; produce it on request / for `/report legal`:
 
 ```bash
-# Generate professional CTI Report DOCX with charts and diagrams
-python3 ~/.claude/skills/cti-expert/scripts/generate-cti-docx.py \
-  "${JSON_DATA_FILE}" \
-  "${DOCX_FILE}"
+# Narrative (MD) + charts/diagrams (JSON) — the primary DOCX
+uv run ~/.claude/skills/cti-expert/scripts/generate-cti-docx-hybrid.py \
+  "${MD_FILE}" "${JSON_DATA_FILE}" "${DOCX_FILE}"
 ```
 
-The Python generator (`scripts/generate-cti-docx.py`) produces:
+**Fallback 1: JSON-only generator** (`generate-cti-docx.py`) — charts + structured data, no pandoc required (use when the Markdown narrative is unavailable):
+
+```bash
+uv run ~/.claude/skills/cti-expert/scripts/generate-cti-docx.py \
+  "${JSON_DATA_FILE}" "${DOCX_FILE}"
+```
+
+The JSON-only generator (`scripts/generate-cti-docx.py`) produces:
 - Professional cover page with "CTI REPORT" title
 - Table of contents
 - Styled headings, tables, and finding cards
@@ -193,7 +199,7 @@ The Python generator (`scripts/generate-cti-docx.py`) produces:
 - Network topology diagram
 - Header/footer with classification and page numbers
 
-**Fallback: pandoc** (basic text conversion when JSON data not available):
+**Fallback 2: MD-only** (`generate-cti-docx-hybrid.py "${MD_FILE}" "${DOCX_FILE}"`) — styled narrative, no charts. Plain pandoc remains available too:
 
 ```bash
 command -v pandoc >/dev/null 2>&1 || apt install -y pandoc
