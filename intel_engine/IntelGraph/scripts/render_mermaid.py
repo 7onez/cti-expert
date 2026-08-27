@@ -28,10 +28,12 @@ Needs headless Chrome for mmdc; if missing once, run:
 (then set PUPPETEER_EXECUTABLE_PATH if mmdc can't find it).
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOUSE_CSS = os.path.normpath(os.path.join(HERE, "..", "references", "diagram.css"))
@@ -48,7 +50,7 @@ def find_mmdc():
     return None
 
 
-def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False):
+def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False, puppeteer=None):
     mmdc = find_mmdc()
     if not mmdc:
         sys.exit("mmdc not found. Install: npm i -g @mermaid-js/mermaid-cli")
@@ -74,6 +76,8 @@ def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False):
             cmd += ["-C", css]
         if out.endswith(".pdf"):
             cmd += ["-f"]                      # --pdfFit: crop the page to the chart
+        if puppeteer:
+            cmd += ["-p", puppeteer]        # puppeteer config (e.g. --no-sandbox for root)
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             sys.stderr.write(r.stderr[-600:] + "\n")
@@ -99,15 +103,34 @@ def main():
     ap.add_argument("--pdf", action="store_true",
                     help="also emit <stem>.pdf — a VECTOR figure, which is what a PDF report "
                          "should embed: it stays sharp at any zoom and has no raster cost")
+    ap.add_argument("--puppeteer-config", default="",
+                    help="puppeteer config JSON passed to mmdc as -p. When omitted and running as "
+                         "root, one with {\"args\":[\"--no-sandbox\"]} is auto-generated (headless "
+                         "Chrome refuses to launch as root otherwise).")
     args = ap.parse_args()
     css = None if args.no_css else (args.css or (HOUSE_CSS if os.path.isfile(HOUSE_CSS) else None))
     if not args.no_css and not css:
         sys.stderr.write(f"[render_mermaid] WARNING: house stylesheet not found at {HOUSE_CSS}; "
                          f"rendering bare mermaid — the figure will not match the report's other "
                          f"diagrams.\n")
+    pptr = args.puppeteer_config or None
+    auto_pptr = None
+    if not pptr and hasattr(os, "geteuid") and os.geteuid() == 0:
+        fd, pptr = tempfile.mkstemp(prefix="mmdc-pptr-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"args": ["--no-sandbox", "--disable-setuid-sandbox"]}, fh)
+        auto_pptr = pptr
+        sys.stderr.write(f"[render_mermaid] running as root; auto puppeteer config -> {pptr}\n")
     os.makedirs(os.path.dirname(os.path.abspath(args.stem)), exist_ok=True)
-    outs = render(args.mmd, args.stem, args.width, args.theme, args.background,
-                  scale=args.scale, css=css, pdf=args.pdf)
+    try:
+        outs = render(args.mmd, args.stem, args.width, args.theme, args.background,
+                      scale=args.scale, css=css, pdf=args.pdf, puppeteer=pptr)
+    finally:
+        if auto_pptr:
+            try:
+                os.unlink(auto_pptr)
+            except OSError:
+                pass
     print("wrote:\n  " + "\n  ".join(outs))
 
 
