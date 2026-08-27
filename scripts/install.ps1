@@ -430,6 +430,7 @@ Write-Host "Venv:      $VenvDir"
 Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
 if ($Headless) { Write-Host "Mode:      +headless" }
 if ($Go) { Write-Host "Mode:      +go" }
+if ($All) { Write-Host "Mode:      +all (report render engines)" }
 
 Write-Section "uv (Astral package manager)"
 Install-Uv
@@ -498,6 +499,7 @@ Install-WingetPackage "Poppler" "pdfinfo" "oschwartz10612.Poppler"
 Install-WingetPackage "QPDF" "qpdf" "QPDF.QPDF"
 Install-WingetPackage "whois (Sysinternals)" "whois" "Microsoft.Sysinternals.Whois"
 Install-WingetPackage "dig (ISC BIND)" "dig" "ISC.Bind"
+Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # IntelGraph link graphs need the `dot` binary
 
 Write-Section "Python: core skill requirements"
 $requirements = Join-Path $SkillDir "scripts\requirements.txt"
@@ -510,6 +512,24 @@ if (Test-Path $requirements) {
 }
 else {
     Log-Fail "requirements.txt" "not found at $requirements"
+}
+
+Write-Section "Python: deep-layer pipeline (harness + IntelGraph)"
+# The root requirements.txt carries the harness (claude-agent-sdk, pydantic, rich) and the
+# IntelGraph renderers (matplotlib, graphviz) plus light collector extras (openpyxl, pyzbar,
+# pillow). Small and pure-Python, so installed unconditionally — previously only in the root
+# manifest a user had to run by hand, leaving /harness, the MCP server and IntelGraph's `dot`
+# path silently unavailable.
+$deepRequirements = Join-Path $SkillDir "requirements.txt"
+if (Test-Path $deepRequirements) {
+    Invoke-Step "requirements.txt [deep layer]" {
+        Invoke-VenvPip --quiet --upgrade -r $deepRequirements
+        if ($LASTEXITCODE -ne 0) { throw "install (uv pip / pip) --upgrade -r failed" }
+        Log-Ok "requirements.txt [deep layer] (claude-agent-sdk, pydantic, rich, graphviz, openpyxl, pyzbar, pillow)"
+    } | Out-Null
+}
+else {
+    Log-Skip "requirements.txt [deep layer] (not found at $deepRequirements)"
 }
 
 Write-Section "Python: OSINT tools"
@@ -529,6 +549,7 @@ Install-PipxPackage "h8mail" "h8mail"
 Install-PipxPackage "git+https://github.com/laramies/theHarvester.git" "theHarvester" "theHarvester"
 Install-PipxPackage "waymore" "waymore"
 Install-PipPackage "cloudscraper" "cloudscraper"   # library, imported not executed
+Install-PipPackage "oletools" "oletools"           # OLE/Office authorship + macro (olevba) — document metadata pivot
 Install-PipxPackage "xeuledoc" "xeuledoc"
 Install-AgentFlow
 
@@ -614,6 +635,22 @@ else {
     Write-Host "  --  agent-browser not requested (add -Headless; installs CLI + Chrome)" -ForegroundColor Yellow
 }
 
+Write-Section "Playwright (render / screenshot / engage)"
+# Post-JS DOM render (/webpivot --render), full-page screenshot evidence, and Engage's
+# synthetic-persona automation use Playwright — a browser, so it rides with -Headless.
+if ($Headless) {
+    Invoke-Step "playwright" {
+        Invoke-VenvPip --quiet --upgrade playwright
+        if ($LASTEXITCODE -ne 0) { throw "playwright install failed" }
+        & $VenvPython -m playwright install chromium *> $null
+        if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed" }
+        Log-Ok "playwright + chromium"
+    } | Out-Null
+}
+else {
+    Write-Host "  --  Playwright not requested (add -Headless; installs playwright + Chromium)" -ForegroundColor Yellow
+}
+
 Write-Section "Go tools"
 if ($Go) {
     if (!(Test-Command "go")) {
@@ -646,6 +683,22 @@ if ($Go) {
 }
 else {
     Write-Host "  --  Skipped (add -Go to install Go tools, requires Go 1.21+)" -ForegroundColor Yellow
+}
+
+Write-Section "Report render engines (mermaid-cli + xelatex)"
+# mmdc (IntelGraph flow diagrams) and xelatex (IntelReport PDF via pandoc) are large — mmdc
+# pulls a headless Chrome, MiKTeX is hundreds of MB — so they ride with -All. DOCX/HTML need neither.
+if ($All) {
+    if (Test-Command "npm") {
+        Invoke-Step "mermaid-cli" { npm install -g '@mermaid-js/mermaid-cli' | Out-Host; if ($LASTEXITCODE -ne 0) { throw "npm install -g @mermaid-js/mermaid-cli failed" }; Log-Ok "mermaid-cli (mmdc)" } | Out-Null
+    }
+    else {
+        Log-Skip "mermaid-cli (needs npm — install Node.js)"
+    }
+    Install-WingetPackage "MiKTeX (xelatex)" "xelatex" "MiKTeX.MiKTeX"
+}
+else {
+    Write-Host "  --  Report render engines not requested (add -All for mermaid-cli + xelatex; DOCX/HTML need neither)" -ForegroundColor Yellow
 }
 
 Write-Section "ASN lookup (native asn command)"

@@ -87,7 +87,11 @@ if python3 -m py_compile intel_engine/tools/collect_core.py intel_engine/tools/i
 echo "== 6. zero-dep test runners =="
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
-         tests/test_email_permute.py tests/test_hooks.py; do
+         tests/test_email_permute.py tests/test_hooks.py \
+         tests/test_phish_domain_survival.py tests/test_clickfix_detect.py \
+         tests/test_html_visibility_analysis.py tests/test_apk_permission_scope.py \
+         tests/test_kit_template_fingerprint.py tests/test_render_confirm.py \
+         tests/test_phishtrace_features.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 
@@ -113,6 +117,25 @@ PY
 else
   bad "hooks/hooks.json missing — the RULE 1 write-time gate and the outbound gate are not wired"
 fi
+
+echo "== 8. registered command count matches commands/ across SKILL.md + the 3 READMEs (RULE 3, command layer) =="
+# The drift this catches: a new commands/*.md ships but a doc still advertises the old count or never
+# names it (exactly how /cti-proxy slipped past all three READMEs). Compare the architecture-tree
+# count and every command basename against each README, and each /slash-name against SKILL.md.
+n_cmd="$(ls commands/*.md 2>/dev/null | wc -l | tr -d ' ')"
+cmd_ok=1
+for f in README.md README.vi.md README.zh-CN.md; do
+  d="$(grep -oE '[0-9]+ (registered slash commands|条已注册斜杠命令)' "$f" | grep -oE '^[0-9]+' | head -1)"
+  if [ "$d" = "$n_cmd" ]; then note "$f tree count $d matches commands/ ($n_cmd)"; else bad "$f tree count '$d' != commands/ ($n_cmd)"; cmd_ok=0; fi
+  for c in commands/*.md; do
+    grep -qF "$(basename "$c")" "$f" || { bad "$f never names $(basename "$c")"; cmd_ok=0; }
+  done
+done
+for c in commands/*.md; do
+  s="/$(basename "$c" .md)"
+  grep -qF "$s" SKILL.md || { bad "SKILL.md never documents $s"; cmd_ok=0; }
+done
+[ "$cmd_ok" = 1 ] && note "all $n_cmd commands referenced in SKILL.md + all 3 READMEs"
 
 echo
 if [ "$fail" = 0 ]; then echo "AUDIT: clean"; else echo "AUDIT: failures above"; exit 1; fi

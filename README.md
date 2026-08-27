@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 74+ commands, 49 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 120+ commands, 56 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -16,10 +16,10 @@
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.8-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.8"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
-  <a href="#command-reference"><img src="https://img.shields.io/badge/commands-74+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="74+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-49-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="49 Techniques"></a>&nbsp;
+  <a href="#command-reference"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-56-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="56 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -43,6 +43,8 @@
 <br>
 
 <sub>Built by <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><b>Hieu Ngo</b></a> &bull; <a href="mailto:hieu.ngo@chongluadao.vn">hieu.ngo@chongluadao.vn</a> &bull; <a href="https://chongluadao.vn">chongluadao.vn</a></sub>
+<br>
+<sub>Core contributor &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a></sub>
 
 </div>
 
@@ -68,17 +70,32 @@
   <a href="https://zetalytics.com"><img src="https://img.shields.io/badge/ZETAlytics-Passive_DNS-0B7285?style=for-the-badge" alt="ZETAlytics"></a>&nbsp;
   <a href="https://intelx.io"><img src="https://img.shields.io/badge/IntelX-Leak_%26_Darknet_Search-2B6E6B?style=for-the-badge" alt="Intelligence X"></a>
 </p>
+<p>
+  <a href="https://www.shodan.io"><img src="https://img.shields.io/badge/Shodan-Host_%26_Service_Intel-C6252B?style=for-the-badge" alt="Shodan"></a>&nbsp;
+  <a href="https://censys.com"><img src="https://img.shields.io/badge/Censys-Internet_Scanning-3A2FB0?style=for-the-badge" alt="Censys"></a>&nbsp;
+  <a href="https://urlscan.io"><img src="https://img.shields.io/badge/URLScan.io-Passive_Website_Scans-2F6FEB?style=for-the-badge" alt="URLScan.io"></a>
+</p>
+<p>
+  <a href="https://serpapi.com"><img src="https://img.shields.io/badge/SerpApi-Search_%26_Ads_Results-5A67D8?style=for-the-badge" alt="SerpApi"></a>&nbsp;
+  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Open_Bucket_Search-374151?style=for-the-badge" alt="GrayHatWarfare"></a>
+</p>
 
 </div>
 
 | Supporter | What they bring | In the toolkit |
 |-----------|-----------------|----------------|
 | [**Rexxfield**](https://rexxfield.com) | Cybercrime investigation and victim-side casework since 2008 — the real-world tradecraft the case workflow and attribution standards are modelled on | Tradecraft &amp; methodology |
+| [**ChongLuaDao**](https://chongluadao.vn) ⭐ | **First-party** — the project's home org. Premium VN threat intel: ~20M-URL denylist verdicts, deep AI URL analysis, IoC + data-leak/breach exposure, brand lookalikes and CVE/KEV feeds — your client talks only to CLD, which fetches the target server-side (never your egress) | `/cld` · `/scam-check` · `/threat-check` · `/breach-deep` |
 | [**Hudson Rock**](https://www.hudsonrock.com) | Infostealer-infection intelligence — which machines leaked which credentials, and when | `/breach-deep` · `/stealer-log` |
 | [**ParanoidLab**](https://paranoidlab.com) | Dark-web, Initial-Access-Broker and infostealer-log monitoring across forums, markets and private Telegram | Dark-web collection &amp; review |
 | [**ANY.RUN**](https://any.run) | Interactive malware sandbox + **TI Lookup** — sandbox-observed C2 and real endpoints from packed samples | `/binary` · `/hash-id` |
 | [**ZETAlytics**](https://zetalytics.com) | Global passive DNS with rare geographic diversity — historical resolution and co-tenancy pivots | `/webpivot` · `/cti-pivot` |
 | [**IntelX**](https://intelx.io) | Intelligence X — paste sites, leaks, darknet and phonebook selector search | `/webpivot` · `/email-deep` |
+| [**Shodan**](https://www.shodan.io) | Internet-connected host &amp; service intelligence — open ports, banners, tags and known CVEs, passive-first via InternetDB | `/webpivot` · `/appliance-scan` · `/cert-pivot` |
+| [**Censys**](https://censys.com) | Internet-wide host &amp; certificate scanning — the server-side view; every host on an exact leaf certificate (works on the free plan) | `/censys` · `/cert-pivot` |
+| [**URLScan.io**](https://urlscan.io) | Passive website scanning — what a page served and who it talked to, captured without touching the target | `/webpivot` · `/impersonate` |
+| [**SerpApi**](https://serpapi.com) | Search-engine + Google Ads Transparency results API — who *paid* to send traffic, plus multi-engine dork results | `/serp` · `/search-pivot` |
+| [**GrayHatWarfare**](https://grayhatwarfare.com) | Open cloud-bucket &amp; exposed-file search (S3/Azure/GCS/Spaces) — graded **exposure**, not a same-operator pivot | `/secrets` · `/docleak` |
 
 > [!IMPORTANT]
 > **ANY.RUN is used read-only.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. This skill **never submits a sample** — a public sandbox task is world-readable and irreversible. That boundary is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.
@@ -93,13 +110,13 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **74+ commands** across **49 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **120+ commands** across **56 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default, more powerful with your keys.** Every core technique runs with zero API keys. Add any free or paid keys to `.env` (or run `/apikeys set <service> <KEY>`) and the skill auto-detects them, unlocking higher-tier pivots: reverse favicon→host, passive DNS, certificate search, sibling-domain discovery. A missing or bad key never breaks a run — it just degrades to a note. Setup guide: [handbook/api-keys.md](handbook/api-keys.md).
 
 > [!TIP]
-> **One skill, two layers.** cti-expert is the *broad collector* — the wide net (`/sweep`, `/webpivot`, `/subdomain`, `/username`, `/email-deep`…). Built into the repo is a *deep pipeline* (`intel_engine/`) that turns raw collection into a real case: a persistent knowledge base, versioned cases, cross-case correlation, and calibrated assessment. The flow reads like a sentence — **collect broadly → "seen this operator before?" → cluster → filter false positives → assess.** No external setup: the backend resolves to `SELF`; install the deep-layer deps once with `uv venv && uv pip install -r requirements.txt`. Architecture: [connectors/intel-backend.md](connectors/intel-backend.md).
+> **One skill, two layers.** cti-expert is the *broad collector* — the wide net (`/sweep`, `/webpivot`, `/subdomain`, `/username`, `/email-deep`…). Built into the repo is a *deep pipeline* (`intel_engine/`) that turns raw collection into a real case: a persistent knowledge base, versioned cases, cross-case correlation, and calibrated assessment. The flow reads like a sentence — **collect broadly → "seen this operator before?" → cluster → filter false positives → assess.** No external setup: the backend resolves to `SELF`, and **as of v2.9 the bundled installer (`scripts/install.{sh,ps1}`) provisions the deep layer automatically** (or by hand: `uv venv && uv pip install -r requirements.txt`). Architecture: [connectors/intel-backend.md](connectors/intel-backend.md).
 
 <table>
 <tr>
@@ -160,6 +177,45 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 <br>
 
+## What's New in v2.11
+
+> **The eCrime-2026 follow-up batch — planned, then cooked.** Four deferred phases from the v2.10 research pass ship as keyless, offline, tested modules (planned in `plans/260826-1935-ecrime-2026-followup-analyzers/`, implemented via `/ak:cook`). Same contracts: zero-dep tests in `audit.sh`, attribution-safety (RULE 5). Full mapping: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **APK permission-scope scoring** | On-device-fraud capability from the manifest | [`scripts/apk_permission_scope.py`](scripts/apk_permission_scope.py) scores dangerous-permission **combinations** (accessibility+overlay+SMS = banking-trojan profile) — the combination is the signal, not any single grant, so banking/AV apps aren't blindly flagged; result is **capability, not guilt**. Handles plaintext manifests and binary AXML (UTF-8 **and** UTF-16 string pools; a zero-permission decode degrades to a note, never a false "clean"). Extends BinaryPivot. Grounded in *"The 'Allow' Reflex"* (Kandagadla Srinivasamurthy, Dupuis — UW). See [`techniques/apk-permission-scope.md`](techniques/apk-permission-scope.md) |
+| **Kit-template attribution** | Same-kit lineage across rotating hosts | [`scripts/kit_template_fingerprint.py`](scripts/kit_template_fingerprint.py) fingerprints DOM structure + harvest-form field-set + asset skeleton and grades similarity — but a **commodity template** (WordPress/Wix/Shopify) match is graded *noise*, not a same-operator link (§2.5 trap), and no grade ever auto-merges. Grounded in the Vicomtech *tree-structured attribution* paper. See [`techniques/kit-template-attribution.md`](techniques/kit-template-attribution.md) |
+| **Renderer-level confirmation** | Dynamic confirmation of the static ClickFix/visibility verdicts | [`scripts/render_confirm.py`](scripts/render_confirm.py) feeds renderer-captured **runtime clipboard writes** and **computed-style hidden elements** into the existing detectors (via new additive seams) and reconciles static vs rendered — promoting a JS-assembled payload the static pass missed, or weighing a static-only HIGH. Renderer (Playwright/agent-browser) is optional and **degrades to a note**. Grounded in *PasteJacked* + *Visibility-Aware HTML*. See [`techniques/renderer-confirmation.md`](techniques/renderer-confirmation.md) |
+| **PhishTrace dynamic features** | Characterize a page from its runtime trace | [`scripts/phishtrace_features.py`](scripts/phishtrace_features.py) turns a runtime trace (requests, redirects, form POSTs, cloaking) into a verdict + **exfil-endpoint IOCs** — where a thin/cloaked trace on a flagged page reads as **cloaked, never benign**, and exfil hosts are pivot leads, not attribution. Grounded in *"PhishTrace"* (Islam, Mannan). See [`techniques/phishtrace-dynamic-features.md`](techniques/phishtrace-dynamic-features.md) |
+| **AAM actor-modeling overlay** | Anticipate the next move, not just attribute the past | [`handbook/aam-actor-modeling.md`](handbook/aam-actor-modeling.md) adds an optional `/threat-model` overlay (OODA faces + Mirror/Twin/Opposite/Lever) alongside ACH. Grounded in ISECOM's *"Modeling Adversaries Through Chaos"* training. Docs-only |
+| **Tested & gated** | Four more zero-dep suites in `audit.sh` | `test_apk_permission_scope` (combo-vs-single + benign control + AXML zero-perm degrade), `test_kit_template_fingerprint` (commodity-trap RULE 5 guard + never-auto-merge), `test_render_confirm` (promotion + seam-additivity + no-renderer degrade), `test_phishtrace_features` (cloaked-not-benign) |
+
+## What's New in v2.10
+
+> **The release that turns APWG eCrime 2026 research into working, tested detectors.** Three keyless, offline, deterministically-tested analyzers land at the Enrich→Assess boundary, each mapped to a named eCrime 2026 paper — closing the two audited gaps: page-content threat classification, and an explicit maliciously-registered-vs-compromised call. Full mapping + repo audit: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **Phishing-domain survival profiling** | Registration/DNS strategy → maliciously-registered vs **compromised**, plus takedown-resilience | [`scripts/phish_domain_survival.py`](scripts/phish_domain_survival.py) turns collected WHOIS/DNS into a two-axis, fully auditable judgement (every signal carries a weight + reason; seed lists tunable via `--refs`). The compromised/malicious split is attribution-safety: a long-lived domain at an established registrar serving unrelated legitimate content is a **victim**, never named as the operator (RULE 5). Grounded in *"Built to Last? Registration and DNS Strategies in Phishing Domain Survival"* (Lim et al., eCrime 2026). See [`techniques/phishing-domain-survival.md`](techniques/phishing-domain-survival.md) |
+| **ClickFix / PasteJacking detection** | Clipboard-hijack lures + `-EncodedCommand` decode → C2 IOCs | [`scripts/clickfix_detect.py`](scripts/clickfix_detect.py) scores three co-occurring families (clipboard write · social lure · OS-command payload) so a coupon "copy" button or the word *powershell* in prose never reads as HIGH; it decodes PowerShell `-enc` UTF-16LE base64 to surface the hidden C2 URL, and maps to ATT&CK T1204.004/T1059. Grounded in *"PasteJacked: Detection and Characterization of Clipboard-Hijacking Attacks"* (Nabeel, Melicher, Starov — Palo Alto, eCrime 2026). See [`techniques/clickfix-clipboard-hijack.md`](techniques/clickfix-clipboard-hijack.md) |
+| **Visibility-aware HTML analysis** | Surface hidden credential forms / off-origin links / off-screen brand text | [`scripts/html_visibility_analysis.py`](scripts/html_visibility_analysis.py) catches inline + class-based hiding a naive parser misses, severity-ranked by concealed intent + origin (a hidden off-origin credential form is HIGH; a benign `type=hidden` CSRF field is **not** flagged). Static approximation with the renderer-level path (agent-browser/Playwright) noted as the upgrade. Grounded in *"Visibility-Aware HTML Analysis through Renderer-Level Extraction"* (Betts et al., Auckland, eCrime 2026). See [`techniques/visibility-aware-html.md`](techniques/visibility-aware-html.md) |
+| **Tested & gated** | Three zero-dep suites wired into `audit.sh` | [`tests/test_phish_domain_survival.py`](tests/test_phish_domain_survival.py), [`tests/test_clickfix_detect.py`](tests/test_clickfix_detect.py), [`tests/test_html_visibility_analysis.py`](tests/test_html_visibility_analysis.py) — with explicit false-positive guards (coupon-copy, prose mention, CSRF field) and the RULE 5 compromised/malicious split — run in [`scripts/audit.sh`](scripts/audit.sh) §6 |
+
+## What's New in v2.9
+
+> **The release where "install it" and "install everything" become the same command — and the pivot loop stops leaving identifiers on the floor.** v2.8 moved the safety rails to where the harness runs. v2.9 fixes the layer *beneath* the collector: the bundled installer now provisions the whole two-layer stack, not just the light collector — and the last four auto-pivot dead-ends, where a collected identifier was typed but never chased, are wired shut.
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **The installer provisions the deep layer** | "Install once" now installs the pipeline, not just the collector | Both `scripts/install.{sh,ps1}` installed **only** `scripts/requirements.txt` (the light collector) and never the **root** `requirements.txt` — so the IntelHarness Agent-SDK pipeline (`claude-agent-sdk`, `pydantic`, `rich`), the typed MCP server, and IntelGraph's `graphviz` render path were declared, imported, then **silently absent** on a fresh box. The installer now runs the root manifest unconditionally (small, pure-Python), so `/harness`, the MCP surface, and link-graph rendering work out of the box |
+| **`--all` = everything, including the heavy renderers** | The engines pandoc/IntelGraph shell out to are installable now | `dot` (Graphviz binary — IntelGraph link graphs) and `gh` (the GitHub CLI the whole `/github-osint` workflow calls) install on **every** platform now — `gh` was Windows-only before. `--headless` additionally installs **Playwright + Chromium** (post-JS render, screenshot evidence, Engage automation — previously an unguarded `ModuleNotFoundError`). `--all` adds the two heavy ones — **mermaid-cli** (`mmdc`, flow/kill-chain diagrams) and **xelatex** (IntelReport PDF) — behind the flag because each is hundreds of MB and DOCX/HTML need neither |
+| **Auto-pivot: the last dead-ends wired shut** | A typed identifier that never spawns a pivot is a silent hole in the spider-map | Four fixes in [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py): (1) **altcoin wallets** — TRON/LTC/XMR are scraped by `pivot_extract` and traceable by `crypto_balance.py`, yet only BTC/ETH were typed; all three now classify, re-enter the frontier, and run on-chain flow. (2) **breach passwords** no longer mis-seed — a recovered password fell through to the username regex and got enumerated across 3000+ platforms; it is dropped from the breach yields. (3) **`/email-deep`** infrastructure (domain/IP) and (4) **`/gdoc`** share links now carry edge-matrix entries, so both feed discoveries back into the loop instead of ending at a leaf. Company names get a documented `type:"org"` tagging rule — `classify()` cannot tell an org from a person |
+| **46 → 52 MCP tools** | The typed intel surface grew; the changelog now says so | `intel_engine/harness/tools.py` registers **52** `@tool`s (24 collect + 28 analyze) — six past the v2.8 figure, added with the engine sync but never recorded. No new install step; they surface through the same `intel` MCP server |
+| **Command count corrected** | The badge undersold the toolkit | §3 now carries **120+** commands (measured: 145 rows, ~123 unique base commands) — the "75+" badge predated three releases of additions |
+
+<details>
+<summary><b>What's New in v2.8</b></summary>
+
 ## What's New in v2.8
 
 > **The release where the engine caught up and the safety rails moved to where the harness can see them.** v2.7 landed the deep pipeline. v2.8 brings the vendored engine **~30 commits forward** — **24 → 46 MCP tools**, a new engagement skill, and a case loop that runs to convergence — and then fixes the layer underneath it: two safety properties were being enforced at a moment Claude Code never reaches. Both now fire where the work actually happens.
@@ -176,6 +232,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Installable as a Claude Code plugin** | Skill + commands + MCP + hooks as **one** unit | `register.sh` symlinks the skill, the commands and the MCP server — but it cannot install **hooks**, and that is where the two rails above live. [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) bundles all four: `/plugin marketplace add <clone>` then `/plugin install cti-expert`. Hook paths use exec form with `${CLAUDE_PLUGIN_ROOT}`, so nothing is hardcoded to one machine and no path is shell-parsed. Both PreToolUse hooks **fail open** — a hook bug must never brick your repo; `audit.sh` and the git pre-commit hook remain the backstop |
 | **The OPSEC gate was met, not relaxed** | Upstream grew a submission path, so the test had to be satisfied honestly | ANY.RUN's API is mostly a *submission* API, and the upstream engine added a gated path to it — which failed [`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py), by design. The fix was not to weaken the assertion: the `REQUIRES_ANALYST_CONFIRMATION` marker was placed on `submit()` itself, the four submission-lifecycle endpoints were listed **explicitly** (an unreviewed new key still fails), and the test now demands the marker **and the refusal it claims** — so the marker cannot decay into a magic string. Verified by planting each failure: remove the marker → fail; remove the refusal → fail; restore → pass |
 | **The re-sync procedure was the one that breaks the repo** | Documented advice that fails *silently* is worse than none | [STRUCTURE.md](STRUCTURE.md) told the next person to "copy into `intel_engine/`, then re-apply the 5 shims". That is wrong, and its failure has no error message: the collectors keep running, they just stop finding things. It now documents the procedure that holds — classify by **blob identity**, three-way merge off the minimum-distance base, check for the duplicate `@tool` blocks a stale base produces — plus the `zsh` word-splitting trap that turns an unquoted `rsync` exclude list into **no exclusions at all**. The vendored engine's own **17 gates** now ship and run alongside cti-expert's 6, and `audit.sh` gained a check that every path `hooks.json` registers still resolves, because a renamed script disables its hook silently |
+
+</details>
 
 <details>
 <summary><b>What's New in v2.7</b></summary>
@@ -227,7 +285,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Archive access** | Fetch archived pages Claude Code's WebFetch can't reach | WebFetch is blocked from `web.archive.org` (robots.txt at the fetch layer). [`wayback_fetch.py`](scripts/webpivot/wayback_fetch.py) routes around it — CDX lookup → nearest-snapshot resolve → raw `id_` fetch, with retry/backoff (`--near`, `--list`, `--url-only`, `--json`) |
 | **Web pivoting** | `/webpivot` — map the infra behind a page | Favicon **mmh3**, GA/GTM/AdSense IDs, wallets & SaaS-operator tokens from a page's DOM → ranked pivots; same-operator correlation via `/rank-relations` (weighted scoring + noise denylist), `/cert-pivot`, `/pivot-suggest`, `/crypto-balance`, `/email-hygiene`, `/sensitive-paths`. Auto-runs in `/case` for domain/URL targets |
 | **Keyless by default** | 100% free — no key, no signup | crt.sh (certificate transparency) + passive DNS + anonymous urlscan **always run**; full pivoting at zero cost, nothing to configure |
-| **Premium auto-detect** | Drop in a key → it upgrades itself | `/webpivot` **auto-detects** any premium key you've set (Shodan, Censys, FOFA, DNSLytics, SecurityTrails, urlscan-PRO, WhoisXML) and unlocks its higher tier — no flag, no re-run; a missing/bad key degrades to a note, never breaks the run. Manage keys with `/apikeys` |
+| **Premium auto-detect** | Drop in a key → it upgrades itself | `/webpivot` **auto-detects** any premium key you've set (Shodan, Censys, FOFA, Hunter.how, DNSLytics, SecurityTrails, urlscan-PRO, WhoisXML) and unlocks its higher tier — no flag, no re-run; a missing/bad key degrades to a note, never breaks the run. Manage keys with `/apikeys` |
 | **Attack surface** | `/appliance-scan` — edge/VPN appliance → KEV mapping | Passive-first fingerprint of internet-facing Citrix/F5/Cisco/Ivanti/Forti/Palo Alto/Exchange appliances (Shodan InternetDB/Censys) → matched **CISA KEV/CVE** list; feeds `/vuln-check` + `/threat-model` |
 | **Identity fabric** | `/saas-map` — SaaS tenancy + IdP surface | DNS-TXT tenancy tokens (Google/Atlassian/Zscaler/Salesforce/Workday…), non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauthenticated API/GraphQL/OpenAPI-spec discovery |
 | **Credentials** | Read-only liveness validation | A discovered key is confirmed live via identity-only endpoints (AWS STS, GitHub scopes, Slack `auth.test`, `…/v1/models`) — never a mutating call — upgrading it to CRITICAL with account/scope evidence |
@@ -431,10 +489,10 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 ### Step 3 &mdash; Register the commands with Claude Code
 
-`install.sh` installs the OSINT *tools*. This one-time step wires the **skill, the 8 `/cti*` slash commands, and the MCP tools** into Claude Code so they work from a cold prompt in any project — it symlinks `commands/*.md` into `~/.claude/commands/` and writes the per-machine `.mcp.json`. It's idempotent, so it's safe to re-run after a `git pull`.
+`install.sh` installs the OSINT *tools*. This one-time step wires the **skill, the 9 `/cti*` slash commands, and the MCP tools** into Claude Code so they work from a cold prompt in any project — it symlinks `commands/*.md` into `~/.claude/commands/` and writes the per-machine `.mcp.json`. It's idempotent, so it's safe to re-run after a `git pull`.
 
 ```bash
-# Register the skill + 8 commands + write the per-machine .mcp.json
+# Register the skill + 9 commands + write the per-machine .mcp.json
 bash ~/.claude/skills/cti-expert/scripts/register.sh
 
 # Recommended: install the built-in deep-pipeline (intel_engine) deps once
@@ -523,7 +581,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
    ```bash
    bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT tools
-   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 8 commands + MCP
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 9 commands + MCP
    ```
 
    Or on Windows PowerShell (Python deps only; run `register.sh` from Git Bash/WSL):
@@ -563,7 +621,7 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
 There is **one command to remember: `/cti <target>`.** It looks at what you gave it — a domain, IP, email, username, phone, wallet, hash, or APK — and runs the right chain automatically. That's usually all you need.
 
-Under it sit **8 registered commands** that Claude Code recognizes from a cold prompt in any project (no need to load the skill first):
+Under it sit **9 registered commands** that Claude Code recognizes from a cold prompt in any project (no need to load the skill first):
 
 | Command | What it does |
 |---------|--------------|
@@ -575,8 +633,21 @@ Under it sit **8 registered commands** that Claude Code recognizes from a cold p
 | `/cti-check <indicator>` | False-positive control — real operator link, or shared noise? |
 | `/cti-report <ID>` | Render the relationship graph + a polished PDF/DOCX |
 | `/cti-status` | Health check — backend, MCP tools, API-credit balances |
+| `/cti-proxy [op]` | Egress proxy / rotation pool for **all** outbound calls |
 
 Every *other* command on this page (`/case`, `/webpivot`, `/report`, `/sweep`…) is a **convention command**: shorthand that works once the skill is loaded — via `/cti`, or by typing `/cti-expert` to open the skill directly. At a cold prompt, reach for a registered command above, or just describe your goal in plain English — it works identically.
+
+### First 60 seconds — turn on full power
+
+Before your first real case, run these once in Claude Code so you're not silently running keyless or degraded:
+
+```bash
+/cti-expert      # load the skill first — the four below are convention commands
+/onboard         # interactive first-run guide
+/capabilities    # which evidence classes are unavailable now + the free path that substitutes
+/backend         # confirm Tier-1 typed MCP (52 tools) is live, not Tier-3 stateless
+/apikeys status  # keyless works; add free/paid keys to unlock reverse pivots
+```
 
 ### 1 &mdash; Investigate anything
 
@@ -803,7 +874,7 @@ Every investigation follows four automated phases:
 
 ### Workflow diagrams
 
-**End-to-end tool &amp; skill flow** — the whole system as one sequence: your target enters at `/cti`, crosses Layer 1's 49 techniques and the 24-tool MCP surface, through WebPivot / BinaryPivot / the knowledge base / IntelAnalysis, and leaves as a rendered graph and a PDF:
+**End-to-end tool &amp; skill flow** — the whole system as one sequence: your target enters at `/cti`, crosses Layer 1's 56 techniques and the 52-tool MCP surface, through WebPivot / BinaryPivot / the knowledge base / IntelAnalysis, and leaves as a rendered graph and a PDF:
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert end-to-end tool and skill flow — sequence diagram across both layers" width="900">
@@ -838,7 +909,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 
 ## Command Reference
 
-> The tables below are **convention commands** — the full technique vocabulary, available once the skill is loaded (via `/cti` or `/cti-expert`). The 8 registered entry commands (`/cti`, `/cti-recall`, `/cti-case`…) are in [Quick Start](#quick-start) above. For the authoritative reference, see **[SKILL.md](SKILL.md)**.
+> The tables below are **convention commands** — the full technique vocabulary, available once the skill is loaded (via `/cti` or `/cti-expert`). The 9 registered entry commands (`/cti`, `/cti-recall`, `/cti-case`…) are in [Quick Start](#quick-start) above. For the authoritative reference, see **[SKILL.md](SKILL.md)**.
 
 <details>
 <summary><b>Acquire</b> — Data collection commands</summary>
@@ -854,6 +925,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 | `/email-deep [email]` | Accounts, breaches, infrastructure |
 | `/subdomain [domain]` | CT logs + passive enumeration |
 | `/github-osint [target]` | GitHub user/org/repo profiles, code, commits, forks |
+| `/cld [target]` ⭐ | ChongLuaDao first-party premium — URL/AI/IoC/breach/CVE verdicts; client talks only to CLD, CLD fetches server-side (needs key) |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence |
 | `/breach-deep [email]` | Multi-source breach lookup |
 
@@ -1022,7 +1094,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>49 techniques</b> — click to expand full catalog</summary>
+<summary><b>56 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -1076,6 +1148,13 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 | `stealer-log-analysis.md` | Infostealer-log triage — family ID, victim-vs-operator profiling, cross-log correlation, IOC | No |
 | `fx-dork-sweep.md` | Zero-auth dork sweep — Telegram ecosystem, doc-hosts, filetype families | No |
 | `fx-document-leak-hunt.md` | 18-platform document-leak hunt with severity classification | No |
+| `phishing-domain-survival.md` | Registration/DNS strategy → maliciously-registered vs compromised + survival outlook (eCrime 2026 "Built to Last?") | No |
+| `clickfix-clipboard-hijack.md` | ClickFix / PasteJacking clipboard-hijack detection + `-enc` decode → C2 IOCs (eCrime 2026 "PasteJacked") | No |
+| `visibility-aware-html.md` | Hidden credential forms / off-origin links / off-screen brand text (eCrime 2026 "Visibility-Aware HTML Analysis") | No |
+| `apk-permission-scope.md` | APK permission-scope risk scoring — on-device-fraud permission combos, capability≠guilt (eCrime 2026 "The 'Allow' Reflex") | No |
+| `kit-template-attribution.md` | Phishing kit/template structural fingerprint + similarity; commodity-template match graded as noise (eCrime 2026 tree-structured attribution) | No |
+| `renderer-confirmation.md` | Renderer-level confirmation of ClickFix + visibility (runtime clipboard / computed-hidden → reconcile); renderer optional (eCrime 2026 PasteJacked + Visibility-Aware HTML) | No |
+| `phishtrace-dynamic-features.md` | Runtime-trace phishing characterization → verdict + exfil IOCs; thin trace on a flagged page = cloaked (eCrime 2026 "PhishTrace") | No |
 
 </details>
 
@@ -1159,10 +1238,10 @@ cti-expert/
 ├── AGENTS.md                   Cross-agent runtime contract (Claude Code + Codex)
 ├── CLAUDE.md                   Contributor rules (loads only when building the repo)
 │
-├── commands/                   8 registered slash commands — work from a cold prompt
+├── commands/                   9 registered slash commands — work from a cold prompt
 │   ├── cti.md                  /cti — the entry point, routes by target type
 │   ├── cti-recall.md · cti-case.md · cti-pivot.md · cti-cluster.md
-│   └── cti-check.md · cti-report.md · cti-status.md
+│   └── cti-check.md · cti-report.md · cti-status.md · cti-proxy.md
 │
 │  ── LAYER 1 · Broad collector — cti-expert's own tools ──────────────
 ├── scripts/                    Collectors, backend dispatcher, report generators
@@ -1314,7 +1393,7 @@ CTI Expert stands on the shoulders of the open-source community and free, public
 | **Agents & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) |
 | **Browser & web collection** | [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Chromium](https://www.chromium.org) |
 | **Username, people & social** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [LeakCheck](https://leakcheck.io) |
+| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
 | **Domains, DNS & infrastructure** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Whoxy](https://www.whoxy.com) · [ViewDNS](https://viewdns.info) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [Shodan InternetDB](https://internetdb.shodan.io) · [ipwho.is](https://ipwho.is) |
 | **Threat intelligence** | [VirusTotal](https://www.virustotal.com) · [URLScan.io](https://urlscan.io) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) |
 | **Secrets & code** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) |
@@ -1348,7 +1427,8 @@ CTI Expert stands on the shoulders of the open-source community and free, public
   <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><img src="https://img.shields.io/badge/LinkedIn-Hieu_Ngo-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>&nbsp;
   <a href="mailto:hieu.ngo@chongluadao.vn"><img src="https://img.shields.io/badge/Email-hieu.ngo%40chongluadao.vn-0080ff?style=for-the-badge&logo=gmail&logoColor=white" alt="Email"></a>&nbsp;
   <a href="https://chongluadao.vn"><img src="https://img.shields.io/badge/Web-chongluadao.vn-00c853?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website"></a>&nbsp;
-  <a href="https://github.com/7onez"><img src="https://img.shields.io/badge/GitHub-7onez-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://github.com/7onez"><img src="https://img.shields.io/badge/GitHub-7onez-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>&nbsp;
+  <a href="https://github.com/Zeroska"><img src="https://img.shields.io/badge/Contributor-Zeroska-6f42c1?style=for-the-badge&logo=github&logoColor=white" alt="Contributor: Zeroska"></a>
 </p>
 
 <sub>If this tool helps your work, consider giving it a star. It helps others find it.</sub>

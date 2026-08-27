@@ -43,11 +43,12 @@ VENV_PYTHON="$VENV_BIN/python3"
 
 OPT_HEADLESS=false
 OPT_GO=false
+OPT_ALL=false
 for arg in "$@"; do
   case $arg in
     --headless) OPT_HEADLESS=true ;;
     --go)       OPT_GO=true ;;
-    --all)      OPT_HEADLESS=true; OPT_GO=true ;;
+    --all)      OPT_HEADLESS=true; OPT_GO=true; OPT_ALL=true ;;
   esac
 done
 
@@ -471,6 +472,7 @@ echo "Venv:      $HOME/.claude/skills/.venv"
 echo "Installer: uv-first (pip/pipx/venv fallback)"
 [[ "$OPT_HEADLESS" == true ]] && echo "Mode:     +headless"
 [[ "$OPT_GO" == true ]]       && echo "Mode:     +go"
+[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (report render engines)"
 
 # ── uv bootstrap ────────────────────────────────────────────
 section "uv (Astral package manager)"
@@ -520,6 +522,25 @@ apt_install poppler-utils pdfinfo
 apt_install qpdf qpdf
 if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
+apt_install graphviz dot            # IntelGraph link graphs need the `dot` binary
+# gh is NOT in Debian/Ubuntu default repos, so `apt install gh` fails there. Use the GitHub
+# release binary on Linux (cross-distro), brew on macOS. Powers /github-osint's `gh api` recon.
+if has gh; then
+  log_skip "gh (present)"
+elif [[ "$OS" == "macos" ]]; then
+  apt_install gh gh                                 # -> brew install gh
+elif [[ "$OS" == "linux" ]]; then
+  GH_ARCH="amd64"; [[ "$ARCH" == "arm64" ]] && GH_ARCH="arm64"
+  gh_binary_install "GitHub CLI" gh "cli/cli" "linux_${GH_ARCH}\\.tar\\.gz$" "$HOME/.local/bin"
+else
+  apt_install gh gh
+fi
+# zbar shared lib for pyzbar QR decoding (/webpivot --decode-qr)
+if [[ "$OS" == "linux" ]] && has apt-get; then
+  $SUDO apt-get install -y libzbar0 &>/dev/null 2>&1 && log_ok "libzbar0 (QR decode)" || log_skip "libzbar0"
+elif [[ "$OS" == "macos" ]] && has brew; then
+  brew install zbar &>/dev/null 2>&1 && log_ok "zbar (QR decode)" || log_skip "zbar"
+fi
 # libcairo2-dev needed by maigret on Linux
 if [[ "$OS" == "linux" ]] && ! dpkg -l libcairo2-dev &>/dev/null 2>&1; then
   $SUDO apt-get install -y libcairo2-dev &>/dev/null 2>&1 && log_ok "libcairo2-dev (maigret dep)" || true
@@ -536,6 +557,24 @@ if [[ -f "$REQ" ]]; then
   fi
 else
   log_fail "requirements.txt" "not found at $REQ"
+fi
+
+# ── Python: deep-layer pipeline deps (always) ─────────────────
+# The root requirements.txt carries the harness (claude-agent-sdk, pydantic, rich) and the
+# IntelGraph renderers (matplotlib, graphviz) plus light collector extras (openpyxl, pyzbar,
+# pillow). These are pure-Python and small, so they install unconditionally — previously they
+# lived only in the root manifest a user had to `uv pip install -r requirements.txt` by hand,
+# leaving /harness, the typed MCP server, and IntelGraph's `dot` path silently unavailable.
+section "Python: deep-layer pipeline (harness + IntelGraph)"
+DEEP_REQ="$SKILL_DIR/requirements.txt"
+if [[ -f "$DEEP_REQ" ]]; then
+  if vpip --quiet --upgrade -r "$DEEP_REQ" 2>/dev/null; then
+    log_ok "requirements.txt [deep layer] (claude-agent-sdk, pydantic, rich, graphviz, openpyxl, pyzbar, pillow)"
+  else
+    log_fail "requirements.txt [deep layer]" "install (uv pip / pip) -r failed"
+  fi
+else
+  log_skip "requirements.txt [deep layer] (not found at $DEEP_REQ)"
 fi
 
 # ── Python: OSINT tools ───────────────────────────────────────
@@ -556,6 +595,7 @@ pipx_install h8mail h8mail
 pipx_install "git+https://github.com/laramies/theHarvester.git" theHarvester "" theHarvester
 pipx_install waymore waymore
 pip_install  cloudscraper cloudscraper   # library, imported not executed — belongs in the venv
+pip_install  oletools oletools           # OLE/Office authorship + macro (olevba) — document metadata pivot
 pipx_install xeuledoc xeuledoc
 agentflow_install                       # no-deps avoids urllib3 conflict with msftrecon
 
@@ -644,6 +684,27 @@ else
   echo -e "  ${YELLOW}–${NC} agent-browser not requested (add --headless; installs CLI + Chrome)"
 fi
 
+# ── Playwright (render / screenshot / engage) ─────────────────
+# Post-JS DOM render (/webpivot --render), full-page screenshot evidence, and Engage's
+# synthetic-persona automation all use Playwright. It ships a browser, so it rides with
+# --headless alongside Scrapling's Chromium and agent-browser.
+section "Playwright (render / screenshot / engage)"
+if [[ "$OPT_HEADLESS" == true ]]; then
+  if vpip --quiet --upgrade playwright 2>/dev/null; then
+    PW_CLI="$VENV_BIN/playwright"; [[ "$OS" == "windows" ]] && PW_CLI="$VENV_BIN/playwright.exe"
+    [[ "$OS" == "linux" ]] && { { [[ -x "$PW_CLI" ]] && $SUDO "$PW_CLI" install-deps chromium; } || $SUDO "$VENV_PYTHON" -m playwright install-deps chromium; } &>/dev/null 2>&1 || true
+    if { [[ -x "$PW_CLI" ]] && "$PW_CLI" install chromium &>/dev/null; } || "$VENV_PYTHON" -m playwright install chromium &>/dev/null; then
+      log_ok "playwright + chromium"
+    else
+      log_skip "playwright (installed; finish with: $VENV_PYTHON -m playwright install chromium)"
+    fi
+  else
+    log_fail "playwright" "install (uv pip / pip) failed"
+  fi
+else
+  echo -e "  ${YELLOW}–${NC} Playwright not requested (add --headless; installs playwright + Chromium)"
+fi
+
 # ── Go tools (optional) ────────────────────────────────────────
 section "Go tools"
 if [[ "$OPT_GO" == true ]]; then
@@ -679,6 +740,28 @@ if [[ "$OPT_GO" == true ]]; then
   fi
 else
   echo -e "  ${YELLOW}–${NC} Skipped (add --go to install Go tools, requires Go 1.21+)"
+fi
+
+# ── Report render engines: mermaid-cli + xelatex (--all) ──────
+# mmdc (IntelGraph flow/kill-chain diagrams) and xelatex (IntelReport PDF via pandoc) are
+# large — mmdc pulls a headless Chrome, texlive is hundreds of MB — so they ride with --all.
+# DOCX and interactive HTML reports need neither and work after a plain install.
+section "Report render engines (mermaid-cli + xelatex)"
+if [[ "$OPT_ALL" == true ]]; then
+  if has npm; then
+    npm install -g @mermaid-js/mermaid-cli &>/dev/null 2>&1 && log_ok "mermaid-cli (mmdc)" || log_fail "mermaid-cli" "npm install -g @mermaid-js/mermaid-cli failed"
+  else
+    log_skip "mermaid-cli (needs npm — install Node.js, then: npm i -g @mermaid-js/mermaid-cli)"
+  fi
+  if [[ "$OS" == "linux" ]] && has apt-get; then
+    $SUDO apt-get install -y texlive-xetex texlive-fonts-recommended fonts-noto-core &>/dev/null 2>&1 && log_ok "texlive-xetex (PDF engine)" || log_fail "texlive-xetex" "sudo apt install texlive-xetex texlive-fonts-recommended"
+  elif [[ "$OS" == "macos" ]] && has brew; then
+    brew install --cask mactex-no-gui &>/dev/null 2>&1 && log_ok "mactex (xelatex)" || log_skip "mactex (brew install --cask mactex-no-gui)"
+  else
+    log_skip "xelatex (install TeX Live / MiKTeX for PDF reports)"
+  fi
+else
+  echo -e "  ${YELLOW}–${NC} Report render engines not requested (add --all for mermaid-cli + xelatex; DOCX/HTML need neither)"
 fi
 
 # ── ASN lookup tool (nitefood/asn) ────────────────────────────
