@@ -40,8 +40,8 @@ Every investigation follows four phases:
 |-------|-------------|
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/subdomain`, `/webpivot` + `/icp` (domain/URL targets), `/cn-corp` · `/iban` · `/hash-id` on discovery |
 | **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) **automatically until the frontier is exhausted**, no approval prompts (`autonomy=auto`). Acquire↔Enrich iterate, not run once. |
-| **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)) |
-| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle**. When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
+| **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)). **If the case has not converged** (frontier still open after the pivot loop + deterministic pipeline) and posture is active, `/case` **auto-escalates to the `/harness` deepening loop** — keyless-first (the CLI's own model), egress hard-gated on hostile infra; `--no-harness` opts out |
+| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle**. When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). **Deep-layer persist (automatic, ZERO extra egress):** when `/backend` is live, `/case` **reuses the pivots it already collected** — never re-fetches — to persist the versioned case at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` and correlate it cross-case; see the auto-chain note below. See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
 
@@ -87,12 +87,52 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > and supplies the **pipeline chains + deeper pivoting logic**: a persistent knowledge base (`intel_engine/knowledge/`), versioned cases
 > (`cases/`), cross-case correlation, calibrated assessment, and rendering.
 >
-> **The chain:** broad collection (cti-expert) → the pipeline (`/pipeline`, `/harness`) ingests it,
-> then applies the deep logic — *"seen this operator before?"* (`/recall`), whole-KB clustering
-> (`/kb --cluster`, `/cert-overlap`), false-positive control (`/reference`), risk scoring
-> (`/risk`), hypothesis generation, confidence calibration, and a versioned `Assessment`. The
-> pipeline drives cti-expert's own `scripts/webpivot/pivot_extract.py` collector, so the broad and
-> deep layers share one artifact shape end-to-end.
+> **The chain (automatic for `/case`, and it NEVER re-fetches):** broad collection (cti-expert)
+> already ran `pivot_extract` per host during Acquire. When `/backend` resolves to Tier 1/2 **and**
+> the run produced ≥1 host seed (domain/URL/IP), `/case` hands what it already collected to the
+> deterministic pipeline in **reuse mode** (`--no-collect`) — one command, a complete case dir, and
+> nothing touches the target again:
+>
+> 1. Write each host's already-collected pivot JSON to `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/<host>.json`
+>    and the host list to an absolute `<CASE-ID>-seeds.txt`, both **anchored at the engine root**
+>    (`ROOT=$SKILL_DIR/intel_engine`) — never a CWD-relative path.
+> 2. `intel.py pipeline open <CASE-ID> <abs-seeds.txt> --no-collect` — `--no-collect` skips the live
+>    fetch and runs the *rest of the existing pipeline* over the raw you just wrote: ingest →
+>    prior-overlap (`/recall`) → risk (`/risk`) → shared cluster seeds → `clusters.json` →
+>    `case_graph.json` → ICD-203 `assessment.md`. Every step is a KB/local read: zero egress, zero
+>    metered calls.
+>
+> **The persisted case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` — `raw/`, `shared.txt`,
+> `clusters.json`, `case_graph.json`, `assessment.md` — NOT the current working directory**, and it
+> is a COMPLETE case that `intel.py pipeline status <CASE-ID>` accepts (not the partial dir a hand-rolled
+> op sequence would leave). `<CASE-ID>` is the same id as the report filenames (mint
+> `CASE-YYYYMMDD-NN` when none is given). Its cluster/risk/assessment fold back into the auto-saved
+> report. Tier 3 (stateless), or a person/username/phone target with no host seeds → the handoff is
+> **skipped silently** and the tier noted; broad collection + report are unaffected.
+>
+> **Collecting `pipeline open` (no `--no-collect`) stays MANUAL — `/case` never runs it.**
+> `intel.py pipeline open` without the flag re-fetches every seed directly (`collect_many` on
+> `https://<host>`; the egress gate at `collect_core.py:169` only fires when `hostile` is set, which
+> the `open` path never sets), so a blind auto-`open` would be a **second live round** against infra
+> `/case` may have just classified hostile/no-touch — which is why the automatic handoff uses
+> `--no-collect`. Run collecting mode by hand only for a **fresh** case with no prior collection,
+> after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive`).
+>
+> **`/harness` deepening AUTO-ESCALATES on non-convergence** (`--no-harness` opts out). After the
+> `--no-collect` pipeline, if the case has **not converged** — `intel.py convergence <case>`
+> reports status ≠ `converged` (`cold` = no free leads left = exhausted), or `intel.py frontier
+> <case>` still lists open leads
+> **and** posture is active (not `--passive`, infra not classified hostile/no-touch) — `/case` runs
+> the harness Collect→Correlate→Assess loop to close the gap. Egress stays safe **by construction**:
+> the harness's own `audit.py` PreToolUse gate turns `hostile=True` into a **hard denial** of
+> outbound collection ([`harness/README.md`](intel_engine/harness/README.md)), so an escalation can
+> never re-touch no-touch infra — on hostile infra it deepens correlation/assessment only.
+> **Model — the CLI's own agent:** run interactively in Claude Code, the IntelHarness skill
+> front-end drives the same pipeline on your subscription with **no separate LLM key**; it falls
+> back to `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key only for unattended
+> SDK runs. No reasoning backend reachable **and** non-interactive → the escalation is **skipped and
+> noted as a collection gap**, never a blocker. A converged case, `--passive`, or hostile-only infra
+> → no escalation and the deterministic result stands.
 >
 > **Self-contained & self-resolving.** `/backend` resolves to **SELF** (in-repo) — no external
 > setup. The bundled installer (`scripts/install.{sh,ps1}`) provisions the deep layer; or by hand: `uv venv && uv pip install -r requirements.txt` (harness SDK/MCP + IntelGraph
@@ -456,8 +496,8 @@ Commands grouped by AEAD phase.
 | `/reverse-whois [email\|name]` | **Built-in.** Reverse-WHOIS a registrant identity → only high-value pivots; refuses privacy/registrar terms, flags bulk resellers as noise. **T2:** `intel.py reverse-whois --reverse-email <e> --search-type historic --json`. **T1:** `reverse_whois` | `/reverse-whois owner@x.com` |
 | `/cert-overlap [d1 d2 …]` | **Built-in.** KB-aware TLS/SAN same-operator **verdict** (SHARED-CERT / SIBLING-OVERLAP / NO-CT-OVERLAP) across 2+ domains — corroborates a cluster at the TLS layer. Complements the keyless `/cert-pivot`. **T2:** `intel.py cert-overlap a.com b.com`. **T1:** `cert_overlap` | `/cert-overlap a.com b.com` |
 | `/reference [check\|add\|list]` | **Built-in.** Curated **false-positive control** ledger — is a fingerprint BENIGN (common logo/CDN → don't cluster), SIGNAL (distinctive, prior-case → pivot), or UNKNOWN. **T2:** `intel.py reference check <value>`. **T1:** `reference_check`/`reference_add` | `/reference check favicon:123` |
-| `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — the bread-and-butter handoff: broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **T2:** `intel.py pipeline open <case> seeds.txt [--no-graph]` | `/pipeline open case1 seeds.txt` |
-| `/harness [open\|continue\|status]` | **Built-in.** The **LLM-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence (needs the venv deps + an LLM key for `continue`). **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
+| `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **`--no-collect`** = reuse mode: skip the live fetch and run the whole chain over pivot JSONs already in `cases/<case>/raw/` — the zero-egress handoff `/case` uses (it re-fetches nothing). **T2:** `intel.py pipeline open <case> seeds.txt [--no-collect] [--no-graph]` | `/pipeline open case1 seeds.txt` |
+| `/harness [open\|continue\|status]` | **Built-in.** The **agent-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence. **Auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription; `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
 | `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **T2:** `intel.py graph <case_graph.json> <out-stem> --legend`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
 | `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF/DOCX** (editorial house style, cover/TOC/figures, VN-safe). Complements `/report docx`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
 | `/clusters [case]` | **Built-in.** Partition a case into same-operator clusters **before** judging it — the unit of judgment is the cluster, not the case. Shows each binding indicator's KB-wide prevalence, so an indicator that binds 3 domains here but sits on 400 KB-wide reads as noise. Pure KB read. **T2:** `intel.py clusters <case>`. **T1:** `case_clusters` | `/clusters CASE-0001` |
@@ -1284,7 +1324,8 @@ never blockers ([`techniques/china-recon.md`](techniques/china-recon.md) §7). N
 [`techniques/fiat-payment-osint.md`](techniques/fiat-payment-osint.md) §4.
 
 **Flags:** `--no-cn` skips `/icp`+`/cn-corp` (both run by default). `--redact` *adds* the
-redacted variant (off by default).
+redacted variant (off by default). `--no-harness` disables the non-convergence auto-escalation
+to the harness deepening loop (on by default; see the deep-layer note above).
 
 **Recursive pivot orchestration (the spider-map).** `/case` is not a one-pass collector —
 it runs a **recursive BFS pivot engine**: every discovered identifier becomes a new seed,
@@ -1317,9 +1358,14 @@ back via `--ingest`.
 - **Control flags** (all *narrowing* — the defaults are already maximal):
   `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
   **`--checkpoint`** (pause for approval after each depth level), `--depth N`, `--budget N`,
-  `--authorization unconfirmed` (re-hold PII), `--no-cn`; `--redact` opts *in* to the redacted variant.
-- **Termination** → emit edges → `graph_build.py` → interactive HTML force-graph + topology
-  + timeline; findings/indicators roll into the auto-saved report + IOC bundle.
+  `--authorization unconfirmed` (re-hold PII), `--no-cn`, `--no-harness` (skip harness
+  auto-escalation); `--redact` opts *in* to the redacted variant.
+- **Termination** → if the loop **converged** (frontier exhausted): emit edges → `graph_build.py`
+  → interactive HTML force-graph + topology + timeline; findings/indicators roll into the
+  auto-saved report + IOC bundle. If it stopped on a **cap** (`max_nodes`/`max_depth`/`--budget`)
+  with the frontier still open — i.e. **not converged** — `/case` **auto-escalates to the harness
+  deepening loop** (posture-gated, keyless-first; `--no-harness` opts out) before Deliver, per the
+  deep-layer note above.
 
 Legacy one-hop note (still true, now a subset of the loop): if `/sweep` on a domain finds an
 email, `/email-deep` and `/breach-deep` trigger on it automatically.

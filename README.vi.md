@@ -77,7 +77,8 @@
 </p>
 <p>
   <a href="https://serpapi.com"><img src="https://img.shields.io/badge/SerpApi-Kết_quả_tìm_kiếm_%26_quảng_cáo-5A67D8?style=for-the-badge" alt="SerpApi"></a>&nbsp;
-  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Tìm_kiếm_bucket_mở-374151?style=for-the-badge" alt="GrayHatWarfare"></a>
+  <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Tìm_kiếm_bucket_mở-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
+  <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-Nền_tảng_điều_tra_OSINT-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 
 </div>
@@ -96,6 +97,7 @@
 | [**URLScan.io**](https://urlscan.io) | Quét website bị động — trang phục vụ gì và nói chuyện với ai, ghi lại mà không chạm vào mục tiêu | `/webpivot` · `/impersonate` |
 | [**SerpApi**](https://serpapi.com) | API kết quả công cụ tìm kiếm + Google Ads Transparency — ai **trả tiền** để kéo traffic, cùng kết quả dork đa công cụ | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Tìm kiếm bucket lưu trữ mở &amp; tệp bị phơi nhiễm (S3/Azure/GCS/Spaces) — xếp loại **phơi nhiễm**, không phải pivot cùng-người-vận-hành | `/secrets` · `/docleak` |
+| [**Social Links**](https://sociallinks.io) | Nền tảng điều tra OSINT — hơn 1000 phương pháp trên mạng xã hội, blockchain và dark web (SL Professional / Crimewall, Maltego transforms) | Phương pháp luận &amp; dữ liệu OSINT |
 
 > [!IMPORTANT]
 > **ANY.RUN chỉ được dùng ở chế độ chỉ-đọc.** `anyrun_lookup` tra cứu TI Lookup cho các hash **đã** được kích nổ từ trước. Skill này **không bao giờ nộp mẫu lên sandbox** — một task công khai là ai cũng đọc được và không thể thu hồi. Ranh giới đó được bảo vệ bằng một bài kiểm thử hồi quy ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), chứ không chỉ bằng quy ước.
@@ -722,7 +724,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /clusters CASE-0001                   # phán xét theo cụm cùng-nhà-vận-hành, kèm mức phổ biến toàn KB
 /frontier CASE-0001                   # khoảng trống chưa giải: seed miễn phí kế tiếp + lead tính phí bị hoãn
 
-# B — HARNESS do LLM dẫn dắt (điều phối toàn vụ việc đến hội tụ)
+# B — HARNESS đầy đủ (do agent dẫn dắt; cũng tự động nâng cấp trong /case khi vụ việc chưa hội tụ)
 /harness open CASE-0001 example.com sibling.com
 /harness continue CASE-0001 --depth 4 # Collect→Correlate→Assess, xuyên vụ việc, đến khi frontier cạn
 /harness status CASE-0001             # status không cần key
@@ -731,7 +733,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /cti-report CASE-0001 --pdf           # giao nộp: đồ thị quan hệ + PDF/DOCX chỉn chu
 ```
 
-> **Pipeline vs harness:** `/pipeline` là chuỗi tất định (không cần LLM key, tái lập từng byte). `/harness` là điều phối do LLM dẫn dắt, suy luận xuyên các vụ việc đến hội tụ (chế độ sâu nhất); nó cần deps trong venv (`uv pip install -r requirements.txt`, trình cài đặt đã chạy sẵn) cộng một LLM key cho `continue`. Cả hai lưu dưới `cases/<ID>/`; alias đăng ký chạy nguội `/cti-case <ID> <seeds>` chạy pipeline tất định.
+> **Pipeline vs harness:** `/pipeline` là chuỗi tất định (không cần LLM key, tái lập từng byte). `/harness` là điều phối toàn vụ việc **do agent dẫn dắt**, suy luận xuyên các vụ việc đến hội tụ (chế độ sâu nhất), và **tự động nâng cấp trong `/case`** khi pipeline tất định chưa hội tụ và posture đang chủ động (dùng `--no-harness` để tắt). **Ưu tiên không-key:** chạy tương tác trong Claude Code, nó dùng chính model của CLI trên gói đăng ký của bạn (không cần LLM key riêng); `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, không key) hoặc một API key chỉ cần cho `continue` chạy SDK không giám sát. Cả hai lưu dưới `cases/<ID>/`; alias đăng ký chạy nguội `/cti-case <ID> <seeds>` chạy pipeline tất định.
 
 <br>
 
@@ -1050,7 +1052,7 @@ Tích hợp sẵn trong skill dưới `intel_engine/` (`intel_engine/harness/`, 
 | `/reverse-whois [email\|name]` | Reverse-WHOIS một registrant → chỉ giữ các pivot giá trị cao (đã lọc privacy/hàng loạt) |
 | `/cert-overlap [d1 d2 …]` | Phán định cùng nhà vận hành qua TLS/SAN có nhận thức KB, trên nhiều tên miền |
 | `/reference [check\|add\|list]` | Sổ kiểm soát dương tính giả — fingerprint BENIGN vs SIGNAL |
-| `/harness [open\|continue\|status]` | Điều phối toàn vụ việc — bền vững, có phiên bản, xuyên vụ việc cho tới khi hội tụ |
+| `/harness [open\|continue\|status]` | Điều phối toàn vụ việc do agent dẫn dắt — bền vững, có phiên bản, xuyên vụ việc cho tới khi hội tụ; **tự động nâng cấp trong `/case`** (ưu tiên không-key) |
 | `/graph --render` | IntelGraph kết xuất đồ thị vụ việc chất lượng xuất bản → PNG/SVG |
 | `/report pdf` | IntelReport kết xuất một bản đánh giá bằng pandoc → PDF/DOCX chỉn chu |
 | `/binary [file\|url]` | Trích xuất IOC tĩnh từ APK/exe lừa đảo (chứng chỉ ký, package, host C2, ví) → gộp cụm với hạ tầng web |
