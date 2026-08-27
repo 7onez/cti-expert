@@ -240,6 +240,10 @@ CTI_PROXY_ENABLED=
 CTI_PROXY_ROTATION=
 # Fall back to a DIRECT connection if every proxy fails (1/0). Default 0.
 CTI_PROXY_ALLOW_DIRECT=
+# Per-request timeout (sec) when a caller sets none; slow proxy fails over. Blank -> 20.
+CTI_PROXY_TIMEOUT=
+# Quarantine a failed/slow proxy for N sec so it's tried last. Blank -> 90; 0 disables.
+CTI_PROXY_COOLDOWN=
 # Hosts reached without a proxy:
 NO_PROXY=localhost,127.0.0.1""")
     return 0

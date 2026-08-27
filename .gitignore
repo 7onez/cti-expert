@@ -31,6 +31,7 @@ scripts/**/.env
 # Egress proxy pool (managed by /proxy) — may hold proxy credentials; never commit
 scripts/proxy/proxies.json
 scripts/proxy/.rotation-state
+scripts/proxy/.proxy-health
 
 # Local intel-backend MCP registration (absolute path, machine-specific).
 # Written by `scripts/backend/intel.py mcp --write` to enable Tier 1 — never commit.

@@ -19,6 +19,9 @@ WHAT IT SUPPORTS
   - Automatic in-process FAILOVER — a dead proxy is skipped and the request is
     retried through the next one; an origin HTTP error (4xx/5xx) is NOT retried
     (the proxy worked, the server answered).
+  - A default request TIMEOUT (CTI_PROXY_TIMEOUT, 20s) so a slow/hanging proxy
+    fails over instead of blocking forever, plus a per-proxy failure COOLDOWN
+    (CTI_PROXY_COOLDOWN, 90s) that deprioritizes a just-failed exit next request.
   - `no_proxy` host bypass and an optional `allow_direct` last resort.
   - HTTP/HTTPS proxies natively; SOCKS4/5 when PySocks is installed.
 
@@ -27,7 +30,8 @@ CONFIG (merged, highest precedence first)
   2. env  HTTPS_PROXY / HTTP_PROXY / ALL_PROXY (standard, already-in-env)
   3. file scripts/proxy/proxies.json  (managed by `proxy.py`, gitignored)
   Toggles: CTI_PROXY_ENABLED=0|1, CTI_PROXY_ROTATION=<mode>,
-           CTI_PROXY_ALLOW_DIRECT=0|1, NO_PROXY=<csv>.
+           CTI_PROXY_ALLOW_DIRECT=0|1, NO_PROXY=<csv>,
+           CTI_PROXY_TIMEOUT=<sec>, CTI_PROXY_COOLDOWN=<sec>.
 
 Stdlib-only. Importable AND runnable (`python3 cti_proxy.py status|pick|test`).
 FOR AUTHORIZED INVESTIGATIONS ONLY.
@@ -42,6 +46,7 @@ import os
 import random
 import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -58,11 +63,18 @@ SKILL_ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 ENV_PATH = os.environ.get("CTI_API_KEYS_ENV") or os.path.join(SKILL_ROOT, ".env")
 STORE_PATH = os.environ.get("CTI_PROXY_STORE") or os.path.join(HERE, "proxies.json")
 STATE_PATH = os.path.join(HERE, ".rotation-state")
+HEALTH_PATH = os.environ.get("CTI_PROXY_HEALTH") or os.path.join(HERE, ".proxy-health")
 
 VALID_SCHEMES = ("http", "https", "socks4", "socks5", "socks5h")
 DEFAULT_TEST_URL = "https://api.ipify.org?format=json"
 _TRUE = ("1", "true", "yes", "on")
 _FALSE = ("0", "false", "no", "off")
+# Slow-proxy guard + runtime health. A bare urlopen() passes no timeout, so a
+# hanging proxy would block forever; apply this default when the caller gives
+# none. And quarantine a proxy that just failed/timed-out for a cooldown window
+# so it is not retried first on every subsequent request. Both are env-tunable.
+DEFAULT_PROXY_TIMEOUT = 20     # seconds; override via CTI_PROXY_TIMEOUT (<=0 = none)
+DEFAULT_PROXY_COOLDOWN = 90    # seconds; override via CTI_PROXY_COOLDOWN (0 disables)
 
 _INSTALLED = False   # guard: install() is idempotent within a process
 
@@ -259,6 +271,32 @@ def allow_direct(cfg=None):
     cfg = cfg or load_store()
     return bool(cfg.get("allow_direct", False))
 
+def proxy_timeout():
+    """Default per-request timeout (seconds) the failover opener applies when the
+    caller passes none. CTI_PROXY_TIMEOUT overrides; <=0 means no default (block
+    like stdlib). Invalid values fall back to DEFAULT_PROXY_TIMEOUT."""
+    raw = os.environ.get("CTI_PROXY_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_PROXY_TIMEOUT
+    try:
+        v = float(raw)
+    except ValueError:
+        return DEFAULT_PROXY_TIMEOUT
+    return v if v > 0 else None
+
+
+def proxy_cooldown():
+    """Seconds to quarantine a proxy after a transport failure/timeout so it is
+    tried last on later requests. CTI_PROXY_COOLDOWN overrides; 0 disables."""
+    raw = os.environ.get("CTI_PROXY_COOLDOWN", "").strip()
+    if not raw:
+        return DEFAULT_PROXY_COOLDOWN
+    try:
+        v = float(raw)
+    except ValueError:
+        return DEFAULT_PROXY_COOLDOWN
+    return max(0.0, v)
+
 
 def no_proxy_hosts(cfg=None):
     raw = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
@@ -283,6 +321,59 @@ def _write_cursor(n):
             f.write(str(int(n)))
     except OSError:
         pass
+
+def _proxy_key(url):
+    """Stable, non-secret identity for a proxy: scheme://host:port (credentials
+    stripped so they are never written to the on-disk health file)."""
+    if not url:
+        return None
+    p = urlsplit(url)
+    host = (p.hostname or "").lower()
+    return f"{p.scheme}://{host}:{p.port}" if host else None
+
+
+def _read_health():
+    """Load the persisted proxy-health map {key: last_fail_epoch}. Read fresh on
+    every (typically short-lived) run — an in-memory dict would always start empty
+    because install() runs once per process."""
+    try:
+        with open(HEALTH_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(k): float(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _write_health(health):
+    try:
+        with open(HEALTH_PATH, "w", encoding="utf-8") as f:
+            json.dump(health, f)
+    except OSError:
+        pass
+
+
+def _mark_bad(url, cooldown):
+    """Persist that `url` just failed; prune entries already past cooldown so the
+    file stays bounded. No-op when the proxy is direct/None or cooldown disabled."""
+    key = _proxy_key(url)
+    if not key or not cooldown:
+        return
+    now = time.time()
+    health = {k: ts for k, ts in _read_health().items() if now - ts < cooldown}
+    health[key] = now
+    _write_health(health)
+
+
+def _clear_bad(url):
+    """Persist that `url` recovered — drop it from the map (writes only when it
+    was actually quarantined)."""
+    key = _proxy_key(url)
+    if not key:
+        return
+    health = _read_health()
+    if key in health:
+        del health[key]
+        _write_health(health)
 
 
 def pick_start(pool, mode=None, advance=True):
@@ -331,6 +422,8 @@ class FailoverOpener:
         self._direct_ok = direct_ok
         self._no_proxy = no_proxy
         self._cache = {}
+        self._timeout = proxy_timeout()      # applied when caller passes none
+        self._cooldown = proxy_cooldown()    # quarantine window (persisted to disk)
 
     def _opener_for(self, proxy):
         if proxy not in self._cache:
@@ -343,7 +436,18 @@ class FailoverOpener:
         if self._host_bypassed(host):
             return [None]
         n = len(self._pool)
-        seq = [self._pool[(self._start + i) % n] for i in range(n)] if n else []
+        rot = [self._pool[(self._start + i) % n] for i in range(n)] if n else []
+        if self._cooldown:
+            health = _read_health()          # persisted across processes
+            now = time.time()
+            def _cooling(p):
+                ts = health.get(_proxy_key(p))
+                return ts is not None and now - ts < self._cooldown
+            fresh = [p for p in rot if not _cooling(p)]
+            stale = [p for p in rot if _cooling(p)]
+            seq = fresh + stale              # quarantined exits still tried, but last
+        else:
+            seq = rot
         if self._direct_ok or not seq:
             seq = seq + [None]
         return seq
@@ -352,20 +456,30 @@ class FailoverOpener:
         return bool(host) and _host_bypassed(host, self._no_proxy)
 
     def open(self, fullurl, data=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT):
+        # A bare urlopen() passes the stdlib global-default (no timeout); a
+        # hanging proxy would then block forever. Substitute our default so a
+        # slow proxy times out and fails over instead.
+        if timeout is socket._GLOBAL_DEFAULT_TIMEOUT and self._timeout:
+            timeout = self._timeout
         last = None
         for proxy in self._order(_host_of(fullurl)):
             try:
-                return self._opener_for(proxy).open(fullurl, data, timeout)
+                resp = self._opener_for(proxy).open(fullurl, data, timeout)
+                if self._cooldown:
+                    _clear_bad(proxy)            # recovered: clear persisted quarantine
+                return resp
             except urllib.error.HTTPError as e:
                 # 407 = the PROXY rejected auth -> a proxy failure, rotate to the
                 # next one. Any other status is the ORIGIN answering (the proxy
                 # worked): raise it, and never fan a 403/429 across the whole pool
                 # (that burns every exit and hammers the target from many IPs).
                 if e.code == 407:
+                    _mark_bad(proxy, self._cooldown)
                     last = e
                     continue
                 raise
             except Exception as e:  # URLError, socket timeout, proxy CONNECT fail
+                _mark_bad(proxy, self._cooldown)
                 last = e
                 continue
         raise last if last else urllib.error.URLError("no proxy could be reached")
