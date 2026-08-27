@@ -940,7 +940,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 
 | 命令 | 用途 |
 |---------|---------|
-| `/case [target]` | 完整流水线 —— 所有适用的技术 |
+| `/case [target]` | 完整流水线 —— 所有适用的技术（**`/cti` 的别名**；建议用 `/cti`） |
 | `/sweep [target]` | 多向量侦察（个人／域名／组织／用户名／邮箱／IP） |
 | `/query [subject]` | 12-15 条高级搜索运算符查询 |
 | `/username [handle]` | 3000+ 平台枚举 |
