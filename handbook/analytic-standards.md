@@ -152,6 +152,10 @@ operator-language evidence predating the campaign; a second unrelated ICP filing
 - Executive summary and every judgment: a **likelihood term** (§1).
 - `/coverage` and `/blind-spots`: technique matrix **plus** the 5W1H table (§2).
 - `/threat-model`: an ACH matrix for each attribution claim, with the runner-up named (§3).
+- `/threat-model` (active-actor cases only): optionally add an **AAM actor-state overlay** after
+  the ACH matrix — the four OODA faces + a next-move posture via Mirror/Twin/Opposite/Lever —
+  [`handbook/aam-actor-modeling.md`](aam-actor-modeling.md). ACH attributes the past; AAM anticipates
+  the next move. Skip for closed retrospective cases.
 - `intelligence_gaps[]`: every `UNANSWERED` 5W1H dimension, plus the evidence named in
   "would change the ranking".
 - Keep likelihood **out** of `findings[].confidence` — that field stays an integer 0–100
@@ -166,3 +170,4 @@ operator-language evidence predating the campaign; a second unrelated ICP filing
 - [`validation/coverage-matrix.md`](../validation/coverage-matrix.md) — technique matrix + 5W1H pass
 - [`validation/quality-scoring.md`](../validation/quality-scoring.md) — quality composite
 - [`output/reports/citation-guide.md`](../output/reports/citation-guide.md) — sourcing standards
+- [`handbook/aam-actor-modeling.md`](aam-actor-modeling.md) — AAM actor-state overlay (next-move posture; distinct from ACH attribution)
