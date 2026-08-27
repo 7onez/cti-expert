@@ -21,6 +21,9 @@ silent bug here mis-routes (or leaks) every outbound request in the skill:
   5. NO-LEAK DEFAULT. With a pool present and allow_direct off, a direct connection is
      never in the failover order — the point of a proxy is to not expose the real IP.
   6. NO_PROXY BYPASS. Listed hosts go direct regardless of the pool.
+  7. HEALTH PERSISTENCE. A failed proxy is quarantined to an on-disk map so a
+     FRESH process (the common one-shot case) still deprioritizes it — not just
+     the single long-lived opener instance that happened to observe the failure.
 """
 import os
 import sys
@@ -36,6 +39,10 @@ for _v in ("CTI_PROXY", "CTI_PROXIES", "CTI_PROXY_ENABLED", "CTI_PROXY_ROTATION"
     os.environ.pop(_v, None)
 os.environ["CTI_PROXY_STORE"] = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".proxy-test-store.json")
+os.environ["CTI_PROXY_HEALTH"] = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".proxy-test-health.json")
+os.environ["CTI_API_KEYS_ENV"] = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".no-real-env-during-tests")
 
 import cti_proxy as cp  # noqa: E402
 
@@ -158,6 +165,7 @@ class _FakeSubOpener:
 
 
 def _opener(pool, start, direct_ok, no_proxy, script):
+    cp._write_health({})   # each failover scenario starts from a clean health map
     fo = cp.FailoverOpener(pool, start, direct_ok, no_proxy)
     fo._cache = {p: _FakeSubOpener(p, script) for p in pool + [None]}
     fo._opener_for = lambda proxy: fo._cache[proxy]  # bypass real build_opener
@@ -194,6 +202,40 @@ def test_failover():
     _, used3 = fo3.open("http://target.example/")
     check("407 proxy-auth rotates to the next proxy", used3 == "http://b:1")
 
+
+# ── 4b. proxy health persists across opener instances (fresh-process case) ───
+def test_health_persistence():
+    print("\n[4b] proxy health persists on disk across opener instances")
+    _clear_env()
+    cp._write_health({})                       # start clean
+    pool = ["http://a:1", "http://b:1", "http://c:1"]
+    # opener #1: a is down -> failover to b, a is quarantined to the on-disk map
+    fo1 = cp.FailoverOpener(pool, 0, False, [])
+    fo1._opener_for = lambda p: _FakeSubOpener(p, {"http://a:1": "down"})
+    _, used = fo1.open("http://target.example/")
+    check("first opener fails over off the down proxy", used == "http://b:1")
+    check("the down proxy is written to the on-disk health map",
+          cp._proxy_key("http://a:1") in cp._read_health())
+    # opener #2 simulates a FRESH process: it reads the file and tries a LAST
+    fo2 = cp.FailoverOpener(pool, 0, False, [])
+    order = fo2._order("target.example")
+    check("a fresh opener deprioritizes the quarantined proxy (tried last)",
+          order[0] == "http://b:1" and order[-1] == "http://a:1")
+    # credentials are never written to disk (key is scheme://host:port only)
+    fo3 = cp.FailoverOpener(["http://user:pw@a:1"], 0, False, [])
+    fo3._opener_for = lambda p: _FakeSubOpener(p, {"http://user:pw@a:1": "down"})
+    try:
+        fo3.open("http://target.example/")
+    except urllib.error.URLError:
+        pass
+    check("no credentials are persisted in the health map",
+          "pw" not in open(cp.HEALTH_PATH).read())
+    # recovery clears the entry
+    cp._clear_bad("http://a:1")
+    check("recovery clears the proxy from the health map",
+          cp._proxy_key("http://a:1") not in cp._read_health())
+    cp._write_health({})
+    _clear_env()
 
 # ── 5. no-leak default + no_proxy bypass ─────────────────────────────────────
 def test_no_leak_and_bypass():
@@ -367,11 +409,15 @@ def test_live_proxy_roundtrip():
 def main():
     print("cti_proxy — normalization, precedence, rotation, failover, no-leak, live")
     for fn in (test_normalize, test_precedence, test_rotation, test_failover,
-               test_no_leak_and_bypass, test_disabled_inert, test_socks_failclosed,
-               test_live_proxy_roundtrip):
+               test_health_persistence, test_no_leak_and_bypass, test_disabled_inert,
+               test_socks_failclosed, test_live_proxy_roundtrip):
         fn()
     try:
         os.remove(os.environ["CTI_PROXY_STORE"])
+    except OSError:
+        pass
+    try:
+        os.remove(os.environ["CTI_PROXY_HEALTH"])
     except OSError:
         pass
     print()
