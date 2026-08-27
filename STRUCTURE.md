@@ -85,8 +85,14 @@ Upstream is the `intelligence_assist` working tree (GitHub `0xdefh/Intelligence-
 vendored tree also carries a dozen files cti-expert has patched on purpose, and overwriting them
 fails *silently* — the collectors still run, they just stop finding things. Known examples:
 `wp_common` walks one extra level up for `.env` (cti-expert nests deeper; upstream's version
-resolves every API key to empty), and `pivot_extract` has reverse-WHOIS ON with
-`--no-whois-reverse` as the opt-out (upstream made it opt-in).
+resolves every API key to empty); `pivot_extract` has reverse-WHOIS ON with
+`--no-whois-reverse` as the opt-out (upstream made it opt-in); `harness/orchestrator.py`
+`_skill()` tries `SKILL.reference.md` before `SKILL.md` (the vendoring renames every component's
+`SKILL.md`, so upstream's bare `open(.../SKILL.md)` raises FileNotFoundError on the first Collect
+phase and takes `/harness` down entirely — mirror `agents._load_skill`'s reference-first fallback);
+and `IntelReport/scripts/render_report.py` `pick_fonts()` pins `Times New Roman`/`Arial`/`Consolas`
+as the win32 defaults (Windows has no `fc-list`, so upstream's `Latin Modern` default — which lacks
+Vietnamese coverage — silently tofus every VN PDF there).
 
 Find the divergence mechanically rather than from memory — **blob identity against all upstream
 history**. Index every `(blob, path)` pair upstream has ever committed, plus its current working
