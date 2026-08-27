@@ -146,6 +146,12 @@
       "category": "infra", "tier": "free",
       "url": "https://github.com/FlareSolverr/FlareSolverr",
       "unlocks": "/webpivot: routes fetches through a local FlareSolverr proxy to solve Cloudflare/JS interstitials when a target sits behind a challenge page. This is a service URL, not an API key"
+    },
+    {
+      "id": "gemini", "name": "Google Gemini (vision/A-V)", "env": "GEMINI_API_KEY",
+      "aliases": ["GOOGLE_API_KEY", "GEMINI_KEY"], "category": "ai", "tier": "freemium",
+      "url": "https://aistudio.google.com/apikey",
+      "unlocks": "media-vision-analysis: multix Gemini image OCR + sign/landmark/logo/face read, structured selector extraction, and A/V transcription (npx @mrgoonie/multix). Keyless collection still works; vision/transcription need this key"
     }
   ]
 }

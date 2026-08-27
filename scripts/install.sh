@@ -523,6 +523,45 @@ apt_install qpdf qpdf
 if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
 apt_install graphviz dot            # IntelGraph link graphs need the `dot` binary
+# ── Media / vision toolchain ──────────────────────────────────
+# ffmpeg + imagemagick preprocess A/V and image evidence; Node/npx runs the multix
+# vision CLI (npx @mrgoonie/multix) and agent-browser. See techniques/media-vision-analysis.md.
+apt_install ffmpeg ffmpeg
+apt_install imagemagick convert            # `convert` on IM6, `magick` on IM7; package is imagemagick
+if [[ "$OS" == "macos" ]]; then apt_install tesseract tesseract; else apt_install tesseract-ocr tesseract; fi   # keyless OCR fallback — brew formula is `tesseract`, apt pkg is `tesseract-ocr`
+# OCR language packs — cti-expert is VN-first + heavy CN recon; bare tesseract is eng-only.
+if [[ "$OS" == "linux" ]] && has apt-get; then
+  $SUDO apt-get install -y tesseract-ocr-vie tesseract-ocr-chi-sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract-ocr-vie/chi-sim"
+elif [[ "$OS" == "macos" ]] && has brew; then
+  brew install tesseract-lang &>/dev/null 2>&1 && log_ok "tesseract-lang (all languages)" || log_skip "tesseract-lang"
+fi
+if has npx; then
+  log_skip "node/npx (present)"
+elif [[ "$OS" == "linux" ]] && has apt-get; then
+  $SUDO apt-get install -y nodejs npm &>/dev/null 2>&1 && log_ok "nodejs + npm" || log_fail "nodejs" "install Node 20+ (NodeSource) — needed for npx multix + agent-browser"
+elif [[ "$OS" == "macos" ]] && has brew; then
+  brew install node &>/dev/null 2>&1 && log_ok "node (brew)" || log_fail "node" "brew install node"
+else
+  log_skip "node/npx (install Node 20+ manually for npx multix)"
+fi
+# rmbg-cli — optional AI background removal (needs npm)
+if has rmbg; then
+  log_skip "rmbg-cli (present)"
+elif has npm; then
+  npm install -g rmbg-cli &>/dev/null 2>&1 && log_ok "rmbg-cli (npm)" || log_skip "rmbg-cli (optional; npm install failed)"
+else
+  log_skip "rmbg-cli (needs npm; optional)"
+fi
+# Local Whisper — keyless offline A/V transcription fallback (no GEMINI_API_KEY). Optional: pulls CTranslate2 + a model on first run.
+if has whisper-ctranslate2; then
+  log_skip "whisper-ctranslate2 (present)"
+elif [[ -n "$UV_BIN" ]] && "$UV_BIN" tool install whisper-ctranslate2 &>/dev/null 2>&1; then
+  log_ok "whisper-ctranslate2 (local transcription fallback)"
+elif [[ -n "$PIPX_BIN" ]] && "$PIPX_BIN" install whisper-ctranslate2 &>/dev/null 2>&1; then
+  log_ok "whisper-ctranslate2 (local transcription fallback)"
+else
+  log_skip "whisper-ctranslate2 (optional local transcription fallback; install with: uv tool install whisper-ctranslate2)"
+fi
 # gh is NOT in Debian/Ubuntu default repos, so `apt install gh` fails there. Use the GitHub
 # release binary on Linux (cross-distro), brew on macOS. Powers /github-osint's `gh api` recon.
 if has gh; then

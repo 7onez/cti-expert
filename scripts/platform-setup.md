@@ -184,8 +184,20 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | mat2 | `mat2` | **not supported** → use `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
 | Go | `go` | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` (or go.dev/dl) |
 | agent-browser | `agent-browser` | `npm i -g agent-browser` / `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` / `cargo install` → `agent-browser install` |
+| ffmpeg | `ffmpeg` | `winget install Gyan.FFmpeg` | `brew install ffmpeg` | `sudo apt install -y ffmpeg` |
+| imagemagick | `convert` (`magick` on v7) | `winget install ImageMagick.ImageMagick` | `brew install imagemagick` | `sudo apt install -y imagemagick` |
+| Node.js 20+ (npx) | `npx` | `winget install OpenJS.NodeJS.LTS` | `brew install node` | `sudo apt install -y nodejs npm` |
+| rmbg-cli (optional) | `rmbg` | `npm i -g rmbg-cli` | `npm i -g rmbg-cli` | `npm i -g rmbg-cli` |
+| tesseract + OCR langs (fallback) | `tesseract` | `winget install UB-Mannheim.TesseractOCR` (bundles langs) | `brew install tesseract tesseract-lang` | `sudo apt install -y tesseract-ocr tesseract-ocr-vie tesseract-ocr-chi-sim` |
+| Whisper local ASR (optional) | `whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` |
 
 > **agent-browser** ([vercel-labs](https://github.com/vercel-labs/agent-browser)) is the skill's primary interactive browser collector (CDP, accessibility-tree snapshots, screenshots). No API key for core automation. `agent-browser install` downloads Chrome for Testing (first run). It is complementary to Scrapling — see `techniques/agent-browser.md`. The bundled installers add it under `--headless`/`-Headless`.
+
+> **Vision / A-V analysis** uses the standalone [`multix`](https://github.com/mrgoonie/multix-cli) CLI via `npx @mrgoonie/multix@latest` (no global install) plus `ffmpeg`/`imagemagick` for keyframe/audio/image preprocessing. Needs **Node.js 20+**; `GEMINI_API_KEY` (`/apikeys set gemini <KEY>`) is **optional** — see the keyless fallback below. See `techniques/media-vision-analysis.md`. The bundled installers provision ffmpeg, imagemagick, Node, and tesseract.
+
+> **ImageMagick version split:** Debian/Ubuntu `apt install imagemagick` yields **IM6** (`convert`/`mogrify`, no `magick` binary); brew/winget yield **IM7** (`magick`). Resolve at call time — `IM="$(command -v magick || command -v convert)"` — and invoke `"$IM"`.
+
+> **No Gemini key? Keyless fallback.** OCR + sign/landmark/logo/scene read fall back to the host agent's own vision (Claude Code / Codex read the image directly) plus `tesseract` for dense OCR; A/V transcription falls back to local **Whisper** (`whisper-ctranslate2`, offline) after `ffmpeg` audio extraction. A `GEMINI_API_KEY` only upgrades quality/scene-reading. See `techniques/media-vision-analysis.md`.
 
 ### Go tools (need Go installed first; then identical on all OSes)
 

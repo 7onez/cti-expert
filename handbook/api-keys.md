@@ -61,6 +61,8 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | **Search-engine dorking** ||||
 | SerpAPI | `SERPAPI_KEY` | freemium | `/dork-sweep`,`/query`: automated Google dork queries | serpapi.com |
 | Bright Data SERP | `BRIGHTDATA_SERP_KEY` | paid | `/dork-sweep`: SerpAPI alternative + residential SERP | brightdata.com |
+| **AI / vision** ||||
+| Google Gemini | `GEMINI_API_KEY` | freemium | `media-vision-analysis` (multix, `npx @mrgoonie/multix`): image OCR + sign/landmark/logo/face read, structured selector extraction, A/V transcription | aistudio.google.com/apikey |
 
 > **⭐ ChongLuaDao is the first-party key.** cti-expert is built by chongluadao.vn, so a CLD
 > premium key is the single highest-leverage upgrade: it adds first-party VN scam/phishing

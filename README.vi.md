@@ -310,6 +310,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **CTI** | Trình phân tích nhật ký infostealer (`/stealer-log`) | Định danh họ mã độc, phân tích nạn nhân vs. nhà vận hành, tương quan chéo nhiều nhật ký, trích xuất IOC + tang chứng thô |
 | **Trinh sát** | Phát hiện trang quản trị / điểm cuối nhạy cảm | Bộ phân loại tiền tố subdomain + đường dẫn + CJK (`admin`, `adm`, `kef`, `ador`, `panel`…) |
 | **Thu thập** | Tích hợp agent-browser | Trình duyệt tương tác chính ([vercel-labs](https://github.com/vercel-labs/agent-browser)): CDP, ảnh chụp cây accessibility, screenshot; bổ trợ cho Scrapling, không cần API key cho phần cốt lõi |
+| **Thu thập** | Phân tích media & thị giác | Bằng chứng ảnh/A-V được phân tích nội dung: OCR + đọc biển hiệu/địa danh/logo/khuôn mặt và bóc băng A/V, kèm tiền xử lý keyframe/âm thanh bằng FFmpeg; văn bản/GPS/thực thể trích được quay lại vòng lặp pivot. **Mặc định không cần key** — thị giác của chính tác nhân + OCR `tesseract` + Whisper cục bộ; `GEMINI_API_KEY` nâng chất lượng/đọc bối cảnh. Độc lập (`npx` multix + `ffmpeg`). Xem [`techniques/media-vision-analysis.md`](techniques/media-vision-analysis.md) |
 | **Độ tin cậy** | Gia cố cài đặt trên VPS sạch + CI | Bootstrap root/sudo + điều kiện tiên quyết; smoke test + GitHub Actions trên container Ubuntu root tối giản |
 
 <details>
@@ -593,6 +594,25 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
 ## Bắt đầu nhanh
 
+> [!TIP]
+> **Mới dùng, hay trên một VPS sạch?** Các bước dưới đây đưa bạn từ một máy trống tới một vụ việc hoàn chỉnh trong vài phút. Không cần API key cho phần cốt lõi.
+
+```bash
+# 1 — cài công cụ (Linux/macOS): Python + ffmpeg + Node + toàn bộ công cụ OSINT
+git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
+bash ~/.claude/skills/cti-expert/scripts/install.sh
+# 2 — đăng ký skill + 9 lệnh /cti* + MCP với Claude Code, rồi KHỞI ĐỘNG LẠI Claude Code
+bash ~/.claude/skills/cti-expert/scripts/register.sh
+#     (Windows: chạy register.sh trong Git Bash / WSL — nó dùng symlink. Khởi động lại Claude Code sau đó.)
+# 3 — điều tra bất cứ thứ gì (không key, chạy đến khi khép kín):
+/cti example.com
+# 4 — tùy chọn: mở khóa reverse pivot + thị giác ảnh (đã có fallback không key)
+/apikeys set shodan <KEY>     # reverse host / favicon
+/apikeys set gemini <KEY>     # OCR ảnh, đọc biển hiệu/địa danh, bóc băng A-V
+```
+
+Biến thể Windows, `--all` và Codex: xem [Cài đặt](#cài-đặt).
+
 ### Cách các lệnh hoạt động — đọc phần này trước
 
 Chỉ có **một lệnh cần nhớ: `/cti <mục-tiêu>`.** Nó nhìn vào thứ bạn đưa cho nó — một tên miền, IP, email, username, số điện thoại, ví, hash hay APK — và chạy đúng chuỗi kỹ thuật một cách tự động. Thường thì thế là đủ.
@@ -687,6 +707,31 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /brief                              # Plain-language summary
 /workspace save                     # Save case workspace state (resume later)
 ```
+
+### 7 &mdash; Full pipeline & full harness (chế độ sâu nhất)
+
+`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 52 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
+
+```bash
+/cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 52 MCP tool)
+
+# A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
+printf "example.com\nsibling.com\n" > seeds.txt
+/pipeline open CASE-0001 seeds.txt    # collect → ingest → recall → risk → cluster → đánh giá ICD-203
+/clusters CASE-0001                   # phán xét theo cụm cùng-nhà-vận-hành, kèm mức phổ biến toàn KB
+/frontier CASE-0001                   # khoảng trống chưa giải: seed miễn phí kế tiếp + lead tính phí bị hoãn
+
+# B — HARNESS do LLM dẫn dắt (điều phối toàn vụ việc đến hội tụ)
+/harness open CASE-0001 example.com sibling.com
+/harness continue CASE-0001 --depth 4 # Collect→Correlate→Assess, xuyên vụ việc, đến khi frontier cạn
+/harness status CASE-0001             # status không cần key
+/loop CASE-0001                       # hoặc: collect↔assess lặp lại đến khi hội tụ
+
+/cti-report CASE-0001 --pdf           # giao nộp: đồ thị quan hệ + PDF/DOCX chỉn chu
+```
+
+> **Pipeline vs harness:** `/pipeline` là chuỗi tất định (không cần LLM key, tái lập từng byte). `/harness` là điều phối do LLM dẫn dắt, suy luận xuyên các vụ việc đến hội tụ (chế độ sâu nhất); nó cần deps trong venv (`uv pip install -r requirements.txt`, trình cài đặt đã chạy sẵn) cộng một LLM key cho `continue`. Cả hai lưu dưới `cases/<ID>/`; alias đăng ký chạy nguội `/cti-case <ID> <seeds>` chạy pipeline tất định.
 
 <br>
 

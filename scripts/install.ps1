@@ -501,6 +501,22 @@ Install-WingetPackage "whois (Sysinternals)" "whois" "Microsoft.Sysinternals.Who
 Install-WingetPackage "dig (ISC BIND)" "dig" "ISC.Bind"
 Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # IntelGraph link graphs need the `dot` binary
 
+# Media / vision toolchain — ffmpeg + imagemagick preprocess A/V + image evidence;
+# Node/npx runs the multix vision CLI (npx @mrgoonie/multix). See techniques/media-vision-analysis.md.
+Install-WingetPackage "FFmpeg" "ffmpeg" "Gyan.FFmpeg"
+Install-WingetPackage "ImageMagick" "magick" "ImageMagick.ImageMagick"
+Install-WingetPackage "Tesseract OCR" "tesseract" "UB-Mannheim.TesseractOCR"   # keyless local OCR fallback (UB-Mannheim build bundles vie/chi_sim + many langs)
+Install-WingetPackage "Node.js LTS" "node" "OpenJS.NodeJS.LTS"   # Node 20+ for npx multix + agent-browser
+if (Test-Command "npm") {
+    if (Test-Command "rmbg") { Log-Skip "rmbg-cli (present)" }
+    else { npm install -g rmbg-cli 2>&1 | Out-Null; if (Test-Command "rmbg") { Log-Ok "rmbg-cli (npm)" } else { Log-Skip "rmbg-cli (optional; npm install failed)" } }
+}
+else { Log-Skip "rmbg-cli (needs npm; optional)" }
+# Local Whisper — keyless offline A/V transcription fallback (optional; pulls CTranslate2 + a model on first run)
+if (Test-Command "whisper-ctranslate2") { Log-Skip "whisper-ctranslate2 (present)" }
+elseif (Test-Command "uv") { uv tool install whisper-ctranslate2 2>&1 | Out-Null; if (Test-Command "whisper-ctranslate2") { Log-Ok "whisper-ctranslate2 (local transcription fallback)" } else { Log-Skip "whisper-ctranslate2 (optional; install failed)" } }
+else { Log-Skip "whisper-ctranslate2 (optional local transcription fallback; needs uv)" }
+
 Write-Section "Python: core skill requirements"
 $requirements = Join-Path $SkillDir "scripts\requirements.txt"
 if (Test-Path $requirements) {
