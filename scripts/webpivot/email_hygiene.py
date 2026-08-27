@@ -45,6 +45,26 @@ import urllib.request
 import urllib.error
 from urllib.parse import urlencode
 
+# --- egress proxy / rotation: route outbound HTTP through the /proxy pool ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 UA = "cti-expert/1.0"
 
 # ── optional burner/disposable API key: env first, then the unified skill-root

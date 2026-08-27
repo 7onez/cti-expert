@@ -42,6 +42,26 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# --- egress proxy / rotation: route outbound HTTP through the /proxy pool ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 DEFAULT_UA = "cti-expert/1.0"
 
 # API keys: environment first, then the unified skill-root .env managed by

@@ -99,7 +99,7 @@
         "metered": true,
         "impact": "medium",
         "power_without_key": 50,
-        "unlocks": "the ANY.RUN sandbox — your own task history and reports, and (behind an explicit per-submission confirmation gate) detonating a file or URL. Threat Intelligence Lookup over OTHER people's detonations is a separate, more limited licence that a plain sandbox key does NOT include; check with `bp_anyrun.py keycheck` rather than assuming",
+        "unlocks": "the ANY.RUN sandbox — your own task history and reports, and (behind an explicit per-submission confirmation gate) detonating a file or URL. Threat Intelligence Lookup over OTHER people's detonations is a separate, more limited licence that a plain sandbox key does NOT include; settle it with `bp_anyrun.py keycheck --probe` (the plain license check false-greens a sandbox key)",
         "without_it": "BinaryPivot stays limited to what is statically visible in the file. That is worst exactly where it hurts: a PACKED or protected sample's real backend only exists at runtime, so the endpoints are recoverable from a detonation record and from nowhere else. Roughly HALF the layer — the TI Lookup query is still composed for every artifact, it is just never run. NOTE the key does not lower the bar for SUBMITTING: that stays gated on the analyst's explicit yes, because it is outbound, attributable and irreversible",
         "free_fallback": "the composed TI Lookup query plus the intelligence.any.run UI address to paste it into, and the existing keyless VirusTotal / MalwareBazaar / Triage / Koodous query strings",
         "signup": "https://app.any.run/profile (API and Limits tab)"
@@ -156,6 +156,35 @@
         "without_it": "--solve-cf falls back to a Playwright render only; a hard managed challenge on a datacenter IP usually still wins",
         "free_fallback": "--render (Playwright), a residential --proxy / --proxy-range, and the urlscan/Wayback passive-recovery path",
         "signup": "docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr"
+      },
+      "HUNTERHOW_API_KEY": {
+        "service": "Hunter.how",
+        "aliases": [
+          "HUNTER_HOW_API_KEY",
+          "HUNTERHOW_KEY"
+        ],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "an INDEPENDENT cyberspace index (CN-dense) to reverse a favicon mmh3 hash, cert, web.body string, domain or IP to co-hosted hosts — a FOFA/Quake/ZoomEye peer that catches siblings the others' indexes miss",
+        "without_it": "one more reverse index is unqueried; FOFA/Quake/ZoomEye still cover this rung, so the loss is redundancy not a whole evidence class — but when FOFA quota is spent or the infra is CN-hosted, an empty sibling list may be a coverage gap, not a small operation",
+        "free_fallback": "the other reverse indexes if keyed (FOFA/Quake/ZoomEye/Shodan/Censys), and the emitted Hunter.how query string for the analyst to run in the web UI",
+        "signup": "https://hunter.how/search-api"
+      },
+      "GRAYHATWARFARE_API_KEY": {
+        "service": "GrayHatWarfare",
+        "aliases": [
+          "GRAYHAT_API_KEY",
+          "GHW_API_KEY"
+        ],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "power_without_key": 20,
+        "unlocks": "scriptable open-bucket (S3/Azure/GCS/DO Spaces) and exposed-file search by keyword/domain/extension, filterable and paginated — the exposure-discovery layer for /secrets and /docleak. Graded EXPOSURE, never a same-operator cluster edge",
+        "without_it": "public-bucket exposure is only reachable via the keyless site:buckets.grayhatwarfare.com dork — first page, no filetype/date/keyword filters and no pagination — so a domain's exposed buckets/files are undercounted, not proven absent",
+        "free_fallback": "the site:buckets.grayhatwarfare.com Google/Bing dork and the s3:GetObject / directory-listing probes in discovery-paths.md",
+        "signup": "https://grayhatwarfare.com/account"
       }
     }
   },

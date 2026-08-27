@@ -67,6 +67,11 @@ _RX = {
     "ipv6":      re.compile(r"^(?=.*:)[0-9A-Fa-f:]{3,}$"),
     "eth":       re.compile(r"^0x[a-fA-F0-9]{40}$"),
     "btc":       re.compile(r"^(bc1[a-z0-9]{20,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$"),
+    # altcoin wallets pivot_extract also scrapes (techniques/web-pivot.md); on-chain
+    # tracing for each already exists in scripts/webpivot/crypto_balance.py.
+    "tron":      re.compile(r"^T[1-9A-HJ-NP-Za-km-z]{33}$"),
+    "ltc":       re.compile(r"^(ltc1[a-z0-9]{20,}|[LM][a-km-zA-HJ-NP-Z1-9]{25,34})$"),
+    "xmr":       re.compile(r"^[48][0-9AB][1-9A-HJ-NP-Za-km-z]{93}$"),  # 4=standard, 8=subaddress (matches wp_extract.py)
     "asn":       re.compile(r"^AS\d{2,6}$", re.I),
     # 64 hex is ambiguous — a TLS cert fingerprint OR a file SHA-256. Both pivots are
     # queued for it and /hash-id disambiguates; see techniques/threat-intel.md.
@@ -82,6 +87,9 @@ _RX = {
     # pivot. Must be classified BEFORE `url` (see the order tuple in classify()).
     "document":  re.compile(r"^\S+\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf)(?:[?#]\S*)?$", re.I),
     "image":     re.compile(r"^\S+\.(?:jpe?g|png|gif|bmp|tiff?|webp|heic|svg)(?:[?#]\S*)?$", re.I),
+    # Google Docs/Sheets/Slides share link — no file extension, so type it before `url`
+    # to route it to /gdoc owner+revision metadata instead of the generic web-DOM pivot.
+    "gdoc_url":  re.compile(r"^https?://docs\.google\.com/\S+", re.I),
     "url":       re.compile(r"^https?://", re.I),
     "domain":    re.compile(r"^(?=.{4,253}$)([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"),
     "social_handle": re.compile(r"^@[A-Za-z0-9._]{2,}$"),
@@ -109,7 +117,8 @@ def classify(value):
     #                       is a company code, not a number worth reverse-lookup.
     #   vin/youtube_channel before username — both would otherwise fall through to username.
     #   document/image before url — a .pdf/.jpg link is a forensics pivot, not a web page.
-    for t in ("email", "document", "image", "url", "ipv4", "ipv6", "eth", "btc", "asn",
+    for t in ("email", "document", "image", "gdoc_url", "url", "ipv4", "ipv6", "eth", "btc",
+              "tron", "ltc", "xmr", "asn",
               "ga_id", "adsense_id", "cert_sha256", "sha1", "md5", "social_handle", "icp",
               "coordinates", "iban", "uscc", "youtube_channel", "vin"):
         if _RX[t].match(v):
@@ -169,13 +178,14 @@ def key_of(value, t):
 EDGE_MATRIX = {
     "email": [
         {"method": "reverse-whois", "tool": "whois_enrich.py <email> --reverse", "yields": ["domain"], "rel": "REGISTERED", "confidence": 88, "active": False},
-        {"method": "breach", "tool": "/breach-deep <email>", "yields": ["email", "username", "phone", "password"], "rel": "REACHES", "confidence": 90, "active": False},
+        {"method": "breach", "tool": "/breach-deep <email>", "yields": ["email", "username", "phone"], "rel": "REACHES", "confidence": 90, "active": False},
         {"method": "github-commit", "tool": "/github-osint <email>", "yields": ["username", "domain", "person"], "rel": "ALSO_KNOWN_AS", "confidence": 85, "active": False},
         {"method": "email-hygiene", "tool": "email_hygiene.py <email>", "yields": [], "rel": "OTHER", "confidence": 60, "active": False},
         {"method": "socials/gravatar+dork", "tool": "/dork-sweep <email>", "yields": ["username", "person", "social_handle"], "rel": "ALSO_KNOWN_AS", "confidence": 70, "active": False},
+        {"method": "account+infra", "tool": "/email-deep <email>", "yields": ["domain", "ipv4"], "rel": "LINKED_TO", "confidence": 75, "active": False},
     ],
     "domain": [
-        {"method": "webpivot-dom", "tool": "pivot_extract.py <domain> --leads", "yields": ["email", "phone", "btc", "eth", "ga_id", "adsense_id", "social_handle", "favicon_mmh3"], "rel": "CONTROLS", "confidence": 80, "active": True},
+        {"method": "webpivot-dom", "tool": "pivot_extract.py <domain> --leads", "yields": ["email", "phone", "btc", "eth", "tron", "ltc", "xmr", "ga_id", "adsense_id", "social_handle", "favicon_mmh3"], "rel": "CONTROLS", "confidence": 80, "active": True},
         {"method": "wayback-harvest", "tool": "wayback_harvest.py <domain> --indicators", "yields": ["email", "phone", "btc", "eth", "ga_id", "social_handle"], "rel": "CONTROLS", "confidence": 78, "active": False},
         {"method": "whois-current+history+reverse", "tool": "whois_enrich.py <domain>", "yields": ["email", "person", "phone", "domain"], "rel": "REGISTERED", "confidence": 85, "active": False},
         {"method": "subdomains", "tool": "/subdomain <domain>", "yields": ["domain"], "rel": "ENCOMPASSES", "confidence": 92, "active": False},
@@ -190,7 +200,7 @@ EDGE_MATRIX = {
         {"method": "payment-rail-extract", "tool": "/iban <accounts found on page>", "yields": ["iban", "org"], "rel": "REACHES", "confidence": 85, "active": False},
     ],
     "url": [
-        {"method": "webpivot-dom", "tool": "pivot_extract.py <url> --leads", "yields": ["domain", "email", "phone", "btc", "eth", "ga_id", "social_handle"], "rel": "CONTROLS", "confidence": 80, "active": True},
+        {"method": "webpivot-dom", "tool": "pivot_extract.py <url> --leads", "yields": ["domain", "email", "phone", "btc", "eth", "tron", "ltc", "xmr", "ga_id", "social_handle"], "rel": "CONTROLS", "confidence": 80, "active": True},
     ],
     "ipv4": [
         {"method": "reverse-dns", "tool": "/sweep <ip>", "yields": ["domain"], "rel": "HOSTS", "confidence": 85, "active": True},
@@ -230,6 +240,15 @@ EDGE_MATRIX = {
     ],
     "eth": [
         {"method": "onchain-flow", "tool": "crypto_balance.py <addr>", "yields": ["eth"], "rel": "COMMUNICATES", "confidence": 70, "active": False},
+    ],
+    "tron": [
+        {"method": "onchain-flow", "tool": "crypto_balance.py <addr>", "yields": ["tron"], "rel": "COMMUNICATES", "confidence": 70, "active": False},
+    ],
+    "ltc": [
+        {"method": "onchain-flow", "tool": "crypto_balance.py <addr>", "yields": ["ltc"], "rel": "COMMUNICATES", "confidence": 70, "active": False},
+    ],
+    "xmr": [
+        {"method": "onchain-flow", "tool": "crypto_balance.py <addr>", "yields": ["xmr"], "rel": "COMMUNICATES", "confidence": 70, "active": False},
     ],
     "phone": [
         {"method": "reverse-phone+carrier", "tool": "/phone <number>", "yields": ["person", "social_handle"], "rel": "REACHES", "confidence": 72, "active": False},
@@ -315,6 +334,10 @@ EDGE_MATRIX = {
     # own domain, socials and contact email.
     "youtube_channel": [
         {"method": "channel-about+links", "tool": "channel about/links panel <UC…> — techniques/social-media-platforms.md", "yields": ["domain", "social_handle", "email"], "rel": "ALSO_KNOWN_AS", "confidence": 72, "active": True},
+    ],
+    # A Google Docs/Sheets/Slides share link exposes owner + revision metadata (/gdoc).
+    "gdoc_url": [
+        {"method": "gdoc-metadata", "tool": "/gdoc <url>", "yields": ["person", "email", "org"], "rel": "REGISTERED", "confidence": 72, "active": False},
     ],
 }
 

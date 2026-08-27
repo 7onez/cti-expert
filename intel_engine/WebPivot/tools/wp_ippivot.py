@@ -33,6 +33,7 @@ from wp_recon import fofa_search, scan_misconfig
 from wp_analyze import classify_ip
 from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
+from wp_hunterhow import attach_hunterhow_queries  # Hunter.how query builder (keyless — no key needed)
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
@@ -552,7 +553,7 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
 
     from wp_pivots import sort_pivots
     return {"meta": result["meta"], "artifacts": artifacts,
-            "pivots": sort_pivots(attach_intelx_queries(attach_censys_queries(pivots)))}
+            "pivots": sort_pivots(attach_hunterhow_queries(attach_intelx_queries(attach_censys_queries(pivots))))}
 
 
 __all__ = ["ip_mode_target", "ipinfo_lookup", "dns_records", "reverse_dns", "mail_intel",

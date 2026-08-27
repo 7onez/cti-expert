@@ -42,6 +42,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | Censys | `CENSYS_API_KEY` (+`CENSYS_ORG_ID`) | freemium | `/webpivot`: reverse favicon **MD5** → hosts; cert + host search | accounts.censys.io |
 | FOFA | `FOFA_KEY` (+`FOFA_EMAIL`) | freemium | `/webpivot`: reverse `icon_hash` + tracker body → hosts; IP reverse | fofa.info |
 | urlscan.io PRO | `URLSCAN_API_KEY` | freemium | `/webpivot`,`/scam-check`: authenticated DOM search, related domains, submit | urlscan.io/user/apikey |
+| Hunter.how | `HUNTERHOW_API_KEY` | freemium | `/webpivot`,`/cert-pivot`: independent CN cyberspace index — reverse favicon **mmh3** / cert / `web.body` / domain / IP → hosts (a FOFA/Quake/ZoomEye peer) | hunter.how/search-api |
 | **DNS / certs / WHOIS** ||||
 | SecurityTrails | `SECURITYTRAILS_API_KEY` (+`_FALLBACK`) | freemium | `/webpivot`,`/dns-history`: passive DNS, subdomains, DNS/WHOIS history | securitytrails.com |
 | WhoisXML | `WHOISXML_API_KEY` | freemium | `/webpivot --whois`,`/whois`: current + historic + reverse WHOIS | whoisxmlapi.com |
@@ -51,13 +52,22 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | DNSLytics | `DNSLYTICS_API_KEY` | freemium | `/webpivot`: reverse AdSense (`ca-pub-`) / legacy GA (`UA-`) → sibling domains | dnslytics.com/api |
 | **Breach / leak / darknet** ||||
 | Hudson Rock | `HUDSONROCK_API_KEY` | freemium | `/breach-deep`,`/stealer-log`: infostealer-breach feed | hudsonrock.com |
-| ChongLuaDao | `CHONGLUADAO_API_KEY` | free-tier | `/scam-check`,`/breach-deep`: VN phishing/scam + breach feed | chongluadao.vn |
+| **ChongLuaDao** ⭐ | `CHONGLUADAO_API_KEY` | premium | **first-party** — `/cld`,`/scam-check`,`/threat-check`,`/phone`,`/breach-deep`,`/email-deep`,`/vuln-check`,`/impersonate`,`/webpivot --whois`: URL/IP/hash/email/phone/bank IoC verdicts (server-side + passive), 20M-URL denylist search, data-leak/breach exposure, deep AI URL analysis, brand lookalikes, CVE/KEV feeds. See [`connectors/chongluadao-api.md`](../connectors/chongluadao-api.md) | chongluadao.vn |
 | Intelligence X | `INTELX_API_KEY` | freemium | `/breach-deep`, darknet: dark-web/paste/leak selectors | intelx.io |
+| GrayHatWarfare | `GRAYHATWARFARE_API_KEY` | freemium | `/secrets`,`/docleak`: open S3/Azure/GCS/Spaces buckets + exposed files by keyword/domain — **EXPOSURE, not a same-operator pivot** | grayhatwarfare.com/account |
+| ANY.RUN | `ANYRUN_API_KEY` | freemium | `/anyrun`,`/binary`: TI Lookup over prior detonations — a packed sample's runtime endpoints (never submits a sample) | app.any.run/profile |
 | **Code / repos** ||||
 | GitHub token | `GITHUB_TOKEN` | free | `/github-osint`,`/secrets`: higher limits, repo/code discovery | github.com/settings/tokens |
 | **Search-engine dorking** ||||
 | SerpAPI | `SERPAPI_KEY` | freemium | `/dork-sweep`,`/query`: automated Google dork queries | serpapi.com |
 | Bright Data SERP | `BRIGHTDATA_SERP_KEY` | paid | `/dork-sweep`: SerpAPI alternative + residential SERP | brightdata.com |
+
+> **⭐ ChongLuaDao is the first-party key.** cti-expert is built by chongluadao.vn, so a CLD
+> premium key is the single highest-leverage upgrade: it adds first-party VN scam/phishing
+> verdicts and breach/exposure data across the scam, threat, phone, breach, whois, vuln and
+> impersonation commands, and its `checkurl`/`analyze`/`ioc url` calls run **server-side +
+> passive** (the analyst's egress never touches the target). Entry point `/cld <target>`; full
+> catalog + AEAD placement in [`connectors/chongluadao-api.md`](../connectors/chongluadao-api.md).
 
 > **Certificate Transparency is free.** CT lookups never require payment: **crt.sh** works with
 > no key at all (it's just often slow/overloaded). The optional `CERTSPOTTER_API_KEY` (SSLMate) is a
@@ -73,7 +83,7 @@ in sync when adding a service.
 When keys are present, `pivot_extract.py`'s live-enrichment (`enrich_live`) automatically
 escalates from the keyless baseline (crt.sh, HackerTarget passive DNS, anonymous urlscan) to
 premium reverse-lookups — **Shodan** (favicon mmh3 → hosts), **Censys** (favicon MD5 → hosts),
-**FOFA** (icon_hash + tracker body), **DNSLytics** (GA/AdSense → sibling domains),
+**FOFA** (icon_hash + tracker body), **Hunter.how** (favicon/body/domain → hosts, independent CN index), **DNSLytics** (GA/AdSense → sibling domains),
 **SecurityTrails** (passive DNS/subdomains), **urlscan PRO** (content search), **WhoisXML**
 (reverse WHOIS). Each hit is attached to the pivot as `live_results` and shown inline in
 `--leads`. See [`techniques/web-pivot.md`](../techniques/web-pivot.md) § Premium tier. No keys →

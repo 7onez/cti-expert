@@ -8,7 +8,8 @@ a file or a URL, it detonates it in an interactive VM and returns a task with th
 dropped files and a verdict. **Threat Intelligence Lookup — searching other people's detonations
 without running your own — is a separate and comparatively limited product**: its own licence, a
 small request allowance, and absent entirely from a plain sandbox subscription. So TI Lookup is
-treated here as a bonus for when the licence exists (`keycheck` says whether it does), and the
+treated here as a bonus for when the licence exists (`keycheck --probe` settles whether it does —
+the license endpoint alone false-greens a sandbox key), and the
 sandbox is the layer's real surface.
 
 SUBMISSION IS AN OPSEC DECISION, AND IT IS ALWAYS THE ANALYST'S
@@ -91,7 +92,7 @@ CLI:
   python3 bp_anyrun.py report <task-uuid> [--iocs]  # one task's report / IOC set
   python3 bp_anyrun.py submit ./sample.bin          # prints the RISK BRIEFING and refuses
   python3 bp_anyrun.py submit ./sample.bin --confirm-submission   # actually detonates
-  python3 bp_anyrun.py keycheck                     # is this key entitled to TI Lookup?
+  python3 bp_anyrun.py keycheck [--probe]           # TI-Lookup check (advisory; --probe settles it, free unless entitled)
   python3 bp_anyrun.py budget                       # OFFLINE — this month's request spend
 """
 import argparse
@@ -186,9 +187,51 @@ _MEMO_LOCK = threading.Lock()
 ENABLED = True
 
 
+def _load_env_files():
+    """Populate os.environ from the same .env candidates WebPivot reads, so a key stored via
+    /apikeys — which writes the skill-root .env — is visible to BinaryPivot too. Env always wins
+    (a set var is never overridden); an earlier file wins over a later one. BinaryPivot ships
+    standalone, so this mirrors wp_common._load_customization_env locally rather than importing it."""
+    sd = os.path.dirname(os.path.abspath(__file__))
+    intel_engine = os.path.dirname(os.path.dirname(sd))      # tools -> BinaryPivot -> intel_engine
+    skill_root = os.path.dirname(intel_engine)               # -> skill root (where /apikeys writes)
+    seen = set()
+    cands = [
+        os.environ.get("CTI_API_KEYS_ENV") or os.environ.get("CTI_WEBPIVOT_ENV"),
+        os.path.join(os.getcwd(), ".env"),
+        os.path.join(skill_root, ".env"),
+        os.path.join(intel_engine, ".env"),
+        os.path.expanduser("~/.config/cti-expert/WebPivot/.env"),
+    ]
+    for p in cands:
+        if not p or p in seen or not os.path.isfile(p):
+            continue
+        seen.add(p)
+        try:
+            with open(p, encoding="utf-8") as fh:
+                for ln in fh:
+                    ln = ln.strip()
+                    if not ln or ln.startswith("#") or "=" not in ln:
+                        continue
+                    k, v = ln.split("=", 1)
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    if k and v and k not in os.environ:
+                        os.environ[k] = v
+        except Exception:
+            pass
+
+
+_ENV_LOADED = False
+
+
 def _secret(*names):
     """First non-empty environment variable among `names`, else None (same contract as WebPivot's
-    `wp_common._secret`, re-implemented locally because BinaryPivot ships standalone)."""
+    `wp_common._secret`). Lazily loads the skill-root .env on first use so a key stored via
+    /apikeys is seen even though BinaryPivot ships standalone."""
+    global _ENV_LOADED
+    if not _ENV_LOADED:
+        _load_env_files()
+        _ENV_LOADED = True
     for n in names:
         v = os.environ.get(n)
         if v and v.strip():
@@ -585,21 +628,57 @@ def lookup_artifact(kind: str, value, days: int = None):
     return ti_lookup(q, days=days)
 
 
-def keycheck(timeout: int = 20):
-    """Is this key entitled to TI Lookup? Costs nothing, and answers the question that otherwise
-    surfaces as a confusing 403 halfway through a batch."""
+def keycheck(probe: bool = False, timeout: int = 20):
+    """Report TI-Lookup entitlement — TRUTHFULLY.
+
+    DEFAULT (free, no spend): queries /intelligence/keycheck, the LICENCE endpoint. That only
+    confirms the licence record answers; it does NOT prove /intelligence/api/search is authorised.
+    A sandbox-only key passes keycheck yet 403s on the real search, so the default result is
+    ADVISORY — `entitled` is None and the note says to run --probe to settle it. (The old behaviour
+    of returning entitled=True off this endpoint was a false green; see keycheck --probe.)
+
+    --probe (AUTHORITATIVE): issues the MINIMAL real TI search. A sandbox-only key 403s — which
+    costs nothing — so the probe is free in exactly the false-green case; it consumes 1 TI request
+    ONLY when the licence genuinely exists and the search returns 200, and that spend is recorded
+    on the shared ledger."""
     if not anyrun_configured():
         return None
 
     def run():
-        url = ENDPOINTS.get("api_base", "https://api.any.run/v1") + \
-            ENDPOINTS.get("ti_keycheck", "/intelligence/keycheck")
-        data, err = _call(url, timeout=timeout)
+        base = ENDPOINTS.get("api_base", "https://api.any.run/v1")
+        lic_url = base + ENDPOINTS.get("ti_keycheck", "/intelligence/keycheck")
+        lic_data, lic_err = _call(lic_url, timeout=timeout)
+        license_valid = lic_err is None
+        out = {"license_valid": license_valid,
+               "license_response": lic_data if license_valid else lic_err}
+        if not probe:
+            out["entitled"] = None
+            out["note"] = (
+                ("license endpoint says valid" if license_valid
+                 else "license endpoint did not validate")
+                + " — this does NOT confirm TI-Lookup access: a sandbox-only key can pass here yet "
+                "403 on the real search. Run `keycheck --probe` to settle it (free if not entitled; "
+                "costs 1 request only if it is).")
+            return out
+        # AUTHORITATIVE: hit the real search endpoint. 401/403 -> not entitled and FREE; a 200 ->
+        # entitled and 1 TI request spent, recorded on the ledger.
+        start, end = _window(1)
+        s_url = base + ENDPOINTS.get("ti_search", "/intelligence/api/search")
+        data, err = _call(s_url, method="POST",
+                          body={"query": 'domainName:"any.run"', "startDate": start, "endDate": end},
+                          timeout=timeout)
         if err:
-            return dict(err, entitled=False,
-                        note="TI Lookup is a separate licence from the sandbox")
-        return {"entitled": True, "response": data}
-    return _memoised("keycheck", "self", run)
+            reason = err.get("skipped") or err.get("error") or "unknown"
+            entitled = False if ("403" in reason or "401" in reason) else None
+            _record("keycheck_probe", 0, "keycheck", ok=False)
+            out.update({"entitled": entitled, "probe": reason})
+            return out
+        _record("keycheck_probe", int(REQUEST_BUDGET.get("lookup_costs", 1)), "keycheck",
+                results=0, ok=True)
+        out.update({"entitled": True,
+                    "probe": "HTTP 200 — /intelligence/api/search authorised (1 TI request spent)"})
+        return out
+    return _memoised("keycheck", "probe" if probe else "self", run)
 
 
 # --------------------------------------------------------------------------- sandbox READS
@@ -970,7 +1049,12 @@ def main():
     p.add_argument("--sandbox-timeout", type=int, default=None, metavar="SECONDS")
     p.add_argument("--tags", default=None,
                    help="ANY.RUN user tags — NEVER put a case ID or an analyst/client name here")
-    sub.add_parser("keycheck", help="is this key entitled to TI Lookup?")
+    kc = sub.add_parser("keycheck",
+                        help="TI-Lookup licence check (advisory; add --probe to settle it "
+                             "authoritatively — free unless entitled)")
+    kc.add_argument("--probe", action="store_true",
+                    help="issue the real /intelligence search: free if not entitled (403), "
+                         "costs 1 request only if it is")
     sub.add_parser("limits", help="the sandbox account's remaining plan limits")
     sub.add_parser("budget", help="OFFLINE: this month's ANY.RUN request spend (no key, no spend)")
     args = ap.parse_args()
@@ -1005,12 +1089,12 @@ def main():
             "  STILL AVAILABLE, keyless and free: " + "; ".join(cap["available"]) + ".\n"
             f"  Get a key: {UI_TEMPLATES.get('api_key_tab')}, then\n"
             "    `printf 'ANYRUN_API_KEY=…\\n' >> .env && chmod 600 .env`.\n"
-            "  NOTE: TI Lookup is a separate licence from the sandbox — check with `keycheck`.\n"
+            "  NOTE: TI Lookup is a separate licence from the sandbox — settle it with `keycheck --probe`.\n"
             "  Detail: BinaryPivot/SKILL.md § ANY.RUN",
             file=sys.stderr)
         return 2
     elif args.cmd == "keycheck":
-        out = keycheck()
+        out = keycheck(probe=getattr(args, "probe", False))
     elif args.cmd == "limits":
         out = user_limits()
     elif args.cmd == "history":

@@ -103,6 +103,7 @@ CLI-first cascade:
 2. `curl -s "https://crt.sh/?q=%25.example.com&output=json" | jq '.[].name_value' | sort -u` — CT log query
 3. `amass enum -passive -d example.com -json output.json` — 87 sources, slower but thorough
 4. WebSearch fallback: `site:securitytrails.com "example.com" subdomains`
+5. crt.name fallback — **only if crt.sh is unreachable**: `curl -s "https://crt.name/v1/search?apex=example.com&format=json"` (`apex` must be an eTLD+1; omit `&format=json` for text one-per-line) — aggregated index (CT **+** Common Crawl/CZDS/Chaos/HaGeZi), **not pure CT**; tag `source:crt.name(aggregated)`, verify hits before reporting, and note it leaks the target apex to a third-party operator
 
 **Content & Exposure:**
 - Search: `site:example.com filetype:pdf OR filetype:doc OR filetype:xls`
@@ -128,12 +129,14 @@ CLI-first cascade:
 
 **Cloud Storage Exposure:**
 - Search: `site:buckets.grayhatwarfare.com "example"` (indexed open buckets)
+- API (keyed): `uv run "$SKILL_DIR/intel_engine/WebPivot/tools/wp_buckets.py" buckets <name>` / `files <name>` — GrayHatWarfare open buckets + exposed files by keyword/domain, filterable and paginated (needs `GRAYHATWARFARE_API_KEY`; the dork above is the keyless fallback). Graded EXPOSURE, not a same-operator pivot
 - Run: `s3scanner scan --bucket example-name` or `cloud_enum -k example`
 - Search: `"example" site:s3.amazonaws.com OR site:blob.core.windows.net OR site:storage.googleapis.com`
 - Look for: Open S3 buckets, Azure blobs, GCS buckets with directory listing enabled
 
 **Breach & Leak Exposure — Domain (free APIs — no key required):**
-1. HudsonRock domain check: `curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/example.com"` — employee/client URLs in infostealer logs; `totalUrls > 0` = stolen credentials
+1. HudsonRock domain check (free, no key, 50 req/10s): `curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/urls-by-domain?domain=example.com"` (login URLs, top-20 capped) or `https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/example.com` (**uncapped** full list — prefer for attack-surface enum), plus `.../osint-tools/search-by-domain?domain=example.com` (impact stats + stealer families); `totalUrls > 0` = stolen credentials
+1b. Lunar domain exposure (free, no key, poll-aware): `uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" example.com` — org-level 12-mo infostealer + breach trend, malware-family & VPN/SSO service breakdown, top login URLs. EXPOSURE-graded (victims, not operator).
 2. LeakCheck domain check: `curl -s "https://leakcheck.io/api/public?check=example.com"` — breach entries mentioning the domain
 3. Search: `"@example.com" site:pastebin.com` — email dumps referencing the domain
 
@@ -233,7 +236,7 @@ CLI-first cascade:
 
 **Breach & Leak Exposure (free APIs — no key required):**
 1. LeakCheck public API: `curl -s "https://leakcheck.io/api/public?check=email@example.com"` — breach count, exposed fields (password, SSN, DOB, phone), source list
-2. HudsonRock Cavalier: `curl -s "https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email=email@example.com"` — infostealer log hit; returns machine name, date compromised, services count → CRITICAL if found
+2. HudsonRock Cavalier: `curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=email@example.com"` — infostealer log hit; returns machine name, date compromised, services count → CRITICAL if found
 3. Search: `"email@example.com" site:pastebin.com OR site:paste.org` — paste site exposure
 - If disposable: mark subject credibility LOW, flag account as likely throwaway
 - If LeakCheck `found > 0`: document each source name, date, and exposed fields

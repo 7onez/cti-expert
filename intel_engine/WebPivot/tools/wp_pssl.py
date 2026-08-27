@@ -259,7 +259,20 @@ def live_cert_sha1(host: str, port: int = 443, timeout: int = 10) -> str:
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock = None
+        _cp = None
+        try:
+            import cti_proxy as _cp
+        except Exception:
+            _cp = None              # proxy layer absent -> connect directly, as before
+        if _cp is not None:
+            try:
+                sock = _cp.proxied_connection(host, port, timeout)  # None => go direct
+            except Exception:
+                return ""           # proxy set but tunnel failed -> never dial direct
+        if sock is None:
+            sock = socket.create_connection((host, port), timeout=timeout)
+        with sock:
             with ctx.wrap_socket(sock, server_hostname=host) as tls:
                 der = tls.getpeercert(binary_form=True)
         return hashlib.sha1(der).hexdigest() if der else ""

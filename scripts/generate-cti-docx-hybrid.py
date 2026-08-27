@@ -144,14 +144,27 @@ def ensure_pandoc():
 
 
 def convert_md_to_docx(md_path: str) -> str:
-    """Run pandoc to convert Markdown to a temporary DOCX file."""
+    """Normalize prose dashes, then run pandoc to convert Markdown to a temporary DOCX."""
+    from cti_text_normalize import normalize_dashes
+    with open(md_path, "r", encoding="utf-8") as f:
+        md_text = normalize_dashes(f.read())
+    md_norm = tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w",
+                                          encoding="utf-8", newline="\n")
+    md_norm.write(md_text)
+    md_norm.close()
     tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
     tmp.close()
-    subprocess.run(
-        ["pandoc", md_path, "-o", tmp.name, "--from", "markdown", "--to", "docx", "--standalone"],
-        check=True,
-        capture_output=True,
-    )
+    try:
+        subprocess.run(
+            ["pandoc", md_norm.name, "-o", tmp.name, "--from", "markdown", "--to", "docx", "--standalone"],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        try:
+            os.unlink(md_norm.name)
+        except OSError:
+            pass
     return tmp.name
 
 
@@ -228,6 +241,8 @@ def main():
 
     json_data = load_json(json_path) if json_path and os.path.exists(json_path) else build_minimal_json_from_md(md_path)
     has_json = json_path is not None and os.path.exists(json_path)
+    from cti_text_normalize import normalize_obj
+    json_data = normalize_obj(json_data)
 
     if not output_path:
         output_path = resolve_output_path(md_path, json_data)

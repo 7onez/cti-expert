@@ -43,6 +43,26 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# --- egress proxy / rotation: route outbound HTTP through the /proxy pool ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pivot_extract import (extract_trackers, VERIFICATION_META, extract_meta,
                            DEFAULT_UA, shodan_favicon_hash)  # reuse the harness
@@ -61,7 +81,7 @@ def cdx_snapshots(domain, year_from=None, year_to=None, limit_scan=800):
         q += f"&to={year_to}"
     try:
         req = urllib.request.Request(q, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=40) as r:
+        with urllib.request.urlopen(req, timeout=1800) as r:
             rows = json.load(r)
     except Exception as e:
         print(f"  cdx error for {domain}: {e}", file=sys.stderr)
@@ -86,7 +106,7 @@ def fetch_raw(timestamp, original, ua=DEFAULT_UA):
     url = f"https://web.archive.org/web/{timestamp}id_/{original}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=1800) as r:
             return r.read().decode("utf-8", "ignore")
     except Exception:
         return ""

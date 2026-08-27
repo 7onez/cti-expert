@@ -79,6 +79,13 @@ but step 4 becomes an approval gate: present the summary and wait before calling
 right shape — e.g. `wayback_harvest.py --indicators` and `pivot_extract.py` JSON — map each
 artifact to `{from: "<parent node key>", value, type, method, confidence}`.
 
+> **Tag `type:"org"` explicitly for company names.** `classify()` cannot tell a company
+> name from a person's name (both are capitalised multi-word Latin strings), so a bare org
+> string auto-types as `person` and runs the PII/person playbook instead of the org one
+> (brand-domain sweep, personnel, tenant lookup, GitHub org). When a discovery is an
+> organisation, set its `type` field to `org` in `discoveries.json`; the same applies to
+> `uscc`/`cn_name` for PRC entities.
+
 ---
 
 ## Identifier-type → pivot-action matrix (the edges)
@@ -88,13 +95,13 @@ commands; **bold** yields feed back as the next hop's seeds:
 
 | Seed type | Pivots (tool) → **yields** |
 |-----------|----------------------------|
-| **email** | reverse-WHOIS (`whois_enrich --reverse`)→**domain**; `/breach-deep`→**email/username/phone**; `/github-osint`→**username/domain/person**; `/dork-sweep`→**username/person/social** |
+| **email** | reverse-WHOIS (`whois_enrich --reverse`)→**domain**; `/breach-deep`→**email/username/phone**; `/github-osint`→**username/domain/person**; `/dork-sweep`→**username/person/social**; `/email-deep`→**account infrastructure (domain/IP)** |
 | **domain/url** | `/webpivot` (`pivot_extract`)→**email/phone/wallet/GA/social/favicon**; `wayback_harvest`→**historical selectors**; `whois_enrich` (current+history+reverse)→**registrant email/name/other-domains**; `/subdomain`→**subdomains**; `cert_pivot`→**sibling hosts/IPs**; DNS→**IP/MX/TXT**; `wayback_ga`→**shared GA/AdSense**; `/msftrecon`/`/saas-map`→**tenant/org** |
 | **ipv4/ipv6** | reverse-DNS + passive-DNS (co-hosted)→**domains**; Shodan InternetDB / `/appliance-scan`→**services/hostnames**; ASN→**netblock/related IPs** |
 | **username/handle** | `/username` platform-enum→**profiles/other-platforms/email/person**; `pivot_suggest` variants (leet/sequential)→**username**; `/github-osint`→**email/domain** |
 | **person/name** | `/username` guess+enum→**handles**; people-search+`/dork-sweep`→**email/phone/org**; `/docleak` authorship→**email/org/domain** |
 | **company/org** | primary+brand domains→**domain**; personnel→**person/email**; `/msftrecon` tenant→**domain**; GitHub org→**username/domain** |
-| **wallet (btc/eth)** | `crypto_balance` on-chain flow→**counterparty wallets/exchanges** |
+| **wallet (btc/eth/tron/ltc/xmr)** | `crypto_balance` on-chain flow→**counterparty wallets/exchanges** (each chain re-enters the loop as its own node) |
 | **phone** | `/phone` reverse+carrier→**person/messaging handle** |
 | **GA / AdSense ID** | reverse-analytics (PublicWWW/DNSlytics/urlscan)→**sibling domains** (high-value same-operator link) |
 | **cert fingerprint** | `cert_pivot --hash`→**other hosts/domains** |

@@ -58,6 +58,26 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+# --- egress proxy / rotation: route outbound HTTP through the /proxy pool ----
+def _install_cti_proxy():
+    import os as _o, sys as _s
+    _b = _o.path.dirname(_o.path.abspath(__file__))
+    for _ in range(6):
+        _c = _o.path.join(_b, "proxy", "cti_proxy.py")
+        if _o.path.isfile(_c):
+            _s.path.insert(0, _o.path.dirname(_c))
+            try:
+                import cti_proxy
+                cti_proxy.install()
+            except Exception:
+                pass
+            return
+        _p = _o.path.dirname(_b)
+        if _p == _b:
+            return
+        _b = _p
+_install_cti_proxy()
+
 # Reuse the shared UA/extractors when available; stay standalone if not.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -69,13 +89,20 @@ except Exception:
 CDX = "http://web.archive.org/cdx/search/cdx"
 
 
-def _get(url, timeout=40, retries=3, backoff=3):
-    """GET with retry+backoff — web.archive.org CDX/fetch is notoriously flaky."""
+def _get(url, timeout=1800, retries=3, backoff=3):
+    """GET with retry+backoff — web.archive.org CDX/fetch is notoriously flaky.
+
+    `timeout` is a TOTAL wall-clock budget across ALL retries + backoff (not per
+    attempt), so the 30-min ceiling holds."""
     last = None
+    deadline = time.monotonic() + timeout
     for attempt in range(retries):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=remaining) as r:
                 return r.read(), r.geturl()
         except urllib.error.HTTPError as e:
             # 429/5xx are worth retrying; 4xx (except 429) usually aren't.
@@ -85,7 +112,10 @@ def _get(url, timeout=40, retries=3, backoff=3):
         except Exception as e:
             last = e
         if attempt < retries - 1:
-            time.sleep(backoff * (attempt + 1))
+            nap = min(backoff * (attempt + 1), max(0.0, deadline - time.monotonic()))
+            if nap <= 0:
+                break
+            time.sleep(nap)
     raise last if last else RuntimeError("request failed")
 
 
@@ -116,7 +146,7 @@ def cdx_snapshots(url, year_from=None, year_to=None, status="200",
     if year_to:
         q += f"&to={re.sub(r'[^0-9]', '', year_to)}"
     try:
-        body, _ = _get(q, timeout=40)
+        body, _ = _get(q, timeout=1800)
         rows = json.loads(body.decode("utf-8", "ignore"))
     except urllib.error.HTTPError as e:
         print(f"  cdx HTTP {e.code} for {url}", file=sys.stderr)
@@ -157,7 +187,7 @@ def fetch(timestamp, original, mode="id_"):
     """Fetch archived bytes. Returns (text, final_url) or ('', url) on failure."""
     url = raw_url(timestamp, original, mode)
     try:
-        body, final = _get(url, timeout=30)
+        body, final = _get(url, timeout=1800)
         return body.decode("utf-8", "ignore"), final
     except urllib.error.HTTPError as e:
         print(f"  fetch HTTP {e.code} for {url}", file=sys.stderr)

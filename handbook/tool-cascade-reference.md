@@ -84,8 +84,11 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 
 | Priority | Tool | Method | Notes |
 |----------|------|--------|-------|
-| 1 (Primary) | HudsonRock Cavalier | `curl "https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email=<EMAIL>"` | Free, no key, infostealer data |
-| 2 (Domain) | HudsonRock Cavalier | `curl "https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/<DOMAIN>"` | Compromised employee URLs |
+| 1 (Primary) | HudsonRock Cavalier | `curl "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=<EMAIL>"` | Free, no key (50 req/10s), infostealer data |
+| 2 (Domain) | HudsonRock Cavalier | `curl "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/urls-by-domain?domain=<DOMAIN>"` | Login URLs, **top-20 capped** (`type` lowercase) |
+| 2a (Domain, full) | HudsonRock stats | `curl "https://www.hudsonrock.com/api/json/v2/stats/website-results/urls/<DOMAIN>"` | **Uncapped** login-URL superset — full long-tail (`type` capitalized); prefer for attack-surface enum |
+| 2b (Domain) | HudsonRock Cavalier | `curl "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain?domain=<DOMAIN>"` | Domain infostealer impact stats + stealer families |
+| 2c (Domain) | Lunar Domain Exposure | `uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" <DOMAIN>` | Free, no key; org-level 12-mo exposure trend, malware-family & VPN/SSO breakdown (poll-aware; EXPOSURE-graded) |
 | 3 (Tertiary) | HaveIBeenPwned | haveibeenpwned.com | Traditional breach database |
 | 4 (Web fallback) | h8mail | `h8mail -t <email>` | Breach hunting CLI |
 
@@ -96,7 +99,7 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | 1 (Primary) | `holehe <email>` | CLI | 120+ sites, silent mode |
 | 2 (Secondary) | `h8mail -t <email>` | CLI | Breach hunting |
 | 3 (Tertiary) | emailrep.io | `curl emailrep.io/<email>` | Reputation scoring |
-| 4 (Quaternary) | HudsonRock | `curl "https://www.hudsonrock.com/api/json/v2/stats/website-results/email?email=<EMAIL>"` | Infostealer check |
+| 4 (Quaternary) | HudsonRock | `curl "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=<EMAIL>"` | Infostealer check |
 | 5 (Web fallback) | haveibeenpwned.com | Manual | Breach confirmation |
 
 ### Subdomain Enumeration
@@ -105,6 +108,7 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 |----------|------|--------|-------|
 | 1 (Primary) | `subfinder -d <domain> -oJ` | CLI | 45+ passive sources, fast |
 | 2 (Secondary) | `curl -s "https://crt.sh/?q=%25.<domain>&output=json"` | API | CT log query |
+| 2b (CT fallback — crt.sh down) | crt.name aggregated index | `curl -s "https://crt.name/v1/search?apex=<eTLD+1>&format=json"` | Keyless, 100/IP/day (`apex` must be an eTLD+1; default response is text one-per-line, `&format=json` for JSON). Use **only when crt.sh is unreachable**. ⚠️ Aggregates CT **plus** Common Crawl / CZDS / Chaos / HaGeZi — a hit is **not CT-log-attributable**; tag `source:crt.name(aggregated)` and verify before it enters a report. OPSEC: leaks the target apex to an unknown operator |
 | 3 (Tertiary) | `amass enum -passive -d <domain>` | CLI | 87 sources, thorough |
 | 4 (Web fallback) | `site:securitytrails.com "<domain>"` | WebSearch | No install needed |
 
@@ -177,7 +181,7 @@ different services entirely. See [`techniques/threat-intel.md`](../techniques/th
 |----------|------|--------|-------|
 | 1 (Primary) | HaveIBeenPwned | `haveibeenpwned.com` | Free tier; API key for bulk |
 | 2 (Secondary) | LeakCheck Public API | `curl "https://leakcheck.io/api/public?check=<email>"` | Free, rate-limited |
-| 3 (Tertiary) | HudsonRock Cavalier | `curl "https://www.hudsonrock.com/api/json/v2/..."` | Free, no key, infostealer data |
+| 3 (Tertiary) | HudsonRock Cavalier | `curl "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email=<email>"` | Free, no key, infostealer data |
 | 4 (CLI) | h8mail | `h8mail -t <email>` | CLI breach hunting |
 | 5 (Web fallback) | Pastebin dorks | `site:pastebin.com "<email>"` | Manual |
 

@@ -26,7 +26,8 @@ Aggregates threat reputation data for IPs, domains, URLs, and file hashes from f
 | Secondary | ThreatFox | Domain, IP, Hash | Unlimited | None required |
 | Secondary | **URLScan.io** | Domain, URL, IP | 100 scans/day free | https://urlscan.io/user/signup |
 | Tertiary | Pulsedive | IP, Domain | Limited | pulsedive.com |
-| Tertiary | HudsonRock Cavalier | Domain | Unlimited | None required |
+| Tertiary | HudsonRock Cavalier | Domain, Email, Username, IP | 50 req/10s | None required |
+| Tertiary | **Lunar Domain Exposure** | Domain | Not published; keyless (poll-aware, backs off) | None required |
 | Tertiary | **CIRCL CVE Search** | CVE, Vendor, Product | Unlimited | None required |
 | Tertiary | **NVD API v2** | CVE, Keyword, CPE | 5 req/30s (no key) | https://nvd.nist.gov/developers/request-an-api-key |
 | Tertiary | **Ransomware.live** | Org name, Domain | Unlimited | None required |
@@ -136,6 +137,14 @@ in itself).
 ```bash
 curl -s "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain?domain=<domain>"
 # Returns: employee/user credential exposures from infostealer logs
+```
+
+**Domain — Lunar Domain Exposure (org-level infostealer + breach, free, no key):**
+```bash
+uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" <domain>          # analyst summary
+uv run "$SKILL_DIR/scripts/lunar_domain_exposure.py" <domain> --json    # full report
+# Async API: script polls GENERATING_REPORT -> REPORT_READY (bounded). EXPOSURE-graded, not clusterable.
+# Returns: 12-mo trend, malware families, VPN/SSO service classification, top login URLs (attack-surface leads).
 ```
 
 **Domain/URL — URLScan.io (search existing scans):**
