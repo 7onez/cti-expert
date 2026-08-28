@@ -648,12 +648,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             jobs = {"dns": lambda: resolve_live_dns(val),
                     "crtsh": lambda: ct_search(val),   # crt.sh + Shodan CTL merged (resilient)
                     "passivedns": lambda: passivedns_search(val),
-                    "urlscan": lambda: urlscan_search(f"domain:{val}")}
+                    "urlscan": lambda: urlscan_search(f"domain:{val}", free_only=free_only)}
             if have_pdns:
                 jobs["pdns"] = lambda: pdns_search(val)   # CIRCL-COF passive DNS (historical IPs + co-hosted names)
             if have_urlscan:
-                # urlscan Pro structure-similarity: clusters re-skinned kits (no-op/skipped on free)
-                jobs["urlscan_similar"] = lambda: urlscan_similar(val)
+                # urlscan Pro structure-similarity: clusters re-skinned kits (skipped under free-only)
+                jobs["urlscan_similar"] = lambda: urlscan_similar(val, free_only=free_only)
             if have_censys:
                 # Censys web property (hostname:443): the cert, favicon hashes, body hash, software
                 # and threat labels Censys recorded for THIS hostname — the server's own view of

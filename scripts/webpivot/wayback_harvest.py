@@ -122,9 +122,20 @@ def harvest_html(html):
 
 # ----------------------------------------------------------------------------- merge
 
-def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urlscan=False):
-    snaps = cdx_snapshots(domain, year_from, year_to)
+def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urlscan=False,
+                   root_only=False, include_assets=True, limit_scan=2000, urlscan_pages=3,
+                   deadline=None, fetch_budget=None):
+    snaps = cdx_snapshots(domain, year_from, year_to, limit_scan=limit_scan,
+                          root_only=root_only, include_assets=include_assets)
     picked = sample_evenly(snaps, max_snaps)
+    # `fetch_budget` (seconds) bounds only the snapshot-FETCH loop, started AFTER the CDX
+    # enumeration above returns — so a slow enumeration on a heavily-archived domain cannot
+    # consume the whole slice and leave zero snapshots fetched. `deadline` (absolute) still
+    # applies if given; the earlier of the two wins.
+    import time as _t
+    if fetch_budget is not None:
+        fb = _t.monotonic() + max(5, fetch_budget)
+        deadline = fb if deadline is None else min(deadline, fb)
 
     # (kind, value) -> record
     ids = {}
@@ -145,6 +156,8 @@ def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urls
 
     scanned = 0
     for ts, original in picked:
+        if deadline is not None and _t.monotonic() > deadline:
+            break            # phase budget spent — leave time for the other corpora
         html = fetch_raw(ts, original)
         if not html or (len(html) < 400 and "<title" not in html.lower()):
             continue
@@ -167,7 +180,11 @@ def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urls
     if with_urlscan and urlscan_intel is not None:
         try:
             host = re.sub(r"^https?://", "", domain).split("/")[0]
-            us = urlscan_intel(host)
+            # paginate so a host with hundreds of scans is not truncated to one page
+            try:
+                us = urlscan_intel(host, max_pages=urlscan_pages)
+            except TypeError:
+                us = urlscan_intel(host)   # older signature without pagination
             result["urlscan"] = us
         except Exception as e:
             result["urlscan"] = {"error": str(e)}
@@ -286,6 +303,13 @@ def main():
     ap.add_argument("--timeline", action="store_true", help="markdown timeline instead of JSON")
     ap.add_argument("--indicators", action="store_true",
                     help="emit case-schema indicators[] JSON (for /case → IOC bundle)")
+    ap.add_argument("--root-only", action="store_true",
+                    help="legacy exact-apex scan (no subdomains/subpaths); faster, narrower")
+    ap.add_argument("--html-only", action="store_true",
+                    help="restrict to text/html captures (skip archived JS/JSON)")
+    ap.add_argument("--limit-scan", type=int, default=2000, help="max CDX rows to pull")
+    ap.add_argument("--urlscan-pages", type=int, default=3,
+                    help="max urlscan search pages to paginate (size 100 each)")
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("-o", "--out", help="write JSON output to file")
     args = ap.parse_args()
@@ -298,7 +322,10 @@ def main():
     else:
         ap.error("provide a domain or -f file")
 
-    results = [analyze_domain(d, args.max, args.yfrom, args.yto, args.urlscan) for d in domains]
+    results = [analyze_domain(d, args.max, args.yfrom, args.yto, args.urlscan,
+                              root_only=args.root_only, include_assets=not args.html_only,
+                              limit_scan=args.limit_scan, urlscan_pages=args.urlscan_pages)
+               for d in domains]
 
     if args.timeline:
         out_text = "\n\n".join(render_timeline(r) for r in results)

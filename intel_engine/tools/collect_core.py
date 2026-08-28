@@ -189,7 +189,12 @@ def collect_host(
         screenshot_py = render_py
     args, dropped = filter_args(py, collpath, root, args)
     base = [collpath, *args]
-    r = run([screenshot_py, *base], cwd=root, timeout=300 if want_shot else 240)
+    # A --deep-archive collection exhausts Wayback history + every urlscan DOM + CommonCrawl +
+    # archive.today on top of normal enrichment, so it needs far more than the 240s calibrated for
+    # a single-capture collection (deep_archive self-budgets at ~150s; give the whole run headroom).
+    _deep = "--deep-archive" in args
+    _sub_timeout = 600 if _deep else (300 if want_shot else 240)
+    r = run([screenshot_py, *base], cwd=root, timeout=_sub_timeout)
     data = load_json(out)
     if data is None:
         return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,

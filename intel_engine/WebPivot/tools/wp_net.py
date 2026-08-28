@@ -336,63 +336,87 @@ def wayback_closest(url: str, ua: str = DEFAULT_UA):
         pass
     return None, None
 
-def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20):
-    """urlscan.io search for prior scans of a host: related domains/IPs/ASNs.
+def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
+                  max_pages: int = 1, page_size: int = 100, free_only: bool = False):
+    """urlscan.io search for prior scans of a host: related domains/IPs/ASNs + every scan.
 
-    Sends the API-Key header when URLSCAN_API_KEY is set (higher rate limits and
-    access to results anonymous search omits); otherwise runs keyless as before.
-    """
+    Paginates with `search_after` (up to `max_pages` pages of `page_size`) so a host with
+    hundreds of scans is not silently truncated to one page. `recent_scans` stays capped at
+    `limit` for compact display; `all_scans` holds every scan found (used to fetch every
+    cached DOM). Sends the API-Key header when URLSCAN_API_KEY is set (higher rate limits and
+    access to results anonymous search omits); otherwise runs keyless.
+
+    `free_only=True` FORBIDS spending the credential: urlscan is a metered index, so a
+    free-only run stays analytically keyless — no API-Key, single anonymous page."""
     out = {"query": host, "total": 0, "related_domains": [], "ips": [], "asns": [],
-           "servers": [], "recent_scans": []}
-    try:
-        api = f"https://urlscan.io/api/v1/search/?q=domain:{host}&size={limit}"
+           "servers": [], "recent_scans": [], "all_scans": [], "pages": 0}
+    _uk = None if free_only else _secret("URLSCAN_API_KEY")
+    if free_only:
+        max_pages = 1            # keyless anonymous search returns a single page anyway
+    doms, ips, asns, servers = set(), set(), set(), set()
+    search_after = None
+    size = max(1, min(int(page_size), 100))
+    latest_uid = None
+    for _page in range(max(1, int(max_pages))):
+        api = f"https://urlscan.io/api/v1/search/?q=domain:{host}&size={size}"
+        if search_after:
+            api += f"&search_after={search_after}"
         req_headers = {"User-Agent": ua}
-        _uk = _secret("URLSCAN_API_KEY")
         if _uk:
             req_headers["API-Key"] = _uk
-        req = urllib.request.Request(api, headers=req_headers)
         _rem = _lim = None
-        with urllib.request.urlopen(req, timeout=30) as r:
+        try:
+            req = urllib.request.Request(api, headers=req_headers)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                if api_usage:
+                    _rem, _lim = api_usage.rl_headers(r)
+                data = json.load(r)
+        except Exception as e:
+            if not out["all_scans"]:      # only the first page failing is an error
+                out["error"] = str(e)
             if api_usage:
-                _rem, _lim = api_usage.rl_headers(r)
-            data = json.load(r)
-    except Exception as e:
-        out["error"] = str(e)
+                api_usage.record("urlscan", "search", credits=0, query=f"domain:{host}", ok=False)
+            break
         if api_usage:
-            api_usage.record("urlscan", "search", credits=0, query=f"domain:{host}", ok=False)
-        return out
-    if api_usage:
-        api_usage.record("urlscan", "search", credits=1, query=f"domain:{host}",
-                         results=data.get("total"), remaining=_rem, limit=_lim)
-    out["total"] = data.get("total", 0)
-    doms, ips, asns, servers = set(), set(), set(), set()
-    for res in data.get("results", []):
-        p = res.get("page", {})
-        if p.get("domain"):
-            doms.add(p["domain"])
-        if p.get("ip"):
-            ips.add(p["ip"])
-        if p.get("asn"):
-            asns.add(f"{p.get('asn')} {p.get('asnname', '')}".strip())
-        if p.get("server"):
-            servers.add(p["server"])
-        out["recent_scans"].append({
-            "url": p.get("url"), "time": res.get("task", {}).get("time"),
-            "result": f"https://urlscan.io/result/{res.get('_id')}/",
-        })
+            api_usage.record("urlscan", "search", credits=1, query=f"domain:{host}",
+                             results=data.get("total"), remaining=_rem, limit=_lim)
+        out["pages"] += 1
+        out["total"] = data.get("total", out["total"])
+        results = data.get("results", []) or []
+        for res in results:
+            p = res.get("page", {})
+            if p.get("domain"):
+                doms.add(p["domain"])
+            if p.get("ip"):
+                ips.add(p["ip"])
+            if p.get("asn"):
+                asns.add(f"{p.get('asn')} {p.get('asnname', '')}".strip())
+            if p.get("server"):
+                servers.add(p["server"])
+            uid = res.get("_id")
+            latest_uid = latest_uid or uid
+            out["all_scans"].append({
+                "uuid": uid, "url": p.get("url"), "time": res.get("task", {}).get("time"),
+                "result": f"https://urlscan.io/result/{uid}/",
+            })
+        # advance the cursor; stop when the API says there is no more or a page came back empty
+        if not results or not data.get("has_more"):
+            break
+        sortv = results[-1].get("sort")
+        if not sortv:
+            break
+        search_after = ",".join(str(x) for x in sortv) if isinstance(sortv, list) else str(sortv)
     out["related_domains"] = sorted(doms)[:40]
     out["ips"] = sorted(ips)[:40]
     out["asns"] = sorted(asns)[:20]
     out["servers"] = sorted(servers)[:20]
-    out["recent_scans"] = out["recent_scans"][:limit]
+    out["recent_scans"] = out["all_scans"][:limit]
     # urlscan verdict/brand → feeds risk_signals triage. The compact SEARCH hit omits verdicts;
     # they live in the full RESULT endpoint (works on a normal key). Fetch it for the latest scan.
-    if _uk:
-        uid = next((res.get("_id") for res in data.get("results", []) if res.get("_id")), None)
-        if uid:
-            v = urlscan_verdict(uid, ua=ua)
-            if v:
-                out["verdict"] = v
+    if _uk and latest_uid:
+        v = urlscan_verdict(latest_uid, ua=ua)
+        if v:
+            out["verdict"] = v
     return out
 
 
@@ -429,10 +453,15 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
             "categories": ov.get("categories") or [], "tags": ov.get("tags") or [],
             "result": f"https://urlscan.io/result/{uuid}/"}
 
-def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30):
+def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only: bool = False):
     """Fetch the rendered DOM of the most recent urlscan scan for a host, so a dead /
     blocked target is still analyzable from a third-party capture. Returns (html, id)
-    or ('', None). urlscan stores the DOM at /dom/<uuid>/."""
+    or ('', None). urlscan stores the DOM at /dom/<uuid>/ — which returns 403 without an
+    API-Key, so the key (when set) is sent; keyless (or free_only) degrades to ('', None)."""
+    _uk = None if free_only else _secret("URLSCAN_API_KEY")
+    hdr = {"User-Agent": ua}
+    if _uk:
+        hdr["API-Key"] = _uk
     for scan in (intel or {}).get("recent_scans", []):
         res = scan.get("result") or ""
         m = re.search(r"/result/([0-9a-f\-]{16,})", res)
@@ -440,8 +469,7 @@ def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30):
             continue
         uid = m.group(1)
         try:
-            req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/",
-                                         headers={"User-Agent": ua})
+            req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 html = r.read().decode("utf-8", "ignore")
             if html and len(html) > 200:
@@ -449,6 +477,67 @@ def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30):
         except Exception:
             continue
     return "", None
+
+def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
+                    max_doms: int = 25, min_len: int = 200,
+                    max_attempts: int = None, deadline: float = None, free_only: bool = False):
+    """Fetch EVERY distinct cached DOM urlscan holds for a host (not just the newest, which
+    urlscan_dom returns). Iterates `all_scans` (falls back to recent_scans), pulls
+    /dom/<uuid>/ (sending the API-Key when set — the endpoint is 403 keyless), and dedupes
+    count once. Returns [{'uuid','url','time','sha256','html'}], newest first, capped at
+    max_doms distinct DOMs.
+
+    BOUNDED so a host with hundreds of scans whose DOMs 404/time out cannot stall the caller:
+    stops after `max_attempts` fetches (default max_doms*3+10) or when `deadline`
+    (time.monotonic()) passes — whichever comes first."""
+    import hashlib
+    import time as _t
+    scans = (intel or {}).get("all_scans") or (intel or {}).get("recent_scans") or []
+    if max_attempts is None:
+        max_attempts = max_doms * 3 + 10
+    _uk = None if free_only else _secret("URLSCAN_API_KEY")   # /dom/ is 403 without a key
+    hdr = {"User-Agent": ua}
+    if _uk:
+        hdr["API-Key"] = _uk
+    seen_hashes: set[str] = set()
+    out = []
+    attempts = 0
+    _rem = _lim = None
+    for scan in scans:
+        if len(out) >= max_doms or attempts >= max_attempts:
+            break
+        if deadline is not None and _t.monotonic() > deadline:
+            break
+        uid = scan.get("uuid")
+        if not uid:
+            m = re.search(r"/result/([0-9a-f\-]{16,})", scan.get("result") or "")
+            uid = m.group(1) if m else None
+        if not uid:
+            continue
+        attempts += 1
+        try:
+            req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                if api_usage:
+                    _rem, _lim = api_usage.rl_headers(r)
+                html = r.read().decode("utf-8", "ignore")
+        except Exception:
+            continue
+        if not html or len(html) < min_len:
+            continue
+        h = hashlib.sha256(html.encode("utf-8", "ignore")).hexdigest()
+        if h in seen_hashes:
+            continue
+        seen_hashes.add(h)
+        out.append({"uuid": uid, "url": scan.get("url"), "time": scan.get("time"),
+                    "sha256": h, "html": html})
+    # metered: with the API-Key each /dom/ fetch is a licensed call — log the batch (RULE:
+    # every metered third-party call lands in MEMORY/api_usage.jsonl). Keyless = 403, not billed.
+    if api_usage and _uk and attempts:
+        api_usage.record("urlscan", "dom", credits=attempts,
+                         query=(intel or {}).get("query"), results=len(out),
+                         remaining=_rem, limit=_lim)
+    return out
 
 def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
     """Submit a URL to the Wayback Machine's Save Page Now. Returns a dict with the

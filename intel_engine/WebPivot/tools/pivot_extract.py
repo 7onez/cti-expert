@@ -375,6 +375,18 @@ def main():
     ap.add_argument("--submit", action="store_true",
                     help="actively archive the URL: submit to Wayback Save-Page-Now AND urlscan.io "
                          "(needs URLSCAN_API_KEY for the scan). Archives attached to result.archives.")
+    ap.add_argument("--deep-archive", action="store_true",
+                    help="EXHAUSTIVE archival pass (domain targets): full Wayback history across the "
+                         "whole domain (subdomains+subpaths, HTML+JS/JSON), EVERY distinct urlscan "
+                         "cached DOM (paginated, de-duped), CommonCrawl stored bodies, and "
+                         "archive.today mementos — merged with first/last-seen. Passive & keyless; "
+                         "recovers historical/scrubbed/taken-down selectors a single capture misses.")
+    ap.add_argument("--deep-root-only", action="store_true",
+                    help="with --deep-archive: legacy exact-apex Wayback scan (no subdomains/subpaths)")
+    ap.add_argument("--deep-no-commoncrawl", action="store_true",
+                    help="with --deep-archive: skip the CommonCrawl corpus")
+    ap.add_argument("--deep-no-archive-today", action="store_true",
+                    help="with --deep-archive: skip the archive.today corpus")
     ap.add_argument("--report", nargs="?", const=True, default=None, metavar="PATH",
                     help="render a finished-intelligence assessment in CIA analytic-tradecraft "
                          "style (ICD 203: BLUF, Key Judgments, estimative language, confidence). "
@@ -709,12 +721,12 @@ def main():
                     print(f"[+] recovered archived copy: {snap_url}", file=sys.stderr)
                 except Exception:
                     pass
-            intel = urlscan_intel(host_for_intel, ua=seed_ua)
+            intel = urlscan_intel(host_for_intel, ua=seed_ua, free_only=args.free_only)
             print(f"[+] urlscan: {intel.get('total', 0)} prior scans, "
                   f"{len(intel.get('related_domains', []))} related domains", file=sys.stderr)
             # No Wayback copy but urlscan has a prior scan → analyze its stored DOM.
             if not html:
-                dom_html, dom_id = urlscan_dom(intel, ua=seed_ua)
+                dom_html, dom_id = urlscan_dom(intel, ua=seed_ua, free_only=args.free_only)
                 if dom_html:
                     html = dom_html
                     base_url = base_url or f"https://{host_for_intel}/"
@@ -1028,6 +1040,69 @@ def main():
         u = archives["urlscan"]
         print(f"    urlscan: {u.get('result') or u.get('error') or u.get('skipped')}", file=sys.stderr)
         result.setdefault("archives", {}).update(archives)   # keep any screenshot key
+
+    # --- DEEP ARCHIVE: exhaust Wayback history + every urlscan cached DOM + CommonCrawl +
+    # archive.today, merging historical / scrubbed / taken-down selectors a single live capture
+    # misses. Opt-in (--deep-archive); passive & keyless; domain targets only (never an IP or an
+    # offline file). Never fatal — a failed corpus leaves the live analysis untouched.
+    _host_deep = result["meta"].get("host")
+
+    def _is_ipaddr(h):
+        try:
+            import ipaddress
+            ipaddress.ip_address((h or "").strip("[]"))
+            return True
+        except Exception:
+            return False
+
+    if getattr(args, "deep_archive", False) and _host_deep and not _is_ipaddr(_host_deep):
+        try:
+            import wp_deep_archive
+            print(f"[+] deep-archive: exhausting Wayback + urlscan + CommonCrawl + archive.today "
+                  f"for {_host_deep} …", file=sys.stderr)
+            da = wp_deep_archive.deep_archive(
+                _host_deep, ua=seed_ua, free_only=args.free_only,
+                root_only=getattr(args, "deep_root_only", False),
+                commoncrawl=not getattr(args, "deep_no_commoncrawl", False),
+                archive_today=not getattr(args, "deep_no_archive_today", False))
+            seen = {(p.get("kind"), str(p.get("value"))) for p in result["pivots"]}
+            added = 0
+            for p in da.get("pivots", []):
+                k = (p.get("kind"), str(p.get("value")))
+                if k not in seen:
+                    seen.add(k)
+                    result["pivots"].append(p)
+                    added += 1
+            sort_pivots(result["pivots"])
+            result["meta"]["deep_archive"] = da.get("meta", {})
+            inds = da.get("indicators") or []
+            if inds and (args.case or args.out):
+                # NEVER write this bare-list file into a case raw/ dir: the loop globs raw/*.json
+                # for collected hosts AND the frontier miner (case_state) does obj.get("meta") on
+                # each — a list there becomes a phantom host and crashes the next round. Keep it in
+                # a sibling deep-archive/ dir; the selectors also live as pivots in raw/<host>.json.
+                if args.case:
+                    ind_dir = os.path.join("cases", args.case, "deep-archive")
+                    os.makedirs(ind_dir, exist_ok=True)
+                    ind_path = os.path.join(ind_dir, _host_deep + ".indicators.json")
+                else:
+                    base = re.sub(r"\.json$", "", args.out)
+                    outdir = os.path.dirname(base) or "."
+                    if os.path.basename(outdir) == "raw":     # redirect out of raw/
+                        outdir = os.path.join(os.path.dirname(outdir), "deep-archive")
+                        os.makedirs(outdir, exist_ok=True)
+                        base = os.path.join(outdir, os.path.basename(base))
+                    ind_path = base + ".deep-archive.indicators.json"
+                with open(ind_path, "w", encoding="utf-8") as f:
+                    json.dump(inds, f, ensure_ascii=False, indent=2)
+                result["meta"]["deep_archive_indicators_file"] = ind_path
+            m = da.get("meta", {})
+            print(f"[+] deep-archive: +{added} pivot(s), {len(inds)} indicator(s) "
+                  f"(wayback {m.get('wayback_snapshots', 0)} snap, "
+                  f"urlscan {m.get('urlscan_doms', 0)} dom, CC {m.get('cc_fetched', 0)} body, "
+                  f"archive.today {m.get('at_mementos', 0)} memento)", file=sys.stderr)
+        except Exception as e:
+            print(f"[!] deep-archive failed ({e}) — the analysis above stands.", file=sys.stderr)
 
     _emit_result(result, args, src)
 

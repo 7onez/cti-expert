@@ -186,7 +186,8 @@ def scan_misconfig(rows, self_ip: str = None) -> list:
     return findings
 
 
-def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results: int = None):
+def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results: int = None,
+                   free_only: bool = False):
     """Authenticated urlscan.io search for an arbitrary query (content/tracker/token).
 
     Sends the API-Key header when URLSCAN_API_KEY is set — that unlocks the content-index searches
@@ -194,9 +195,11 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
     key this **paginates via `search_after`** to pull far more than one page — free/keyless returns
     a single page. Returns {'query','total','domains':[...],'pages'} or {'error':...}.
 
-    max_results caps how many domains to accumulate (default 1000 with a key, 100 keyless)."""
+    max_results caps how many domains to accumulate (default 1000 with a key, 100 keyless).
+    `free_only=True` FORBIDS spending the credential (urlscan is a metered index): no API-Key,
+    single anonymous page — analytically keyless."""
     headers = {"User-Agent": DEFAULT_UA}
-    key = _secret("URLSCAN_API_KEY")
+    key = None if free_only else _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
     if max_results is None:
@@ -243,7 +246,7 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
             "domains": doms[:max_results], "pages": pages}
 
 
-def urlscan_similar(host: str, timeout: int = 30, limit: int = 60):
+def urlscan_similar(host: str, timeout: int = 30, limit: int = 60, free_only: bool = False):
     """urlscan **Pro** 'Similar' — pages structurally like the host's latest scan (DOM structure),
     clustering re-skinned kits even when favicon/analytics/wallet all differ.
 
@@ -251,6 +254,8 @@ def urlscan_similar(host: str, timeout: int = 30, limit: int = 60):
     {'uuid','similar_domains':[...]} or {'skipped':...}/{'error':...} — always safe to call; a
     non-Pro key just degrades to skipped. Two steps: find the host's most recent scan UUID, then
     ask urlscan for structurally-similar results."""
+    if free_only:
+        return {"skipped": "--free-only (urlscan Pro not spent)"}
     key = _secret("URLSCAN_API_KEY")
     if not key:
         return {"skipped": "no URLSCAN_API_KEY"}
