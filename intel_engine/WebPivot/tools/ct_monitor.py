@@ -22,13 +22,25 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from wp_common import _secret   # shared skill-root .env loader (+ installs cti-proxy)
+except Exception:                   # noqa: BLE001 — degrade to env-only
+    def _secret(*names):
+        for _n in names:
+            _v = os.environ.get(_n)
+            if _v:
+                return _v
+        return None
 
 DEFAULT_UA = "Mozilla/5.0 (WebPivot ct_monitor)"
 
 
-def _get_json(url: str, timeout: int = 45):
-    req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA,
-                                               "Accept": "application/json"})
+def _get_json(url: str, timeout: int = 45, headers: dict = None):
+    h = {"User-Agent": DEFAULT_UA, "Accept": "application/json"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, headers=h)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
@@ -60,8 +72,10 @@ def certspotter(pattern: str, timeout: int = 45):
     dom = pattern.strip(".%")
     url = ("https://api.certspotter.com/v1/issuances?domain=" + urllib.parse.quote(dom)
            + "&include_subdomains=true&expand=dns_names&expand=not_before&expand=issuer")
+    key = _secret("CERTSPOTTER_API_KEY")   # authenticated = higher rate limit; keyless still works
+    hdrs = {"Authorization": "Bearer %s" % key} if key else None
     try:
-        data = _get_json(url, timeout)
+        data = _get_json(url, timeout, headers=hdrs)
     except Exception as e:
         return None, str(e)
     certs = []
