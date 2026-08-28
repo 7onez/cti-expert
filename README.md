@@ -80,6 +80,9 @@
   <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Open_Bucket_Search-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_Investigation_Platform-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
+<p>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS_Certs_%26_Favicon_Graph-1F7A5A?style=for-the-badge" alt="Validin"></a>
+</p>
 
 </div>
 
@@ -98,6 +101,7 @@
 | [**SerpApi**](https://serpapi.com) | Search-engine + Google Ads Transparency results API — who *paid* to send traffic, plus multi-engine dork results | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Open cloud-bucket &amp; exposed-file search (S3/Azure/GCS/Spaces) — graded **exposure**, not a same-operator pivot | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | OSINT investigation platform — 1000+ methods across social media, blockchain and the dark web (SL Professional / Crimewall, Maltego transforms) | OSINT methodology &amp; data |
+| [**Validin**](https://validin.com) | DNS + certificates + favicon + response-body hashes in one graph — passive DNS, subdomain enumeration, reverse-IP and host-response hash pivots on a free community key | Ready-to-run query strings across `/webpivot` pivots today; native API wiring in progress |
 
 > [!IMPORTANT]
 > **ANY.RUN is used read-only.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. This skill **never submits a sample** — a public sandbox task is world-readable and irreversible. That boundary is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.

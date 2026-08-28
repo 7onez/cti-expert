@@ -80,6 +80,9 @@
   <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-Tìm_kiếm_bucket_mở-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-Nền_tảng_điều_tra_OSINT-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
+<p>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-Đồ_thị_DNS_Chứng_chỉ_%26_Favicon-1F7A5A?style=for-the-badge" alt="Validin"></a>
+</p>
 
 </div>
 
@@ -98,6 +101,7 @@
 | [**SerpApi**](https://serpapi.com) | API kết quả công cụ tìm kiếm + Google Ads Transparency — ai **trả tiền** để kéo traffic, cùng kết quả dork đa công cụ | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Tìm kiếm bucket lưu trữ mở &amp; tệp bị phơi nhiễm (S3/Azure/GCS/Spaces) — xếp loại **phơi nhiễm**, không phải pivot cùng-người-vận-hành | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | Nền tảng điều tra OSINT — hơn 1000 phương pháp trên mạng xã hội, blockchain và dark web (SL Professional / Crimewall, Maltego transforms) | Phương pháp luận &amp; dữ liệu OSINT |
+| [**Validin**](https://validin.com) | DNS + chứng chỉ + favicon + hash nội dung phản hồi gộp trong một đồ thị — passive DNS, liệt kê subdomain, reverse-IP và pivot hash host-response trên key Community miễn phí | Hiện cung cấp chuỗi truy vấn dựng sẵn cho các pivot `/webpivot`; đang tích hợp API gốc |
 
 > [!IMPORTANT]
 > **ANY.RUN chỉ được dùng ở chế độ chỉ-đọc.** `anyrun_lookup` tra cứu TI Lookup cho các hash **đã** được kích nổ từ trước. Skill này **không bao giờ nộp mẫu lên sandbox** — một task công khai là ai cũng đọc được và không thể thu hồi. Ranh giới đó được bảo vệ bằng một bài kiểm thử hồi quy ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), chứ không chỉ bằng quy ước.

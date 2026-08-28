@@ -80,6 +80,9 @@
   <a href="https://grayhatwarfare.com"><img src="https://img.shields.io/badge/GrayHatWarfare-开放存储桶检索-374151?style=for-the-badge" alt="GrayHatWarfare"></a>&nbsp;
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_调查平台-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
+<p>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS证书与Favicon图谱-1F7A5A?style=for-the-badge" alt="Validin"></a>
+</p>
 
 </div>
 
@@ -98,6 +101,7 @@
 | [**SerpApi**](https://serpapi.com) | 搜索引擎 + Google 广告透明度结果 API——谁**付费**引流，以及多引擎 dork 结果 | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）——评级为**暴露**，并非同一运营者枢轴 | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | OSINT 调查平台——覆盖社交媒体、区块链与暗网的 1000+ 方法（SL Professional / Crimewall、Maltego transforms） | OSINT 方法论与数据 |
+| [**Validin**](https://validin.com) | DNS + 证书 + favicon + 响应体哈希汇于一张图谱——被动 DNS、子域枚举、反向 IP 与主机响应哈希枢轴（免费 Community 密钥） | 目前为 `/webpivot` 枢轴提供即用查询串；原生 API 集成进行中 |
 
 > [!IMPORTANT]
 > **ANY.RUN 仅以只读方式使用。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。本技能**从不提交样本**——公开沙箱任务全网可读且不可撤回。该边界由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
