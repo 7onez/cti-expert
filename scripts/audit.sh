@@ -89,7 +89,7 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
          tests/test_email_permute.py tests/test_hooks.py \
          tests/test_email_hygiene_nullmx.py scripts/test_pivot_orchestrator.py \
-         tests/test_osint_tools.py tests/test_cluster_corroboration.py; do
+         tests/test_osint_tools.py tests/test_cluster_corroboration.py tests/test_social_noise_classification.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 
