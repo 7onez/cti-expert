@@ -269,7 +269,8 @@ def cmd_open(a):
             [f"https://{h}" for h in hosts], a.case,
             max_workers=max(1, a.jobs), on_result=_status, retry_misses=1,
             root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
-            timeout=a.timeout, force=a.force, no_archive=(not a.archive), extra_flags=extra)
+            timeout=a.timeout, force=a.force, no_archive=(not a.archive),
+            want_shot=getattr(a, "screenshots", False), extra_flags=extra)
 
     raw_glob = os.path.join(case_dir, "raw")
     raw_files = [os.path.join(raw_glob, f) for f in os.listdir(raw_glob) if f.endswith(".json")]
@@ -836,6 +837,11 @@ def main():
     o.add_argument("--render-extract", action="store_true",
                    help="render post-JS DOM per page (unlocks SaaS/analytics tokens; needs playwright)")
     o.add_argument("--render", action="store_true")
+    o.add_argument("--screenshots", action="store_true",
+                   help="capture a full-page PNG of each host (evidence backup for findings; "
+                        "implies per-host --render, needs playwright; auto-skipped on hostile "
+                        "targets without a proxy). PNGs land in cases/<case>/screenshots/ and are "
+                        "embedded into reports via scripts/evidence-images.py")
     o.add_argument("--serp", action="store_true",
                    help="run the ADVERTISING layer on every host: Google Ads Transparency — the "
                         "VERIFIED paying advertiser account and the legal name its ads are funded "
