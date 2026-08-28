@@ -697,7 +697,9 @@ def cmd_loop(a):
         # autonomous loop must spend no credits, so --free-only rides as an extra flag and
         # filter_args drops it (loudly) if this checkout's collector does not take it.
         ok, failed = [], []
-        loop_extra = ["--free-only"]
+        # DEFAULT: --free-only guards the autonomous loop (no credit spend). `--full` opts metered
+        # engines in; free Validin + keyless sources run either way.
+        loop_extra = [] if getattr(a, "full", False) else ["--free-only"]
         if a.render_extract:
             loop_extra.append("--render")
 
@@ -886,6 +888,10 @@ def main():
     lp.add_argument("--timeout", type=int, default=20)
     lp.add_argument("--render-extract", action="store_true",
                     help="render post-JS DOM per page (needs playwright)")
+    lp.add_argument("--full", action="store_true",
+                    help="run METERED engines (FOFA/Censys/SecurityTrails/DNSLytics/HunterHow/…) in "
+                         "the autonomous loop too — drops the default --free-only credit guard. Free "
+                         "Validin + keyless sources run either way. Opt-in; spends credits per round.")
     lp.add_argument("--min", type=int, default=2, help="--shared cluster threshold")
     lp.add_argument("--analyst", default=None)
     lp.add_argument("--classification", default="UNCLASSIFIED//FOR OFFICIAL USE ONLY")
