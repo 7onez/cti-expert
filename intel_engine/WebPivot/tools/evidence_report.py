@@ -148,7 +148,12 @@ def _utc_now() -> str:
 _HIT_SOURCES = (("fofa", "FOFA"), ("urlscan", "urlscan"),
                 ("crtsh", "crt.sh"), ("passivedns", "passive DNS"),
                 ("pdns", "PDNS"), ("fofa_ip_reverse", "FOFA reverse-IP"),
-                ("pdns_ip_reverse", "PDNS reverse-IP"))
+                ("pdns_ip_reverse", "PDNS reverse-IP"),
+                # Phase 6 backfill: engines that made real calls but never surfaced in the report.
+                ("validin", "Validin"), ("validin_subs", "Validin subdomains"),
+                ("validin_cert", "Validin cert-reverse"), ("validin_favicon", "Validin favicon-reverse"),
+                ("hunterhow", "Hunter.how"),
+                ("securitytrails", "SecurityTrails"), ("dnslytics", "DNSLytics"))
 
 
 def _ceiling(key: str) -> int:
