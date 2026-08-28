@@ -185,6 +185,17 @@
         "without_it": "public-bucket exposure is only reachable via the keyless site:buckets.grayhatwarfare.com dork — first page, no filetype/date/keyword filters and no pagination — so a domain's exposed buckets/files are undercounted, not proven absent",
         "free_fallback": "the site:buckets.grayhatwarfare.com Google/Bing dork and the s3:GetObject / directory-listing probes in discovery-paths.md",
         "signup": "https://grayhatwarfare.com/account"
+      },
+      "VALIDIN_API_KEY": {
+        "service": "Validin",
+        "aliases": [],
+        "companion": ["VALIDIN_API_KEY_FALLBACK"],
+        "metered": false,
+        "impact": "high",
+        "unlocks": "DNS + certs + favicon + response-body hashes in one graph on a FREE Community key: passive DNS, subdomain enumeration, reverse-IP, and favicon/cert/body-hash reverse -> co-hosted hosts, plus quick reputation and Levenshtein lookalikes",
+        "without_it": "Validin's reverse pivots (passive DNS / subdomains / reverse-IP / hash reverse) are unqueried; only the manual Validin query string is emitted for the analyst to run in the web UI. WHOIS history stays with WhoisXML regardless (paid on Validin)",
+        "free_fallback": "the other reverse indexes if keyed (FOFA/Censys/HunterHow) and the emitted Validin query string for the web UI",
+        "signup": "https://app.validin.com/"
       }
     }
   },

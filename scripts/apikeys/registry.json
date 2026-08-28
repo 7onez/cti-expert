@@ -8,6 +8,13 @@
       "test": {"url": "https://api.shodan.io/api-info?key={key}", "expect_json": "query_credits"}
     },
     {
+      "id": "validin", "name": "Validin", "env": "VALIDIN_API_KEY",
+      "extra": ["VALIDIN_API_KEY_FALLBACK"], "category": "infra", "tier": "free",
+      "url": "https://app.validin.com/",
+      "unlocks": "/webpivot + /cti + /impersonate + harness: passive DNS, subdomains, reverse-IP, favicon/cert/body-hash reverse -> co-hosted hosts, quick reputation, Levenshtein lookalikes (FREE Community key; WHOIS history is paid-tier)",
+      "test": {"url": "https://app.validin.com/api/ping", "bearer": true, "expect_json": "status"}
+    },
+    {
       "id": "censys", "name": "Censys", "env": "CENSYS_API_KEY", "extra": ["CENSYS_ORG_ID"],
       "aliases": ["CENSYS_PAT", "CENSYS_TOKEN", "CENSYS_API_SECRET"], "category": "infra", "tier": "freemium",
       "url": "https://accounts.censys.io/settings/personal-access-tokens",

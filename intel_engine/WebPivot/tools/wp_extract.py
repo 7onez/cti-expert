@@ -883,6 +883,7 @@ def get_favicon(base_url: str, html: str, ua: str, proxy: str = None):
             "shodan_mmh3": shodan_favicon_hash(raw),
             "md5": hashlib.md5(raw).hexdigest(),
             "sha256": hashlib.sha256(raw).hexdigest(),
+            "sha1": hashlib.sha1(raw).hexdigest(),   # Validin FAVICON_HASH reverse is sha1-keyed
             "bytes": len(raw),
         }
     except Exception:
