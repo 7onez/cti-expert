@@ -235,7 +235,7 @@ Cross-Reference Analysis:
 ## 5. Limitations
 
 1. **Mnemonic PassiveDNS** — Coverage varies by domain popularity; obscure domains may have sparse history
-2. **SecurityTrails** — Free web access only via cached Google results; direct API requires paid key
+2. **SecurityTrails** — **API now wired** (`wp_securitytrails.py`, freemium ~50/mo key: subdomains + DNS history, auto-run in enrich_live). The cached-Google-dork path below is the KEYLESS fallback for when no key is set or the monthly quota is spent.
 3. **ViewDNS** — HTML parsing required; no structured API for free tier
 4. **crt.sh** — Only shows certificates from public CT logs; private/internal CAs not included
 5. **Historical gaps** — Passive DNS collection started ~2010; older records may not exist
