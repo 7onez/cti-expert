@@ -39,6 +39,9 @@ import wp_assets   # asset layer: JS bundles, source maps, well-known files, API
 import wp_docmeta  # document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF
 from wp_censys import censys_configured, censys_webproperty, censys_certificate
 from wp_hunterhow import hunterhow_configured, search as hunterhow_search  # Hunter.how reverse (metered)
+import wp_validin  # Validin infra-pivot client (FREE key; runs under --free-only; --no-validin off-switch)
+import wp_securitytrails  # SecurityTrails: subdomains + DNS history (metered 50/mo; --no-securitytrails)
+import wp_dnslytics       # DNSLytics: reverse GA/AdSense -> sibling domains (metered; --no-dnslytics)
 import wp_pssl     # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
@@ -590,6 +593,13 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # pivots it can reverse. It is an INDEPENDENT (CN-dense) index, so its hits corroborate or
     # extend FOFA's rather than duplicate them.
     have_hunterhow = hunterhow_configured() and not free_only
+    # Validin is FREE-keyed (Community 10/day) and quota-governed inside wp_validin, so unlike the
+    # metered engines it runs EVEN under --free-only — its whole value is deepening the loop.
+    have_validin = wp_validin.validin_configured()
+    # SecurityTrails + DNSLytics are METERED (ST freemium 50/mo; DNSLytics credits), so unlike free
+    # Validin they are gated `and not free_only` — held back from the autonomous loop like FOFA/Censys.
+    have_securitytrails = wp_securitytrails.securitytrails_configured() and not free_only
+    have_dnslytics = wp_dnslytics.dnslytics_configured() and not free_only
     # Passive SSL rides the SAME CIRCL credential pair as passive DNS. The two are the historical
     # name->IP and cert->IP halves of one question, so a run that has pDNS should always have
     # pSSL as well — before this layer existed the cert->IP direction was simply never asked.
@@ -611,6 +621,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("censys")
     if have_hunterhow:
         sources.append("hunterhow")
+    if have_validin:
+        sources.append("validin")
+    if have_securitytrails:
+        sources.append("securitytrails")
+    if have_dnslytics:
+        sources.append("dnslytics")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -633,6 +649,13 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 # and threat labels Censys recorded for THIS hostname — the server's own view of
                 # the page, independent of whatever the site served us just now.
                 jobs["censys"] = lambda: censys_webproperty(val)
+            if have_validin:
+                # ONE combined-connections call (passive DNS + co-hosted) + subdomains; the
+                # per-domain cap in wp_validin bounds spend so a small key survives the run.
+                jobs["validin"] = lambda: wp_validin.domain_lookup(val)
+                jobs["validin_subs"] = lambda: wp_validin.subdomains(val)
+            if have_securitytrails:
+                jobs["securitytrails"] = lambda: wp_securitytrails.subdomains(val)
             with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
                 futures = {k: ex.submit(fn) for k, fn in jobs.items()}
                 lr = {k: fu.result() for k, fu in futures.items()}
@@ -762,6 +785,24 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 cert = censys_certificate(str(val))
                 if cert:
                     lr["censys_cert"] = cert
+            if have_validin and kind == "tls_cert:fingerprint_sha256":
+                fp1 = ((result.get("artifacts") or {}).get("tls_cert") or {}).get("fingerprint_sha1")
+                if fp1:
+                    vc = wp_validin.cert_hosts(fp1)   # every host on this exact cert
+                    if vc is not None:
+                        lr["validin_cert"] = vc
+            if have_validin and kind == "favicon_hash":
+                fsha1 = ((result.get("artifacts") or {}).get("favicon") or {}).get("sha1")
+                if fsha1:
+                    vf = wp_validin.favicon_hosts(fsha1)
+                    if vf is not None:
+                        lr["validin_favicon"] = vf
+            if have_dnslytics and kind.startswith(("tracker:", "verification:")):
+                # reverse a GA/AdSense id to sibling domains; ga_adsense_siblings self-filters
+                # non-GA/AdSense ids (returns None), so it is safe to call on any tracker pivot.
+                dn = wp_dnslytics.ga_adsense_siblings(str(val))
+                if dn is not None:
+                    lr["dnslytics"] = dn
         if lr:
             piv["live_results"] = lr
     return result

@@ -87,6 +87,9 @@ from wp_assets import *  # noqa
 import wp_docmeta  # noqa  (document/image metadata layer: hosted PDFs + images → /Info, XMP, EXIF)
 import wp_censys   # noqa  (Censys Platform: lookups + CenQL builder; --no-censys flips ENABLED)
 import wp_hunterhow  # noqa  (Hunter.how reverse search; --no-hunterhow flips ENABLED)
+import wp_validin  # noqa  (Validin infra-pivot: passive DNS/subdomains/reverse-IP/hash reverse; --no-validin off-switch)
+import wp_securitytrails  # noqa  (SecurityTrails subdomains/DNS history; --no-securitytrails off-switch)
+import wp_dnslytics  # noqa  (DNSLytics reverse GA/AdSense -> siblings; --no-dnslytics off-switch)
 import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin behind a CDN)
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
 import wp_exhaust  # noqa  (collection-exhaustion checklist: which evidence layers never ran)
@@ -264,6 +267,17 @@ def main():
                          "Hunter.how is metered and query-rate-limited (a free account has a small "
                          "quota), so this is the switch for conserving it. The Hunter.how query is "
                          "still emitted on every reversible pivot — built offline, costing nothing.")
+    ap.add_argument("--no-validin", action="store_true",
+                    help="do NOT call the Validin API even if VALIDIN_API_KEY is set. Validin is "
+                         "FREE-keyed but quota-limited (Community 10/day); wp_validin caps calls "
+                         "per domain so a run never empties the key. The Validin query string is "
+                         "still emitted on every reversible pivot — built offline, costing nothing.")
+    ap.add_argument("--no-securitytrails", action="store_true",
+                    help="do NOT call the SecurityTrails API even if SECURITYTRAILS_API_KEY is set "
+                         "(freemium 50/month; metered).")
+    ap.add_argument("--no-dnslytics", action="store_true",
+                    help="do NOT call the DNSLytics API even if DNSLYTICS_API_KEY is set "
+                         "(credit-metered; reverse GA/AdSense -> sibling domains).")
     ap.add_argument("--no-pssl", action="store_true",
                     help="do NOT query CIRCL passive SSL even when the CIRCL credentials "
                          "(PDNS_USERNAME/PDNS_PASSWORD) are set. Passive SSL is the historical "
@@ -439,6 +453,9 @@ def main():
     wp_extract.QR_DECODE_IMAGES = bool(args.decode_qr)
     wp_censys.ENABLED = not args.no_censys   # offline CenQL builder is unaffected — it costs nothing
     wp_hunterhow.ENABLED = not args.no_hunterhow  # offline query builder unaffected — costs nothing
+    wp_validin.ENABLED = not args.no_validin  # offline query-string path unaffected — costs nothing
+    wp_securitytrails.ENABLED = not args.no_securitytrails  # offline path unaffected
+    wp_dnslytics.ENABLED = not args.no_dnslytics            # offline path unaffected
     wp_pssl.ENABLED = not args.no_pssl       # passive SSL: historical cert->IP (origin recovery)
     # Asset layer (JS bundles / source maps / well-known files) — on by default, per-half opt-out.
     wp_assets.COLLECT_ASSETS = not args.no_assets
