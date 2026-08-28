@@ -32,6 +32,8 @@ Common flags for `open`:
     --timeout S         per-fetch timeout (default 20)
 """
 import argparse
+import glob
+import json
 import os
 import re
 import subprocess
@@ -377,6 +379,88 @@ def _write_shared(case_dir, min_shared, hosts=None):
         fh.write(r.stdout or "")
 
 
+
+def _corroboration(case_dir, clusters, min_independent=2):
+    """Annotate each cluster with HOW MANY INDEPENDENT ARTIFACTS actually corroborate it.
+
+    The rule this repo states everywhere — one shared artifact is a LEAD, two independent ones are
+    a CLUSTER — was enforced only by an analyst remembering it. `_write_clusters`' `min_shared`
+    is a different test (one indicator binding >=2 domains), so a component resting on a single
+    artifact was reported identically to one resting on five.
+
+    This ANNOTATES; it never re-partitions. Changing which components form could split a real
+    estate or merge an innocent party, and that is a rearchitecture rather than a fix. The verdict
+    rides alongside so IntelAnalysis and the analyst can see which clusters are actually load-
+    bearing.
+
+    Prefers `rank_relations` over the case's raw pivot JSON (it applies the noise denylist and
+    scores pairwise strength); falls back to counting distinct KB binding indicators when no raw
+    JSON is present. `source` always records which was used.
+    """
+    rel_by_pair, source = {}, "kb_binding"
+    raw = sorted(glob.glob(os.path.join(case_dir, "raw", "*.json")))
+    if len(raw) >= 2:
+        rr = os.path.join(os.path.dirname(ROOT), "scripts", "webpivot", "rank_relations.py")
+        if os.path.isfile(rr):
+            try:
+                # include-weak so a 1-signal pair is still RETURNED and can be labelled a lead —
+                # filtering it out here would hide exactly the case this function exists to name.
+                res = subprocess.run([sys.executable, rr, *raw, "--include-weak"],
+                                     capture_output=True, text=True, timeout=120)
+                if res.returncode == 0 and res.stdout.strip():
+                    for r in (json.loads(res.stdout).get("relations") or []):
+                        key = tuple(sorted((str(r.get("a", "")).lower(),
+                                            str(r.get("b", "")).lower())))
+                        prev = rel_by_pair.get(key)
+                        if prev is None or len(r.get("signals") or []) > len(prev.get("signals") or []):
+                            rel_by_pair[key] = r
+                    source = "rank_relations"
+            except Exception as e:  # noqa: BLE001
+                # Clustering must survive a broken corroborator. A pipeline that dies because an
+                # annotation failed is worse than one that reports the annotation as unavailable.
+                print(f"   note: rank_relations unavailable ({type(e).__name__}); "
+                      f"falling back to KB binding counts")
+
+    for c in clusters:
+        if c.get("singleton"):
+            c["corroboration"] = {"independent_artifacts": 0, "source": source,
+                                  "assessment": "singleton",
+                                  "verdict": "no relation to corroborate"}
+            continue
+        arts, best = set(), None
+        if source == "rank_relations":
+            doms = [d.lower() for d in c["domains"]]
+            for i in range(len(doms)):
+                for j in range(i + 1, len(doms)):
+                    r = rel_by_pair.get(tuple(sorted((doms[i], doms[j]))))
+                    if not r:
+                        continue
+                    sig = set(r.get("signals") or [])
+                    if len(sig) > len(arts):
+                        arts, best = sig, r
+        if not arts:
+            # KB fallback: distinct indicator TYPES binding this component. Types, not values —
+            # three GA IDs from one operator are one artifact class, not three corroborations.
+            arts = {b["indicator"].split(":", 1)[0] for b in c.get("binding_indicators", [])}
+            source_used = "kb_binding"
+        else:
+            source_used = "rank_relations"
+        n = len(arts)
+        c["corroboration"] = {
+            "independent_artifacts": n,
+            "artifacts": sorted(arts)[:8],
+            "source": source_used,
+            "assessment": (best or {}).get("assessment"),
+            "verdict": ("CORROBORATED — >=%d independent artifacts" % min_independent) if n >= min_independent
+                       else ("LEAD ONLY — a single shared artifact. One artifact is a lead, not "
+                             "proof: trackers get copied and favicons are reused by templates. "
+                             "Find a second independent artifact before asserting same operator.")
+                       if n == 1 else
+                       "UNCORROBORATED — no strong shared artifact survived noise filtering",
+        }
+    return clusters
+
+
 def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
     """Partition THIS case's collected hosts into same-operator components (strong edges only) and
     persist them with the indicators binding each -> cases/<case>/clusters.json.
@@ -429,13 +513,16 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
         clusters.append({"id": i, "size": len(mset), "domains": sorted(mset),
                          "singleton": len(mset) == 1, "binding_indicators": binding[:15],
                          "binding_total": len(binding)})
+    _corroboration(case_dir, clusters)
     doc = {"case": case, "generated": _iso_now(), "scope_hosts": len(hosts),
            "n_clusters": len(clusters), "max_prevalence": max_prevalence,
            "note": ("Same-operator components over STRONG shared indicators (boilerplate / "
                     "reference-benign / over-prevalent edges excluded). Judge each cluster "
                     "separately with IntelAnalysis — a cluster, not the case, is one attribution "
                     "question. kb_wide_domains >> domains_in_cluster means the indicator is "
-                    "prevalent noise, not an owner link."),
+                    "prevalent noise, not an owner link. Each cluster carries `corroboration`: "
+                    "ONE shared artifact is a LEAD, TWO independent ones make a cluster — a "
+                    "cluster marked LEAD ONLY must not be reported as an attributed estate."),
            "clusters": clusters}
     import json as _json
     with open(os.path.join(case_dir, "clusters.json"), "w", encoding="utf-8") as fh:
@@ -446,8 +533,11 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
           f"-> {os.path.relpath(os.path.join(case_dir, 'clusters.json'), ROOT)}")
     for c in multi[:8]:
         top = c["binding_indicators"][0]["indicator"] if c["binding_indicators"] else "—"
+        cor = c.get("corroboration") or {}
+        flag = "" if cor.get("independent_artifacts", 0) >= 2 else "  ⚠ LEAD ONLY"
         print(f"      c{c['id']} ({c['size']}): {', '.join(c['domains'][:5])}"
-              f"{' …' if c['size'] > 5 else ''}   via {top}")
+              f"{' …' if c['size'] > 5 else ''}   via {top}"
+              f"  [{cor.get('independent_artifacts', 0)} artifact(s)]{flag}")
     return clusters
 
 
