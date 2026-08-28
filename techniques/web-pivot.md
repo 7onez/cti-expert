@@ -350,8 +350,9 @@ unchanged.** Never commit the `.env`.
 - **GA `UA-` IDs are historical** (Universal Analytics shut down Jul 2023). Live artifacts are
   GA4 `G-` and `GTM-`.
 - **crt.sh is frequently overloaded** — keep Certspotter / Censys as CT fallbacks.
-- **Validin** is the current standout free/low-cost infra-pivot engine (DNS + certs + favicon +
-  response-body hashes in one graph).
+- **Validin** is the standout free/low-cost infra-pivot engine (DNS + certs + favicon +
+  response-body hashes in one graph) — **now scripted** (`wp_validin.py`): it auto-runs in
+  `/webpivot`/`/cti` (passive DNS + subdomains + cert/favicon reverse), quota-governed, on a free key.
 - **Chainabuse** (absorbed Bitcoinabuse) is the primary free crypto-scam DB with a public API.
 
 ## See also

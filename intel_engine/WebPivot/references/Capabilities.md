@@ -572,5 +572,5 @@ See `Workflows/NetworkGraph.md` for the full extract → build → render pipeli
 
 - **GA `UA-` IDs are historical** (Universal Analytics shut down Jul 2023). Live analytics artifacts are GA4 `G-` and `GTM-`.
 - **crt.sh is frequently overloaded** — `ct_search` auto-covers it with the keyless **Shodan CTL** mirror (`ctl.shodan.io`); Certspotter / Censys remain further CT fallbacks.
-- **Validin** is the current standout free/low-cost infra-pivot engine (DNS + certs + favicon + response-body hashes in one graph).
+- **Validin** is the standout free/low-cost infra-pivot engine (DNS + certs + favicon + response-body hashes in one graph) — **now scripted** via `wp_validin.py` (auto-runs in enrich_live: passive DNS + subdomains + cert/favicon reverse; quota-governed, runs even under `--free-only`).
 - **Chainabuse** (absorbed Bitcoinabuse) is the primary free crypto-scam reporting DB with a real public API.

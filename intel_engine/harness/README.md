@@ -375,6 +375,13 @@ Every `pivot_extract` call now, by default:
 - resolves **WHOIS with no key** — keyless RDAP (rdap.org bootstrap) + a `.vn` port-43 fallback fill registrar/dates/NS/status on every domain; `WHOISXML_API_KEY` only adds registrant history;
 - emits an active **JARM TLS-stack fingerprint** (`artifacts.jarm`) + a `jarm:<hash>` pivot on Shodan `ssl.jarm:` — it survives a full domain+cert rotation, so it re-finds an operator's origin. Suppressed under `--proxy` (raw-socket probe);
 - **saves the raw DOM** to `cases/<case>/dom/<host>.html` so you can manually analyze it or re-run a pivoting script over it;
+- runs the **premium-engine set** when keyed — Censys, Hunter.how, **Validin** (FREE key: DNS +
+  certs + favicon + response-body-hash reverse), **SecurityTrails** (subdomains + DNS history),
+  **DNSLytics** (reverse GA/AdSense → sibling domains). They all ride this SAME
+  `collect_core.collect_host` → `pivot_extract` → `enrich_live` path, so they **auto-flow into
+  harness deepening + `--fanout`** with no orchestrator change. **Validin is quota-governed and
+  runs even under `--free-only`** (it is free); the metered engines (FOFA/Censys/SecurityTrails/
+  DNSLytics/Hunter.how) are held back under `--free-only` and opt in via `intel.py loop --full`;
 - **detects Cloudflare** (`meta.cloudflare`) and auto-retries the bypass — a real browser via `--render` (uses `WebPivot/.venv`), or FlareSolverr if `HARNESS_FLARESOLVERR=http://host:8191/v1` is set.
 
 The judgment phase also has a **`reverse_whois`** tool that returns only high-value pivots: it refuses privacy/registrar terms and flags a bulk registrant (`> max_domains` = reseller = noise) instead of dumping it.
