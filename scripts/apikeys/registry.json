@@ -98,7 +98,7 @@
     {
       "id": "serpapi", "name": "SerpAPI", "env": "SERPAPI_KEY", "category": "dork",
       "tier": "freemium", "url": "https://serpapi.com/manage-api-key",
-      "unlocks": "/dork-sweep + /query: automated Google dork queries",
+      "unlocks": "/webpivot --serp: Google Ads Transparency (the VERIFIED paying-advertiser identity behind a domain's ads) + multi-engine SERP results. NOTE: does NOT power /dork-sweep or /query — that engine (search_pivot.py) is keyless and reads no SERPAPI_KEY",
       "test": {"url": "https://serpapi.com/account?api_key={key}", "expect_status": 200}
     },
     {
