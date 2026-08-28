@@ -16,6 +16,33 @@ jobs:
       - name: Run scripts/audit.sh (DISPATCH resolve, shim integrity, @tool count, compile, tests)
         run: bash scripts/audit.sh
 
+  engine-tests:
+    name: engine tests (with SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime deps (audit.sh §9 needs claude_agent_sdk)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Full audit — §9 executes here instead of skipping
+        run: |
+          set -euo pipefail
+          bash scripts/audit.sh | tee /tmp/audit.out
+      - name: Assert §9 actually ran (a silently-skipped guard is no guard)
+        run: |
+          set -euo pipefail
+          if grep -q "SKIPPED (claude_agent_sdk not importable)" /tmp/audit.out; then
+            echo "::error::claude_agent_sdk missing in the job whose whole purpose is to run it"
+            exit 1
+          fi
+          grep -q "PASS intel_engine/tests/test_context_budget.py" /tmp/audit.out \
+            || { echo "::error::the context-governor test did not run"; exit 1; }
+          echo "OK — the SDK-dependent engine tests ran"
+
   leak-diff:
     name: leak check (PR diff, RULE 1)
     if: github.event_name == 'pull_request'
