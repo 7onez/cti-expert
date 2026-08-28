@@ -126,6 +126,8 @@ DISPATCH = {
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
     "exhaust":       ("WebPivot/tools/wp_exhaust.py", []),     # which collection layers actually
                                                                # RAN vs silently never fired
+    "buckets":       ("WebPivot/tools/wp_buckets.py", []),   # GrayHatWarfare open-bucket /
+                                                             # exposed-file search (/secrets, /docleak)
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
     "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
@@ -218,6 +220,7 @@ BLURB = {
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "exhaust": "which collection layers RAN vs silently never fired",
+    "buckets": "GrayHatWarfare open-bucket / exposed-file search (/secrets, /docleak)",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
     "kb-stats": "KB stats (positional root)",

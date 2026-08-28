@@ -156,6 +156,23 @@ _HIT_SOURCES = (("fofa", "FOFA"), ("urlscan", "urlscan"),
                 ("securitytrails", "SecurityTrails"), ("dnslytics", "DNSLytics"))
 
 
+# Phase 10 cross-engine merge — the source label shown per discovered host. IP-reverse engines run
+# on the domain pivot; artifact-reverse engines run on any (favicon/cert/tracker) pivot. A host
+# found by several is listed with ALL its sources, so corroboration is visible, not collapsed.
+_IP_REVERSE_DISCOVERY = {"fofa_ip_reverse": "FOFA reverse-IP", "fofa": "FOFA", "urlscan": "urlscan",
+                         "pdns": "PDNS", "pdns_ip_reverse": "PDNS reverse-IP"}
+_ARTIFACT_DISCOVERY = {"validin": "Validin", "validin_subs": "Validin subdomains",
+                       "hunterhow": "Hunter.how", "censys_cert": "Censys cert",
+                       "securitytrails": "SecurityTrails", "dnslytics": "DNSLytics",
+                       "quake": "Quake", "zoomeye": "ZoomEye"}
+
+
+def _discovered_host(h):
+    """Normalize a discovered-infra row (string or engine dict) to a bare host, or ''."""
+    hh = _norm(h.get("domain") or h.get("host") or h.get("name") if isinstance(h, dict) else h)
+    return hh.split("//")[-1].split("/")[0]
+
+
 def _ceiling(key: str) -> int:
     try:
         return int(_SAT_CEILINGS.get(key, _SAT_CEILINGS.get("default", 500)))
@@ -660,7 +677,7 @@ def render_cluster_report(results: list,
     corroborated: set = set()
     suppressed_emails: set = set()
     suppressed_ips: dict = {}   # ip -> provider (CDN edge = noise)
-    discovered: dict = {}       # external host -> how found
+    discovered: dict = {}       # external host -> set of source labels (Phase 10 cross-engine merge)
     per_host: dict = {}         # host -> {status, ipclass, top}
 
     for r in results:
@@ -681,15 +698,24 @@ def render_cluster_report(results: list,
                     if c.get("cdn") is True:
                         suppressed_ips[c["ip"]] = c.get("provider") or "cdn"
                 # discovered infra from origin-IP reverse (only ran on origin candidates)
-                for lr_key in ("fofa_ip_reverse", "fofa", "urlscan", "pdns", "pdns_ip_reverse"):
+                for lr_key, label in _IP_REVERSE_DISCOVERY.items():
                     blk = (p.get("live_results") or {}).get(lr_key) or {}
                     for h in (blk.get("results") or blk.get("domains") or []):
-                        hh = _norm(h.get("domain") or h.get("host") if isinstance(h, dict) else h)
-                        hh = hh.split("//")[-1].split("/")[0]
+                        hh = _discovered_host(h)
                         if (hh and hh not in case_hosts and "." in hh
                                 and not hh.replace(".", "").isdigit()
                                 and not _is_infra_noise_host(hh)):
-                            discovered.setdefault(hh, f"{lr_key} on {host}")
+                            discovered.setdefault(hh, set()).add(label)
+            # Phase 10: artifact-reverse discoveries on ANY pivot (favicon/cert/tracker), merged
+            # into the same per-host source set so a host seen by N engines lists all N.
+            for lr_key, label in _ARTIFACT_DISCOVERY.items():
+                blk = (p.get("live_results") or {}).get(lr_key) or {}
+                for h in (blk.get("hosts") or blk.get("domains") or blk.get("names") or []):
+                    hh = _discovered_host(h)
+                    if (hh and hh not in case_hosts and "." in hh
+                            and not hh.replace(".", "").isdigit()
+                            and not _is_infra_noise_host(hh)):
+                        discovered.setdefault(hh, set()).add(label)
             if _is_identity_pivot(kind) and val is not None:
                 key = (kind, _norm(val))
                 shared.setdefault(key, set()).add(host)
@@ -804,9 +830,10 @@ def render_cluster_report(results: list,
 
     # Discovered infrastructure
     if discovered:
-        L += ["## Discovered Infrastructure (origin-IP reverse — not in input set)", ""]
-        for h, how in sorted(discovered.items()):
-            L.append(f"- `{h}` — via {how}")
+        L += ["## Discovered Infrastructure (cross-engine reverse — not in input set)", ""]
+        for h, srcs in sorted(discovered.items()):
+            L.append(f"- `{h}` — seen by {', '.join(sorted(srcs))}"
+                     + (f" ({len(srcs)}\u00d7 corroborated)" if len(srcs) >= 2 else ""))
         L.append("")
 
     # Per-host reported facts

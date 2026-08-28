@@ -42,7 +42,9 @@ from wp_hunterhow import hunterhow_configured, search as hunterhow_search  # Hun
 import wp_validin  # Validin infra-pivot client (FREE key; runs under --free-only; --no-validin off-switch)
 import wp_securitytrails  # SecurityTrails: subdomains + DNS history (metered 50/mo; --no-securitytrails)
 import wp_dnslytics       # DNSLytics: reverse GA/AdSense -> sibling domains (metered; --no-dnslytics)
-import wp_pssl     # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
+import wp_quake           # Quake (360): favicon-hash reverse -> hosts (metered CN-dense; --no-quake)
+import wp_zoomeye         # ZoomEye: favicon-hash reverse -> hosts (metered; --no-zoomeye)
+import wp_pssl           # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
 try:
@@ -600,6 +602,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # Validin they are gated `and not free_only` — held back from the autonomous loop like FOFA/Censys.
     have_securitytrails = wp_securitytrails.securitytrails_configured() and not free_only
     have_dnslytics = wp_dnslytics.dnslytics_configured() and not free_only
+    # Quake (360) + ZoomEye are METERED cyberspace indexes (points/quota), independent CN-dense
+    # peers of FOFA/Hunter.how. Gated `and not free_only` — held back from the autonomous loop.
+    have_quake = wp_quake.quake_configured() and not free_only
+    have_zoomeye = wp_zoomeye.zoomeye_configured() and not free_only
     # Passive SSL rides the SAME CIRCL credential pair as passive DNS. The two are the historical
     # name->IP and cert->IP halves of one question, so a run that has pDNS should always have
     # pSSL as well — before this layer existed the cert->IP direction was simply never asked.
@@ -627,6 +633,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("securitytrails")
     if have_dnslytics:
         sources.append("dnslytics")
+    if have_quake:
+        sources.append("quake")
+    if have_zoomeye:
+        sources.append("zoomeye")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -659,6 +669,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
                 futures = {k: ex.submit(fn) for k, fn in jobs.items()}
                 lr = {k: fu.result() for k, fu in futures.items()}
+                # Reputation is CORROBORATION only (folded into exposure scoring, never a sole
+                # verdict). Run it AFTER the two concurrent calls so it draws only on leftover
+                # per-domain quota and never preempts domain_lookup/subdomains; on a small key it
+                # degrades to a skipped note, on Professional it fires.
+                if have_validin:
+                    lr["validin_reputation"] = wp_validin.reputation(val)
             # Anchor pivots to the LIVE IP: reverse-search FOFA on what DNS resolves to
             # right now, and flag any passive source still reporting a different (stale) IP.
             live_ips = lr.get("dns", {}).get("ips", []) or []
@@ -679,6 +695,9 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     lr["ipinfo"] = {ip: ipinfo_lookup(ip) for ip in live_ips}
                 origin_ips = [c["ip"] for c in classified if c.get("cdn") is False]
                 cdn_ips = [c for c in classified if c.get("cdn") is True]
+                if have_validin and origin_ips:
+                    # IP reputation on the origin candidate only (bounded), corroborating exposure.
+                    lr["validin_ip_reputation"] = {origin_ips[0]: wp_validin.ip_reputation(origin_ips[0])}
                 if cdn_ips:
                     lr["dns"]["cdn_note"] = (
                         "live IP(s) are shared CDN/cloud edge (%s) — hosting IP is noise, "
@@ -753,6 +772,18 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     hh = hunterhow_search(hh_q)
                     if hh is not None:
                         lr["hunterhow"] = hh
+            # Quake (360) + ZoomEye favicon-hash reverse — independent CN-dense indexes, run on the
+            # same favicon mmh3 a FOFA/Hunter.how icon_hash reverse uses. Each returns a normalized
+            # {"total","hosts":[...]} the frontier/report/dedup layers already consume (Phase 10),
+            # or a tri-state note; a throttled/keyless call degrades, never breaks enrichment.
+            if have_quake and kind == "favicon_hash":
+                qk = wp_quake.favicon_reverse(val)
+                if qk is not None:
+                    lr["quake"] = qk
+            if have_zoomeye and kind == "favicon_hash":
+                ze = wp_zoomeye.favicon_reverse(val)
+                if ze is not None:
+                    lr["zoomeye"] = ze
             # --- urlscan reverses — query form matches how urlscan indexes each artifact:
             #   tracker/verification IDs → page CONTENT search ("<id>")
             #   favicon                  → resource-HASH search (hash:<sha256>)

@@ -43,6 +43,8 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | FOFA | `FOFA_KEY` (+`FOFA_EMAIL`) | freemium | `/webpivot`: reverse `icon_hash` + tracker body → hosts; IP reverse | fofa.info |
 | urlscan.io PRO | `URLSCAN_API_KEY` | freemium | `/webpivot`,`/scam-check`: authenticated DOM search, related domains, submit | urlscan.io/user/apikey |
 | Hunter.how | `HUNTERHOW_API_KEY` | freemium | `/webpivot`,`/cert-pivot`: independent CN cyberspace index — reverse favicon **mmh3** / cert / `web.body` / domain / IP → hosts (a FOFA/Quake/ZoomEye peer) | hunter.how/search-api |
+| Quake (360) | `QUAKE_API_KEY` | freemium | `/webpivot`: reverse favicon **mmh3** → hosts; independent CN-dense cyberspace index (FOFA/Hunter.how peer) | quake.360.net |
+| ZoomEye | `ZOOMEYE_API_KEY` | freemium | `/webpivot`: reverse favicon **iconhash (mmh3)** → hosts; independent cyberspace index | zoomeye.ai/profile |
 | **DNS / certs / WHOIS** ||||
 | SecurityTrails | `SECURITYTRAILS_API_KEY` (+`_FALLBACK`) | freemium | `/webpivot`,`/dns-history`: passive DNS, subdomains, DNS/WHOIS history | securitytrails.com |
 | WhoisXML | `WHOISXML_API_KEY` | freemium | `/webpivot --whois`,`/whois`: current + historic + reverse WHOIS | whoisxmlapi.com |
@@ -85,7 +87,7 @@ in sync when adding a service.
 When keys are present, `pivot_extract.py`'s live-enrichment (`enrich_live`) automatically
 escalates from the keyless baseline (crt.sh, HackerTarget passive DNS, anonymous urlscan) to
 premium reverse-lookups — **Shodan** (favicon mmh3 → hosts), **Censys** (favicon MD5 → hosts),
-**FOFA** (icon_hash + tracker body), **Hunter.how** (favicon/body/domain → hosts, independent CN index), **DNSLytics** (GA/AdSense → sibling domains),
+**FOFA** (icon_hash + tracker body), **Hunter.how** (favicon/body/domain → hosts, independent CN index), **Quake**/**ZoomEye** (favicon mmh3 → hosts), **DNSLytics** (GA/AdSense → sibling domains),
 **SecurityTrails** (passive DNS/subdomains), **urlscan PRO** (content search), **WhoisXML**
 (reverse WHOIS). Each hit is attached to the pivot as `live_results` and shown inline in
 `--leads`. See [`techniques/web-pivot.md`](../techniques/web-pivot.md) § Premium tier. No keys →

@@ -104,6 +104,24 @@ site:github.com "<org_name>" ".env" OR "config.json" password
 site:github.com "<domain.com>" "db_password" OR "database_url"
 ```
 
+## 4a. GrayHatWarfare — open buckets & exposed files (`/secrets`, `/docleak`)
+
+Beyond source-code secrets, `/secrets` and `/docleak` also search publicly readable object
+storage (S3, Azure Blob, GCS, DO Spaces) and the files inside it via GrayHatWarfare
+(`wp_buckets.py`). With `GRAYHATWARFARE_API_KEY` set the search is filterable and paginated; with
+no key it degrades to the keyless `site:buckets.grayhatwarfare.com` dork (never an error).
+
+```bash
+# buckets whose NAME matches the org/domain keyword (→ /secrets asset discovery)
+uv run intel.py buckets buckets <org-or-domain> --limit 20
+# exposed FILES matching the keyword (→ /docleak leaked-document discovery)
+uv run intel.py buckets files <domain> --limit 20
+```
+
+**Grading:** an exposed bucket is graded **EXPOSURE**, never a same-operator cluster edge — two
+sites in one public bucket share a hosting provider, not an operator. Findings feed the exposure
+layer and responsible disclosure, not attribution edges.
+
 ---
 
 ## 5. Fallback Cascade

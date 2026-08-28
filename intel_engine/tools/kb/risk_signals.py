@@ -159,6 +159,27 @@ def _verdict(raw):
             "categories": v.get("categories") or []}
 
 
+_REP_RISK_RE = re.compile(
+    r"malicious|phish|scam|spam|malware|suspicious|botnet|c2|command.and.control|"
+    r"high.?risk|threat|fraud|abuse", re.I)
+
+
+def _reputation(raw):
+    """Validin quick-reputation annotations attached to live_results (domain + origin IP) during
+    enrichment, folded here as a CORROBORATING exposure signal — never the sole verdict. Read
+    OFFLINE (no network), so a captured fixture drives the test."""
+    anns = []
+    for piv in raw.get("pivots") or []:
+        lr = piv.get("live_results") or {}
+        for a in (lr.get("validin_reputation") or {}).get("annotations") or []:
+            anns.append(a)
+        for _ip, ipblk in (lr.get("validin_ip_reputation") or {}).items():
+            for a in (ipblk or {}).get("annotations") or []:
+                anns.append(a)
+    risky = any(_REP_RISK_RE.search(a if isinstance(a, str) else str(a)) for a in anns)
+    return {"present": bool(anns), "risky": risky, "annotations": anns[:6]}
+
+
 def score_domain(raw, today=None, ref=None):
     """Score one pivot-extract JSON dict. Returns structured flags (no exceptions)."""
     ref = ref or _load_ref()
@@ -171,6 +192,7 @@ def score_domain(raw, today=None, ref=None):
     bph = _bph(whois, artifacts, pivots, ref)
     money = _money(whois, artifacts, ref)
     verdict = _verdict(raw)
+    rep = _reputation(raw)
     # a compact escalation verdict
     escalate = []
     if nrd["tier"] in ("critical", "high"):
@@ -183,8 +205,12 @@ def score_domain(raw, today=None, ref=None):
         escalate.append("urlscan-malicious")
     if verdict["brands"]:
         escalate.append("brand:" + ",".join(verdict["brands"][:2]))
+    # reputation is CORROBORATION only — it may sharpen an existing escalation but never trip one
+    # on its own (guarded by `and escalate`), keeping estimative discipline (analytic-standards.md).
+    if rep["risky"] and escalate:
+        escalate.append("validin-reputation")
     return {"host": host, "nrd": nrd, "bph": bph, "money": money,
-            "verdict": verdict, "escalate": escalate}
+            "verdict": verdict, "reputation": rep, "escalate": escalate}
 
 
 def _fmt(s):
@@ -205,6 +231,8 @@ def _fmt(s):
         line.append(f"urlscan={v.get('score') if v.get('score') is not None else 'malicious'}")
     if v.get("brands"):
         line.append(f"brand={','.join(v['brands'][:2])}")
+    if (s.get("reputation") or {}).get("risky"):
+        line.append("validin-rep!")
     return "  ".join(line)
 
 

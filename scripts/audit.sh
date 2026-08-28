@@ -91,7 +91,7 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_phish_domain_survival.py tests/test_clickfix_detect.py \
          tests/test_html_visibility_analysis.py tests/test_apk_permission_scope.py \
          tests/test_kit_template_fingerprint.py tests/test_render_confirm.py \
-         tests/test_phishtrace_features.py; do
+         tests/test_phishtrace_features.py tests/test_engine_additions.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 
