@@ -9,6 +9,7 @@ services that recently changed — verify before relying.
 | **Shodan** | `http.favicon.hash:<int>` | **mmh3** | Paid (favicon filter needs membership) | REST + py lib, key |
 | **FOFA** | `icon_hash="<int>"` | **mmh3** | Freemium (heavy paid gating) | REST, key |
 | **ZoomEye** (zoomeye.ai) | `iconhash:"<mmh3>"` | **mmh3** | Freemium credits | REST, key |
+| **Quake** (360, quake.360.net) | `favicon:"<mmh3>"` | **mmh3** | Freemium credits | REST, key — independent CN index |
 | **Censys** (Platform API) | `web.endpoints.http.favicons.hash_md5=<md5>` | **MD5** | Free plan = **no search API** (UI only, 5 credits/query); Starter+ for the API | REST, PAT ⚠️ **CenQL, not Legacy Search** — the old `services.http.response.favicons.md5_hash` no longer runs |
 | **Netlas** | `http.favicon.hash_sha256` | **SHA-256** | Freemium + 14-day trial | REST, key |
 | **Validin** | favicon in host-response graph | body hashes | Free community + free API | REST, free key |
@@ -74,6 +75,24 @@ now queries crt.sh **and** Shodan CTL concurrently and unions them (`ct_search`)
 either source being down and gets fuller subdomain coverage; `tools/fallback_probe.py` does the same
 on cold seeds.
 
+### 4b. Cert-fingerprint pivots — find OTHER hosts serving the SAME cert
+
+CT enumeration (above) lists a domain's own certs. **Cert-fingerprint pivoting** goes the
+other direction: take one leaf cert's fingerprint and find every host that presents it — a
+strong same-operator signal — and mine the cert's **SAN list** for sibling domains.
+Automated by [`cert_pivot.py`](../../../scripts/webpivot/cert_pivot.py) (`intel.py cert-pivot`).
+
+| Engine | Query field | Hash algo | Notes |
+|---|---|---|---|
+| **Shodan** | `ssl.cert.fingerprint:<hash>` | **SHA-256** (SHA-1 alt) | key → live hosts; web link keyless |
+| **Censys** | `services.tls.certificates.leaf_data.fingerprint_sha256="<hex>"` | **SHA-256** | `CENSYS_API_ID`+`_API_SECRET` |
+| **FOFA** | `cert="<sha256>"` | **SHA-256** | base64-wrapped web query |
+| **crt.sh** | `?id=<n>` / `?serial=<hex>` / `?q=<sha256>` | — | keyless; SANs = sibling domains |
+
+The leaf-cert fingerprint is computed **keyless** from a live TLS handshake (stdlib `ssl`);
+no key is needed to obtain it or to build the clickable pivot links — keys only run the
+searches server-side.
+
 ## 5. Passive DNS / shared IP / shared infra
 | Service | Cost | API |
 |---|---|---|
@@ -115,11 +134,39 @@ enrichment and takedown routing. A bare IP into `pivot_extract.py` runs this pas
 | **Chainalysis / TRM / Elliptic** — pro clustering, sanctions | Enterprise | gated |
 | **OFAC SDN crypto list** — sanctioned-address match | Free | data download |
 
+## 8. China: ICP filings, PRC registries, CN cyberspace indexes
+
+Full tradecraft in [`techniques/china-recon.md`](../../../techniques/china-recon.md). Reverse-pivot
+the **licence serial** (not the province prefix) to find sibling sites under one filing.
+
+| Service | Input → output | Cost | API |
+|---|---|---|---|
+| **beian.miit.gov.cn** | domain → filing entity, licence, approval date | Free | none — CAPTCHA, Chinese-only ⚠️ authoritative |
+| **ICP_Query** / beian mirrors (chinaz, aizhan) | domain → cached filing | Free | scriptable; mirrors go stale → trust 2 until MIIT-confirmed |
+| **PublicWWW / NerdyData** | `"ICP备<serial>号"` → sibling domains | Freemium | REST, key |
+| **FOFA / Quake / ZoomEye** | `body="ICP备<serial>"` → hosts | Freemium | REST, key |
+| **ENScan_GO** | company 中文全名 → ICP filings, domains, apps, mini-programs | Free tool | CLI; needs aggregator cookies |
+| **GSXT** (gsxt.gov.cn) | USCC / 中文全名 → registration, legal rep, capital, status | Free | none — slider CAPTCHA ⚠️ ground truth |
+| **信用中国** (creditchina.gov.cn) | company → penalties, 失信 blacklist | Free | limited |
+| **TianYanCha / QCC / Aiqicha** | company → shareholders, officers, branches, related firms | Freemium | ⚠️ **IP-blocked outside mainland**; needs CN egress + +86 account |
+| **Cninfo** (cninfo.com.cn) | listed company → official filings | Free | listed companies only |
+| **Sayari / Datenna** | company → cross-border UBO, sanctions | Enterprise | REST, key |
+
 ## Scriptable-API cheat sheet
-- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web).
-- **Free-tier key:** Shodan, FOFA, ZoomEye, **Censys** (⚠️ free = **lookup endpoints only**, 100 credits/month; search is Starter+ — see `Setup.md`), Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web), Cninfo, 信用中国.
+- **Free-tier key:** Shodan, FOFA, **Quake**, ZoomEye, **Censys** (⚠️ free = **lookup endpoints only**, 100 credits/month; search is Starter+ — see `Setup.md`), Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **Free but not scriptable (CAPTCHA / manual):** beian.miit.gov.cn, GSXT.
+- **Geo-gated:** TianYanCha, QCC, Aiqicha — CN egress required; log a collection gap otherwise.
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.
 - **No official API (scrape/manual):** AnalyzeID, osint.sh, SpyOnWeb.
 
 Store your keys in a `chmod 600` `.env` at the repo root, or export them (never commit). See
 `references/Setup.md`.
+
+---
+
+> **Canonical copy.** Single source of truth for pivot services; the repo-root
+> `handbook/pivot-services.md` is a pointer to it. Merged 2026-08-27 from two copies that had
+> drifted apart. The root copy still taught the **retired** Censys query
+> `services.http.response.favicons.md5_hash`; §1 above carries the CenQL replacement. Kept from
+> the root copy and NOT present upstream: Quake, §4b cert-fingerprint pivots, §8 China registries.
