@@ -51,13 +51,27 @@ AGENTS: dict[str, AgentDefinition] = {
     "collector": AgentDefinition(
         description="Extracts pivot artifacts from ONE url/host and ingests them. Use for fan-out.",
         prompt=_skill("WebPivot"),
-        tools=["mcp__collect__pivot_extract", "mcp__collect__kb_ingest"],
+        # Passive collectors only. Every one of these reads an archive, a CT log or a
+        # third-party metadata endpoint — none touches the target beyond what pivot_extract
+        # already does, so widening the fan-out costs no extra exposure. wayback_harvest is the
+        # high-value addition: the tracker that clusters an estate has usually been SCRUBBED from
+        # the live page and survives only in an old capture.
+        tools=["mcp__collect__pivot_extract", "mcp__collect__kb_ingest",
+               "mcp__collect__wayback_harvest", "mcp__collect__wayback_fetch",
+               "mcp__collect__cert_pivot", "mcp__collect__msft_recon",
+               "mcp__collect__threat_check"],
         model="haiku",   # mechanical collection -> cheap model
     ),
     "analyst": AgentDefinition(
         description="Correlates the KB, attributes clusters, assesses confidence. Read-only.",
         prompt=_skill("IntelAnalysis"),
-        tools=["mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals"],
+        # rank_relations is the one that matters: it mechanizes "one artifact is a lead, two
+        # independent ones are a cluster", which the analyst was otherwise applying from memory.
+        # exposure_score is the SUBJECT counterpart to risk_signals' INFRASTRUCTURE score — the
+        # prompt must keep them distinct in the write-up. All read-only.
+        tools=["mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
+               "mcp__analyze__rank_relations", "mcp__analyze__exposure_score",
+               "mcp__analyze__hash_id", "mcp__analyze__vuln_check"],
         model="opus",
         effort="high",
     ),
