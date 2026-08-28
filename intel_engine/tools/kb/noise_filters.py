@@ -111,6 +111,9 @@ DOM_SKELETON_MIN_TAGS = int(_REF["dom_skeleton_min_tags"]["tags"])
 
 # Scraped social "handles" that are really static assets or templating placeholders.
 SOCIAL_HANDLE_NOISE = tuple(_REF["social_handle_noise"])
+# A "handle" that is the platform's own apex names no account — see the ref file's _comment.
+SOCIAL_PLATFORM_APEXES = frozenset(str(x).strip().lower().strip("/")
+                                   for x in _REF["social_platform_apexes"])
 # {u} ${name} %s %(x)s <user> :user — every templating dialect a bundle might ship.
 _PLACEHOLDER_RE = re.compile(r"\{[^/}]*\}|\$\{[^}]*\}|%[sd]\b|%\([^)]*\)|<[^/>]+>|^:\w+$")
 
@@ -244,6 +247,13 @@ def is_noise_social_handle(handle: str) -> bool:
         return True
     if h.endswith(SOCIAL_HANDLE_NOISE):
         return True
+    # A BARE platform apex is not an account: t.me and facebook.com name no one. But
+    # t.me/some_channel does, so the apex must be the ENTIRE value — host with no path. Testing
+    # only the host segment would discard every real channel, which is far worse than the noise
+    # it removes.
+    nopath = re.sub(r"^\w+://", "", h).split("?")[0].split("#")[0].rstrip("/")
+    if nopath in SOCIAL_PLATFORM_APEXES:
+        return True
     return bool(_PLACEHOLDER_RE.search(h))
 
 
@@ -348,6 +358,11 @@ def is_noise_indicator(indicator_value: str) -> bool:
         # is_shared_infra_apex already matches a host against its parent apexes, so the
         # full backend hostname can be passed straight through.
         return is_shared_infra_apex(v.split(":", 1)[1])
+    if v.startswith("social:"):
+        # 'social:<platform>:<handle>' — judge the HANDLE, which is everything after the
+        # platform segment. Without this branch a bare facebook.com bridged unrelated cases.
+        parts = v.split(":", 2)
+        return is_noise_social_handle(parts[2]) if len(parts) == 3 else True
     return False
 
 
