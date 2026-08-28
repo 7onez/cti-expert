@@ -1,6 +1,7 @@
 {
-  "_note": "Validin (app.validin.com) endpoint path templates + quota/cap budget for wp_validin.py. {q} is URL-encoded by the client. Community tier is 10 queries/day, 50/month — the budget caps keep one /cti run from emptying a small key. Overrides the inline _VALIDIN_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
+  "_comment": "Validin (app.validin.com) endpoint path templates + quota/cap budget for wp_validin.py. {q} is URL-encoded by the client. Community tier is 10 queries/day, 50/month — the budget caps keep one /cti run from emptying a small key. Overrides the inline _VALIDIN_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
   "endpoints": {
+    "_comment": "axon/v2/profile REST paths joined to https://app.validin.com; {q} is the URL-encoded query value.",
     "usage": "/api/profile/usage",
     "paths": "/api/paths",
     "combined_domain": "/api/v2/domain/combined/connections/{q}",
@@ -14,5 +15,7 @@
     "lookalike": "/api/lookalike/domain/{q}",
     "bulk_osint": "/api/axon/bulk/osint/context"
   },
-  "budget": {"max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3}
+  "budget": {
+    "_comment": "quota caps: per-domain (protect a 10/day key), per-run ceiling, and the min remaining before degrading to query strings.",
+    "max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3}
 }

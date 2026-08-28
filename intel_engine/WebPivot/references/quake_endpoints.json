@@ -1,0 +1,11 @@
+{
+  "_comment": "Quake (360, quake.360.net v3) endpoint path templates + per-run budget for wp_quake.py. The token travels in the X-QuakeToken header on a POST whose JSON body carries the query (favicon.hash:\"<mmh3>\"). Quake bills in points; the caller gates it `and not free_only`. Overrides the inline _QUAKE_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
+  "endpoints": {
+    "_comment": "v3 REST paths (joined to https://quake.360.net). search POSTs the favicon.hash query and returns quake_service rows.",
+    "search": "/api/v3/search/quake_service"
+  },
+  "budget": {
+    "_comment": "per-run guard rails; page_size caps how many service rows one favicon reverse returns.",
+    "max_calls_per_run": 15, "min_remaining": 0, "page_size": 50
+  }
+}

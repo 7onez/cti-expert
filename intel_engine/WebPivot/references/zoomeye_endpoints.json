@@ -1,0 +1,11 @@
+{
+  "_comment": "ZoomEye (api.zoomeye.ai v2) endpoint path templates + per-run budget for wp_zoomeye.py. The key travels in the API-KEY header on a POST whose JSON body carries a base64-encoded query (qbase64 = base64('iconhash=\"<mmh3>\"')). Response success code is 60000. ZoomEye bills query quota; the caller gates it `and not free_only`. Overrides the inline _ZOOMEYE_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
+  "endpoints": {
+    "_comment": "v2 REST paths (joined to https://api.zoomeye.ai). search POSTs the base64 iconhash query and returns asset rows.",
+    "search": "/v2/search"
+  },
+  "budget": {
+    "_comment": "per-run guard rails; page_size caps how many rows one favicon reverse returns.",
+    "max_calls_per_run": 15, "min_remaining": 0, "page_size": 50
+  }
+}

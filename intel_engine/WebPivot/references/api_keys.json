@@ -196,6 +196,28 @@
         "without_it": "Validin's reverse pivots (passive DNS / subdomains / reverse-IP / hash reverse) are unqueried; only the manual Validin query string is emitted for the analyst to run in the web UI. WHOIS history stays with WhoisXML regardless (paid on Validin)",
         "free_fallback": "the other reverse indexes if keyed (FOFA/Censys/HunterHow) and the emitted Validin query string for the web UI",
         "signup": "https://app.validin.com/"
+      },
+      "QUAKE_API_KEY": {
+        "service": "Quake (360)",
+        "aliases": ["QUAKE_TOKEN"],
+        "companion": ["QUAKE_API_KEY_FALLBACK"],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "independent CN-dense cyberspace index — favicon mmh3 reverse -> hosts serving the same icon (re-skinned kit siblings FOFA/Hunter.how may miss)",
+        "without_it": "the Quake favicon-hash reverse is unqueried; only the manual query string is emitted for the web UI",
+        "free_fallback": "the other favicon reverses if keyed (FOFA/Hunter.how/ZoomEye) and the emitted Quake query string",
+        "signup": "https://quake.360.net/"
+      },
+      "ZOOMEYE_API_KEY": {
+        "service": "ZoomEye",
+        "aliases": ["ZOOMEYE_KEY"],
+        "companion": ["ZOOMEYE_API_KEY_FALLBACK"],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "independent cyberspace index — favicon iconhash (mmh3) reverse -> hosts serving the same icon; corroborates or extends FOFA/Hunter.how/Quake",
+        "without_it": "the ZoomEye favicon-hash reverse is unqueried; only the manual query string is emitted for the web UI",
+        "free_fallback": "the other favicon reverses if keyed (FOFA/Hunter.how/Quake) and the emitted ZoomEye query string",
+        "signup": "https://www.zoomeye.ai/profile"
       }
     }
   },

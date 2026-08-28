@@ -1,11 +1,18 @@
 {
-  "_note": "DNSLytics (api.dnslytics.net v1) endpoint path templates + per-call credit cost + budget for wp_dnslytics.py. apikey travels as a query-string param, not a header. accountinfo is FREE (0 credits) and used only to prime the balance cache; reverseadsense/reverseganalytics/reverseip are pay-as-you-go premium calls billed against the account's prepaid credit balance. Overrides the inline _DNSLYTICS_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
+  "_comment": "DNSLytics (api.dnslytics.net v1) endpoint path templates + per-call credit cost + budget for wp_dnslytics.py. apikey travels as a query-string param, not a header. accountinfo is FREE (0 credits) and used only to prime the balance cache; reverseadsense/reverseganalytics/reverseip are pay-as-you-go premium calls billed against the account's prepaid credit balance. Overrides the inline _DNSLYTICS_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
   "endpoints": {
+    "_comment": "v1 REST paths joined to https://api.dnslytics.net/v1; {q} is the URL-encoded query value (id or IP).",
     "accountinfo": "/accountinfo",
     "reverseadsense": "/reverseadsense/{q}",
     "reverseganalytics": "/reverseganalytics/{q}",
     "reverseip": "/reverseip/{q}"
   },
-  "credits": {"reverseadsense": 6, "reverseganalytics": 6, "reverseip": 5},
-  "budget": {"max_calls_per_run": 15, "min_remaining": 5}
+  "credits": {
+    "_comment": "per-call prepaid credit cost, charged against the account balance read from accountinfo.",
+    "reverseadsense": 6, "reverseganalytics": 6, "reverseip": 5
+  },
+  "budget": {
+    "_comment": "per-run guard rails: call ceiling and the min balance to keep before degrading to a note.",
+    "max_calls_per_run": 15, "min_remaining": 5
+  }
 }

@@ -90,6 +90,8 @@ import wp_hunterhow  # noqa  (Hunter.how reverse search; --no-hunterhow flips EN
 import wp_validin  # noqa  (Validin infra-pivot: passive DNS/subdomains/reverse-IP/hash reverse; --no-validin off-switch)
 import wp_securitytrails  # noqa  (SecurityTrails subdomains/DNS history; --no-securitytrails off-switch)
 import wp_dnslytics  # noqa  (DNSLytics reverse GA/AdSense -> siblings; --no-dnslytics off-switch)
+import wp_quake    # noqa  (Quake/360 favicon-hash reverse -> hosts; --no-quake off-switch)
+import wp_zoomeye  # noqa  (ZoomEye favicon-hash reverse -> hosts; --no-zoomeye off-switch)
 import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin behind a CDN)
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
 import wp_exhaust  # noqa  (collection-exhaustion checklist: which evidence layers never ran)
@@ -215,7 +217,9 @@ def _emit_result(result, args, src):
 
 def main():
     ap = argparse.ArgumentParser(description="WebPivot — extract OSINT pivot artifacts from a page.")
-    ap.add_argument("source", help="URL, IP address, local HTML file, or '-' for stdin")
+    ap.add_argument("source", nargs="?", default=None,
+                    help="URL, IP address, local HTML file, or '-' for stdin (optional for "
+                         "standalone actions like --validin-bulk)")
     ap.add_argument("--render", action="store_true", help="render post-JS DOM via Playwright")
     ap.add_argument("--leads", action="store_true", help="print ranked pivot leads (markdown) instead of JSON")
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON")
@@ -272,12 +276,23 @@ def main():
                          "FREE-keyed but quota-limited (Community 10/day); wp_validin caps calls "
                          "per domain so a run never empties the key. The Validin query string is "
                          "still emitted on every reversible pivot — built offline, costing nothing.")
+    ap.add_argument("--validin-bulk", metavar="FILE", default=None,
+                    help="OPT-IN batch verdicts: POST the indicators in FILE (one per line) to "
+                         "Validin bulk/osint/context and print the JSON. Bulk is Professional+ — on "
+                         "a Community/keyless key it degrades to a capability-gap note, never an "
+                         "error. Standalone action: does not fetch the page target.")
     ap.add_argument("--no-securitytrails", action="store_true",
                     help="do NOT call the SecurityTrails API even if SECURITYTRAILS_API_KEY is set "
                          "(freemium 50/month; metered).")
     ap.add_argument("--no-dnslytics", action="store_true",
                     help="do NOT call the DNSLytics API even if DNSLYTICS_API_KEY is set "
                          "(credit-metered; reverse GA/AdSense -> sibling domains).")
+    ap.add_argument("--no-quake", action="store_true",
+                    help="do NOT call the Quake (360) API even if QUAKE_API_KEY is set "
+                         "(point-metered; favicon-hash reverse -> co-branded hosts).")
+    ap.add_argument("--no-zoomeye", action="store_true",
+                    help="do NOT call the ZoomEye API even if ZOOMEYE_API_KEY is set "
+                         "(quota-metered; favicon-hash reverse -> co-branded hosts).")
     ap.add_argument("--no-pssl", action="store_true",
                     help="do NOT query CIRCL passive SSL even when the CIRCL credentials "
                          "(PDNS_USERNAME/PDNS_PASSWORD) are set. Passive SSL is the historical "
@@ -437,6 +452,22 @@ def main():
     # State the run's capability BEFORE any collection, so the analyst reads the caveat with the
     # result rather than after acting on it. Silent when every key is present — see wp_capabilities.
     wp_capabilities.print_banner(free_only=args.free_only)
+    if args.validin_bulk:
+        # Standalone opt-in: batch-verdict a file of indicators. bulk_osint() self-gates on
+        # permitted_paths() (Professional+) AND can_spend(), so on a Community/keyless key it
+        # returns a skipped capability-gap note rather than an error or a wasted call.
+        try:
+            with open(args.validin_bulk, encoding="utf-8") as _fh:
+                _inds = [ln.strip() for ln in _fh if ln.strip() and not ln.startswith("#")]
+        except OSError as _e:
+            print(json.dumps({"error": "cannot read --validin-bulk file: %s" % _e}), file=sys.stderr)
+            return 2
+        print(json.dumps({"validin_bulk": wp_validin.bulk_osint(_inds), "indicators": len(_inds)},
+                         ensure_ascii=False, indent=2 if args.pretty else None))
+        return 0
+    if not args.source:
+        ap.error("source is required (a URL, IP, file, or '-') unless a standalone action "
+                 "like --validin-bulk is given")
     # The IntelX layer states its own capability separately: it is the only layer whose absence
     # removes an entire CORPUS (leaks, stealer logs, pastes, darknet) rather than an index of the
     # live internet, and a keyless run of it is explicitly ~50% — see wp_intelx.capability().
@@ -456,6 +487,8 @@ def main():
     wp_validin.ENABLED = not args.no_validin  # offline query-string path unaffected — costs nothing
     wp_securitytrails.ENABLED = not args.no_securitytrails  # offline path unaffected
     wp_dnslytics.ENABLED = not args.no_dnslytics            # offline path unaffected
+    wp_quake.ENABLED = not args.no_quake                    # offline path unaffected
+    wp_zoomeye.ENABLED = not args.no_zoomeye                # offline path unaffected
     wp_pssl.ENABLED = not args.no_pssl       # passive SSL: historical cert->IP (origin recovery)
     # Asset layer (JS bundles / source maps / well-known files) — on by default, per-half opt-out.
     wp_assets.COLLECT_ASSETS = not args.no_assets

@@ -270,6 +270,30 @@ def _add_cand(cands, host, source, seed_apexes):
         slot["examples"].add(host.lower())
 
 
+# Phase 10 — UNIVERSAL frontier consumption. Every engine that attaches a host/domain-yielding
+# live_results block is ONE entry here: (live_results key, list field, source label). A row is a
+# bare host string or an engine dict carrying domain/host/name. Adding an engine is a one-line
+# addition, never a new branch. The same apex found by N engines merges into ONE candidate whose
+# `sources` set has length N (see _add_cand) → corroboration score = |sources|.
+_HOST_YIELDING_SOURCES = (
+    ("validin",        "hosts",   "validin"),
+    ("validin_subs",   "hosts",   "validin_subdomain"),
+    ("hunterhow",      "hosts",   "hunterhow"),
+    ("censys_cert",    "names",   "censys_cert"),
+    ("securitytrails", "hosts",   "securitytrails"),
+    ("dnslytics",      "domains", "dnslytics"),
+    ("quake",          "hosts",   "quake"),
+    ("zoomeye",        "hosts",   "zoomeye"),
+)
+
+
+def _row_host(row):
+    """A host/domain string from a frontier row that may be a bare string or an engine dict."""
+    if isinstance(row, dict):
+        return row.get("domain") or row.get("host") or row.get("name") or ""
+    return row
+
+
 _CDN_IDX = []          # lazy one-shot cache: [] = not loaded, [None] = unavailable, [idx] = loaded
 
 
@@ -342,22 +366,15 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
         # reverse-WHOIS siblings left behind by a prior --whois-reverse run
         for st in ("reverse_whois_current", "reverse_whois_historic"):
             _whois_candidates(lr.get(st) or {}, cands, seed_apexes, deferred, host, st)
-        # ARTIFACT-REVERSE + Validin hosts -> frontier seeds. Phase 6/10: engines that make real
-        # calls whose discoveries the loop never consumed (Validin co-hosted + subdomains,
-        # Hunter.how favicon/body reverse, Censys cert names). Attached to domain AND per-artifact
-        # pivots, so mined here (outside the kind=="domain" block) across every pivot.
-        for h in (lr.get("validin") or {}).get("hosts") or []:
-            _add_cand(cands, h, "validin", seed_apexes)
-        for h in (lr.get("validin_subs") or {}).get("hosts") or []:
-            _add_cand(cands, h, "validin_subdomain", seed_apexes)
-        for x in (lr.get("hunterhow") or {}).get("hosts") or []:
-            _add_cand(cands, x.get("domain") if isinstance(x, dict) else x, "hunterhow", seed_apexes)
-        for nm in (lr.get("censys_cert") or {}).get("names") or []:
-            _add_cand(cands, nm, "censys_cert", seed_apexes)
-        for h in (lr.get("securitytrails") or {}).get("hosts") or []:
-            _add_cand(cands, h, "securitytrails", seed_apexes)
-        for d in (lr.get("dnslytics") or {}).get("domains") or []:
-            _add_cand(cands, d, "dnslytics", seed_apexes)
+        # ARTIFACT-REVERSE hosts -> frontier seeds, REGISTRY-DRIVEN (Phase 10 universal
+        # consumption). Every host/domain-yielding engine is one _HOST_YIELDING_SOURCES entry
+        # (Validin co-hosted+subdomains, Hunter.how, Censys cert names, SecurityTrails, DNSLytics,
+        # Quake, ZoomEye), so a new engine is a one-line addition — not a new branch here. Attached
+        # to domain AND per-artifact pivots, so mined across every pivot. Same apex from N engines
+        # merges into ONE candidate with |sources| == N (corroboration score).
+        for lr_key, field, label in _HOST_YIELDING_SOURCES:
+            for row in (lr.get(lr_key) or {}).get(field) or []:
+                _add_cand(cands, _row_host(row), label, seed_apexes)
     # top-level urlscan-related infra attached when the page itself was gone
     for d in ((obj.get("related_urlscan") or {}).get("domains") or []):
         _add_cand(cands, d, "urlscan_related", seed_apexes)
