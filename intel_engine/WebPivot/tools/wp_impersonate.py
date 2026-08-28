@@ -271,6 +271,22 @@ def urlscan_keyword_hunt(label: str, timeout: int = 30):
             "total": res.get("total")}
 
 
+
+def validin_lookalike_hunt(domain: str):
+    """Validin newly-observed Levenshtein<=2 lookalikes for `domain`. FREE (quota-governed in
+    wp_validin, runs even under --free-only); returns {} when no key. Each hit carries live
+    recent_dns + registrar, so Validin lookalikes are strong (registered + observed), not guesses."""
+    import wp_validin
+    if not wp_validin.validin_configured():
+        return {"source": "validin", "skipped": "no VALIDIN_API_KEY configured"}
+    res = wp_validin.lookalikes(domain)
+    if not isinstance(res, dict) or res.get("error") or res.get("skipped"):
+        return {"source": "validin", **({k: v for k, v in (res or {}).items()
+                                         if k in ("error", "skipped")} or {"error": "no result"})}
+    domains = sorted({_registrable(r.get("domain")) for r in (res.get("records") or [])
+                      if r.get("domain")})
+    return {"source": "validin", "domains": [d for d in domains if d], "count": len(domains)}
+
 # --- orchestration + WebPivot-shaped result ---------------------------------
 def build_impersonation_result(domain: str, *, max_variants: int = 600, fofa: bool = False,
                                urlscan: bool = False, case=None) -> dict:
@@ -293,6 +309,9 @@ def build_impersonation_result(domain: str, *, max_variants: int = 600, fofa: bo
         jobs["fofa"] = lambda: fofa_keyword_hunt(label)
     if urlscan:
         jobs["urlscan"] = lambda: urlscan_keyword_hunt(label)
+    import wp_validin
+    if wp_validin.validin_configured():
+        jobs["validin"] = lambda: validin_lookalike_hunt(domain)
     if len(jobs) == 1:
         hunts = {"crtsh": crtsh_keyword_hunt(label)}
     else:
