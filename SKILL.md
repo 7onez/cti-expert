@@ -262,15 +262,15 @@ Commands grouped by AEAD phase.
 | `/query [subject]` | Builds 12–15 advanced search operator queries **T2:** `intel.py query <indicator>` | `/query example.com` |
 | `/username [handle]` | Enumerate handle across 3000+ platforms **T2:** `intel.py username <handle>`. **T1:** `username_enum` — HYPOTHESES, not findings | `/username johndoe` |
 | `/phone [number]` | Carrier, line type, reputation, public associations **T2:** `intel.py phone +<E164>`. **T1:** `phone_osint` — carrier/line-type NOT determined | `/phone +84901234567` |
-| `/email-deep [email]` | Accounts, breach history, infrastructure **[unimplemented]** | `/email-deep u@domain.com` |
-| `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` **[unimplemented]** | `/subdomain example.com` |
-| `/breach-deep [email]` | Multi-source breach lookup with context **[unimplemented]** | `/breach-deep u@domain.com` |
-| `/traffic [domain]` | Traffic estimation, ranking, audience data **[unimplemented]** | `/traffic example.com` |
-| `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics | `/visitors example.com` |
-| `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) | `/techstack example.com` |
-| `/competitors [domain]` | Competitor & related site discovery | `/competitors example.com` |
-| `/secrets [target]` | Exposed credentials in repos and paste sites **[unimplemented]** | `/secrets github.com/org` |
-| `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks **[unimplemented]** | `/github-osint github.com/org/repo` |
+| `/email-deep [email]` | Accounts, breach history, infrastructure **T2:** `intel.py email-deep <email>`. **T1:** `deep_profile` — metered steps planned, not fired | `/email-deep u@domain.com` |
+| `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` **T2:** `intel.py subdomain <domain>`. **T1:** `subdomain_enum` — multi-source; names any source that was down | `/subdomain example.com` |
+| `/breach-deep [email]` | Multi-source breach lookup with context **T2:** `intel.py breach-deep <email>`. **T1:** `deep_profile` (mode=breach) | `/breach-deep u@domain.com` |
+| `/traffic [domain]` | Traffic estimation, ranking, audience data **T2:** `intel.py traffic <domain>`. **T1:** `traffic_rank` — Tranco only; no paid-panel estimates | `/traffic example.com` |
+| `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics **T2:** `intel.py visitors <url>`. **T1:** `pivot_extract` (trackers) | `/visitors example.com` |
+| `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) **T2:** `intel.py techstack <url>`. **T1:** `pivot_extract` (tech_fingerprint) | `/techstack example.com` |
+| `/competitors [domain]` | Competitor & related site discovery **[unimplemented]** | `/competitors example.com` |
+| `/secrets [target]` | Exposed credentials in repos and paste sites **T2:** `intel.py secrets <target>`. **T1:** `github_osint` (secrets=true) — code search needs auth, so queries are EMITTED | `/secrets github.com/org` |
+| `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks **T2:** `intel.py github-osint <target>`. **T1:** `github_osint` | `/github-osint github.com/org/repo` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence **T2:** `intel.py threat-check <indicator>`. **T1:** `threat_check` | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check **T2:** `intel.py scam-check <domain>`. **T1:** `threat_check` (mode=scam) | `/scam-check susp-site.xyz` |
 | `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) **T2:** `intel.py webpivot <url>`. **T1:** `pivot_extract` | `/webpivot https://scam-site.top` |
@@ -285,28 +285,28 @@ Commands grouped by AEAD phase.
 | `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline. Pure matching, **no request reaches the target**. **T2:** `intel.py sensitive-paths --file <list>`. **T1:** `sensitive_paths` | `/sensitive-paths waymore_index.txt` |
 | `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable / MX / free / role). An RFC 7505 **null MX** (`0 .`) scores as undeliverable, not valid. **T2:** `intel.py email-hygiene <email>`. **T1:** `email_hygiene` | `/email-hygiene admin@site.top` |
 | `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) **T2:** `intel.py vuln-check CVE-… | --product <p>`. **T1:** `vuln_check` | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
-| `/ransomware-check [org]` | Check if org is a ransomware victim | `/ransomware-check "Acme Corp"` |
+| `/ransomware-check [org]` | Check if org is a ransomware victim **T2:** `intel.py ransomware-check <domain>`. **T1:** `threat_check` (mode=scam) | `/ransomware-check "Acme Corp"` |
 | `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown) | `/stealer-log ./logs` |
-| `/gdoc [url]` | Extract metadata/owner from Google document **[unimplemented]** | `/gdoc https://docs.google.com/...` |
+| `/gdoc [url]` | Extract metadata/owner from Google document **T2:** `intel.py gdoc <url>`. **T1:** `doc_metadata` | `/gdoc https://docs.google.com/...` |
 | `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint **T2:** `intel.py msftrecon <domain>`. **T1:** `msft_recon` | `/msftrecon example.com` |
-| `/icp [domain\|serial]` | ICP filing (工信部备案) → registered PRC entity + licence number; reverse the **licence serial** to sibling domains under the same filing (same-operator, HIGH). See `techniques/china-recon.md` **[unimplemented]** | `/icp scam-site.top` |
-| `/cn-corp [name\|USCC]` | PRC corporate registry chain — GSXT (ground truth) → TianYanCha/QCC/Aiqicha → 信用中国 blacklist → UBO; officers, shareholders, subsidiaries, revoked-status flags **[unimplemented]** | `/cn-corp 深圳市某某科技有限公司` |
+| `/icp [domain\|serial]` | ICP filing (工信部备案) → registered PRC entity + licence number; reverse the **licence serial** to sibling domains under the same filing (same-operator, HIGH). See `techniques/china-recon.md` **T2:** `intel.py icp <domain>`. **T1:** `cn_recon` — MIIT is CAPTCHA-walled; gates are named | `/icp scam-site.top` |
+| `/cn-corp [name\|USCC]` | PRC corporate registry chain — GSXT (ground truth) → TianYanCha/QCC/Aiqicha → 信用中国 blacklist → UBO; officers, shareholders, subsidiaries, revoked-status flags **T2:** `intel.py cn-corp --company "<name>"`. **T1:** `cn_recon` — GSXT/TianYanCha gated | `/cn-corp 深圳市某某科技有限公司` |
 | `/iban [value]` | Validate + decompose a bank account as a selector — mod-97 checksum, country, BBAN split, bank code, jurisdiction-mismatch signals. See `techniques/fiat-payment-osint.md` **T2:** `intel.py iban <IBAN>` | `/iban GB29NWBK60161331926819` |
 | `/hash-id [hash]` | Identify a hash's algorithm **before** lookup — separates file hashes from credential material (32 hex = MD5 *or* NTLM) so it routes to the right service **T2:** `intel.py hash-id <hash> [--context file|credential]`. **T1:** `hash_id` **T2:** `intel.py hash-id <hash> [--context file|credential]`. **T1:** `hash_id` | `/hash-id 5f4dcc3b5aa765d61d8327deb882cf99` |
-| `/appliance-scan [domain\|ip]` | Fingerprint internet-facing edge/VPN appliances (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed services → CISA KEV/CVE mapping. Passive-first (Shodan InternetDB/Censys); feeds `/vuln-check` + `/threat-model`. See `techniques/fx-edge-appliance-recon.md` | `/appliance-scan vpn.example.com` |
-| `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` | `/saas-map example.com` |
-| `/sharelink [url]` | Extract sharer identity from share link **[unimplemented]** | `/sharelink https://vm.tiktok.com/ABC` |
+| `/appliance-scan [domain\|ip]` | Fingerprint internet-facing edge/VPN appliances (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed services → CISA KEV/CVE mapping. Passive-first (Shodan InternetDB/Censys); feeds `/vuln-check` + `/threat-model`. See `techniques/fx-edge-appliance-recon.md` **[unimplemented]** | `/appliance-scan vpn.example.com` |
+| `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` **T2:** `intel.py saas-map <url>`. **T1:** `pivot_extract` (saas_ids) | `/saas-map example.com` |
+| `/sharelink [url]` | Extract sharer identity from share link **T2:** `intel.py sharelink <url>`. **T1:** `sharelink_resolve` — contacts the final host | `/sharelink https://vm.tiktok.com/ABC` |
 | `/binary [file\|url]` | **Built-in.** Static IOC extraction from a scam/fraud binary (sideloaded APK, desktop trading `.exe`/`.dmg`, bundled `.jar`) via the in-repo `BinaryPivot/` — signing-cert SHA-256, package name/permissions, embedded C2/backend hosts, Firebase/S3 tenants, wallets, Telegram/WhatsApp handles. Output is WebPivot-shaped → clusters the app with web infra in the shared KB. See `connectors/intel-backend.md` §7 | `/binary ./trader.apk` |
 <!-- dork-integration:phase-05 start -->
 | `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Zero-auth dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier fallback cascade **T2:** `intel.py dork-sweep <target>` | `/dork-sweep example.com --filetype` |
-| `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW) **[unimplemented]** | `/docleak "Acme Corp"` |
+| `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW) **T2:** `intel.py docleak "<target>"`. **T1:** `dork_builder` — emits queries, never runs them | `/docleak "Acme Corp"` |
 <!-- dork-integration:phase-05 end -->
-| `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS | `/dns-history example.com` |
-| `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) | `/cert-history example.com` |
+| `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS **T2:** `intel.py dns-history <domain>`. **T1:** `wayback_ga` | `/dns-history example.com` |
+| `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) **T2:** `intel.py cert-history <domain>`. **T1:** `passive_ssl` | `/cert-history example.com` |
 | `/email-permute [name] [domain]` | Generate email permutations from name + domain | `/email-permute "John Smith" company.com` |
-| `/proton-check [email]` | Proton Mail account creation date via PGP key | `/proton-check user@proton.me` |
-| `/pgp-lookup [email]` | PGP key search — creation date, UIDs, signatures | `/pgp-lookup dev@example.com` |
-| `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net **[unimplemented]** | `/wifi "HomeNetwork"` |
+| `/proton-check [email]` | Proton Mail account creation date via PGP key **[unimplemented]** | `/proton-check user@proton.me` |
+| `/pgp-lookup [email]` | PGP key search — creation date, UIDs, signatures **[unimplemented]** | `/pgp-lookup dev@example.com` |
+| `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net **T2:** `intel.py wifi "<ssid>"`. **T1:** `wifi_ssid` — needs a WiGLE account; discloses the gap | `/wifi "HomeNetwork"` |
 | `/wifi --bssid [mac]` | Exact AP lookup by MAC address | `/wifi --bssid AA:BB:CC:DD:EE:FF` |
 | `/register [name]` | Add a subject to the case workspace | `/register JohnDoe` |
 | `/snapshots [url]` | List/fetch archived Wayback snapshots. WebFetch is blocked from web.archive.org (robots.txt) — this reads the archive instead, so **the request never reaches the target**. **T2:** `intel.py wayback-fetch <url> [--near latest\|earliest\|YYYY] [--list]`. **T1:** `wayback_fetch`. See `analysis/archive-explorer.md` | `/snapshots example.com` |
@@ -322,11 +322,11 @@ Commands grouped by AEAD phase.
 | `/rank-relations` | Score + rank same-operator relations across analyzed pages (noise-filtered). Mechanizes **one artifact = lead, two = cluster** — run it before asserting a cluster. **T2:** `intel.py rank-relations cases/<CASE>/raw/*.json`. **T1:** `rank_relations` | `/rank-relations` |
 | `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot. **T2:** `intel.py crypto-balance <addr>`. **T1:** `crypto_balance` | `/crypto-balance 1ExampleBitcoinAddressDoNotUse` |
 | `/timeline [subject]` | Assemble dated event sequence | `/timeline Company Inc` |
-| `/crossref` | Detect shared identifiers across subjects **[unimplemented]** | `/crossref` |
+| `/crossref` | Detect shared identifiers across subjects **T2:** `intel.py crossref [--case <id>]`. **T1:** `kb_crossref` | `/crossref` |
 | `/link-subjects [A] [B]` | Define a connection between two subjects **[model]** | `/link-subjects John Jane` |
 | `/show-connections` | Display all logged connections **[model]** | `/show-connections` |
-| `/show-trail [subject]` | Show the evidence chain for a subject | `/show-trail JohnDoe` |
-| `/watch [subject]` | Add subject to active tracking list | `/watch example.com` |
+| `/show-trail [subject]` | Show the evidence chain for a subject **[model]** | `/show-trail JohnDoe` |
+| `/watch [subject]` | Add subject to active tracking list **[model]** | `/watch example.com` |
 | `/record-finding` | Log a finding with source and confidence **[model]** | Paste data after command |
 | `/show-findings` | List all recorded findings **[model]** | `/show-findings` |
 | `/graph` | Full ASCII subject relationship map | `/graph` |
@@ -337,22 +337,21 @@ Commands grouped by AEAD phase.
 | Command | What It Does | Example |
 |---------|-------------|---------|
 | `/exposure [target]` | Composite exposure score (0–100) **T2:** `intel.py exposure --set k=v`. **T1:** `exposure_score` | `/exposure domain.com` |
-| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3. **Backend hook (Assess):** if `/backend` is up, calibrate confidence on your own priors first — `intel.py operators list` + `intel.py risk --case <id>` + read `knowledge/{calibration.jsonl,analyst_profile.md}` — instead of scoring from scratch. See `connectors/intel-backend.md` §6 **[unimplemented]** | `/threat-model` |
-| `/signatures` | Surface recurring behavioral patterns **[unimplemented]** | `/signatures` |
+| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3. **Backend hook (Assess):** if `/backend` is up, calibrate confidence on your own priors first — `intel.py operators list` + `intel.py risk --case <id>` + read `knowledge/{calibration.jsonl,analyst_profile.md}` — instead of scoring from scratch. See `connectors/intel-backend.md` §6 **[model]** | `/threat-model` |
+| `/signatures` | Surface recurring behavioral patterns **T2:** `intel.py signatures --set k=v`. **T1:** `signature_scan` — evaluates, does not observe | `/signatures` |
 | `/validate` | Quality audit — score 0–100 **[model]** | `/validate` |
 | `/coverage` | Coverage matrix with identified gaps — technique matrix **plus** the 5W1H substantive pass (`Why`/`How` unanswered blocks Deliver-ready) **[model]** | `/coverage` |
 | `/verify-finding [id]` | Re-check a specific finding's sources **[model]** | `/verify-finding 12` |
-| `/subject [name]` | View or create subject record | `/subject JohnDoe` |
-| `/lookup [name]` | Retrieve a registered subject | `/lookup JohnDoe` |
-| `/modify [name]` | Update a subject record | `/modify JohnDoe` |
-| `/archive-subject [name]` | Remove subject from active tracking | `/archive-subject JohnDoe` |
-| `/find [query]` | Search across all subjects | `/find domain:example.com` |
+| `/subject [name]` | View or create subject record **[model]** | `/subject JohnDoe` |
+| `/lookup [name]` | Retrieve a registered subject **[model]** | `/lookup JohnDoe` |
+| `/modify [name]` | Update a subject record **[model]** | `/modify JohnDoe` |
+| `/archive-subject [name]` | Remove subject from active tracking **[model]** | `/archive-subject JohnDoe` |
+| `/find [query]` | Search across all subjects **[model]** | `/find domain:example.com` |
 | `/show-trail [subject]` | Full evidence trail | `/show-trail JohnDoe` |
 | `/blind-spots` | Prioritized investigation gap analysis **[model]** | `/blind-spots` |
 | `/source-check` | Batch source URL accessibility check **[model]** | `/source-check` |
-| `/drift [subject]` | Temporal risk score tracking **[unimplemented]** | `/drift example.com` |
-| `/clarify [finding]` | Plain-language finding explanation | `/clarify fnd-003` |
-
+| `/drift [subject]` | Temporal risk score tracking **T2:** `intel.py drift <case> [--snapshot]`. **T1:** `case_drift` | `/drift example.com` |
+| `/clarify [finding]` | Plain-language finding explanation **[model]** | `/clarify fnd-003` |
 ### Deliver
 
 | Command | What It Does | Example |
@@ -371,7 +370,7 @@ Commands grouped by AEAD phase.
 | `/render risk` | Exposure heatmap | `/render risk` |
 | `/render network` | Network topology of connections | `/render network` |
 | `/stats` | Counts and coverage statistics **T2:** `intel.py stats` | `/stats` |
-| `/workspace save [name]` | Persist case state | `/workspace save mycase` |
+| `/workspace save [name]` | Persist case state **[model]** | `/workspace save mycase` |
 | `/workspace open [name]` | Resume a saved case | `/workspace open mycase` |
 | `/workspace list` | Show saved cases | `/workspace list` |
 | `/workspace diff [a] [b]` | Diff two saved workspaces | `/workspace diff case1 case2` |
@@ -384,8 +383,8 @@ Commands grouped by AEAD phase.
 
 | Command | What It Does | Example |
 |---------|-------------|---------|
-| `/flow [type]` | Guided step-by-step case workflow | `/flow person` |
-| `/template list` | Browse pre-built case templates | `/template list` |
+| `/flow [type]` | Guided step-by-step case workflow **[model]** | `/flow person` |
+| `/template list` | Browse pre-built case templates **[model]** | `/template list` |
 | `/template run [name]` | Run a pre-built template | `/template run security-audit` |
 | `/novice` | Toggle simplified, low-jargon mode **[model]** | `/novice` |
 | `/terms` | OSINT term glossary **[model]** | `/terms` |
