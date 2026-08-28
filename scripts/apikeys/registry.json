@@ -71,7 +71,7 @@
     {
       "id": "zonecruncher", "name": "ZoneCruncher / zetalytics", "env": "ZONECRUNCHER_API_KEY",
       "category": "dns", "tier": "freemium", "url": "https://zonecruncher.com",
-      "unlocks": "/webpivot + /dns-history: liveDNS, reverse-email -> domains registered by an email"
+      "unlocks": "NOT SCRIPTED — no code sends ZONECRUNCHER_API_KEY and no live pivot queries ZoneCruncher/zetalytics during a run; reverse-email -> domains is covered by Validin + WhoisXML. Listed for key-inventory completeness only"
     },
     {
       "id": "hudsonrock", "name": "Hudson Rock", "env": "HUDSONROCK_API_KEY", "category": "breach",

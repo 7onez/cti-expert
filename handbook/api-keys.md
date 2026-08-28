@@ -49,7 +49,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | SecurityTrails | `SECURITYTRAILS_API_KEY` (+`_FALLBACK`) | freemium | `/webpivot`,`/dns-history`: passive DNS, subdomains, DNS/WHOIS history | securitytrails.com |
 | WhoisXML | `WHOISXML_API_KEY` | freemium | `/webpivot --whois`,`/whois`: current + historic + reverse WHOIS | whoisxmlapi.com |
 | SSLMate CertSpotter | `CERTSPOTTER_API_KEY` | free-tier | `/cert-history`,`/webpivot`: higher-rate CT lookups | sslmate.com/certspotter |
-| ZoneCruncher/zetalytics | `ZONECRUNCHER_API_KEY` | freemium | `/webpivot`,`/dns-history`: liveDNS, reverse-email → domains | zonecruncher.com |
+| ZoneCruncher/zetalytics | `ZONECRUNCHER_API_KEY` | freemium | **not scripted** — no code sends this key and no run queries it; reverse-email→domains is covered by Validin + WhoisXML. Listed for key-inventory completeness | zonecruncher.com |
 | **Analytics-ID pivot** ||||
 | DNSLytics | `DNSLYTICS_API_KEY` | freemium | `/webpivot`: reverse AdSense (`ca-pub-`) / legacy GA (`UA-`) → sibling domains | dnslytics.com/api |
 | **Breach / leak / darknet** ||||
@@ -61,7 +61,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | **Code / repos** ||||
 | GitHub token | `GITHUB_TOKEN` | free | `/github-osint`,`/secrets`: higher limits, repo/code discovery | github.com/settings/tokens |
 | **Search-engine dorking** ||||
-| SerpAPI | `SERPAPI_KEY` | freemium | `/dork-sweep`,`/query`: automated Google dork queries | serpapi.com |
+| SerpAPI | `SERPAPI_KEY` | freemium | `/webpivot --serp`: Google Ads Transparency (VERIFIED paying-advertiser identity behind a domain's ads) + SERP ads. **Does NOT power `/dork-sweep` or `/query`** (that engine is keyless) | serpapi.com |
 | Bright Data SERP | `BRIGHTDATA_SERP_KEY` | paid | `/dork-sweep`: SerpAPI alternative + residential SERP | brightdata.com |
 | **AI / vision** ||||
 | Google Gemini | `GEMINI_API_KEY` | freemium | `media-vision-analysis` (multix, `npx @mrgoonie/multix`): image OCR + sign/landmark/logo/face read, structured selector extraction, A/V transcription | aistudio.google.com/apikey |
