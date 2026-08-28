@@ -87,7 +87,9 @@ if python3 -m py_compile intel_engine/tools/collect_core.py intel_engine/tools/i
 echo "== 6. zero-dep test runners =="
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
-         tests/test_email_permute.py tests/test_hooks.py; do
+         tests/test_email_permute.py tests/test_hooks.py \
+         tests/test_email_hygiene_nullmx.py scripts/test_pivot_orchestrator.py \
+         tests/test_osint_tools.py tests/test_cluster_corroboration.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 
@@ -112,6 +114,42 @@ PY
   [ "$miss" = 0 ] && note "all registered hooks resolve"
 else
   bad "hooks/hooks.json missing — the RULE 1 write-time gate and the outbound gate are not wired"
+fi
+
+echo "== 8. vendored-engine tests (stdlib-only subset) =="
+# These 15 live in intel_engine/tests/ and ran NOWHERE in CI until 2026-08-28. That gap let 15
+# newly-registered @tools sit outside the context governor across two phases: audit.sh was green
+# the whole time because it simply never executed the suite that checks governance. They cost ~1s
+# total, so there is no reason for them to be optional.
+for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py \
+         intel_engine/tests/test_docmeta.py intel_engine/tests/test_engage.py \
+         intel_engine/tests/test_exhaustion.py intel_engine/tests/test_impersonation.py \
+         intel_engine/tests/test_indicator_classification.py intel_engine/tests/test_liveness.py \
+         intel_engine/tests/test_misconfig.py intel_engine/tests/test_misp.py \
+         intel_engine/tests/test_paths_capture.py intel_engine/tests/test_pssl.py \
+         intel_engine/tests/test_serp.py intel_engine/tests/test_timeline.py \
+         intel_engine/tests/test_tool_registry.py; do
+  if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
+  if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
+done
+
+echo "== 9. vendored-engine tests needing claude_agent_sdk =="
+# test_context_budget.py is the one that catches an @tool escaping the context governor, and
+# test_tool_gate.py guards the egress rails — both import the SDK, which the fast path does not
+# have. They are RUN when the SDK is importable and SKIPPED LOUDLY when it is not, so a bare
+# CI job stays green while the job that installs deps still enforces them. A skip is reported,
+# never silent: a silently-skipped guard is the same as no guard.
+if python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
+  for t in intel_engine/tests/test_context_budget.py intel_engine/tests/test_tool_gate.py \
+           intel_engine/tests/test_references.py intel_engine/tests/test_case_scope.py \
+           intel_engine/tests/test_openai_backend.py; do
+    if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
+    if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
+  done
+else
+  note "SKIPPED (claude_agent_sdk not importable) — 5 tests incl. the context-governor check."
+  note "  Run them with the venv: .venv/bin/python intel_engine/tests/test_context_budget.py"
+  note "  CI enforces them in the 'engine tests (with SDK)' job in .github/workflows/audit.yml"
 fi
 
 echo
