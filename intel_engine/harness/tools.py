@@ -2250,6 +2250,348 @@ async def misp_publish(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(body)
 
 
+# ── repo-root collectors (scripts/webpivot/, one level above this engine) ─────────────
+# These worked but were reachable only as raw `python3 …` lines in techniques/web-pivot.md,
+# so neither front-end could call them (CLAUDE.md RULE 3). Registered 2026-08-27.
+def _rr(name: str) -> str:
+    """Path to a repo-root scripts/webpivot collector, relative to ROOT (= intel_engine/)."""
+    return os.path.join("..", "scripts", "webpivot", name)
+
+
+@tool(
+    "cert_pivot",
+    "Pivot on a TLS LEAF-CERTIFICATE FINGERPRINT to find the other hosts serving the SAME cert — "
+    "the opposite direction from CT enumeration, which only lists one domain's own certs. Give it "
+    "`domain` to fetch the live cert and pivot, or an explicit `sha1`/`sha256` you already hold. "
+    "Also mines the cert's SAN list, which is often where sibling domains are named outright. The "
+    "fingerprint is computed KEYLESS from a stdlib TLS handshake, and the crt.sh lookup needs no "
+    "key either; Shodan/Censys/FOFA keys only widen the search. Shared hosting and CDN certs are "
+    "served by thousands of unrelated hosts — treat a match on a wildcard or CDN cert as noise, "
+    "not as a same-operator link.",
+    {"domain": str},  # sha1:str, sha256:str, no_live:bool, no_crtsh:bool, cap:int
+    annotations=READONLY,
+)
+async def cert_pivot(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("cert_pivot.py")]
+    if args.get("domain"):
+        cmd.append(str(args["domain"]))
+    for k in ("sha1", "sha256"):
+        if args.get(k):
+            cmd += [f"--{k}", str(args[k])]
+    if args.get("no_live"):
+        cmd.append("--no-live")
+    if args.get("no_crtsh"):
+        cmd.append("--no-crtsh")
+    if args.get("cap"):
+        cmd += ["--cap", str(args["cap"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "rank_relations",
+    "Score and rank SAME-OPERATOR relations between the pages already collected into a case. Feed "
+    "it `inputs` — the pivot_extract JSON a case has written (typically `cases/<CASE>/raw/*.json`, "
+    "space-separated or a glob). For every pair of hosts it sums the weighted strength of the "
+    "artifacts they share (tracker ID, favicon hash, wallet, registrant email, origin IP, cert, DOM "
+    "template …) after dropping ubiquitous CDN/analytics/font infrastructure via the noise denylist. "
+    "This MECHANIZES the rule that one shared artifact is a lead and two independent ones are a "
+    "cluster — run it before asserting any cluster by eye. Pure post-processing, no network.",
+    {"inputs": str},  # min_strength:int, include_weak:bool, md:bool
+    annotations=READONLY,
+)
+async def rank_relations(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("rank_relations.py"), *str(args.get("inputs") or "").split()]
+    if args.get("min_strength"):
+        cmd += ["--min-strength", str(args["min_strength"])]
+    if args.get("include_weak"):
+        cmd.append("--include-weak")
+    if args.get("md"):
+        cmd.append("--md")
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "pivot_suggest",
+    "Rank WHAT TO PIVOT ON NEXT from a case's findings — the triage step between a collection round "
+    "and the next one, so the expensive query goes to the highest-yield selector instead of the "
+    "first one you noticed. Takes a `findings` JSON path, or ad-hoc comma-separated `usernames` / "
+    "`emails` / `names` / `domains` / `cjk` when you have not written findings yet. Returns the "
+    "selectors ordered by expected yield with the reason each was ranked where it was. Pure "
+    "reasoning over what you already hold — no network, no credits.",
+    {},  # findings:str, usernames:str, emails:str, names:str, domains:str, cjk:str
+    annotations=READONLY,
+)
+async def pivot_suggest(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("pivot_suggest.py")]
+    if args.get("findings"):
+        cmd.append(str(args["findings"]))
+    for k in ("usernames", "emails", "names", "domains", "cjk"):
+        if args.get(k):
+            cmd += [f"--{k}", str(args[k])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "crypto_balance",
+    "On-chain BALANCE and lifetime-flow enrichment for wallet `addresses` (comma- or space-"
+    "separated). Auto-detects the chain per address, or force it with `coin` "
+    "(btc/eth/ltc/trx/ada/dot/bch/doge/dash/zec/xmr). Turns a wallet string scraped off a scam page "
+    "into evidence of SCALE — total received, transaction count, first/last activity — which is what "
+    "separates a live cash-out address from a decorative one copied off another kit. Read-only "
+    "public block-explorer queries; it never broadcasts anything.",
+    {"addresses": str},  # coin:str
+    annotations=READONLY,
+)
+async def crypto_balance(args: dict[str, Any]) -> dict[str, Any]:
+    addrs = str(args.get("addresses") or "").replace(",", " ").split()
+    cmd = [PY, _rr("crypto_balance.py"), *addrs]
+    if args.get("coin"):
+        cmd += ["--coin", str(args["coin"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "email_hygiene",
+    "Grade the DOMAIN behind one or more `emails` 0-100 and A-F, deterministically — same input "
+    "always yields the same grade. Penalises disposable/burner providers, an absent or RFC 7505 "
+    "null MX (a domain publishing `0 .` accepts no mail and is scored as undeliverable, not as "
+    "valid), free webmail, and role mailboxes. Use it to decide how much weight a registrant or "
+    "contact address deserves BEFORE pivoting on it: a burner scores low and a corporate domain "
+    "scores high, and that ordering is the whole point. MX is checked keyless over DNS-over-HTTPS; "
+    "disposable detection works fully offline.",
+    {"emails": str},
+    annotations=READONLY,
+)
+async def email_hygiene(args: dict[str, Any]) -> dict[str, Any]:
+    emails = str(args.get("emails") or "").replace(",", " ").split()
+    r = _run([PY, _rr("email_hygiene.py"), *emails])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "sensitive_paths",
+    "Classify `urls` against sensitive-path patterns and return only what is worth a look — admin "
+    "panels, backups, config and env files, dumps, installers, credential stores — each with a "
+    "severity (CRITICAL/HIGH/MEDIUM/LOW). Built to be pointed at a Wayback/CDX listing, so accepts "
+    "bare URLs, `timestamp url` rows, and raw CDX lines. Filter with `severity`. PURE pattern "
+    "matching with NO network: it tells you which archived paths existed and are worth fetching — "
+    "it never requests them, so nothing here touches the target.",
+    {"urls": str},  # severity:str, file:str
+    annotations=READONLY,
+)
+async def sensitive_paths(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("sensitive_paths.py")]
+    if args.get("file"):
+        cmd += ["--file", str(args["file"])]
+    else:
+        cmd += str(args.get("urls") or "").split()
+    if args.get("severity"):
+        cmd += ["--severity", str(args["severity"]).upper()]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "wayback_fetch",
+    "Resolve the nearest Wayback snapshot of `url` and return its RAW archived content. This is the "
+    "way to read a page that is dead, cloaked, or robots.txt-blocked to a normal fetch, and it is "
+    "PASSIVE — the request goes to archive.org, never to the target, so it leaves no trace in the "
+    "operator's logs. `near` takes 'latest' (default), 'earliest', or a YYYY / YYYYMMDD to pin an "
+    "era; `yfrom`/`yto` bound the range; `list` enumerates the available snapshots instead of "
+    "fetching one. Prefer this over a live fetch for any adversarial infrastructure.",
+    {"url": str},  # near:str, yfrom:str, yto:str, status:str, mime:str, list:bool, text:bool
+    annotations=READONLY,
+)
+async def wayback_fetch(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("wayback_fetch.py"), str(args.get("url") or "")]
+    for k, flag in (("near", "--near"), ("yfrom", "--from"), ("yto", "--to"),
+                    ("status", "--status"), ("mime", "--mime")):
+        if args.get(k):
+            cmd += [flag, str(args[k])]
+    if args.get("list"):
+        cmd.append("--list")
+    if args.get("text"):
+        cmd.append("--text")
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "wayback_harvest",
+    "Sweep a `domain`'s ENTIRE Wayback history and harvest every indicator the archive still holds — "
+    "trackers, wallets, emails, phones, Telegram handles, third-party hosts — across snapshots, not "
+    "just the page as it stands today. This is how you recover the artifacts an operator has since "
+    "SCRUBBED: the GA ID that clustered the estate is frequently only in a 2023 capture. Set `max` "
+    "to bound how many snapshots are sampled, `yfrom`/`yto` to target a registrant era, `timeline` "
+    "for chronological output, `indicators` for the IOC roll-up. Passive — archive.org only.",
+    {"domain": str},  # max:int, yfrom:str, yto:str, urlscan:bool, timeline:bool, indicators:bool
+    annotations=READONLY,
+)
+async def wayback_harvest(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _rr("wayback_harvest.py"), str(args.get("domain") or "")]
+    if args.get("max"):
+        cmd += ["--max", str(args["max"])]
+    for k, flag in (("yfrom", "--from"), ("yto", "--to")):
+        if args.get(k):
+            cmd += [flag, str(args[k])]
+    for k in ("urlscan", "timeline", "indicators"):
+        if args.get(k):
+            cmd.append(f"--{k}")
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+def _os_(name: str) -> str:
+    """Path to a scripts/osint tool, relative to ROOT (= intel_engine/)."""
+    return os.path.join("..", "scripts", "osint", name)
+
+
+@tool(
+    "hash_id",
+    "Identify what a hash IS before looking it up — and refuse to guess when it matters. A 32-hex "
+    "string is MD5 *or* NTLM: the first is a file hash you may freely submit to a public corpus, "
+    "the second is CREDENTIAL material whose submission irreversibly discloses someone's password "
+    "hash to a third party. Length cannot separate them, so an unqualified 32-hex returns "
+    "AMBIGUOUS with safe_to_submit=false; pass `context` as 'file' or 'credential' once you know "
+    "the provenance and it resolves. Also covers bcrypt/argon2/scrypt/shadow formats, ssdeep and "
+    "TLSH. Pure, offline, no keys. Run this BEFORE any sandbox or corpus submission.",
+    {"hashes": str},  # context:'file'|'credential'
+    annotations=READONLY,
+)
+async def hash_id(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("hash_id.py"), *str(args.get("hashes") or "").replace(",", " ").split()]
+    if args.get("context"):
+        cmd += ["--context", str(args["context"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "threat_check",
+    "Reputation for any `indicator` — ip, domain, url or file hash — across feeds that are still "
+    "genuinely keyless (AlienVault OTX, urlscan.io), plus VirusTotal/AbuseIPDB only when their key "
+    "is set. Set `mode` to 'scam' to add ransomware victim records for the fraud reading. Two "
+    "behaviours matter: a feed with no key is reported as NOT CONSULTED rather than silently "
+    "counted as clean, and OTX's own whitelist is respected so popular infrastructure is not "
+    "flagged for merely appearing in pulses. 'NO ADVERSE RECORD' is never a clean bill — fresh "
+    "scam infrastructure is absent from every reputation feed for weeks, so judge new domains on "
+    "their own artifacts instead.",
+    {"indicator": str},  # mode:'threat'|'scam'
+    annotations=READONLY,
+)
+async def threat_check(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("reputation_check.py"), str(args.get("indicator") or "")]
+    if str(args.get("mode") or "") == "scam":
+        cmd += ["--mode", "scam"]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "vuln_check",
+    "Resolve a `cve` id (or search `product`) against CIRCL cve-search and NVD API v2 — both "
+    "keyless. Returns CVSS score, severity, vector, description and references. Queries BOTH "
+    "corpora on purpose: CIRCL lags on very fresh CVEs, NVD lags on enrichment, and a "
+    "single-source severity is a number you cannot defend; when the two disagree the result "
+    "carries `severity_disagreement` rather than silently picking one. Reconnaissance only — this "
+    "maps a product/version to PUBLIC advisories and never probes a host.",
+    {},  # cve:str, product:str, limit:int
+    annotations=READONLY,
+)
+async def vuln_check(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("vuln_check.py")]
+    if args.get("product"):
+        cmd += ["--product", str(args["product"])]
+        if args.get("limit"):
+            cmd += ["--limit", str(args["limit"])]
+    else:
+        cmd += str(args.get("cve") or "").replace(",", " ").split()
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "msft_recon",
+    "M365 / Entra ID tenant recon for a `domain` — tenant id, namespace (Managed vs Federated), "
+    "federation brand and cloud instance. Entirely KEYLESS and passive: every request goes to "
+    "login.microsoftonline.com, never to the target, so the operator sees nothing. Useful because "
+    "a real trading company usually has a tenant and a two-week-old shell usually does not, and "
+    "because a Federated namespace exposes the identity provider host as its own pivot. Note that "
+    "Microsoft has RESTRICTED tenant-domain enumeration — the result says so explicitly rather "
+    "than implying a tenant owns a single domain.",
+    {"domain": str},
+    annotations=READONLY,
+)
+async def msft_recon(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, _os_("msft_recon.py"), str(args.get("domain") or "")])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "username_enum",
+    "Check whether a `username` exists on a curated set of platforms whose present/absent "
+    "detection has been VERIFIED (github, gitlab, keybase, npm, hackernews, telegram, dev.to). "
+    "Deliberately small: platforms that soft-404 were removed because a detector that always "
+    "answers 'present' manufactures links that do not exist. The output is explicitly HYPOTHESES, "
+    "never findings — a handle existing in two places does not make it one person, since handles "
+    "are squatted, recycled and coincidental. Corroborate with profile content or a shared "
+    "artifact before linking identities, and never write a hypothesis into a case as fact.",
+    {"username": str},  # platforms:str
+    annotations=READONLY,
+)
+async def username_enum(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("username_enum.py"), str(args.get("username") or "")]
+    if args.get("platforms"):
+        cmd += ["--platforms", str(args["platforms"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "phone_osint",
+    "Decompose one or more phone `numbers` into what is deterministically knowable: E.164 "
+    "validation, territory from the calling code, national-number split with a length check, "
+    "messaging deep links, and the source-search queries that actually cluster infrastructure — "
+    "an operator reuses one contact number across a whole estate, so finding it quoted in page "
+    "source links the sites. It does NOT report carrier or line type: those need a metered "
+    "HLR/portability lookup and a prefix guess is unreliable because numbers are ported. The "
+    "result names those as not_determined instead of inventing them. Offline and deterministic.",
+    {"numbers": str},
+    annotations=READONLY,
+)
+async def phone_osint(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, _os_("phone_osint.py"),
+              *str(args.get("numbers") or "").replace(",", " ").split()])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "exposure_score",
+    "Composite 0-100 SUBJECT exposure score from analysis/weight-engine.md — security, privacy, "
+    "reputation, legal, infrastructure and surface, weighted. This is the person/organisation "
+    "counterpart to `risk_signals`, which scores INFRASTRUCTURE; do not conflate the two in a "
+    "report. Pure: it consumes indicator values you have already collected (pass `indicators` as "
+    "'key=value,key=value' or a JSON file path) and looks nothing up. Indicators you omit are "
+    "listed as missing and excluded from the denominator, and the result states the coverage — a "
+    "subject scored on 3 of 11 indicators is not comparable to one scored on 11.",
+    {},  # indicators:str, infile:str
+    annotations=READONLY,
+)
+async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("exposure_score.py")]
+    if args.get("infile"):
+        cmd.append(str(args["infile"]))
+    for kv in str(args.get("indicators") or "").split(","):
+        if kv.strip():
+            cmd += ["--set", kv.strip()]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
 # ---------------------------------------------------------------- servers + names
 # Every @tool MUST appear in exactly one server below AND in that server's *_TOOLS allowlist.
 # The stdio front-end (mcp_server.py) auto-discovers @tools, so a tool missing here is visible in
@@ -2279,6 +2621,8 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       domain_liveness,
                       detect_login, make_persona, engage_account, harvest_authenticated,
                       engage_report,
+                      cert_pivot, crypto_balance, wayback_fetch, wayback_harvest,
+                      threat_check, msft_recon, username_enum,
                       kb_ingest])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
@@ -2288,6 +2632,8 @@ ANALYZE_SERVER = create_sdk_mcp_server(
                       email_permute,
                       render_diagram, case_timeline, render_report, victim_profile,
                       collection_gaps,
+                      rank_relations, pivot_suggest, sensitive_paths, email_hygiene,
+                      hash_id, vuln_check, phone_osint, exposure_score,
                       misp_export, misp_search, misp_push, misp_publish])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
@@ -2305,6 +2651,10 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__detect_login", "mcp__collect__make_persona",
                  "mcp__collect__engage_account", "mcp__collect__harvest_authenticated",
                  "mcp__collect__engage_report",
+                 "mcp__collect__cert_pivot", "mcp__collect__crypto_balance",
+                 "mcp__collect__threat_check", "mcp__collect__msft_recon",
+                 "mcp__collect__username_enum",
+                 "mcp__collect__wayback_fetch", "mcp__collect__wayback_harvest",
                  "mcp__collect__kb_ingest"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
@@ -2322,4 +2672,8 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__render_report", "mcp__analyze__victim_profile",
                  "mcp__analyze__collection_gaps",
                  "mcp__analyze__misp_export", "mcp__analyze__misp_search",
+                 "mcp__analyze__rank_relations", "mcp__analyze__pivot_suggest",
+                 "mcp__analyze__hash_id", "mcp__analyze__vuln_check",
+                 "mcp__analyze__phone_osint", "mcp__analyze__exposure_score",
+                 "mcp__analyze__sensitive_paths", "mcp__analyze__email_hygiene",
                  "mcp__analyze__misp_push", "mcp__analyze__misp_publish"]
