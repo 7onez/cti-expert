@@ -132,6 +132,31 @@ DISPATCH = {
     "username":      ("../scripts/osint/username_enum.py",   []),  # handle presence (HYPOTHESES)
     "phone":         ("../scripts/osint/phone_osint.py",     []),  # E.164 decomposition + pivots
     "exposure":      ("../scripts/osint/exposure_score.py",  []),  # weight-engine composite 0-100
+    # ── Phase 3: the commands SKILL.md marked [unimplemented] ───────────────────────
+    "subdomain":     ("../scripts/osint/subdomain_enum.py",  []),  # multi-source, keyless CT+PDNS
+    "github-osint":  ("../scripts/osint/github_osint.py",    []),  # accounts, repos, commit emails
+    "secrets":       ("../scripts/osint/github_osint.py",    ["--secrets"]),
+    "traffic":       ("../scripts/osint/traffic_rank.py",    []),  # Tranco rank (absence matters)
+    "sharelink":     ("../scripts/osint/sharelink_resolve.py", []),# expand + sharer identity
+    "docleak":       ("../scripts/osint/dork_builder.py",    []),  # emits queries, never scrapes
+    "icp":           ("../scripts/osint/cn_recon.py",        []),  # ICP filing + serial pivot
+    "cn-corp":       ("../scripts/osint/cn_recon.py",        []),  # PRC registry chain (gated)
+    "crossref":      ("../scripts/osint/kb_crossref.py",     []),  # identifiers across CASES
+    "drift":         ("../scripts/osint/case_drift.py",      []),  # what changed between runs
+    "signatures":    ("../scripts/osint/signature_scan.py",  []),  # behavioural signature catalog
+    "email-deep":    ("../scripts/osint/deep_profile.py",    []),  # composition, not a collector
+    "breach-deep":   ("../scripts/osint/deep_profile.py",    ["--mode", "breach"]),
+    "wifi":          ("../scripts/osint/wifi_ssid.py",       []),  # WiGLE (keyed; discloses gap)
+    "gdoc":          ("WebPivot/tools/wp_docmeta.py",        []),  # /gdoc == doc_metadata
+    # Aliases surfaced by a recount: these commands only ever appear WITH arguments in
+    # SKILL.md, so the old bare-backtick regex never saw them and they were never triaged.
+    "archive-harvest":("../scripts/webpivot/wayback_harvest.py", []),  # = wayback-harvest
+    "ransomware-check":("../scripts/osint/reputation_check.py", ["--mode", "scam"]),
+    "techstack":     ("WebPivot/tools/pivot_extract.py",     []),  # tech_fingerprint layer
+    "visitors":      ("WebPivot/tools/pivot_extract.py",     []),  # tracker / visitor-intel layer
+    "saas-map":      ("WebPivot/tools/pivot_extract.py",     []),  # saas_ids.* layer
+    "cert-history":  ("WebPivot/tools/wp_pssl.py",           []),  # historic cert -> IP
+    "dns-history":   ("../scripts/webpivot/wayback_ga.py",   []),  # historic records
     # ── aliases: the code already existed, only the documented NAME never resolved ──────
     "webpivot":      ("WebPivot/tools/pivot_extract.py",     []),  # /webpivot, the flagship verb
     "iban":          ("../scripts/iban_analyze.py",          []),  # /iban -> the existing script
@@ -251,6 +276,28 @@ BLURB = {
     "username": "handle presence across curated platforms (HYPOTHESES, never findings)",
     "phone": "E.164 decomposition, territory, messaging links, source-search queries",
     "exposure": "composite 0-100 subject exposure score (analysis/weight-engine)",
+    "subdomain": "passive subdomain enum (certspotter+hackertarget+crt.sh); flags admin hosts",
+    "github-osint": "GitHub account/org/repo recon; commit-author emails",
+    "secrets": "leaked-secret hunt queries for a target (code search needs auth — emits)",
+    "traffic": "Tranco popularity rank; an UNRANKED 'established' site contradicts itself",
+    "sharelink": "expand a share/short link and read the sharer-identity parameters",
+    "docleak": "build document/leak-hunt queries across 18 hosts (emitted, never run)",
+    "icp": "ICP filing via keyless mirrors + licence-serial sibling pivot",
+    "cn-corp": "PRC corporate registry chain; names every CAPTCHA/geo gate it did not pass",
+    "crossref": "identifiers appearing across MORE THAN ONE case (strongest operator signal)",
+    "drift": "what changed in a case between two collections",
+    "signatures": "evaluate observations against analysis/signature-catalog.md",
+    "email-deep": "compose the email profile from existing tools; plans the metered steps",
+    "breach-deep": "same chain, breach-weighted; states what went unqueried for want of a key",
+    "wifi": "WiGLE SSID geolocation (needs a WiGLE account; discloses the gap without one)",
+    "gdoc": "document/image metadata for a Google Doc/Sheet/Drive URL (= docmeta)",
+    "archive-harvest": "full-IOC harvest across a domain's Wayback history (= wayback-harvest)",
+    "ransomware-check": "reputation check incl. ransomware victim records (= scam-check)",
+    "techstack": "CMS/framework/version fingerprint (pivot_extract's tech layer)",
+    "visitors": "analytics/tracker IDs — the visitor-intelligence layer of pivot_extract",
+    "saas-map": "SaaS/no-code operator tokens (pivot_extract's saas_ids layer)",
+    "cert-history": "historic certificate -> IP (passive SSL)",
+    "dns-history": "historic DNS/analytics records from the archive",
     "webpivot": "the flagship verb — collect pivot artifacts from one page (= pivot-extract)",
     "iban": "validate + decompose a bank account as a selector (mod-97)",
     "redact": "strip PII from a document before sharing",

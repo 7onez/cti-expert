@@ -2599,6 +2599,237 @@ async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
 # that references the tool just fails. The reverse is worse: an allowlist entry with no served
 # tool tells the model it may call something that does not exist. `tests/test_tool_registry.py`
 # asserts the three lists agree, so this can only drift again on purpose.
+@tool(
+    "subdomain_enum",
+    "Enumerate a `domain`'s subdomains from independent public sources — certspotter (CT), "
+    "hackertarget (passive DNS) and crt.sh — and report EACH source's status. Multi-source on "
+    "purpose: crt.sh is down or 502-ing a large fraction of the time, and a tool querying it "
+    "alone reports 'no subdomains' when the truth is 'the source was down', turning an absence "
+    "of collection into a false fact about the target. Flags admin/back-office labels (admin, "
+    "panel, kef, ador, backend, staging) because on a fraud estate those carry the operator's own "
+    "console rather than the victim-facing funnel. PASSIVE — third-party indexes only, no DNS "
+    "brute force, nothing touches the target.",
+    {"domain": str},  # sensitive_only:bool, sources:str
+    annotations=READONLY,
+)
+async def subdomain_enum(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("subdomain_enum.py"), str(args.get("domain") or "")]
+    if args.get("sensitive_only"):
+        cmd.append("--sensitive-only")
+    if args.get("sources"):
+        cmd += ["--sources", str(args["sources"])]
+    r = _run(cmd, timeout=180)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "github_osint",
+    "GitHub reconnaissance for a `target` (user, org, owner/repo, or a github.com URL) — profile, "
+    "repos, and the COMMIT-AUTHOR EMAILS, which are usually the strongest pivot because a public "
+    "commit exposes an address that reverse-pivots to other accounts and leak corpora. Set "
+    "`secrets` to also emit leaked-credential hunt queries. Keyless at 60 requests/hour; the "
+    "rate-limit state is ALWAYS reported, because a 403 returning nothing looks exactly like an "
+    "account that does not exist. Code search requires authentication, so /secrets emits the "
+    "queries rather than pretending to have run them.",
+    {"target": str},  # secrets:bool, repo:bool
+    annotations=READONLY,
+)
+async def github_osint(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("github_osint.py"), str(args.get("target") or "")]
+    if args.get("secrets"):
+        cmd.append("--secrets")
+    if args.get("repo"):
+        cmd.append("--repo")
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "traffic_rank",
+    "Tranco popularity rank for one or more `domains`, keyless. The ANALYTIC POINT IS USUALLY THE "
+    "ABSENCE: a funnel claiming years of operation that is unranked in a 1M-entry list is "
+    "contradicting its own copy. Deliberately does NOT report traffic estimates or audience "
+    "demographics — those come only from paid panels whose low-traffic figures are modelled "
+    "guesses, and reporting a model as a measurement about a scam site would be inventing "
+    "evidence. Passive; Tranco is queried, never the target.",
+    {"domains": str},
+    annotations=READONLY,
+)
+async def traffic_rank(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, _os_("traffic_rank.py"),
+              *str(args.get("domains") or "").replace(",", " ").split()])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "sharelink_resolve",
+    "Expand a share/short `url` (vm.tiktok.com, t.co, bit.ly …) and read the SHARER-IDENTITY "
+    "parameters platforms embed in it — u_code, sec_user_id, igshid, invite and affiliate codes — "
+    "which frequently name the account that generated the link. Follows the redirect chain on "
+    "headers alone: it never renders the page or runs JavaScript. NOT PASSIVE: the final host is "
+    "contacted and will see the request, so use a research egress for adversarial infrastructure. "
+    "A sharer parameter identifies who GENERATED the link, not necessarily who sent it to you.",
+    {"url": str},  # max_hops:int
+    annotations=READONLY,
+)
+async def sharelink_resolve(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("sharelink_resolve.py"), str(args.get("url") or "")]
+    if args.get("max_hops"):
+        cmd += ["--max-hops", str(args["max_hops"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "dork_builder",
+    "Build document- and leak-hunt search queries for a `target` across 18 document hosts, paste "
+    "sites and object stores, plus filetype families, each graded by how damaging a hit WOULD be. "
+    "EMITS, NEVER RUNS: automated querying of these engines gets the egress blocked within a few "
+    "requests, breaks on every layout change, and on several hosts breaches the terms the analyst "
+    "is bound by — so running one is a human decision made in a browser they control. The "
+    "severity grades the QUERY, not a result: nothing here is evidence until a human opens it. "
+    "Filter with `severity`. Pure and offline.",
+    {"target": str},  # severity:str
+    annotations=READONLY,
+)
+async def dork_builder(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("dork_builder.py"), str(args.get("target") or "")]
+    if args.get("severity"):
+        cmd += ["--severity", str(args["severity"]).lower()]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "cn_recon",
+    "PRC filing and corporate-registry recon for a `domain` (or a `serial` / `company` you already "
+    "hold): pulls the keyless ICP mirrors, parses the licence, and reverses the LICENCE SERIAL "
+    "into sibling-domain queries — cluster on the serial, never the province prefix, since 苏 "
+    "covers a whole province while -3 is one site within one filing. Names every gate it did not "
+    "pass rather than working around it: beian.miit.gov.cn and GSXT are CAPTCHA-walled, and "
+    "TianYanCha/QCC/Aiqicha are IP-blocked outside mainland China. An empty result is therefore an "
+    "absence of collection, never evidence that no filing or company exists.",
+    {},  # domain:str, serial:str, company:str
+    annotations=READONLY,
+)
+async def cn_recon(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("cn_recon.py")]
+    if args.get("domain"):
+        cmd.append(str(args["domain"]))
+    for k in ("serial", "company"):
+        if args.get(k):
+            cmd += [f"--{k}", str(args[k])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "kb_crossref",
+    "Which identifiers appear across MORE THAN ONE case. `kb_query_shared` answers which "
+    "indicators bind domains; this answers the question that matters once you have a backlog — "
+    "does something in today's case also appear in one you closed months ago? A repeat across "
+    "INDEPENDENTLY collected cases is the strongest same-operator signal available. Scope with "
+    "`case`, raise the bar with `min_cases`. Noise control is inherited, not reinvented: "
+    "indicator-level from noise_filters.py, relation-level using the same boilerplate set the "
+    "cluster writer excludes, plus the /reference benign ledger. Pure — local KB only.",
+    {},  # case:str, min_cases:int
+    annotations=READONLY,
+)
+async def kb_crossref(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("kb_crossref.py")]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    if args.get("min_cases"):
+        cmd += ["--min-cases", str(args["min_cases"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_drift",
+    "What CHANGED in a `case` between two collections. Re-running collection on a live estate "
+    "produces new facts; the useful question is what MOVED — a changed origin IP, a gained "
+    "nameserver, a dropped tracker, a host gone dark — because the date of that movement is often "
+    "the most reportable thing in the case. Pass `snapshot` to store the current state, then diff "
+    "against it after the next collection. Only a narrow set of fields is diffed, on purpose: a "
+    "diff reporting every byte of a re-scrape buries the three facts that matter. A field going "
+    "missing can mean the operator removed it OR that the collector failed — check before calling "
+    "it an operator action. Pure and local.",
+    {"case": str},  # snapshot:bool, against:str
+    annotations=READONLY,
+)
+async def case_drift(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("case_drift.py"), str(args.get("case") or "")]
+    if args.get("snapshot"):
+        cmd.append("--snapshot")
+    if args.get("against"):
+        cmd += ["--against", str(args["against"])]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "signature_scan",
+    "Evaluate behavioural observations against analysis/signature-catalog.md — the TEMPORAL / "
+    "BEHAVIORAL / NETWORK / LINGUISTIC families and their thresholds (posting-interval variance "
+    "under 3 minutes reads as automation, a follower ratio under 0.1 as an inorganic graph, and "
+    "so on). Pass `observations` as 'key=value,key=value'; `list` shows the catalogue and the "
+    "keys it accepts. IT DOES NOT COLLECT: it cannot observe posting cadence or a follower graph, "
+    "and inventing one would be worse than useless — supply what you measured. A fired signature "
+    "is a hypothesis about behaviour, not an identification: automation and a bought follower "
+    "graph are equally consistent with ordinary marketing.",
+    {},  # observations:str, list:bool
+    annotations=READONLY,
+)
+async def signature_scan(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("signature_scan.py")]
+    if args.get("list"):
+        cmd.append("--list")
+    for kv in str(args.get("observations") or "").split(","):
+        if kv.strip():
+            cmd += ["--set", kv.strip()]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "deep_profile",
+    "Run the email-deep / breach-deep chain over a `selector` (an email, or a domain for the "
+    "infrastructure half). This ORCHESTRATES existing tools rather than collecting — email "
+    "hygiene, domain reputation, M365 tenant and subdomains run here because they are free and "
+    "keyless, while the metered steps (IntelX, reverse-WHOIS, HIBP) are returned as an explicit "
+    "PLAN and NOT executed, because spending credits is the analyst's decision rather than a side "
+    "effect of asking for a profile. Set `mode` to 'breach' for the breach-weighted variant. Any "
+    "step lacking a key is reported as a COLLECTION GAP: no breach record here means 'not "
+    "queried', never 'not breached'.",
+    {"selector": str},  # mode:'email'|'breach'
+    annotations=READONLY,
+)
+async def deep_profile(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, _os_("deep_profile.py"), str(args.get("selector") or "")]
+    if str(args.get("mode") or "") == "breach":
+        cmd += ["--mode", "breach"]
+    r = _run(cmd, timeout=240)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "wifi_ssid",
+    "Geolocate a WiFi `ssid` through WiGLE's wardriving corpus. There is NO keyless path: without "
+    "WIGLE_API_NAME / WIGLE_API_TOKEN this returns the query to run rather than an empty result "
+    "that would read as 'no such network'. Handle hits carefully — an SSID observation is a HOME "
+    "OR WORKPLACE location for whoever runs that access point, and a distinctive SSID usually "
+    "resolves to a private residence, so use it for infrastructure attribution rather than to "
+    "locate a person. A common or default SSID matches many unrelated networks and narrows "
+    "nothing.",
+    {"ssid": str},
+    annotations=READONLY,
+)
+async def wifi_ssid(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, _os_("wifi_ssid.py"), str(args.get("ssid") or "")])
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
 # Bind every @tool's NAME around its handler, so the context governor knows which budget to
 # apply to that tool's output (see _bounded / _budget_for). Done by sweeping the module rather
 # than by listing tools, so a tool added later CANNOT escape the governor by being forgotten —
@@ -2623,6 +2854,8 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       engage_report,
                       cert_pivot, crypto_balance, wayback_fetch, wayback_harvest,
                       threat_check, msft_recon, username_enum,
+                      subdomain_enum, github_osint, traffic_rank, sharelink_resolve,
+                      cn_recon, deep_profile, wifi_ssid,
                       kb_ingest])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
@@ -2634,6 +2867,7 @@ ANALYZE_SERVER = create_sdk_mcp_server(
                       collection_gaps,
                       rank_relations, pivot_suggest, sensitive_paths, email_hygiene,
                       hash_id, vuln_check, phone_osint, exposure_score,
+                      dork_builder, kb_crossref, case_drift, signature_scan,
                       misp_export, misp_search, misp_push, misp_publish])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
@@ -2653,7 +2887,10 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__engage_report",
                  "mcp__collect__cert_pivot", "mcp__collect__crypto_balance",
                  "mcp__collect__threat_check", "mcp__collect__msft_recon",
-                 "mcp__collect__username_enum",
+                 "mcp__collect__username_enum", "mcp__collect__subdomain_enum",
+                 "mcp__collect__github_osint", "mcp__collect__traffic_rank",
+                 "mcp__collect__sharelink_resolve", "mcp__collect__cn_recon",
+                 "mcp__collect__deep_profile", "mcp__collect__wifi_ssid",
                  "mcp__collect__wayback_fetch", "mcp__collect__wayback_harvest",
                  "mcp__collect__kb_ingest"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
@@ -2675,5 +2912,7 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__rank_relations", "mcp__analyze__pivot_suggest",
                  "mcp__analyze__hash_id", "mcp__analyze__vuln_check",
                  "mcp__analyze__phone_osint", "mcp__analyze__exposure_score",
+                 "mcp__analyze__dork_builder", "mcp__analyze__kb_crossref",
+                 "mcp__analyze__case_drift", "mcp__analyze__signature_scan",
                  "mcp__analyze__sensitive_paths", "mcp__analyze__email_hygiene",
                  "mcp__analyze__misp_push", "mcp__analyze__misp_publish"]
