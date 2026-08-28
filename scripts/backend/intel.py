@@ -105,6 +105,44 @@ DISPATCH = {
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
     "exhaust":       ("WebPivot/tools/wp_exhaust.py", []),     # which collection layers actually
                                                                # RAN vs silently never fired
+
+    # ── repo-root collectors (scripts/webpivot/ — one level ABOVE $INTEL_HOME). These
+    # existed and worked but were reachable only as raw `python3 …` lines documented in
+    # techniques/web-pivot.md, i.e. invisible to both front-ends (CLAUDE.md RULE 3).
+    "cert-pivot":    ("../scripts/webpivot/cert_pivot.py",      []),  # leaf-cert fingerprint -> other
+                                                               # hosts serving it; SANs = siblings
+    "rank-relations":("../scripts/webpivot/rank_relations.py",  []),  # score same-operator links across
+                                                               # a case's raw/*.json, noise-filtered
+    "pivot-suggest": ("../scripts/webpivot/pivot_suggest.py",   []),  # rank "what to pivot on next"
+    "crypto-balance":("../scripts/webpivot/crypto_balance.py",  []),  # wallet balance / lifetime flow
+    "email-hygiene": ("../scripts/webpivot/email_hygiene.py",   []),  # 0-100 + A-F email-domain grade
+    "sensitive-paths":("../scripts/webpivot/sensitive_paths.py",[]),  # classify URLs against sensitive
+                                                               # -path patterns (pure, no network)
+    "wayback-fetch": ("../scripts/webpivot/wayback_fetch.py",   []),  # nearest snapshot + RAW content
+    "wayback-harvest":("../scripts/webpivot/wayback_harvest.py",[]),  # full-IOC sweep of a domain's
+                                                               # whole Wayback history
+
+    # ── scripts/osint/ — Phase 2 builds. Commands SKILL.md documented for months with no
+    # implementation behind them; each is keyless-first and discloses what it could NOT check.
+    "hash-id":       ("../scripts/osint/hash_id.py",         []),  # MD5-vs-NTLM before you submit
+    "threat-check":  ("../scripts/osint/reputation_check.py", []), # any indicator -> reputation
+    "scam-check":    ("../scripts/osint/reputation_check.py", ["--mode", "scam"]),
+    "vuln-check":    ("../scripts/osint/vuln_check.py",      []),  # CVE via CIRCL + NVD (keyless)
+    "msftrecon":     ("../scripts/osint/msft_recon.py",      []),  # M365 tenant id / federation
+    "username":      ("../scripts/osint/username_enum.py",   []),  # handle presence (HYPOTHESES)
+    "phone":         ("../scripts/osint/phone_osint.py",     []),  # E.164 decomposition + pivots
+    "exposure":      ("../scripts/osint/exposure_score.py",  []),  # weight-engine composite 0-100
+    # ── aliases: the code already existed, only the documented NAME never resolved ──────
+    "webpivot":      ("WebPivot/tools/pivot_extract.py",     []),  # /webpivot, the flagship verb
+    "iban":          ("../scripts/iban_analyze.py",          []),  # /iban -> the existing script
+    "redact":        ("../scripts/redact.py",                []),  # /redact -> the existing script
+    "stealer-log":   ("../scripts/stealer_log_parse.py",     []),  # /stealer-log
+    "snapshots":     ("../scripts/webpivot/wayback_fetch.py", []), # /snapshots
+    "query":         ("tools/search_pivot.py",               []),  # /query and /dork-sweep are
+    "dork-sweep":    ("tools/search_pivot.py",               []),  # the same multi-engine builder
+    "stats":         ("tools/kb/query.py",       ["--kb", "knowledge", "--stats"]),
+    "case":          ("tools/intel.py",                      []),  # /case and /sweep both mean
+    "sweep":         ("tools/intel.py",                      []),  # "run the pipeline"
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
     "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
@@ -197,6 +235,32 @@ BLURB = {
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "exhaust": "which collection layers RAN vs silently never fired",
+    "cert-pivot": "leaf-cert fingerprint → other hosts serving it; SANs = siblings",
+    "rank-relations": "score same-operator links across a case's raw/*.json (noise-filtered)",
+    "pivot-suggest": "rank what to pivot on next from case findings",
+    "crypto-balance": "on-chain balance / lifetime-flow enrichment for wallets",
+    "email-hygiene": "deterministic 0-100 + A-F email-domain hygiene grade",
+    "sensitive-paths": "classify URLs against sensitive-path patterns (pure, no network)",
+    "wayback-fetch": "nearest Wayback snapshot + RAW content (robots.txt-proof)",
+    "wayback-harvest": "full-IOC harvest across a domain's whole Wayback history",
+    "hash-id": "identify a hash's algorithm BEFORE lookup (MD5 vs NTLM = submit vs never)",
+    "threat-check": "reputation for ip/domain/url/hash across keyless feeds (OTX, urlscan)",
+    "scam-check": "the fraud reading of the same feeds, plus ransomware victim records",
+    "vuln-check": "CVE lookup via CIRCL + NVD, both keyless; flags scorer disagreement",
+    "msftrecon": "M365/Entra tenant id, federation and namespace — keyless and passive",
+    "username": "handle presence across curated platforms (HYPOTHESES, never findings)",
+    "phone": "E.164 decomposition, territory, messaging links, source-search queries",
+    "exposure": "composite 0-100 subject exposure score (analysis/weight-engine)",
+    "webpivot": "the flagship verb — collect pivot artifacts from one page (= pivot-extract)",
+    "iban": "validate + decompose a bank account as a selector (mod-97)",
+    "redact": "strip PII from a document before sharing",
+    "stealer-log": "triage a folder of infostealer logs; operator-vs-victim verdict",
+    "snapshots": "list/fetch archived Wayback snapshots (= wayback-fetch)",
+    "query": "build advanced search-operator queries for an indicator",
+    "dork-sweep": "zero-auth dork sweep (same builder as /query)",
+    "stats": "KB counts and coverage statistics",
+    "case": "run the full pipeline on a seed (= pipeline)",
+    "sweep": "multi-vector recon on any target type (= pipeline)",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
     "kb-stats": "KB stats (positional root)",
