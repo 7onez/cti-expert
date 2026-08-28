@@ -1,4 +1,5 @@
 {
+  "generator": "CTI Expert — https://github.com/7onez/cti-expert",
   "case": {
     "id": "CTI-2026-001",
     "label": "Acme Corporation Exposure Assessment",
