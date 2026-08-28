@@ -326,6 +326,7 @@ td .mono{font-family:var(--mono);font-size:12.5px}
     <section class="view" data-view="timeline"></section>
     <section class="view" data-view="indicators"></section>
     <section class="view" data-view="sources"></section>
+    <section class="view" data-view="evidence"></section>
 
     <div class="footer">
       <span id="footL"></span>
@@ -399,6 +400,7 @@ var GAPS=Array.isArray(DATA.intelligence_gaps)?DATA.intelligence_gaps:[];
 var RECS=Array.isArray(DATA.recommendations)?DATA.recommendations:[];
 var VIS=DATA.visitor_stats||null;
 var CAVEATS=Array.isArray(DATA.caveats)?DATA.caveats:[];
+var EVID=Array.isArray(DATA.evidence_images)?DATA.evidence_images:[];
 
 /* ============================ helpers ============================ */
 function $(s,r){return (r||document).querySelector(s);}
@@ -997,6 +999,28 @@ function openSubject(id){
 }
 $('#drawerX').addEventListener('click',function(){$('#drawer').classList.remove('open');});
 
+function renderEvidence(){
+  var v=$('[data-view="evidence"]');
+  var html='<div class="section-h"><h2>Evidence Screenshots</h2><span class="hint">'+EVID.length+' captured · visual backup for findings</span></div>';
+  if(!EVID.length){v.innerHTML=html+'<div class="empty">No evidence screenshots captured for this case.</div>';return;}
+  html+='<div class="grid two">';
+  EVID.forEach(function(im,i){
+    if(!im||!im.data_uri)return;
+    var cap=esc(im.caption||im.host||('Evidence '+(i+1)));
+    var meta=[];
+    if(im.host)meta.push(esc(im.host));
+    if(im.captured_at)meta.push(esc(im.captured_at));
+    if(im.finding_id)meta.push('finding '+esc(im.finding_id));
+    var src=im.source_url?(' <a href="'+esc(im.source_url)+'" target="_blank" rel="noopener">source</a>'):'';
+    html+='<div class="card"><h3>'+cap+'</h3>'+
+      '<a href="'+esc(im.data_uri)+'" target="_blank" rel="noopener"><img src="'+esc(im.data_uri)+'" alt="'+cap+'" loading="lazy" style="width:100%;height:auto;border:1px solid var(--line,#ccc);border-radius:6px"></a>'+
+      ((meta.length||src)?'<div class="hint" style="margin-top:6px">'+meta.join(' · ')+src+'</div>':'')+
+      '</div>';
+  });
+  html+='</div>';
+  v.innerHTML=html;
+}
+
 /* ============================ nav / chrome ============================ */
 var VIEWS=[
   ['overview','📊','Overview',null],
@@ -1006,7 +1030,8 @@ var VIEWS=[
   ['topology','🏗','Topology',null],
   ['timeline','🗓','Timeline',TIMELINE.length],
   ['indicators','📍','Indicators',INDICATORS.length],
-  ['sources','📚','Sources',SOURCES.length]
+  ['sources','📚','Sources',SOURCES.length],
+  ['evidence','🖼','Evidence',EVID.length]
 ];
 var RENDERED={};
 function buildNav(){
@@ -1019,7 +1044,7 @@ function buildNav(){
 function go(view){
   $$('.navitem').forEach(function(n){n.classList.toggle('active',n.getAttribute('data-go')===view);});
   $$('.view').forEach(function(s){s.classList.toggle('active',s.getAttribute('data-view')===view);});
-  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources})[view]();RENDERED[view]=1;}
+  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[view]();RENDERED[view]=1;}
   else if(view==='graph'){buildGraphSVG();}
   window.scrollTo(0,0);
 }
@@ -1067,7 +1092,7 @@ $('#themeBtn').addEventListener('click',function(){
 $('#defangBtn').addEventListener('click',function(){defangOn=!defangOn;toast('Defang '+(defangOn?'ON — values masked':'off'));if(RENDERED.indicators){RENDERED.indicators=0;}var a=$('.navitem.active');if(a&&a.getAttribute('data-go')==='indicators')go('indicators');});
 $('#printBtn').addEventListener('click',function(){
   // render every view so print shows the whole report
-  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources})[v[0]]();RENDERED[v[0]]=1;}});
+  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[v[0]]();RENDERED[v[0]]=1;}});
   setTimeout(function(){window.print();},120);
 });
 $('#menubtn').addEventListener('click',function(){$('#sidebar').classList.toggle('open');});

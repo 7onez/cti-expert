@@ -868,7 +868,19 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
     "traffic_sources": {"direct": 42, "search": 28, "referral": 15, "social": 10, "paid": 5},
     "top_countries": [{"country": "Vietnam", "share": 60}, {"country": "US", "share": 20}]
   },
-  "caveats": ["Caveat string"]   // optional — overrides default methodology notes
+  "caveats": ["Caveat string"],  // optional — overrides default methodology notes
+  "evidence_images": [           // optional — screenshots that visually back findings
+    {
+      "caption": "Phishing login impersonating Bank X",  // human label
+      "host": "phish.example",                            // optional
+      "data_uri": "data:image/png;base64,....",           // REQUIRED — offline-safe base64
+      "sha256": "....",                                   // citable; auto-added by evidence-images.py
+      "captured_at": "2026-04-08T10:00:00Z",              // optional
+      "source_url": "https://phish.example/login",        // optional
+      "finding_id": "FND-001",                            // optional — ties the shot to a finding
+      "subject_id": "SUB-001"                             // optional
+    }
+  ]
 }
 ```
 
@@ -885,6 +897,7 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
 - `subjects[].role` — `actor` | `victim` | `infrastructure` | `associate` | `witness` (drives the role chips and actor↔victim attribution; otherwise inferred from type/links)
 - `subjects[].selectors[]` — contact/social points attached to a person/org: `{type, value, platform, url}` (e.g. a victim's phone, an actor's Telegram or LinkedIn) — surfaced in the Indicators panel and IOC export
 - `indicators[]` — analyst-curated indicators to force into the export verbatim: `{type, value, category, role, confidence, source_url}`
+- `evidence_images[]` — screenshots that back findings, embedded into the HTML **Evidence** view and the DOCX **Visual Analytics → Evidence Screenshots** section (base64, offline-safe): `{caption, host, data_uri, sha256, captured_at, source_url, finding_id, subject_id}`. **Capture evidence during the investigation whenever it fits** — a confirmed phishing/login page, a scam members-panel, a defacement — via the `capture_screenshot` tool (harness/MCP; citable sha256, written under `cases/<case>/`), or the deterministic pipeline's `--screenshots` flag (`intel.py open … --screenshots` → `cases/<case>/screenshots/`). Then build the array mechanically: `uv run "$SKILL_DIR/scripts/evidence-images.py" --case <case-dir> --into REPORT.json` (base64-embeds each PNG, dedupes by sha256; `--finding FND-00X` ties shots to a finding). A hostile target with no proxy is auto-skipped by the egress gate, so capture never touches infrastructure it must not.
 
 **Step 2 — Generate the interactive HTML report (PRIMARY human-facing deliverable).** Self-contained, OFFLINE, zero toolchain to view — opens in any browser:
 ```bash

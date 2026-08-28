@@ -3,6 +3,7 @@ Post-processing for pandoc-generated DOCX files.
 Applies CTI professional styling, injects charts from JSON data,
 and prepends cover page + table of contents.
 """
+import sys
 import unicodedata
 
 from docx import Document
@@ -12,6 +13,8 @@ from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
 import datetime
+import base64
+from io import BytesIO
 
 from cti_docx_styles import (
     COLORS, set_cell_shading, add_page_number,
@@ -23,12 +26,48 @@ from cti_docx_charts import (
 from cti_docx_diagrams import add_entity_diagram, add_network_topology
 
 
+def add_evidence_screenshots(doc, images) -> None:
+    """Embed evidence screenshots (base64 data URIs) as centered figures with captions.
+    Each image dict: {caption?, host?, data_uri, source_url?, captured_at?, finding_id?}.
+    A bad/undecodable entry is skipped so one broken image never breaks the report."""
+    if not images:
+        return
+    for im in images:
+        if not isinstance(im, dict):
+            continue
+        uri = im.get("data_uri") or ""
+        b64 = uri.split(",", 1)[1] if (uri.startswith("data:") and "," in uri) else uri
+        if not b64:
+            continue
+        try:
+            raw = base64.b64decode(b64)
+            doc.add_picture(BytesIO(raw), width=Inches(6))
+            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        except Exception as exc:
+            sys.stderr.write("evidence screenshot skipped (%s): %s\n"
+                             % (im.get("caption") or im.get("host") or "?", exc))
+            continue
+        cap_bits = [b for b in (
+            im.get("caption"), im.get("host"),
+            ("finding " + str(im.get("finding_id"))) if im.get("finding_id") else None,
+            im.get("captured_at"),
+        ) if b]
+        if cap_bits:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(" · ".join(str(b) for b in cap_bits))
+            run.font.size = Pt(9)
+            run.font.italic = True
+        doc.add_paragraph()
+
+
 CHART_KEYWORDS = {
     "risk_gauge": ["executive summary", "tom tat", "dieu hanh"],
     "finding_charts": ["phat hien", "findings", "statistical"],
     "timeline_chart": ["timeline", "thoi gian", "dong thoi gian"],
     "entity_diagram": ["moi quan he", "relationship", "entity", "ban do"],
     "visitor_charts": ["visitor", "traffic", "luong truy cap", "hien dien"],
+    "evidence_screenshots": ["evidence screenshot", "screenshot", "visual evidence", "anh chup man hinh", "bang chung hinh anh"],
 }
 
 
@@ -373,6 +412,12 @@ def _try_inject(doc, heading_text, json_data, injected, case):
                 add_geographic_pie(doc, tc)
             doc.add_paragraph()
             injected.add("visitor_charts")
+    if "evidence_screenshots" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["evidence_screenshots"]):
+        images = json_data.get("evidence_images", [])
+        if images:
+            doc.add_paragraph()
+            add_evidence_screenshots(doc, images)
+            injected.add("evidence_screenshots")
 
 
 def _append_remaining_charts(doc, json_data, injected, case):
@@ -449,3 +494,13 @@ def _append_remaining_charts(doc, json_data, injected, case):
             if tc:
                 add_geographic_pie(doc, tc)
                 doc.add_paragraph()
+
+    if "evidence_screenshots" in remaining:
+        images = json_data.get("evidence_images", [])
+        if images:
+            if not has_content:
+                doc.add_page_break()
+                _add_styled_heading(doc, "Visual Analytics", level=1)
+                has_content = True
+            _add_styled_heading(doc, "Evidence Screenshots", level=2)
+            add_evidence_screenshots(doc, images)
