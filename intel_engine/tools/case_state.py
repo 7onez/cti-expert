@@ -342,6 +342,22 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
         # reverse-WHOIS siblings left behind by a prior --whois-reverse run
         for st in ("reverse_whois_current", "reverse_whois_historic"):
             _whois_candidates(lr.get(st) or {}, cands, seed_apexes, deferred, host, st)
+        # ARTIFACT-REVERSE + Validin hosts -> frontier seeds. Phase 6/10: engines that make real
+        # calls whose discoveries the loop never consumed (Validin co-hosted + subdomains,
+        # Hunter.how favicon/body reverse, Censys cert names). Attached to domain AND per-artifact
+        # pivots, so mined here (outside the kind=="domain" block) across every pivot.
+        for h in (lr.get("validin") or {}).get("hosts") or []:
+            _add_cand(cands, h, "validin", seed_apexes)
+        for h in (lr.get("validin_subs") or {}).get("hosts") or []:
+            _add_cand(cands, h, "validin_subdomain", seed_apexes)
+        for x in (lr.get("hunterhow") or {}).get("hosts") or []:
+            _add_cand(cands, x.get("domain") if isinstance(x, dict) else x, "hunterhow", seed_apexes)
+        for nm in (lr.get("censys_cert") or {}).get("names") or []:
+            _add_cand(cands, nm, "censys_cert", seed_apexes)
+        for h in (lr.get("securitytrails") or {}).get("hosts") or []:
+            _add_cand(cands, h, "securitytrails", seed_apexes)
+        for d in (lr.get("dnslytics") or {}).get("domains") or []:
+            _add_cand(cands, d, "dnslytics", seed_apexes)
     # top-level urlscan-related infra attached when the page itself was gone
     for d in ((obj.get("related_urlscan") or {}).get("domains") or []):
         _add_cand(cands, d, "urlscan_related", seed_apexes)
