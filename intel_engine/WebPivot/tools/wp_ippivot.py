@@ -34,6 +34,7 @@ from wp_analyze import classify_ip
 from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
 from wp_hunterhow import attach_hunterhow_queries  # Hunter.how query builder (keyless — no key needed)
+import wp_validin  # Validin reverse-IP (FREE key; runs even under --free-only)
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
@@ -404,11 +405,14 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
     # and the per-service cert fingerprints. Metered, so --free-only skips it like FOFA.
     if censys_configured() and not free_only:
         jobs["censys"] = lambda: censys_host(ip)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+    if wp_validin.validin_configured() and wp_validin.ENABLED:
+        jobs["validin"] = lambda: wp_validin.ip_lookup(ip)   # FREE reverse-IP -> co-hosted domains
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         futs = {k: ex.submit(fn) for k, fn in jobs.items()}
         res = {k: fu.result() for k, fu in futs.items()}
     ipinfo, fofa, shodan = res["ipinfo"], res["fofa"], res["shodan"]
     censys = res.get("censys") if isinstance(res.get("censys"), dict) else {}
+    validin = res.get("validin") if isinstance(res.get("validin"), dict) else {}
     # a skipped/errored Censys call is still recorded (the analyst must see WHY), but must not
     # contribute names or ports as if it had answered
     cen_ok = censys and not censys.get("error") and not censys.get("skipped")
@@ -425,7 +429,8 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
                    key=lambda p: int(p) if str(p).isdigit() else 0)
     services = uniq(f.get("services", []) + s.get("services", [])
                     + [p for svc in c.get("services", []) for p in svc.get("software", [])])
-    co_domains = uniq(f.get("co_domains", []) + s.get("hostnames", []) + c.get("dns_names", []))
+    co_domains = uniq(f.get("co_domains", []) + s.get("hostnames", []) + c.get("dns_names", [])
+                      + (validin.get("domains") or []))
 
     artifacts = {"ip_intel": {
         "ipinfo": {k: ipinfo.get(k) for k in
@@ -436,6 +441,8 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
     }}
     if censys:
         artifacts["ip_intel"]["censys"] = censys
+    if validin:
+        artifacts["ip_intel"]["validin"] = validin
     result = {"meta": {"host": ip, "final_url": ip, "kind": "ip",
                        "source": "IPPivot", "case": case},
               "artifacts": artifacts, "pivots": []}
