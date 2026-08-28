@@ -351,7 +351,7 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
         kind, val = piv.get("kind", ""), piv.get("value")
         # pivots whose VALUE is itself a co-domain / lookalike / trusted-origin host
         if kind in ("tls_cert:co_san", "cors_allowed_origin", "impersonation:candidate",
-                    "urlscan_related_domain"):
+                    "urlscan_related_domain", "archive_related_domain"):
             _add_cand(cands, str(val), kind.split(":")[0], seed_apexes)
         lr = piv.get("live_results") or {}
         if kind == "domain":

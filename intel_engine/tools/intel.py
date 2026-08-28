@@ -361,6 +361,8 @@ def _all_raw(case_dir):
 
 
 def _ingest_case(raw_files):
+    if not raw_files:
+        return
     _run([sys.executable, os.path.join(KB_TOOLS, "ingest_webpivot.py"), "--kb", KB, *raw_files])
 
 
@@ -702,6 +704,13 @@ def cmd_loop(a):
         loop_extra = [] if getattr(a, "full", False) else ["--free-only"]
         if a.render_extract:
             loop_extra.append("--render")
+        # DEEP ARCHIVE (passive, keyless — safe under the free-only guard). Default: only the
+        # primary seeds (round 1) get the exhaustive Wayback+urlscan+CommonCrawl+archive.today
+        # pass; --deep-archive extends it to every frontier seed; --no-deep-primary turns it off.
+        deep_this_round = getattr(a, "deep_archive", False) or (
+            st["round"] == 1 and not getattr(a, "no_deep_primary", False))
+        if deep_this_round:
+            loop_extra.append("--deep-archive")
 
         def _loop_status(res):
             good = _extract_ok(res)
@@ -888,6 +897,14 @@ def main():
     lp.add_argument("--timeout", type=int, default=20)
     lp.add_argument("--render-extract", action="store_true",
                     help="render post-JS DOM per page (needs playwright)")
+    lp.add_argument("--deep-archive", action="store_true",
+                    help="EXHAUSTIVE archival collection on EVERY seed each round: full Wayback "
+                         "history (whole domain), every urlscan cached DOM, CommonCrawl + "
+                         "archive.today. Passive & keyless (safe for the free-only loop). Default: "
+                         "the primary (round-1) seeds are deep-archived; frontier seeds are not.")
+    lp.add_argument("--no-deep-primary", action="store_true",
+                    help="do NOT deep-archive the primary seeds either (fastest; archive only on "
+                         "explicit --deep-archive)")
     lp.add_argument("--full", action="store_true",
                     help="run METERED engines (FOFA/Censys/SecurityTrails/DNSLytics/HunterHow/…) in "
                          "the autonomous loop too — drops the default --free-only credit guard. Free "

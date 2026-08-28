@@ -70,25 +70,72 @@ from pivot_extract import (extract_trackers, VERIFICATION_META, extract_meta,
 CDX = "http://web.archive.org/cdx/search/cdx"
 
 
-def cdx_snapshots(domain, year_from=None, year_to=None, limit_scan=800):
-    """Return [(timestamp, original_url)] of archived HTML 200s, deduped by digest."""
-    q = (f"{CDX}?url={domain}&output=json&fl=timestamp,original,statuscode,digest"
-         f"&filter=statuscode:200&filter=mimetype:text/html"
-         f"&collapse=digest&limit={limit_scan}")
+# mimetypes worth harvesting: HTML plus the JS/JSON where selectors (GA/GTM IDs, wallet
+# addresses, API endpoints, config blobs) frequently live. text/html-only silently drops them.
+_CDX_HTML_RE = "(text/html|application/xhtml.*)"
+_CDX_ASSET_RE = "(text/javascript|application/javascript|application/x-javascript|application/json)"
+# combined (accepted verbatim by CDX; kept for callers/tests that want one filter string)
+_CDX_MIME_RE = "(text/html|application/xhtml.*|text/javascript|application/javascript|application/json)"
+
+
+def _cdx_host(domain):
+    """Bare host for a CDX query: strip scheme, path, query, and a leading www."""
+    d = (domain or "").strip()
+    if "://" in d:
+        d = d.split("://", 1)[1]
+    d = d.split("/", 1)[0].split("?", 1)[0].strip().lower()
+    return d[4:] if d.startswith("www.") else d
+
+
+def _cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to):
+    """One CDX call for a single mimetype group → list of (timestamp, original). [] on error."""
+    q = (f"{CDX}?url={host}&output=json&fl=timestamp,original,statuscode,digest,mimetype"
+         f"&filter=statuscode:200&collapse={collapse}&limit={limit_scan}"
+         f"&filter=mimetype:{mime_re}")
+    if not root_only:
+        q += "&matchType=domain"        # widen url=host to *.host + every path
     if year_from:
         q += f"&from={year_from}"
     if year_to:
         q += f"&to={year_to}"
     try:
         req = urllib.request.Request(q, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=1800) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             rows = json.load(r)
     except Exception as e:
-        print(f"  cdx error for {domain}: {e}", file=sys.stderr)
+        print(f"  cdx error for {host}: {e}", file=sys.stderr)
         return []
     if not rows or len(rows) < 2:
         return []
-    return [(row[0], row[1]) for row in rows[1:]]
+    return [(row[0], row[1]) for row in rows[1:] if len(row) >= 2]
+
+
+def cdx_snapshots(domain, year_from=None, year_to=None, limit_scan=2000,
+                  root_only=False, include_assets=True, collapse="digest"):
+    """Archived 200 captures for a domain -> [(timestamp, original_url)], time-sorted.
+
+    By default this covers the WHOLE registrable domain — every subdomain and subpath
+    (CDX matchType=domain) — and includes archived JS/JSON, not just HTML, because
+    selectors routinely live in those. HTML and assets are fetched as SEPARATE capped
+    queries and merged, so an HTML-saturated domain (whose html rows would fill the row cap
+    ahead of assets in SURT order) never crowds the JS/JSON out. Deduped by `collapse`
+    (digest = distinct content; urlkey = one row per URL). Pass root_only=True for the legacy
+    exact-apex behaviour, or include_assets=False to restrict to text/html."""
+    host = _cdx_host(domain)
+    groups = [_CDX_HTML_RE] + ([_CDX_ASSET_RE] if include_assets else [])
+    seen = set()
+    snaps = []
+    for mime_re in groups:
+        for ts, orig in _cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to):
+            key = (ts, orig)
+            if key in seen:
+                continue
+            seen.add(key)
+            snaps.append(key)
+    # matchType=domain returns rows grouped by URL, so sort chronologically to keep
+    # sample_evenly's "spread across time, keep first & last".
+    snaps.sort(key=lambda t: t[0])
+    return snaps
 
 
 def sample_evenly(snaps, n):
@@ -101,19 +148,21 @@ def sample_evenly(snaps, n):
     return [snaps[round(i * step)] for i in range(n)]
 
 
-def fetch_raw(timestamp, original, ua=DEFAULT_UA):
+def fetch_raw(timestamp, original, ua=DEFAULT_UA, timeout=45):
     """Fetch the un-rewritten archived HTML via the id_ modifier."""
     url = f"https://web.archive.org/web/{timestamp}id_/{original}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=1800) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read().decode("utf-8", "ignore")
     except Exception:
         return ""
 
 
-def analyze_domain(domain, max_snaps=12, year_from=None, year_to=None):
-    snaps = cdx_snapshots(domain, year_from, year_to)
+def analyze_domain(domain, max_snaps=12, year_from=None, year_to=None,
+                   root_only=False, include_assets=True, limit_scan=2000):
+    snaps = cdx_snapshots(domain, year_from, year_to, limit_scan=limit_scan,
+                          root_only=root_only, include_assets=include_assets)
     picked = sample_evenly(snaps, max_snaps)
     # id -> {"kind":..., "first":ts, "last":ts, "hits":n, "seen":[ts,...]}
     ids = {}
@@ -199,6 +248,11 @@ def main():
     ap.add_argument("--from", dest="yfrom", help="earliest year, e.g. 2018")
     ap.add_argument("--to", dest="yto", help="latest year, e.g. 2026")
     ap.add_argument("--timeline", action="store_true", help="markdown timeline instead of JSON")
+    ap.add_argument("--root-only", action="store_true",
+                    help="legacy exact-apex scan (no subdomains/subpaths); faster, narrower")
+    ap.add_argument("--html-only", action="store_true",
+                    help="restrict to text/html captures (skip archived JS/JSON)")
+    ap.add_argument("--limit-scan", type=int, default=2000, help="max CDX rows to pull")
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args()
 
@@ -211,7 +265,9 @@ def main():
     else:
         ap.error("provide a domain or -f file")
 
-    results = [analyze_domain(d, args.max, args.yfrom, args.yto) for d in domains]
+    results = [analyze_domain(d, args.max, args.yfrom, args.yto,
+                              root_only=args.root_only, include_assets=not args.html_only,
+                              limit_scan=args.limit_scan) for d in domains]
 
     if args.timeline:
         print("\n\n".join(render_timeline(r) for r in results))
