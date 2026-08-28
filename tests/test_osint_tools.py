@@ -83,4 +83,45 @@ if FAIL:
     for f in FAIL:
         print(f"FAIL: {f}", file=sys.stderr)
     sys.exit(1)
-print(f"scripts/osint pure tools: all checks passed")
+print("scripts/osint pure tools: all checks passed")
+
+# ── Phase 3 tools: the pure ones, and the honesty properties of the networked ones ─────
+sig = load("signature_scan")
+check(len(sig.RULES) >= 8, "the signature catalogue exposes at least 8 evaluable observations")
+cat = sig.catalog_families()
+check(cat.get("status") == "ok", "analysis/signature-catalog.md is readable")
+check("TEMPORAL_SIGNATURES" in (cat.get("families") or []), "the TEMPORAL family is parsed")
+_ev = {k: (sid, ev) for k, sid, _f, ev, _d in sig.RULES}
+check("automation" in _ev["posting_interval_variance_min"][1](2).lower(),
+      "a 2-minute posting variance must read as automation (catalogue T-01)")
+check("manual" in _ev["posting_interval_variance_min"][1](30).lower(),
+      "a 30-minute variance must read as manual, not automation")
+
+dk = load("dork_builder")
+check(len(dk.PLATFORMS) >= 18, "the doc-leak sweep covers at least 18 platforms as documented")
+check(all(s in dk.ORDER for _, _, s, _ in dk.PLATFORMS), "every platform has a valid severity")
+check(any(s == "CRITICAL" for _, _, s, _ in dk.PLATFORMS), "paste/object-store hosts rate CRITICAL")
+
+sd = load("subdomain_enum")
+check(len(sd.SOURCES) >= 3, "subdomain enumeration uses at least 3 independent sources")
+check("admin" in sd.SENSITIVE and "kef" in sd.SENSITIVE,
+      "the sensitive-label set covers both western and CJK back-office conventions")
+
+cd_ = load("case_drift")
+check(cd_.diff({}, {"h": {"ip": "1"}})[0]["change"] == "APPEARED", "a new host reads as APPEARED")
+check(cd_.diff({"h": {"ip": "1"}}, {})[0]["change"] == "DISAPPEARED", "a lost host reads as DISAPPEARED")
+_d = cd_.diff({"h": {"ip": "1"}}, {"h": {"ip": "2"}})
+check(_d and _d[0]["change"] == "CHANGED" and _d[0]["before"] == "1",
+      "a changed field reports both before and after")
+check(cd_.diff({"h": {"ip": "1"}}, {"h": {"ip": "1"}}) == [], "an unchanged case yields no diff")
+
+cn = load("cn_recon")
+_m = cn.SERIAL.search("苏ICP备12345678号-3")
+check(_m and _m.group(2) == "12345678", "the ICP licence serial parses out of a full filing string")
+check(_m and _m.group(1) == "苏" and _m.group(3) == "3",
+      "province prefix and site suffix parse separately — the serial is the pivot, not the province")
+check(set(cn.GATED) >= {"beian.miit.gov.cn", "GSXT", "TianYanCha"},
+      "every CAPTCHA/geo-gated source is named rather than silently skipped")
+
+ph = load("phone_osint")
+check(ph.split_cc("8613800138000")[0] == "86", "longest-prefix match resolves 86 over 8")
