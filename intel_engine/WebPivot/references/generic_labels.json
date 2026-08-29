@@ -249,5 +249,45 @@
       "UA-26575989-44",
       "GTM-PLKZVKSB"
     ]
+  },
+  "generic_page_titles": {
+    "_comment": "Page <title>s that are a CMS/server DEFAULT, an empty title, or a bare service word. Consumed by wp_pivots._distinctive_title: a title matching one of these (case-insensitively, after whitespace-collapse) yields NO title pivot, because reverse-searching FOFA title=\"Home\" returns millions of unrelated hosts. Matched EXACTLY against the whole cleaned title, not as a substring. ADD a default the moment it produces a false link; REMOVE only if you are sure a real operator would use it verbatim. WebPivot-only (no ingest-side mirror).",
+    "values": [
+      "",
+      "home",
+      "home page",
+      "homepage",
+      "index",
+      "welcome",
+      "untitled",
+      "untitled document",
+      "just another wordpress site",
+      "site is under construction",
+      "coming soon",
+      "under construction",
+      "default web page",
+      "test page",
+      "web page",
+      "blog",
+      "news",
+      "login",
+      "sign in",
+      "dashboard",
+      "403 forbidden",
+      "404 not found",
+      "access denied",
+      "error",
+      "page not found",
+      "document",
+      "example domain",
+      "apache2 ubuntu default page: it works",
+      "welcome to nginx!",
+      "hello world",
+      "my blog",
+      "my site",
+      "my website",
+      "shop",
+      "store"
+    ]
   }
 }
