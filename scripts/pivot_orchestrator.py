@@ -157,6 +157,8 @@ def normalize(value, t):
         v = ("+" if v.strip().startswith("+") else "") + re.sub(r"\D", "", v)
     if t == "social_handle":
         v = v.lower()
+    if t == "title":
+        v = re.sub(r"\s+", " ", v).strip().lower()
     if t == "iban":
         v = re.sub(r"\s", "", v).upper()   # IBANs are printed in groups of four
     if t == "uscc":
@@ -278,6 +280,9 @@ EDGE_MATRIX = {
     ],
     "favicon_mmh3": [
         {"method": "favicon-reverse", "tool": "Shodan/FOFA http.favicon.hash:<mmh3>", "yields": ["domain", "ipv4"], "rel": "LINKED_TO", "confidence": 75, "active": False},
+    ],
+    "title": [
+        {"method": "title-reverse", "tool": "FOFA title=\"<t>\" / urlscan page.title:\"<t>\" / PublicWWW \"<t>\"", "yields": ["domain"], "rel": "LINKED_TO", "confidence": 72, "active": False},
     ],
     "asn": [
         {"method": "asn-members", "tool": "asn.ps1 <asn>", "yields": ["ipv4", "domain"], "rel": "ENCOMPASSES", "confidence": 60, "active": False},

@@ -185,6 +185,8 @@ _LABELS_FALLBACK = {
     "resource_basename_segments": ["jquery", "bootstrap", "vendor", "main", "index", "app",
                                    "bundle", "min", "js", "css"],
     "noise_tracker_ids": [],
+    "generic_page_titles": ["", "home", "homepage", "index", "welcome", "login", "dashboard",
+                            "just another wordpress site", "coming soon", "under construction"],
 }
 _LABELS_REF = load_ref(ref_path(__file__, "generic_labels.json"), _LABELS_FALLBACK)
 _GENERIC_SUBLABELS = frozenset(_LABELS_REF["subdomain_labels"])
@@ -213,6 +215,33 @@ def _distinctive_subdomain(host: str):
         return None
     return label
 
+# Generic page <title>s (CMS/server defaults, bare service words) that cluster nothing.
+# DATA: references/generic_labels.json -> generic_page_titles (add a default there, not here).
+_GENERIC_TITLES = frozenset(str(t).strip().lower() for t in _LABELS_REF["generic_page_titles"])
+
+
+def _distinctive_title(title, base_host=None):
+    """Return the cleaned page <title> when it is distinctive enough to reverse-search as a
+    same-operator lead, else None. A generic CMS default, an empty title, a single bare word, a
+    numeric-only title, or one that merely echoes the host is rung-9 boilerplate that must never
+    become a pivot — FOFA title="Home" would return millions of unrelated hosts (§2.5)."""
+    t = re.sub(r"\s+", " ", (title or "")).strip()
+    low = t.lower()
+    if len(t) < 6 or len(t) > 120:               # too short = generic; absurdly long = keyword-stuff
+        return None
+    if low in _GENERIC_TITLES:
+        return None
+    if base_host:                                 # a title that only echoes the host adds nothing
+        h = strip_www((base_host or "").lower()).strip(".")
+        base = h.split(".")[0]
+        if low in (h, base) or low.replace(" ", "") == base:
+            return None
+    if len(re.findall(r"[A-Za-z0-9]{2,}", t)) < 2 and not re.search(r"[\u4e00-\u9fff]", t):
+        return None                               # one bare word is too common to reverse
+    if not re.search(r"[A-Za-z\u4e00-\u9fff]", t):
+        return None                               # pure numbers/punctuation are not identity
+    return t
+
 def build_pivots(art: dict, base_host: str):
     """Turn artifacts into ranked, ready-to-run pivot leads."""
     pivots = []
@@ -232,6 +261,15 @@ def build_pivots(art: dict, base_host: str):
             {"service": "Netlas", "query": f'http.favicon.hash_sha256:{fav["sha256"]}'},
         ] + censys_queries("favicon_hash", fav["md5"]),      # Censys wants the MD5, not the mmh3
            "Same favicon across unrelated domains = shared operator/kit.")
+
+    ttl = _distinctive_title(art.get("title"), base_host)
+    if ttl:
+        add("title", ttl, "medium", [
+            {"service": "FOFA", "query": f'title="{ttl}"'},
+            {"service": "urlscan", "query": f'page.title:"{ttl}"'},
+            {"service": "PublicWWW", "query": f'"{ttl}"'},
+        ], "Distinctive page <title> reused across a re-skinned kit = same operator/kit. "
+           "Generic/echo/CMS-default titles are excluded (§2.5).")
 
     cert = art.get("tls_cert")
     if cert and not cert.get("error") and not cert.get("skipped"):
