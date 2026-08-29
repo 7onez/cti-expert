@@ -617,7 +617,7 @@ def _ct_hostlist_search(domain: str, source: str, url: str, timeout: int = 25):
     newline-delimited hostname list (one host per line) — crt.name and agniops.
 
     These are NOT pure certificate-transparency logs: they union CT with Common Crawl /
-    CZDS / Chaos / HaGeZi (crt.name) and other passive feeds (agniops), so a name they
+    CZDS / Chaos / HaGeZi (crt.name) and feeds of UNDISCLOSED provenance (agniops), so a name they
     return is NOT CT-log-attributable evidence and MUST be validated before it enters a
     report (see handbook/pivot-services.md §4). They also expose the target apex to an
     unknown third-party operator, so ct_search only calls them as a FALLBACK. Returns
@@ -637,11 +637,11 @@ def _ct_hostlist_search(domain: str, source: str, url: str, timeout: int = 25):
         name = line.strip().lower().lstrip(".")   # tolerate a leading '.' artifact (.x.com)
         if not name or " " in name or "@" in name:   # skip blanks / prose / email SANs
             continue
-        if name.startswith("*."):
-            wildcards.add(name)
         bare = name.lstrip("*.")
         if bare != dom and not bare.endswith("." + dom):   # in-scope hosts only
             continue
+        if name.startswith("*."):
+            wildcards.add(name)                            # only in-scope wildcards
         if bare and bare != dom:
             subs.add(bare)
     ordered = sorted(subs)
@@ -660,7 +660,8 @@ def crtname_search(domain: str, timeout: int = 25):
     return _ct_hostlist_search(domain, "crt.name(aggregated)", url, timeout)
 
 def agniops_search(domain: str, timeout: int = 25):
-    """Subdomain enumeration via agniops — a keyless AGGREGATED passive index. Same posture
+    """Subdomain enumeration via agniops — a keyless AGGREGATED index of UNDISCLOSED provenance.
+    Same posture
     as crt.name: not CT-log-attributable, ranked below crt.sh, tag `source:agniops(aggregated)`,
     verify before reporting, and it discloses the apex to a third-party operator. Never raises."""
     url = "https://app.agniops.in/v1/search?" + urlencode({"domain": domain})

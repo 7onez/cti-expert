@@ -44,6 +44,9 @@ scripts/proxy/.proxy-health
 # repo root instead of letting the pipeline choose the path. Ignore it so case data can
 # never be committed by accident.
 /cases/
+# Defensive: stray case seed/scratch files dropped at the intel_engine root (e.g.
+# CASE-YYYYMMDD-NN-seeds.txt) are case data (target lists) and slip past /cases/. Ignore them.
+/intel_engine/CASE-*.txt
 /intel_engine/MEMORY/
 /intel_engine/knowledge/entities/
 /intel_engine/knowledge/evidence/
