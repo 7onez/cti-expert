@@ -30,7 +30,7 @@ import kb_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE
 from knowledge_base import KB  # noqa: E402
 from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  # noqa: E402
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
-                           is_noise_social_handle, is_bulk_registrant,
+                           is_noise_social_handle, is_bulk_registrant, is_noise_phone,
                            is_boilerplate_comment, DOM_SKELETON_MIN_TAGS)
 
 # reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
@@ -848,7 +848,7 @@ def ingest_file(kb, path):
     # --- WHOIS ---
     wh = art.get("whois") or {}
     if wh:
-        for k in ("registrar", "created", "updated", "expires"):
+        for k in ("registrar", "created", "updated", "expires", "registrant_country"):
             if wh.get(k) and not _is_privacy(wh[k]):
                 kb.add_fact("domain", host, f"whois_{k}", wh[k], "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
                 n += 1
@@ -877,6 +877,28 @@ def ingest_file(kb, path):
                 kb.add_fact("domain", host, "whois_role_name", nm.strip(),
                             "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
                 n += 1
+        # Registrant PHONE — a strong correlatable selector (like email), so it must be a
+        # queryable KB entity, not just a per-domain fact. Digits-only normalisation matches the
+        # orchestrator's reverse-WHOIS key. Gated by is_noise_phone: a privacy/proxy provider
+        # publishes ONE phone across every domain it fronts, so an unfiltered edge would merge
+        # thousands of unrelated domains (see noise_filters.json §registrant-phone).
+        phones = ([wh.get("registrant_phone")] +
+                  ((wh.get("history") or {}).get("registrant_phones") or []))
+        _seen_ph = set()
+        for ph in phones:
+            if not ph:
+                continue
+            digits = "".join(c for c in str(ph) if c.isdigit())
+            if len(digits) < 7 or digits in _seen_ph:
+                continue
+            _seen_ph.add(digits)
+            if is_noise_phone(ph, wh.get("registrant_email"), wh.get("registrant_org")):
+                kb.add_fact("domain", host, "whois_role_phone", digits,
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+            else:
+                kb.add_edge("domain", host, "registered_by", "phone", digits,
+                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+            n += 1
         for ns in wh.get("name_servers") or []:
             if is_managed_dns(ns):
                 # managed/registrar/parking DNS (Cloudflare, NameSilo, GoDaddy…) — shared by
