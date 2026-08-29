@@ -104,7 +104,7 @@ CLI-first cascade:
 3. `amass enum -passive -d example.com -json output.json` — 87 sources, slower but thorough
 4. WebSearch fallback: `site:securitytrails.com "example.com" subdomains`
 5. crt.name fallback — **only if crt.sh is unreachable**: `curl -s "https://crt.name/v1/search?apex=example.com&format=json"` (`apex` must be an eTLD+1; omit `&format=json` for text one-per-line) — aggregated index (CT **+** Common Crawl/CZDS/Chaos/HaGeZi), **not pure CT**; tag `source:crt.name(aggregated)`, verify hits before reporting, and note it leaks the target apex to a third-party operator
-6. agniops fallback — same posture as crt.name (aggregated passive index, keyless): `curl -s "https://app.agniops.in/v1/search?domain=example.com"` (text one-per-line) — tag `source:agniops(aggregated)`, verify hits before reporting, and note it leaks the target apex to a third-party operator
+6. agniops fallback — same posture as crt.name (aggregated index of undisclosed provenance, keyless): `curl -s "https://app.agniops.in/v1/search?domain=example.com"` (text one-per-line) — tag `source:agniops(aggregated)`, verify hits before reporting, and note it leaks the target apex to a third-party operator
 
 **Content & Exposure:**
 - Search: `site:example.com filetype:pdf OR filetype:doc OR filetype:xls`

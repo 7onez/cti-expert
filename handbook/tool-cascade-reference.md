@@ -109,7 +109,7 @@ Quick reference for all CLI tools used by Free OSINT Expert modules. Covers inst
 | 1 (Primary) | `subfinder -d <domain> -oJ` | CLI | 45+ passive sources, fast |
 | 2 (Secondary) | `curl -s "https://crt.sh/?q=%25.<domain>&output=json"` | API | CT log query |
 | 2b (CT fallback — crt.sh down) | crt.name aggregated index | `curl -s "https://crt.name/v1/search?apex=<eTLD+1>&format=json"` | Keyless, 100/IP/day (`apex` must be an eTLD+1; default response is text one-per-line, `&format=json` for JSON). Use **only when crt.sh is unreachable**. ⚠️ Aggregates CT **plus** Common Crawl / CZDS / Chaos / HaGeZi — a hit is **not CT-log-attributable**; tag `source:crt.name(aggregated)` and verify before it enters a report. OPSEC: leaks the target apex to an unknown operator |
-| 2c (CT fallback — crt.sh down) | agniops aggregated index | `curl -s "https://app.agniops.in/v1/search?domain=<apex>"` | Keyless, text one-per-line. Same posture as crt.name — aggregated passive index, **not CT-log-attributable**; tag `source:agniops(aggregated)` and verify before it enters a report. OPSEC: leaks the target apex to an unknown operator |
+| 2c (CT fallback — crt.sh down) | agniops aggregated index | `curl -s "https://app.agniops.in/v1/search?domain=<apex>"` | Keyless, text one-per-line. Same posture as crt.name — aggregated index of undisclosed provenance, **not CT-log-attributable**; tag `source:agniops(aggregated)` and verify before it enters a report. OPSEC: leaks the target apex to an unknown operator |
 | 3 (Tertiary) | `amass enum -passive -d <domain>` | CLI | 87 sources, thorough |
 | 4 (Web fallback) | `site:securitytrails.com "<domain>"` | WebSearch | No install needed |
 

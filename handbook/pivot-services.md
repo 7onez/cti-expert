@@ -59,7 +59,7 @@ Helper tools that build cross-engine queries: `favihunter`, `favihash`, osint.sh
 
 > **crt.name / agniops are fallbacks, not peers of crt.sh.** Both are **aggregated** subdomain
 > indexes (crt.name = CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi;
-> agniops = passive feeds), so a name they return is **not CT-log-attributable evidence** the way a
+> agniops = feeds of undisclosed provenance), so a name they return is **not CT-log-attributable evidence** the way a
 > crt.sh row is. Rank them *below* crt.sh, tag results `source:crt.name(aggregated)` /
 > `source:agniops(aggregated)`, and validate before any such name enters a report.
 > **OPSEC:** querying either discloses the target apex to an unknown third-party operator — crt.sh and

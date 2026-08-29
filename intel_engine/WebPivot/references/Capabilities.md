@@ -397,7 +397,7 @@ link). The result carries, per logged certificate, the **issuer + validity windo
 flags any **wildcard cert** (`*.<domain>`) separately (`wildcards` field) — one wildcard cert can
 cover many sibling hosts, so it's a broad-scope-reuse signal worth pivoting. **When both CT peers
 return no subdomains**, `ct_search` falls back to the keyless AGGREGATED indexes crt.name + agniops
-(CT unioned with Common Crawl/CZDS/Chaos/HaGeZi and other passive feeds) — their names are attached
+(CT unioned with Common Crawl/CZDS/Chaos/HaGeZi [crt.name] and feeds of undisclosed provenance [agniops]) — their names are attached
 SEPARATELY under `aggregated_subdomains`/`aggregated_sources`, never merged into the CT-attributable
 `subdomains`, because an aggregated hit is not CT-log evidence and must be validated before it enters
 a report. Shown inline in
