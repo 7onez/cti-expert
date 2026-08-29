@@ -7,7 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import nsdecls
 from docx.oxml import parse_xml
 
-from cti_docx_styles import COLORS, SEVERITY_COLORS, set_cell_shading
+from cti_docx_styles import COLORS, SEVERITY_COLORS, set_cell_shading, SHADE_BAND
 
 # Map string confidence levels to numeric percentages
 CONFIDENCE_MAP = {
@@ -81,7 +81,7 @@ def add_subject_profile(doc: Document, data: dict) -> None:
             run.font.bold = True
             run.font.size = Pt(10)
             run.font.color.rgb = COLORS["primary"]
-            set_cell_shading(cell_l, "F1F5F9")
+            set_cell_shading(cell_l, SHADE_BAND)
 
             # Value cell
             cell_r = row.cells[1]
@@ -138,7 +138,7 @@ def add_findings_section(doc: Document, data: dict) -> None:
             run = cell_l.paragraphs[0].add_run(label)
             run.font.bold = True
             run.font.size = Pt(9)
-            set_cell_shading(cell_l, "F1F5F9")
+            set_cell_shading(cell_l, SHADE_BAND)
 
             cell_r = row.cells[1]
             run = cell_r.paragraphs[0].add_run(str(value))
@@ -180,8 +180,8 @@ def add_connections_section(doc: Document, data: dict) -> None:
         run = cell.paragraphs[0].add_run(h)
         run.font.bold = True
         run.font.size = Pt(9)
-        run.font.color.rgb = COLORS["white"]
-        set_cell_shading(cell, "1A237E")
+        run.font.color.rgb = COLORS["text"]   # dark ink on light header band
+        set_cell_shading(cell, SHADE_BAND)
 
     # Data rows
     for c in connections:
@@ -214,8 +214,8 @@ def add_source_list(doc: Document, data: dict) -> None:
         run = cell.paragraphs[0].add_run(h)
         run.font.bold = True
         run.font.size = Pt(9)
-        run.font.color.rgb = COLORS["white"]
-        set_cell_shading(cell, "1A237E")
+        run.font.color.rgb = COLORS["text"]   # dark ink on light header band
+        set_cell_shading(cell, SHADE_BAND)
 
     for j, src in enumerate(sources, 1):
         row = table.add_row()
@@ -291,13 +291,13 @@ def add_methodology_notes(doc: Document, data: dict) -> None:
 def _add_callout_box(doc: Document, text: str, severity: str) -> None:
     """Add a colored callout box."""
     color_map = {
-        "CRITICAL": "FECACA",
-        "HIGH": "FED7AA",
-        "MEDIUM": "FEF3C7",
-        "LOW": "D1FAE5",
-        "INFO": "E0E7FF",
+        "CRITICAL": "EADAD9",   # brick tint
+        "HIGH": "F0E3C9",       # ochre tint
+        "MEDIUM": "ECE4CC",     # amber tint
+        "LOW": "E3E8D8",        # olive tint
+        "INFO": "F7F4ED",       # house callout background
     }
-    bg = color_map.get(severity, "E0E7FF")
+    bg = color_map.get(severity, "F7F4ED")
 
     table = doc.add_table(rows=1, cols=1)
     cell = table.rows[0].cells[0]

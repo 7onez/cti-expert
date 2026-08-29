@@ -454,7 +454,7 @@ Commands grouped by AEAD phase.
 | `/report brief` | Single-page executive brief | `/report brief` |
 | `/report json` | Raw data as JSON | `/report json` |
 | `/report csv` | Spreadsheet-compatible export | `/report csv` |
-| `/report docx` | Word document (rich charts/diagrams) — on request | `/report docx` |
+| `/report docx` | Word document in the **PDF house style** (slate/steel palette, serif body + sans headings, cover/TOC, rich charts/diagrams) — on request | `/report docx` |
 | `/report legal` | Evidence-formatted for legal proceedings (adds DOCX/PDF) | `/report legal` |
 | `/report journalist` | Source-citation-heavy format | `/report journalist` |
 | `/brief` | Plain-language summary (non-technical) | `/brief` |
@@ -500,8 +500,8 @@ Commands grouped by AEAD phase.
 | `/reference [check\|add\|list]` | **Built-in.** Curated **false-positive control** ledger — is a fingerprint BENIGN (common logo/CDN → don't cluster), SIGNAL (distinctive, prior-case → pivot), or UNKNOWN. **T2:** `intel.py reference check <value>`. **T1:** `reference_check`/`reference_add` | `/reference check favicon:123` |
 | `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **`--no-collect`** = reuse mode: skip the live fetch and run the whole chain over pivot JSONs already in `cases/<case>/raw/` — the zero-egress handoff `/case` uses (it re-fetches nothing). **T2:** `intel.py pipeline open <case> seeds.txt [--no-collect] [--no-graph]` | `/pipeline open case1 seeds.txt` |
 | `/harness [open\|continue\|status]` | **Built-in.** The **agent-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence. **Auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription; `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
-| `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **T2:** `intel.py graph <case_graph.json> <out-stem> --legend`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
-| `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF/DOCX** (editorial house style, cover/TOC/figures, VN-safe). Complements `/report docx`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
+| `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **Use it whenever a case has a graph** — any `/case`, `/pipeline`, `/harness` or multi-node `/report` — not only on request; it degrades to a note if the `dot`/mermaid renderer is absent. **Large infra:** above `--max-nodes` (default 45) the MAIN figure is reduced to a **readable, representative subset** (operator anchor + one hub per cluster + top-degree nodes; fan-out infra dropped first) so the picture never collapses into a hairball, and the figure title says so — **the full indicator set stays in the IOC bundle (CSV/Excel · Markdown · JSONL)**. `--full` forces the whole graph; `--split-clusters` emits one figure per cluster. **T2:** `intel.py graph <case_graph.json> <out-stem> --legend [--max-nodes N \| --full]`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
+| `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF + DOCX** in the **same editorial house style** (slate/steel/ochre/brick palette, serif body + sans headings, cover/TOC/figures, VN-safe) — the DOCX now uses a matching `reference.docx` so the Word file reads as the same document as the PDF. Rebuild that reference with `IntelReport/scripts/make_reference_docx.py`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
 | `/clusters [case]` | **Built-in.** Partition a case into same-operator clusters **before** judging it — the unit of judgment is the cluster, not the case. Shows each binding indicator's KB-wide prevalence, so an indicator that binds 3 domains here but sits on 400 KB-wide reads as noise. Pure KB read. **T2:** `intel.py clusters <case>`. **T1:** `case_clusters` | `/clusters CASE-0001` |
 | `/frontier [case]` | **Built-in.** The case's unresolved gaps — free next seeds already discovered (crt.sh SAN, passive-DNS co-host, TLS co-SAN, CORS, reverse-WHOIS) plus the **deferred metered leads** held for approval. `reopen` re-opens a converged case on new seeds. **T2:** `intel.py frontier <case>` · `intel.py reopen <case> <seed…>`. **T1:** `case_frontier`/`case_reopen` | `/frontier CASE-0001` |
 | `/loop [case]` | **Built-in.** Collect → assess repeatedly until the case converges, instead of stopping at an arbitrary depth. **T2:** `intel.py loop <case>`. **T1:** `case_loop` | `/loop CASE-0001` |
@@ -804,7 +804,7 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
 
 - **`--yolo`:** save the five-format default set with no prompt.
 - **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
-- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). HTML **"Print → Save as PDF"** covers most PDF needs for free.
+- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). Every DOCX path now shares the **PDF editorial house style** (see `scripts/cti_docx_styles.py` and `IntelReport/templates/reference.docx`), so a Word file reads as the same document as its PDF. HTML **"Print → Save as PDF"** covers most PDF needs for free.
 - Explicit machine-format subcommands always emit that format directly: `/report json`, `/report csv`, `/report ioc`.
 - **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
   ```bash
@@ -999,6 +999,24 @@ Every narrative report auto-saves the **default export set** (.md + .html + .jso
 **Diagram tradecraft:** [`output/visuals/diagram-patterns.md`](output/visuals/diagram-patterns.md) — compile-check a Mermaid diagram before presenting it, and pick the right diagram type per CTI question (attack → sequence, lifecycle → state, handoffs → swimlane, infra → graph).
 
 The **interactive HTML report** (default deliverable) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
+
+**IntelGraph — use it whenever a case has a graph.** For any multi-node case
+(`/case`, `/pipeline`, `/harness`, or a `/report` with an entity/infra graph),
+render the publication-quality figure with `/graph --render` and embed it in the
+report; do not reserve it for explicit requests. It degrades to a note when the
+`dot`/mermaid renderer is missing, so calling it is always safe.
+
+**Large infrastructure — show a representative example, point to the full list.**
+A case with hundreds of nodes is unreadable in one figure. Above `--max-nodes`
+(default 45) IntelGraph automatically renders a **representative subset** — the
+operator anchor, one hub per cluster, and the highest-degree nodes, dropping
+fan-out infrastructure (nameservers, registrars) first — and stamps the figure
+title `representative subset: N of M nodes`. **The complete indicator set is never
+lost:** it lives in the IOC bundle (`generate-cti-iocs.py` → `.csv` openable in
+**Excel**, plus the report `.md` and the JSON/JSONL exports). Always tell the
+reader, in the figure caption, that the graph is an example and the full details
+are in the IOC list. Use `--full` to force the entire graph, or `--split-clusters`
+for one readable figure per cluster.
 
 ### Connectors
 

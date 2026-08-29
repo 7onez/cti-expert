@@ -76,6 +76,13 @@ LEGEND_SPLIT_MIN_CLUSTERS = 2
 # We still render it — the analyst may want the overview — but we say so.
 CROWDED_NODES = 45
 
+# Fan-out infrastructure types that multiply without carrying the argument (fifteen
+# domains all pointing at one registrar). When a large estate is downsampled to a
+# readable REPRESENTATIVE subset, these are dropped FIRST — the meaningful nodes
+# (operator anchor, hubs, one per cluster) survive. The full set never disappears:
+# it stays in the IOC bundle (CSV / Markdown / JSONL), which the figure caption says.
+FANOUT_TYPES = {"nameserver", "registrar", "regdate", "template", "theme"}
+
 EDGE_CLASS_LABEL = {
     "operator": "same operator",
     "kit": "same kit / fingerprint",
@@ -379,6 +386,69 @@ def subgraph_of_cluster(graph, rank):
     return {"nodes": nodes, "edges": edges}
 
 
+def _node_degree(edges):
+    deg = {}
+    for e in edges:
+        deg[e.get("source")] = deg.get(e.get("source"), 0) + 1
+        deg[e.get("target")] = deg.get(e.get("target"), 0) + 1
+    return deg
+
+
+def downsample(graph, max_nodes):
+    """Reduce a large estate to a READABLE, REPRESENTATIVE subgraph of <= max_nodes.
+
+    A 300-node estate rendered in one figure is an unreadable hairball — labels
+    shrink to nothing and mermaid/dagre can time out. Rather than break the display
+    (or silently ship the hairball), keep the nodes that carry the argument and say
+    so on the figure; the FULL indicator set stays in the IOC bundle.
+
+    Selection is deterministic and evidence-led:
+      1. every operator/person ANCHOR (the nodes a reader must find),
+      2. the highest-degree node in EACH community (no cluster vanishes),
+      3. fill the remaining budget by global degree (hubs first), dropping the
+         fan-out infrastructure types (FANOUT_TYPES) last.
+
+    Returns (subgraph, kept_count, total_count). A graph already within budget is
+    returned unchanged.
+    """
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    total = len(nodes)
+    if total <= max_nodes:
+        return graph, total, total
+    deg = _node_degree(edges)
+
+    def is_anchor(n):
+        return n.get("type") in ("operator", "person")
+
+    kept = {n["id"] for n in nodes if is_anchor(n)}
+
+    by_comm = {}
+    for n in nodes:
+        by_comm.setdefault(n.get("community_rank", 0), []).append(n)
+    for members in by_comm.values():
+        best = max(members, key=lambda n: deg.get(n["id"], 0))
+        kept.add(best["id"])
+
+    # Fill by degree; fan-out infra sorts last so hubs and meaningful nodes win the
+    # budget. Tie-break on id keeps the choice deterministic across runs.
+    remaining = [n for n in nodes if n["id"] not in kept]
+    remaining.sort(key=lambda n: (n.get("type") in FANOUT_TYPES,
+                                  -deg.get(n["id"], 0), str(n["id"])))
+    for n in remaining:
+        if len(kept) >= max_nodes:
+            break
+        kept.add(n["id"])
+
+    sub_nodes = [n for n in nodes if n["id"] in kept]
+    sub_edges = [e for e in edges
+                 if e.get("source") in kept and e.get("target") in kept]
+    sub = dict(graph)
+    sub["nodes"] = sub_nodes
+    sub["edges"] = sub_edges
+    return sub, len(sub_nodes), total
+
+
 def render_triple(mmd_path, stem, *, scale=2, width=0, pdf=False):
     """Shell out to the sibling render_mermaid.py to emit PNG + SVG + thumb (+ vector PDF)."""
     render = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -435,6 +505,14 @@ def main():
                          "nameserver,registrar,template,theme,email")
     ap.add_argument("--no-render", action="store_true",
                     help="write only the .mmd source; skip PNG/SVG rendering")
+    ap.add_argument("--max-nodes", type=int, default=CROWDED_NODES,
+                    help="above this many nodes the MAIN figure is reduced to a readable "
+                         "REPRESENTATIVE subset (anchors + per-cluster hubs + top-degree "
+                         "nodes; fan-out infra dropped first) and the figure title says so, "
+                         "pointing the reader to the full IOC bundle. Default %d" % CROWDED_NODES)
+    ap.add_argument("--full", action="store_true",
+                    help="never downsample — render every node in one figure even when it is "
+                         "too dense to read (the old behaviour; the overview an analyst may want)")
     args = ap.parse_args()
 
     graph = json.load(open(args.graph_json, encoding="utf-8"))
@@ -447,14 +525,31 @@ def main():
                           if e.get("source") in ids and e.get("target") in ids]
     os.makedirs(os.path.dirname(os.path.abspath(args.stem)), exist_ok=True)
 
-    nodes = graph.get("nodes", [])
-    ranks = sorted({n.get("community_rank", 0) for n in nodes})
+    full_nodes = graph.get("nodes", [])
+    full_ranks = sorted({n.get("community_rank", 0) for n in full_nodes})
+
+    # Large infra: build the MAIN figure from a representative subset so it stays
+    # readable instead of collapsing into a hairball. The full graph is still used
+    # for the legend and the per-cluster figures; the full indicator set lives in
+    # the IOC bundle, which the subset title names.
+    if args.full:
+        graph_main, kept, total = graph, len(full_nodes), len(full_nodes)
+    else:
+        graph_main, kept, total = downsample(graph, args.max_nodes)
+    subset = kept < total
+    title = args.title
+    if subset:
+        note = ("representative subset: %d of %d nodes — full IOCs in the bundle "
+                "(CSV / Markdown / JSONL)" % (kept, total))
+        title = ("%s · %s" % (args.title, note)) if args.title else ("Case graph · %s" % note)
+
+    main_ranks = sorted({n.get("community_rank", 0) for n in graph_main.get("nodes", [])})
     # The split decision, in one place: a legend was asked for, the graph has enough clusters to
     # make an inline box crowd it out, and the caller has not overridden.
     split_legend = bool(args.legend) and not args.inline_legend \
-        and len(ranks) >= LEGEND_SPLIT_MIN_CLUSTERS
+        and len(main_ranks) >= LEGEND_SPLIT_MIN_CLUSTERS
 
-    mmd_path = _write(build_mermaid(graph, args.title, args.direction,
+    mmd_path = _write(build_mermaid(graph_main, title, args.direction,
                                     legend=bool(args.legend) and not split_legend,
                                     dedup_labels=not args.all_edge_labels), args.stem)
     outs, companions = [mmd_path], []
@@ -469,8 +564,8 @@ def main():
         if not args.no_render:
             companions += render_triple(lpath, lstem, **render)
 
-    if args.split_clusters and len(ranks) > 1:
-        for rank in ranks:
+    if args.split_clusters and len(full_ranks) > 1:
+        for rank in full_ranks:
             sub = subgraph_of_cluster(graph, rank)
             if not sub["nodes"]:
                 continue
@@ -486,10 +581,17 @@ def main():
     if companions:
         print("companion figure(s) — EMBED THESE TOO, the main figure no longer explains "
               "itself alone:\n  " + "\n  ".join(companions))
-    if len(nodes) > CROWDED_NODES and not args.split_clusters:
+    if subset:
         sys.stderr.write(
-            f"[graph_to_diagram] NOTE: {len(nodes)} nodes in one figure. At printed width the "
-            f"labels will be small. Consider --split-clusters, or --drop-types to prune the "
+            "[graph_to_diagram] NOTE: %d nodes reduced to a REPRESENTATIVE subset of %d for a "
+            "readable figure. The full indicator set is in the IOC bundle "
+            "(generate-cti-iocs.py -> .csv / .txt / STIX; open the .csv in Excel). Use --full "
+            "to force the whole graph, or --split-clusters for one figure per cluster.\n"
+            % (total, kept))
+    elif len(full_nodes) > CROWDED_NODES and not args.split_clusters:
+        sys.stderr.write(
+            f"[graph_to_diagram] NOTE: {len(full_nodes)} nodes in one figure. At printed width "
+            f"the labels will be small. Consider --split-clusters, or --drop-types to prune the "
             f"infrastructure nodes (nameserver,registrar,regdate) that fan out without "
             f"carrying the argument.\n")
 

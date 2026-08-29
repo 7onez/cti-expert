@@ -41,7 +41,9 @@
       "redemption period",
       "pending renewal",
       "on behalf of",
-      "domain buyer"
+      "domain buyer",
+      "registrant id",
+      "not available from registry"
     ]
   },
   "role_name_placeholders": {

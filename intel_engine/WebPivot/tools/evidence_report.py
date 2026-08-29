@@ -468,6 +468,12 @@ _RN_FALLBACK = {
 _RN_REF = load_ref(ref_path(__file__, "registrant_noise.json"), _RN_FALLBACK)
 _NOISE_EMAIL_SUBSTR = tuple(_RN_REF["noise_email_substrings"])
 _NOISE_NAME_SUBSTR = tuple(_RN_REF["noise_name_substrings"])
+# Registrar/proxy/placeholder phone numbers — a shared one of these must never bind domains.
+# Substring match is on the DIGITS-ONLY form (see _is_noise_value phone branch).
+_NOISE_PHONE_SUBSTR = tuple(_RN_REF.get("noise_phone_substrings",
+                            ("14806242599", "4806242599", "15555555555", "5555555555",
+                             "15551234567", "1234567890", "0000000000", "9999999999",
+                             "11111111111")))
 
 
 def _norm(v) -> str:
@@ -497,8 +503,54 @@ def _is_identity_pivot(kind: str) -> bool:
     """Kinds that, when shared across hosts, indicate common OPERATOR control —
     the backbone of a same-operator cluster (favicon, analytics/verif/SaaS tokens,
     exact TLS cert). Excludes co_san (handled separately) and low-value hosts/emails."""
-    return (kind in ("favicon_hash", "tls_cert:fingerprint_sha256")
+    return (kind in ("favicon_hash", "tls_cert:fingerprint_sha256",
+                     "whois:registrant_email", "whois:registrant_phone")
             or kind.startswith(("tracker:", "verification:", "saas:")))
+
+# Rung-1 hard identifiers: a single one shared across hosts is decisive for same-operator
+# control on its own (unlike a favicon/kit, which needs a second independent type). Registrant
+# NAME is deliberately excluded — a common name can false-merge unrelated domains (RULE 5).
+_DECISIVE_KINDS = {"whois:registrant_email", "whois:registrant_phone"}
+
+
+def _is_decisive_pivot(kind: str) -> bool:
+    return kind in _DECISIVE_KINDS
+
+
+# A registrant value binding more than this many domains KB-wide is a bulk/reseller/registrar
+# SERVICE, not one operator — so it must not fire a "confirmed operator cluster" BLUF. This is the
+# reverse-WHOIS reseller cap (whois_enrich uses the same 150), NOT the generic indicator prevalence
+# cap (query.py --max-prevalence 8): a favicon/kit shared by 9 domains is noise, but a real operator
+# estate legitimately holds dozens of domains under one registrant, so the registrant threshold is
+# deliberately far higher.
+_REVERSE_CAP = int(os.environ.get("EVIDENCE_REGISTRANT_CAP", "150"))
+
+
+def _registrant_prevalence(value: str, kb_dir: Optional[str]) -> int:
+    """KB-wide count of DISTINCT domains registered_by `value`. Returns 0 when unknown (no kb_dir
+    or unreadable KB) — and a real estate on a fresh KB also reads its own in-case count — so 0 or a
+    small count NEVER demotes; only a genuinely large KB-wide spread does."""
+    if not kb_dir:
+        return 0
+    try:
+        _kbtools = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "tools", "kb")
+        if _kbtools not in sys.path:
+            sys.path.insert(0, _kbtools)
+        from knowledge_base import KB  # noqa: E402
+        kb = KB(kb_dir)
+        etype = "email" if "@" in value else "phone"
+        return len({v for (t, v, rel, _c) in kb.neighbors(etype, value)
+                    if rel == "registered_by" and t == "domain"})
+    except Exception:  # noqa: BLE001 — prevalence is an ENHANCEMENT; never break the render
+        return 0
+
+
+def _registrant_ok(value: str, kb_dir: Optional[str]) -> bool:
+    """A decisive registrant value survives only if it is NOT a bulk service — it binds
+    <= _REVERSE_CAP domains KB-wide. Complements _is_noise_value (KNOWN privacy-proxy strings):
+    this catches an ordinary-looking mailbox reused across hundreds of unrelated domains."""
+    return _registrant_prevalence(value, kb_dir) <= _REVERSE_CAP
 
 
 def _is_noise_value(kind: str, value: str) -> bool:
@@ -510,10 +562,17 @@ def _is_noise_value(kind: str, value: str) -> bool:
         return any(s in v for s in _NOISE_EMAIL_SUBSTR)
     if kind.endswith("registrant_name") or kind == "person":
         return any(s in v for s in _NOISE_NAME_SUBSTR)
+    if kind.endswith("registrant_phone") or kind == "phone":
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if len(digits) < 7:                         # too short to be a real number
+            return True
+        if len(set(digits)) <= 1:                   # all-same-digit placeholder (000…, 111…)
+            return True
+        return any(s in digits for s in _NOISE_PHONE_SUBSTR)
     return False
 
 
-def _cluster_confidence(n_types: int, live_corroborated: bool) -> str:
+def _cluster_confidence(n_types: int, live_corroborated: bool, decisive: bool = False) -> str:
     """Analytic confidence for a same-operator sub-cluster (ICD 203).
 
     Independent artifact TYPES that co-occur across the same hosts are themselves
@@ -521,7 +580,7 @@ def _cluster_confidence(n_types: int, live_corroborated: bool) -> str:
     domains corroborate each other. So >=3 independent types => high confidence even
     without a live reverse-lookup; 2 types => high only if also live-corroborated,
     else moderate; a single shared artifact => low (or moderate if live-corroborated)."""
-    if n_types >= 3 or (n_types >= 2 and live_corroborated):
+    if decisive or n_types >= 3 or (n_types >= 2 and live_corroborated):
         return "high confidence"
     if n_types >= 2:
         return "moderate confidence"
@@ -657,7 +716,8 @@ def render_cluster_report(results: list,
                           case: Optional[str] = None,
                           classification: str = "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
                           analyst: Optional[str] = None,
-                          graph: Optional[dict] = None) -> str:
+                          graph: Optional[dict] = None,
+                          kb_dir: Optional[str] = None) -> str:
     """Render ONE ICD-203 assessment across a whole case (many pivot_extract results).
 
     Rolls per-host artifacts up into cluster-level Key Judgments: hosts sharing >=2
@@ -747,6 +807,8 @@ def render_cluster_report(results: list,
             continue
         kinds = {k.split(":")[0] for (k, v, _h) in arts}   # distinct artifact TYPES
         subclusters.append({"hosts": sorted(grp), "arts": arts, "types": kinds,
+                            "decisive": any(_is_decisive_pivot(k) and _registrant_ok(v, kb_dir)
+                                            for (k, v, _h) in arts),
                             "corr": any((k, v) in corroborated for (k, v, _h) in arts)})
     subclusters.sort(key=lambda c: (-len(c["types"]), -len(c["hosts"])))
 
@@ -760,17 +822,20 @@ def render_cluster_report(results: list,
     # OPSEC: the analyst name is deliberately NOT stamped on the deliverable (attribution leak).
     L += ["  |  ".join(subj), ""]
 
-    confirmed = [c for c in subclusters if len(c["types"]) >= 2]
+    confirmed = [c for c in subclusters if len(c["types"]) >= 2 or c.get("decisive")]
     L.append("## Bottom Line Up Front")
     if confirmed:
         big = confirmed[0]
+        _dec_only = big.get("decisive") and len(big["types"]) < 2
+        basis = ("a decisive shared registrant identifier (registrant email/phone)"
+                 if _dec_only else "two or more independent identity artifacts")
+        shared_desc = "registrant identity" if _dec_only else ", ".join(sorted(big["types"]))
         L.append(
             f"Collection covered {n_total} domain(s). We assess with high confidence that "
             f"{sum(len(c['hosts']) for c in confirmed)} of them resolve to common operator "
-            f"control, on the basis of {len(confirmed)} sub-cluster(s) each sharing two or more "
-            f"independent identity artifacts. The strongest — {', '.join(big['hosts'])} — "
-            f"almost certainly share a single operator "
-            f"(shared {', '.join(sorted(big['types']))}).")
+            f"control, on the basis of {len(confirmed)} sub-cluster(s) each sharing {basis}. "
+            f"The strongest — {', '.join(big['hosts'])} — almost certainly share a single "
+            f"operator (shared {shared_desc}).")
     elif backbone:
         L.append(f"Collection covered {n_total} domain(s). We assess with moderate confidence "
                  f"that subsets are commonly operated, but no subset yet meets the two-independent-"
@@ -801,9 +866,9 @@ def render_cluster_report(results: list,
           "Two or more independent shared artifacts raise both._", ""]
     if confirmed or subclusters:
         for i, c in enumerate(subclusters[:12], 1):
-            two = len(c["types"]) >= 2
+            two = len(c["types"]) >= 2 or c.get("decisive")
             like = "almost certainly" if two else "likely"
-            conf = _cluster_confidence(len(c["types"]), c["corr"])
+            conf = _cluster_confidence(len(c["types"]), c["corr"], c.get("decisive", False))
             arts_str = "; ".join(f"{k}=`{v}` [{len(h)} hosts]" for (k, v, h) in c["arts"][:4])
             L.append(f"- **KJ-{i}.** {', '.join(c['hosts'])} — **{like}** one operator "
                      f"(*{conf}*); shared: {arts_str}.")

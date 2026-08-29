@@ -19,26 +19,26 @@ from cti_docx_styles import COLORS_HEX
 
 # Entity type → color mapping
 ENTITY_COLORS = {
-    "person": "#1A237E",
-    "username": "#0096C7",
-    "email": "#8B5CF6",
-    "domain": "#EA580C",
-    "ip": "#64748B",
-    "organization": "#16A34A",
-    "phone": "#EC4899",
-    "location": "#92400E",
-    "asset": "#475569",
-    "event": "#0369A1",
+    "person": "#8C2D2D",        # brick — the anchor a reader finds first
+    "username": "#3B5566",      # steel
+    "email": "#5A4A7A",         # muted violet
+    "domain": "#B0790F",        # ochre
+    "ip": "#6F6A61",            # muted
+    "organization": "#5A6B3B",  # olive
+    "phone": "#7A2F52",         # muted plum
+    "location": "#9A5B2F",      # amber-brown
+    "asset": "#22333F",         # slate
+    "event": "#2F6B6B",         # teal
 }
 
 # Connection type → edge style
 EDGE_STYLES = {
-    "owns": {"style": "solid", "color": "#1A237E", "width": 2.5},
-    "uses": {"style": "solid", "color": "#0096C7", "width": 1.5},
-    "works_at": {"style": "dashed", "color": "#16A34A", "width": 1.5},
-    "linked_to": {"style": "dotted", "color": "#64748B", "width": 1.0},
-    "alias": {"style": "dashdot", "color": "#8B5CF6", "width": 1.5},
-    "communicated_with": {"style": "solid", "color": "#EC4899", "width": 1.5},
+    "owns": {"style": "solid", "color": "#8C2D2D", "width": 2.5},
+    "uses": {"style": "solid", "color": "#3B5566", "width": 1.5},
+    "works_at": {"style": "dashed", "color": "#5A6B3B", "width": 1.5},
+    "linked_to": {"style": "dotted", "color": "#6F6A61", "width": 1.0},
+    "alias": {"style": "dashdot", "color": "#5A4A7A", "width": 1.5},
+    "communicated_with": {"style": "solid", "color": "#7A2F52", "width": 1.5},
 }
 
 ENTITY_ICONS = {
@@ -80,7 +80,7 @@ def add_entity_diagram(doc, subjects: list, connections: list) -> None:
         icon = ENTITY_ICONS.get(stype, "?")
         G.add_node(sid)
         node_labels[sid] = f"{icon} {label}"
-        node_colors.append(ENTITY_COLORS.get(stype, "#64748B"))
+        node_colors.append(ENTITY_COLORS.get(stype, "#6F6A61"))
 
     # Add edges
     edge_colors = []
@@ -110,7 +110,7 @@ def add_entity_diagram(doc, subjects: list, connections: list) -> None:
     for i, (u, v) in enumerate(G.edges()):
         nx.draw_networkx_edges(
             G, pos, edgelist=[(u, v)], ax=ax,
-            edge_color=[edge_colors[i]] if i < len(edge_colors) else ["#64748B"],
+            edge_color=[edge_colors[i]] if i < len(edge_colors) else ["#6F6A61"],
             width=edge_widths[i] if i < len(edge_widths) else 1.0,
             style=edge_styles[i] if i < len(edge_styles) else "solid",
             arrows=True, arrowsize=15, arrowstyle="-|>",
@@ -152,7 +152,7 @@ def add_entity_diagram(doc, subjects: list, connections: list) -> None:
         if stype not in seen_types:
             seen_types.add(stype)
             icon = ENTITY_ICONS.get(stype, "?")
-            color = ENTITY_COLORS.get(stype, "#64748B")
+            color = ENTITY_COLORS.get(stype, "#6F6A61")
             legend_items.append(
                 plt.Line2D([0], [0], marker="o", color="w",
                           markerfacecolor=color, markersize=8,
@@ -197,7 +197,7 @@ def add_network_topology(doc, subjects: list, connections: list) -> None:
         label = s.get("label", sid)
         G.add_node(sid)
         node_labels[sid] = f"{label}"
-        node_colors.append(ENTITY_COLORS.get(stype, "#64748B"))
+        node_colors.append(ENTITY_COLORS.get(stype, "#6F6A61"))
 
     for c in infra_connections:
         from_id = c.get("from_id", "")

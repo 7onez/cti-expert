@@ -18,6 +18,79 @@ from collections import Counter
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from knowledge_base import KB  # noqa: E402
 
+# --- registrant carve-out ------------------------------------------------------------------------
+# A shared WHOIS registrant (email / name / org) is an OPERATOR-GRADE link: one operator's estate
+# legitimately holds dozens of domains under a single registrant, so the generic prevalence cap —
+# which treats an indicator carried by > max_prevalence domains as generic infrastructure noise —
+# WRONGLY shatters that estate into singletons. Registrant edges instead get the far higher bulk-
+# registrant bound via noise_filters.is_bulk_registrant (BULK_REGISTRANT_MAX_DOMAINS, from
+# noise_filters.json) — the SAME cap BOTH ingest paths enforce, so clustering never drops a
+# registrant edge ingest admitted, nor keeps one it refused. Above it the value is a
+# reseller/registrar service, not an owner. And a placeholder / privacy / role registrant value (a
+# mis-parsed WHOIS field label such as "Registry Registrant ID: Not Available From Registry", a
+# "Domain Admin" boilerplate name, a privacy-proxy mailbox) is never an identity, so it must not
+# bind a cluster edge at all.
+REGISTRANT_RELS = frozenset({"registered_by"})
+
+try:  # canonical registrant-noise predicates — single source of truth with both ingest paths
+    from noise_filters import is_noise_email, is_bulk_registrant  # noqa: E402
+except Exception:  # noqa: BLE001 — degrade safely; a read-only query must never crash
+    def is_noise_email(_):        # pragma: no cover
+        return False
+    def is_bulk_registrant(_):    # pragma: no cover
+        return False
+
+try:
+    import kb_refs  # noqa: E402 — reference DATA lives in references/registrant_noise.json (RULE 3)
+    _RN = kb_refs.load_ref(kb_refs.ref_path(__file__, "registrant_noise.json"),
+                           {"name_junk": [], "role_name_placeholders": [], "privacy_markers": [],
+                            "placeholder_person_markers": [], "proxy_email_domains": []})
+except Exception:  # noqa: BLE001 — degrade to empty lists; never crash a read-only KB query
+    _RN = {"name_junk": [], "role_name_placeholders": [], "privacy_markers": [],
+           "placeholder_person_markers": [], "proxy_email_domains": []}
+_NAME_JUNK = tuple(_RN.get("name_junk") or ())
+_ROLE_PLACEHOLDERS = frozenset(_RN.get("role_name_placeholders") or ())
+_PRIV_MARKERS = tuple(_RN.get("privacy_markers") or ())
+_PLACEHOLDER_PERSON = tuple(_RN.get("placeholder_person_markers") or ())
+_PROXY_EMAIL_DOMAINS = tuple(_RN.get("proxy_email_domains") or ())
+
+
+def _norm_name(v):
+    """Lowercase, drop punctuation, collapse whitespace — the same normalisation ingest_webpivot
+    uses, so 'Domain Admin.' and 'DOMAIN  ADMIN' both compare equal to the role placeholder list."""
+    s = "".join(c if (c.isalnum() or c.isspace()) else " " for c in (v or "").lower())
+    return " ".join(s.split())
+
+
+def is_registrant_noise(dst_type, value):
+    """True if a `registered_by` target is registrar/privacy/placeholder boilerplate rather than a
+    real owner, so it must never bind a same-operator cluster. Mirrors ingest_webpivot's combined
+    email gate — `_is_privacy(em) OR is_noise_email(em)` — and its name gates (_is_role_placeholder /
+    _name_kind: role_name_placeholders exact + name_junk / privacy / placeholder substrings), over
+    the SAME registrant_noise.json, so a value ingest would refuse as an edge is refused here too,
+    cleaning KBs ingested before those gates existed."""
+    v = (value or "").strip().lower()
+    if not v:
+        return True
+    if dst_type == "email":
+        if "@" not in v:
+            return True
+        # is_noise_email covers role local-parts, abuse.<domain> and noise_filters' registrar/
+        # privacy DOMAIN lists. ingest ALSO gates with _is_privacy — a SEPARATE, non-overlapping
+        # list: fuzzy privacy markers ANYWHERE in the address + registrant_noise proxy_email_domains
+        # (e.g. privacy@1and1.com, which is_noise_email misses). _components reads raw KB edges
+        # (incl. any ingested before those gates), so replicate BOTH.
+        if is_noise_email(v) or any(m in v for m in _PRIV_MARKERS):
+            return True
+        dom = v.split("@", 1)[1]
+        return any(dom == d or dom.endswith("." + d) for d in _PROXY_EMAIL_DOMAINS)
+    # person / org — exact role placeholder, or any junk/privacy/placeholder substring
+    if _norm_name(v) in _ROLE_PLACEHOLDERS:
+        return True
+    return (any(m in v for m in _NAME_JUNK)
+            or any(m in v for m in _PRIV_MARKERS)
+            or any(m in v for m in _PLACEHOLDER_PERSON))
+
 
 def main():
     ap = argparse.ArgumentParser(description="Query the OSINT knowledge base.")
@@ -119,9 +192,16 @@ def main():
         peers = {}
         for e in kb.edges():
             if e["src_type"] == "domain" and (e["dst_type"], e["dst"]) in inds and e["src"] != target:
-                if args.strong and (e["rel"] in NOISE_RELS or e["dst"] in benign or
-                        len(prevalence.get((e["dst_type"], e["dst"]), ())) > args.max_prevalence):
-                    continue
+                if args.strong:
+                    is_reg = e["rel"] in REGISTRANT_RELS
+                    prev = len(prevalence.get((e["dst_type"], e["dst"]), ()))
+                    if e["rel"] in NOISE_RELS or e["dst"] in benign:
+                        continue
+                    if is_reg:
+                        if is_registrant_noise(e["dst_type"], e["dst"]) or is_bulk_registrant(prev):
+                            continue
+                    elif prev > args.max_prevalence:
+                        continue
                 peers.setdefault(e["src"], set()).add(f"{e['rel']}:{e['dst']}")
         peers = {d: v for d, v in peers.items() if v}     # drop peers left with no (strong) link
         tag = " (strong links only — boilerplate excluded)" if args.strong else ""
@@ -154,7 +234,12 @@ def _components(kb, kb_dir, max_prevalence, restrict):
     for e in kb.edges():
         if e["src_type"] != "domain" or e["rel"] in NOISE_RELS or e["dst"] in benign:
             continue
-        if len(prevalence.get((e["dst_type"], e["dst"]), ())) > max_prevalence:
+        is_reg = e["rel"] in REGISTRANT_RELS
+        prev = len(prevalence.get((e["dst_type"], e["dst"]), ()))
+        if is_reg:
+            if is_registrant_noise(e["dst_type"], e["dst"]) or is_bulk_registrant(prev):
+                continue                          # placeholder/privacy or bulk-reseller registrant
+        elif prev > max_prevalence:
             continue
         if restrict is not None and e["src"] not in restrict:
             continue
