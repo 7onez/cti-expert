@@ -549,6 +549,51 @@ def _reverse_whois_seeds(case: str, known: set, cap: int) -> dict:
 _DEDICATED_TENANT_MAX = int(os.environ.get("HARNESS_DEDICATED_TENANT_MAX", "8"))
 
 
+# A `*.apex` wildcard zone answers EVERY fabricated label, so subdomain enumerators (validin_subs /
+# securitytrails / censys_cert) keep returning the same handful of labels recombined — mail.mail.x,
+# giaoduc.mail.x, thietbi.giaoduc.x — and each collected synthetic host spawns more, an unbounded
+# frontier that never converges. These guards cap re-seeding to genuine direct subdomains of a known
+# apex. HARNESS_MAX_SUB_DEPTH raises the cap for the rare legitimately-deep zone.
+_MAX_SUB_DEPTH = int(os.environ.get("HARNESS_MAX_SUB_DEPTH", "1"))
+
+
+def _has_repeated_label(host: str) -> bool:
+    """mail.mail.x / giaoduc.giaoduc.x — an adjacent duplicated DNS label is a wildcard artifact."""
+    labs = host.split(".")
+    return any(labs[i] == labs[i + 1] for i in range(len(labs) - 1))
+
+
+def _apex_set(hosts) -> set:
+    """Registrable roots among `hosts`: a host that is NOT itself a subdomain of another host here."""
+    hs = {h for h in hosts if h}
+    return {h for h in hs if not any(h != g and h.endswith("." + g) for g in hs)}
+
+
+def _too_deep(host: str, apexes: set) -> bool:
+    """host nests more than _MAX_SUB_DEPTH labels below its matching apex (giaoduc.mail.x under
+    apex x is depth 2). A host under no known apex is not our call, so it is allowed (False).
+    Applied ONLY to subdomain-ENUMERATION sources (validin_subs / securitytrails): on a `*.apex`
+    wildcard zone those recombine labels without bound. Cert-SAN and IP-co-tenant hosts are
+    operator-chosen (a real `login.secure.brand.com` SAN is depth 2), so the depth cap is NOT
+    applied to them — only the repeated-adjacent-label check is."""
+    for a in apexes:
+        if host == a:
+            return False
+        if host.endswith("." + a):
+            sub = host[: -(len(a) + 1)]
+            depth = sub.count(".") + 1 if sub else 0
+            return depth > _MAX_SUB_DEPTH
+    return False
+
+
+def _wildcard_recursion(host: str, apexes: set) -> bool:
+    """Full subdomain-enumeration guard: a repeated adjacent label (unambiguous junk, checked on
+    every source) OR too-deep nesting below a known apex (the enumeration-only cap). Kept as the
+    single predicate the subdomain path uses; the cert/co-tenant paths apply _has_repeated_label
+    alone (see _discovered_infra_seeds)."""
+    return _has_repeated_label(host) or _too_deep(host, apexes)
+
+
 def _discovered_infra_seeds(case: str, known: set) -> dict:
     """Hosts surfaced by the STRONG premium reverses that pivot_extract ran but the loop left on the
     floor — re-seeded so the next round actually chases them. Restricted, on purpose, to the reverse
@@ -571,6 +616,7 @@ def _discovered_infra_seeds(case: str, known: set) -> dict:
     # reverses (kit-level / shared-host = §2.5 noise; they remain unseeded leads).
     disc_keys = ("censys_cert", "validin_subs", "securitytrails")
     out: dict = {}
+    apexes = _apex_set(known)
     for p in glob.glob(os.path.join(ROOT, "cases", case, "raw", "*.json")):
         try:
             with open(p, encoding="utf-8") as fh:
@@ -588,6 +634,9 @@ def _discovered_infra_seeds(case: str, known: set) -> dict:
                     hh = _er._discovered_host(h)
                     if (hh and "." in hh and "*" not in hh and not hh.replace(".", "").isdigit()
                             and hh not in known and not _er._is_infra_noise_host(hh)
+                            and not (_wildcard_recursion(hh, apexes)
+                                     if key in ("validin_subs", "securitytrails")
+                                     else _has_repeated_label(hh))
                             and not T._find_cached_raw(hh)):
                         out[hh] = max(out.get(hh, 0), 50)   # moderate: a reverse-lookup lead
         # Censys IP-host co-tenants (live_results["censys"].dns_names, wp_ippivot) — reseeded ONLY
@@ -605,6 +654,7 @@ def _discovered_infra_seeds(case: str, known: set) -> dict:
                 hh = _er._discovered_host(h)
                 if (hh and "." in hh and "*" not in hh and not hh.replace(".", "").isdigit()
                         and hh not in known and not _er._is_infra_noise_host(hh)
+                        and not _has_repeated_label(hh)
                         and not T._find_cached_raw(hh)):
                     out[hh] = max(out.get(hh, 0), 40)   # moderate-: dedicated-box co-tenant (rung-8)
     return out
