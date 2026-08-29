@@ -769,23 +769,22 @@ fi
 
 # ── Playwright (render / screenshot / engage) ─────────────────
 # Post-JS DOM render (/webpivot --render), full-page screenshot evidence, and Engage's
-# synthetic-persona automation all use Playwright. It ships a browser, so it rides with
-# --headless alongside Scrapling's Chromium and agent-browser.
+# synthetic-persona automation all use Playwright. Provisioned by DEFAULT now (like pandoc) so
+# /cti renders live out of the box. The ~120MB Chromium download is best-effort and NEVER fails
+# the install — a miss degrades to the urlscan-DOM recovery path. Set NO_PLAYWRIGHT=1 to opt out.
 section "Playwright (render / screenshot / engage)"
-if [[ "$OPT_HEADLESS" == true ]]; then
-  if vpip --quiet --upgrade playwright 2>/dev/null; then
-    PW_CLI="$VENV_BIN/playwright"; [[ "$OS" == "windows" ]] && PW_CLI="$VENV_BIN/playwright.exe"
-    [[ "$OS" == "linux" ]] && { { [[ -x "$PW_CLI" ]] && $SUDO "$PW_CLI" install-deps chromium; } || $SUDO "$VENV_PYTHON" -m playwright install-deps chromium; } &>/dev/null 2>&1 || true
-    if { [[ -x "$PW_CLI" ]] && "$PW_CLI" install chromium &>/dev/null; } || "$VENV_PYTHON" -m playwright install chromium &>/dev/null; then
-      log_ok "playwright + chromium"
-    else
-      log_skip "playwright (installed; finish with: $VENV_PYTHON -m playwright install chromium)"
-    fi
+if [[ "${NO_PLAYWRIGHT:-}" == "1" ]]; then
+  echo -e "  ${YELLOW}–${NC} Playwright skipped (NO_PLAYWRIGHT=1)"
+elif vpip --quiet --upgrade playwright 2>/dev/null; then
+  PW_CLI="$VENV_BIN/playwright"; [[ "$OS" == "windows" ]] && PW_CLI="$VENV_BIN/playwright.exe"
+  [[ "$OS" == "linux" ]] && { { [[ -x "$PW_CLI" ]] && $SUDO "$PW_CLI" install-deps chromium; } || $SUDO "$VENV_PYTHON" -m playwright install-deps chromium; } &>/dev/null 2>&1 || true
+  if { [[ -x "$PW_CLI" ]] && "$PW_CLI" install chromium &>/dev/null; } || "$VENV_PYTHON" -m playwright install chromium &>/dev/null; then
+    log_ok "playwright + chromium"
   else
-    log_fail "playwright" "install (uv pip / pip) failed"
+    log_skip "playwright (package in; Chromium download deferred — finish: $VENV_PYTHON -m playwright install chromium)"
   fi
 else
-  echo -e "  ${YELLOW}–${NC} Playwright not requested (add --headless; installs playwright + Chromium)"
+  log_skip "playwright (pip install deferred; core techniques degrade gracefully without it)"
 fi
 
 # ── Go tools (optional) ────────────────────────────────────────
