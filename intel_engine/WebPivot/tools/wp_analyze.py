@@ -469,6 +469,11 @@ def render_leads(result: dict) -> str:
                 for ct in (c.get("certs") or [])[:3]:
                     iss = (ct.get("issuer") or "").replace("C=US, O=", "").split(",")[0]
                     lines.append(f"    · cert {ct.get('not_before','?')[:10]}→{ct.get('not_after','?')[:10]} [{iss}] {', '.join(ct.get('names', [])[:4])}")
+            if c.get("aggregated_subdomains"):
+                _aggsrc = "+".join(c.get("aggregated_sources", ["aggregated"]))
+                lines.append(f"  - 🟡 subdomains via AGGREGATED fallback ({_aggsrc}): "
+                             f"{len(c['aggregated_subdomains'])} names — NOT CT-log-attributable, verify before reporting"
+                             f" → {', '.join(c['aggregated_subdomains'][:12])}")
             pd = lr.get("passivedns") or {}
             if pd.get("error"):
                 lines.append(f"  - 🔴 passive DNS: error — {pd['error']}")
