@@ -51,19 +51,24 @@ Helper tools that build cross-engine queries: `favihunter`, `favihash`, osint.sh
 | **Censys** | cert fields | Freemium | Platform API, key |
 | **Cloudflare Merkle Town / Azul** | dashboard | Free | limited |
 | **crt.name** (aggregated index) | `apex=<eTLD+1>` | Free | `/v1/search`, no token, 100/IP/day — **text one-per-line by default; add `&format=json`**; **fallback below crt.sh only** |
+| **agniops** (aggregated index) | `domain=<apex>` | Free | `/v1/search`, no token — **text one-per-line**; same posture as crt.name — **fallback below crt.sh only** |
 
 > **CT is free/keyless.** crt.sh needs no key (just often overloaded); **CertSpotter**'s key is an
 > *optional* reliability + rate-limit upgrade and a crt.sh fallback — its free tier also works keyless
 > at a low rate. CT lookups never require payment.
 
-> **crt.name is a fallback, not a peer of crt.sh.** It is an **aggregated** subdomain index
-> (CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi), so a name it
-> returns is **not CT-log-attributable evidence** the way a crt.sh row is. Rank it *below* crt.sh,
-> tag results `source:crt.name(aggregated)`, and validate before any such name enters a report.
-> **OPSEC:** querying it discloses the target apex to an unknown third-party operator — crt.sh and
-> CertSpotter are established CT operators; crt.name is not. Its remote `/mcp` endpoint is
-> deliberately **not** wired in — an unvetted remote MCP server is exactly the supply-chain /
-> prompt-injection surface `../techniques/prompt-injection-audit.md` warns against.
+> **crt.name / agniops are fallbacks, not peers of crt.sh.** Both are **aggregated** subdomain
+> indexes (crt.name = CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi;
+> agniops = passive feeds), so a name they return is **not CT-log-attributable evidence** the way a
+> crt.sh row is. Rank them *below* crt.sh, tag results `source:crt.name(aggregated)` /
+> `source:agniops(aggregated)`, and validate before any such name enters a report.
+> **OPSEC:** querying either discloses the target apex to an unknown third-party operator — crt.sh and
+> CertSpotter are established CT operators; these are not.
+> **Auto-wiring:** `wp_recon.ct_search()` calls both — but **only as a fallback** when crt.sh *and*
+> Shodan CTL return no subdomains, and their names land in a **separate** `aggregated_subdomains` /
+> `aggregated_sources` channel, never merged into the CT-attributable `subdomains`. crt.name's remote
+> `/mcp` endpoint stays deliberately **not** wired in — an unvetted remote MCP server is exactly the
+> supply-chain / prompt-injection surface `../techniques/prompt-injection-audit.md` warns against.
 
 ### 4b. Cert-fingerprint pivots — find OTHER hosts serving the SAME cert
 

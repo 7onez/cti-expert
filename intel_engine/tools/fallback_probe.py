@@ -7,6 +7,8 @@ keyless, always-available corners that survive a dead/parked front page:
 
   1. crt.sh        — CT/SSL certs. A cert whose SAN list covers OTHER domains is the
                      single strongest operator link there is (issued together = same owner).
+                     When crt.sh + Shodan CTL both come up empty, falls back to the keyless
+                     AGGREGATED indexes crt.name + agniops (names only, not CT-attributable).
   2. Wayback CDX   — the full capture TIMELINE, not just today. Parked-today is routinely
                      a domain that served a live scam last year — the history is the pivot.
   3. archive.is    — the mirror analysts use when Wayback has nothing (operators often
@@ -51,6 +53,29 @@ def _get(url: str, timeout: int = 25) -> str:
         return r.read().decode("utf-8", "ignore")
 
 
+def _ct_hostlist(url: str, domain: str) -> set:
+    """Fetch a keyless AGGREGATED subdomain index that replies with a plaintext,
+    newline-delimited host list (crt.name, agniops). Returns in-scope hosts only,
+    lowercased, apex excluded. Stdlib-only; never raises."""
+    out: set = set()
+    try:
+        body = _get(url, timeout=20).strip()
+    except Exception:
+        return out
+    if not body or body[0] == "<":            # empty or an HTML error page, not a host list
+        return out
+    dom = domain.lower()
+    for line in body.splitlines():
+        name = line.strip().lower().lstrip("*.")   # tolerate '*.' / leading-'.' artifacts
+        if not name or " " in name or "@" in name:
+            continue
+        if name != dom and not name.endswith("." + dom):   # in-scope hosts only
+            continue
+        if name != dom:
+            out.add(name)
+    return out
+
+
 # ------------------------------------------------------------------ 1. CT logs
 def _reg(name: str) -> str:
     return ".".join(name.split(".")[-2:])
@@ -60,7 +85,9 @@ def crtsh(domain: str) -> dict:
     """CT certs for the domain, from TWO keyless CT indexes merged — crt.sh and Shodan's
     CTL mirror (ctl.shodan.io) of the same DB. crt.sh alone 502s often; Shodan covers the
     gap. The prize is SAN-sibling domains: a single cert covering this domain AND an
-    unrelated-looking one binds them to one owner."""
+    unrelated-looking one binds them to one owner. If BOTH CT indexes yield no names, sweeps
+    the keyless AGGREGATED indexes crt.name + agniops as a last resort — their hits are NOT
+    CT-log-attributable (returned under `aggregated_subdomains`, tagged, verify before use)."""
     subs, siblings, issuers, cert_n, srcs = set(), set(), set(), 0, []
 
     def _sort_name(name: str):
@@ -117,10 +144,33 @@ def crtsh(domain: str) -> dict:
     except Exception:
         pass
 
-    if not srcs:
-        return {"ok": False, "error": "no CT source reachable (crt.sh + shodan-ctl both failed)"}
-    return {"ok": True, "sources": srcs, "certs": cert_n, "subdomains": sorted(subs)[:40],
-            "san_siblings": sorted(siblings)[:40], "issuers": sorted(i for i in issuers if i)[:8]}
+    # (c) AGGREGATED fallback — only when the CT logs yielded NO names (both peers down or
+    # empty). crt.name (CT + Common Crawl/CZDS/Chaos/HaGeZi) and agniops are keyless
+    # aggregated indexes: NOT CT-log-attributable, so they are tagged and ranked below crt.sh,
+    # and querying them discloses the apex to a third-party operator — hence gated to the
+    # cold case where they are the difference between a lead and a silent "nothing found".
+    agg_subs, agg_srcs = set(), []
+    if not subs and not siblings:
+        for label, url in (
+            ("crt.name(aggregated)",
+             "https://crt.name/v1/search?" + urllib.parse.urlencode({"apex": domain})),
+            ("agniops(aggregated)",
+             "https://app.agniops.in/v1/search?" + urllib.parse.urlencode({"domain": domain})),
+        ):
+            hits = _ct_hostlist(url, domain)
+            if hits:
+                agg_subs |= hits
+                agg_srcs.append(label)
+
+    if not srcs and not agg_srcs:
+        return {"ok": False,
+                "error": "no CT/subdomain source reachable (crt.sh + shodan-ctl + crt.name + agniops all failed)"}
+    out = {"ok": True, "sources": srcs, "certs": cert_n, "subdomains": sorted(subs)[:40],
+           "san_siblings": sorted(siblings)[:40], "issuers": sorted(i for i in issuers if i)[:8]}
+    if agg_srcs:
+        out["aggregated_sources"] = agg_srcs
+        out["aggregated_subdomains"] = sorted(agg_subs)[:80]
+    return out
 
 
 # ---------------------------------------------------------------- 2. Wayback CDX
@@ -210,6 +260,10 @@ def probe(domain: str, kb_dir: str) -> dict:
                      "strong same-owner link, pivot these first")
     elif res["crtsh"].get("subdomains"):
         leads.append(f"crt.sh: {len(res['crtsh']['subdomains'])} subdomain(s) on cert")
+    elif res["crtsh"].get("aggregated_subdomains"):
+        leads.append(f"{'+'.join(res['crtsh'].get('aggregated_sources', ['aggregated']))}: "
+                     f"{len(res['crtsh']['aggregated_subdomains'])} AGGREGATED subdomain(s) — "
+                     "not CT-log-attributable, verify before pivoting")
     if res["wayback"].get("captures"):
         leads.append(f"wayback: {res['wayback']['captures']} captures "
                      f"{res['wayback'].get('first')}→{res['wayback'].get('last')} — pull an old DOM")
@@ -241,6 +295,9 @@ def _human(r: dict) -> str:
     out.append(f"  CT logs    : {'%d certs, %d subdomains, %d SAN-siblings  [%s]' % (c.get('certs',0), len(c.get('subdomains',[])), len(c.get('san_siblings',[])), '+'.join(c.get('sources',[]))) if c.get('ok') else c.get('error')}")
     if c.get("san_siblings"):
         out.append("     └ SAN-siblings (same-owner pivot): " + ", ".join(c["san_siblings"][:10]))
+    if c.get("aggregated_subdomains"):
+        out.append(f"     └ aggregated subdomains ({'+'.join(c.get('aggregated_sources', []))}, verify before pivoting): "
+                   + ", ".join(c["aggregated_subdomains"][:10]))
     w = r["wayback"]
     out.append(f"  wayback    : {('%d captures %s→%s' % (w.get('captures',0), w.get('first','?'), w.get('last','?'))) if w.get('captures') else w.get('note', w.get('error','—'))}")
     a = r["archive_is"]

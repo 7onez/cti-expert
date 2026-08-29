@@ -535,7 +535,7 @@ def crtsh_search(domain: str, timeout: int = 25):
     return {
         "query": query,
         "total": len(ordered),
-        "subdomains": ordered[:80],
+        "subdomains": ordered,                   # full set; ct_search caps once after the merge
         "wildcards": sorted(wildcards),          # *.domain certs (broad-scope reuse signal)
         "cert_count": len(certs),
         "certs": certs[:40],                     # newest-first, issuer + validity + serial
@@ -608,23 +608,103 @@ def shodan_ctl_search(domain: str, timeout: int = 25):
     ordered = sorted(subs)
     return {
         "query": domain, "source": "shodan-ctl",
-        "total": len(ordered), "subdomains": ordered[:80],
+        "total": len(ordered), "subdomains": ordered,   # full set; ct_search caps once after merge
         "wildcards": sorted(wildcards), "cert_count": len(certs), "certs": certs[:40],
     }
+
+def _ct_hostlist_search(domain: str, source: str, url: str, timeout: int = 25):
+    """Shared client for keyless AGGREGATED subdomain indexes that reply with a PLAINTEXT,
+    newline-delimited hostname list (one host per line) — crt.name and agniops.
+
+    These are NOT pure certificate-transparency logs: they union CT with Common Crawl /
+    CZDS / Chaos / HaGeZi (crt.name) and other passive feeds (agniops), so a name they
+    return is NOT CT-log-attributable evidence and MUST be validated before it enters a
+    report (see handbook/pivot-services.md §4). They also expose the target apex to an
+    unknown third-party operator, so ct_search only calls them as a FALLBACK. Returns
+    {'query','source','aggregated':True,'total','subdomains','wildcards'} or
+    {'error',...}. Never raises."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "ignore").strip()
+    except Exception as e:
+        return {"query": domain, "error": str(e), "source": source}
+    if not body or body[0] == "<":            # empty or an HTML error page, not a host list
+        return {"query": domain, "error": body[:120] or "empty response", "source": source}
+    dom = domain.lower()
+    subs, wildcards = set(), set()
+    for line in body.splitlines():
+        name = line.strip().lower().lstrip(".")   # tolerate a leading '.' artifact (.x.com)
+        if not name or " " in name or "@" in name:   # skip blanks / prose / email SANs
+            continue
+        if name.startswith("*."):
+            wildcards.add(name)
+        bare = name.lstrip("*.")
+        if bare != dom and not bare.endswith("." + dom):   # in-scope hosts only
+            continue
+        if bare and bare != dom:
+            subs.add(bare)
+    ordered = sorted(subs)
+    return {
+        "query": domain, "source": source, "aggregated": True,
+        "total": len(ordered), "subdomains": ordered, "wildcards": sorted(wildcards),  # full; fallback caps once
+    }
+
+def crtname_search(domain: str, timeout: int = 25):
+    """Subdomain enumeration via crt.name — a keyless AGGREGATED index (CT logs PLUS Common
+    Crawl / ICANN CZDS / ProjectDiscovery Chaos / HaGeZi), 100/IP/day. `apex` must be an
+    eTLD+1; default response is text one-per-line. Ranked BELOW crt.sh: a hit is not
+    CT-log-attributable — tag `source:crt.name(aggregated)` and verify before reporting.
+    OPSEC: discloses the apex to a third-party operator. Never raises."""
+    url = "https://crt.name/v1/search?" + urlencode({"apex": domain})
+    return _ct_hostlist_search(domain, "crt.name(aggregated)", url, timeout)
+
+def agniops_search(domain: str, timeout: int = 25):
+    """Subdomain enumeration via agniops — a keyless AGGREGATED passive index. Same posture
+    as crt.name: not CT-log-attributable, ranked below crt.sh, tag `source:agniops(aggregated)`,
+    verify before reporting, and it discloses the apex to a third-party operator. Never raises."""
+    url = "https://app.agniops.in/v1/search?" + urlencode({"domain": domain})
+    return _ct_hostlist_search(domain, "agniops(aggregated)", url, timeout)
+
+def ct_aggregated_fallback(domain: str, timeout: int = 25):
+    """Keyless AGGREGATED subdomain fallback — crt.name + agniops, run concurrently and
+    unioned. Fires only when the certificate-transparency peers (crt.sh + Shodan CTL) return
+    nothing, so the third-party apex disclosure happens only when it buys coverage. Returns
+    {'query','aggregated':True,'sources','total','subdomains','wildcards'} (names ONLY — no
+    cert metadata) or {'error',...}. Never raises."""
+    fns = (crtname_search, agniops_search)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
+        results = [f.result() for f in [ex.submit(fn, domain, timeout) for fn in fns]]
+    good = [r for r in results if not r.get("error")]
+    if not good:
+        return {"query": domain, "aggregated": True,
+                "error": next((r.get("error") for r in results if r.get("error")), "unavailable"),
+                "sources_tried": ["crt.name", "agniops"]}
+    subs, wildcards = set(), set()
+    for r in good:
+        subs.update(r.get("subdomains", []))
+        wildcards.update(r.get("wildcards", []))
+    ordered = sorted(subs)
+    return {"query": domain, "aggregated": True,
+            "sources": [r.get("source") for r in good],
+            "total": len(ordered), "subdomains": ordered[:200], "wildcards": sorted(wildcards)}
 
 def ct_search(domain: str, timeout: int = 25):
     """Merged certificate-transparency view over BOTH CT sources — crt.sh and Shodan's CTL
     mirror — run concurrently and unioned. Two independent CT indexes each miss certs the
     other has, and crt.sh alone 502s often; querying both maximises subdomain enumeration
-    and survives either source being down. Same return shape as crtsh_search."""
+    and survives either source being down. Same return shape as crtsh_search.
+
+    When BOTH CT peers come back with no subdomains, falls back to the keyless AGGREGATED
+    indexes (crt.name + agniops) — their names are attached SEPARATELY under
+    `aggregated_subdomains`/`aggregated_sources` (never merged into the CT-attributable
+    `subdomains`), because an aggregated hit is not CT-log evidence and must be validated
+    before it enters a report (handbook/pivot-services.md §4)."""
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         a = ex.submit(crtsh_search, domain, timeout)
         b = ex.submit(shodan_ctl_search, domain, timeout)
         r1, r2 = a.result(), b.result()
     good = [r for r in (r1, r2) if not r.get("error")]
-    if not good:
-        return {"query": domain, "error": (r1.get("error") or r2.get("error")),
-                "sources_tried": ["crt.sh", "shodan-ctl"]}
     subs, wildcards, certs, seen = set(), set(), [], set()
     for r in good:
         subs.update(r.get("subdomains", []))
@@ -634,6 +714,22 @@ def ct_search(domain: str, timeout: int = 25):
             if key not in seen:
                 seen.add(key)
                 certs.append(c)
+    # No CT-attributable names at all → reach for the aggregated fallback (tagged separately).
+    if not subs:
+        fb = ct_aggregated_fallback(domain, timeout)
+        if not good and fb.get("error"):
+            return {"query": domain, "error": (r1.get("error") or r2.get("error") or fb.get("error")),
+                    "sources_tried": ["crt.sh", "shodan-ctl", "crt.name", "agniops"]}
+        if not fb.get("error"):
+            certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
+            return {
+                "query": domain, "sources": [r.get("source", "crt.sh") for r in good],
+                "total": 0, "subdomains": [], "wildcards": sorted(wildcards),
+                "cert_count": len(certs), "certs": certs[:40],
+                "aggregated_sources": fb.get("sources", []),
+                "aggregated_subdomains": fb.get("subdomains", []),
+                "aggregated_wildcards": fb.get("wildcards", []),
+            }
     certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
     ordered = sorted(subs)
     return {
