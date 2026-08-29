@@ -10,7 +10,7 @@ import numpy as np
 from io import BytesIO
 from docx.shared import Inches
 
-from cti_docx_styles import COLORS_HEX, SEVERITY_COLORS_HEX
+from cti_docx_styles import COLORS_HEX, SEVERITY_COLORS_HEX, CYCLE_HEX
 
 
 def _save_fig_to_buffer(fig) -> BytesIO:
@@ -34,10 +34,7 @@ def add_finding_type_pie(doc, findings: list) -> None:
 
     labels = list(type_counts.keys())
     sizes = list(type_counts.values())
-    colors = [
-        "#1A237E", "#0096C7", "#DC2626", "#EA580C",
-        "#CA8A04", "#16A34A", "#64748B", "#8B5CF6",
-    ][:len(labels)]
+    colors = (CYCLE_HEX * ((len(labels) // len(CYCLE_HEX)) + 1))[:len(labels)]
 
     fig, ax = plt.subplots(figsize=(5, 4), dpi=150)
     wedges, texts, autotexts = ax.pie(
@@ -72,7 +69,7 @@ def add_severity_bar(doc, findings: list) -> None:
 
     labels = [s for s in sev_order if sev_counts[s] > 0]
     counts = [sev_counts[s] for s in labels]
-    colors = [SEVERITY_COLORS_HEX.get(s, "#64748B") for s in labels]
+    colors = [SEVERITY_COLORS_HEX.get(s, COLORS_HEX["muted"]) for s in labels]
 
     fig, ax = plt.subplots(figsize=(5.5, max(2.5, len(labels) * 0.6)), dpi=150)
     bars = ax.barh(labels, counts, color=colors, height=0.5, edgecolor="white")
@@ -104,10 +101,10 @@ def add_risk_gauge(doc, score: int, label: str = "Overall Exposure Score") -> No
     # Draw gauge background arcs
     theta = np.linspace(np.pi, 0, 100)
     segments = [
-        (0, 25, "#16A34A"),    # green
-        (25, 50, "#CA8A04"),   # yellow
-        (50, 75, "#EA580C"),   # orange
-        (75, 100, "#DC2626"),  # red
+        (0, 25, SEVERITY_COLORS_HEX["LOW"]),
+        (25, 50, SEVERITY_COLORS_HEX["MEDIUM"]),
+        (50, 75, SEVERITY_COLORS_HEX["HIGH"]),
+        (75, 100, SEVERITY_COLORS_HEX["CRITICAL"]),
     ]
     for start, end, color in segments:
         t = theta[start:end]
@@ -135,7 +132,10 @@ def add_risk_gauge(doc, score: int, label: str = "Overall Exposure Score") -> No
     if len(t_fill) > 1:
         for i in range(len(t_fill) - 1):
             idx = int((i / len(t_fill)) * 100)
-            c = "#16A34A" if idx < 25 else "#CA8A04" if idx < 50 else "#EA580C" if idx < 75 else "#DC2626"
+            c = (SEVERITY_COLORS_HEX["LOW"] if idx < 25 else
+                 SEVERITY_COLORS_HEX["MEDIUM"] if idx < 50 else
+                 SEVERITY_COLORS_HEX["HIGH"] if idx < 75 else
+                 SEVERITY_COLORS_HEX["CRITICAL"])
             x_o = 1.0 * np.cos(t_fill[i:i+2])
             y_o = 1.0 * np.sin(t_fill[i:i+2])
             x_i = 0.6 * np.cos(t_fill[i:i+2])
@@ -213,18 +213,18 @@ def add_traffic_sources_bar(doc, traffic_sources: dict) -> None:
         return
 
     source_colors = {
-        "direct": "#1A237E",
-        "search": "#0096C7",
-        "referral": "#16A34A",
-        "social": "#8B5CF6",
-        "paid": "#EA580C",
-        "email": "#EC4899",
-        "display": "#CA8A04",
+        "direct": "#22333F",    # slate
+        "search": "#3B5566",    # steel
+        "referral": "#5A6B3B",  # olive
+        "social": "#5A4A7A",    # muted violet
+        "paid": "#B0790F",      # ochre
+        "email": "#7A2F52",     # muted plum
+        "display": "#9A5B2F",   # amber-brown
     }
 
     labels = [k.title() for k in traffic_sources.keys()]
     values = list(traffic_sources.values())
-    colors = [source_colors.get(k, "#64748B") for k in traffic_sources.keys()]
+    colors = [source_colors.get(k, COLORS_HEX["muted"]) for k in traffic_sources.keys()]
 
     fig, ax = plt.subplots(figsize=(5.5, max(2, len(labels) * 0.5)), dpi=150)
     bars = ax.barh(labels, values, color=colors, height=0.5, edgecolor="white")
@@ -264,11 +264,7 @@ def add_geographic_pie(doc, top_countries: list) -> None:
         labels.append("Other")
         sizes.append(100 - total)
 
-    geo_colors = [
-        "#1A237E", "#0096C7", "#16A34A", "#EA580C",
-        "#8B5CF6", "#CA8A04", "#EC4899", "#64748B",
-        "#0369A1", "#92400E",
-    ][:len(labels)]
+    geo_colors = (CYCLE_HEX * ((len(labels) // len(CYCLE_HEX)) + 1))[:len(labels)]
 
     fig, ax = plt.subplots(figsize=(5, 4), dpi=150)
     wedges, texts, autotexts = ax.pie(

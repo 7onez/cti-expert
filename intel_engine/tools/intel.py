@@ -337,7 +337,7 @@ def cmd_open(a):
                     pass
             md = evidence_report.render_cluster_report(
                 results, case=a.case, analyst=a.analyst,
-                classification=a.classification)
+                classification=a.classification, kb_dir=KB)
             with open(assess_path, "w", encoding="utf-8") as fh:
                 fh.write(md)
         except Exception as e:
@@ -400,7 +400,8 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
     sys.path.insert(0, KB_TOOLS)
     try:
         from knowledge_base import KB as _KB  # noqa: E402
-        from query import _components  # noqa: E402
+        from query import (_components, REGISTRANT_RELS, is_registrant_noise)  # noqa: E402
+        from noise_filters import is_bulk_registrant  # noqa: E402
     except Exception as e:
         print(f"   note: cluster partition skipped ({e})")
         return []
@@ -427,7 +428,18 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
         binding = []
         for s in shared:
             strong_rels = [r for r in s["rels"] if r not in NOISE_RELS]
-            if not strong_rels or s["indicator"] in benign or s["domain_count"] > max_prevalence:
+            if not strong_rels or s["indicator"] in benign:
+                continue
+            # Registrant edges get the operator-grade carve-out (same as query._components): exempt
+            # from the generic prevalence cap up to the bulk-registrant bound, and placeholder/
+            # privacy values dropped — so a 31-domain estate binds instead of shattering, and the
+            # "Registry Registrant ID: Not Available From Registry" mis-parse never binds anything.
+            is_reg = any(r in REGISTRANT_RELS for r in strong_rels)
+            if is_reg:
+                if is_registrant_noise(s["indicator_type"], s["indicator"]) \
+                        or is_bulk_registrant(s["domain_count"]):
+                    continue
+            elif s["domain_count"] > max_prevalence:
                 continue
             inside = sorted(d for d in s["domains"] if d.lower() in mset)
             if len(inside) < min_shared:
@@ -519,7 +531,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
         sys.path.insert(0, WP)
         import evidence_report
         md = evidence_report.render_cluster_report(
-            results, case=case, analyst=a.analyst, classification=a.classification)
+            results, case=case, analyst=a.analyst, classification=a.classification, kb_dir=KB)
         # Never clobber a hand-written assessment — the SAME rule assessment.json follows below.
         mdpath = os.path.join(case_dir, "assessment.md")
         if _is_loop_authored_md(mdpath):

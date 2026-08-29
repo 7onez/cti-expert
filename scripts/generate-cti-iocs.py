@@ -23,10 +23,10 @@ plus any explicit top-level `indicators[]`.
 Outputs three machine-readable formats for SIEM / TIP ingest and sharing.
 
 Usage:
-    uv run generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|all]
+    uv run generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|jsonl|all]
     python3 generate-cti-iocs.py <case.json> IOC-CASE-0001 --format all
 
-With --format all (default) writes <out_prefix>.stix.json, .txt and .csv.
+With --format all (default) writes <out_prefix>.stix.json, .txt, .csv and .jsonl.
 With a single format, <out_prefix> is treated as the exact output path.
 
 Author: Hieu Ngo - chongluadao.vn
@@ -328,6 +328,21 @@ def write_csv(inds, path):
                         i.get("platform") or "", i.get("source") or "", i.get("subject_id") or ""])
 
 
+def write_jsonl(inds, attr, path):
+    """One JSON object per line — the streamable IOC list (jq-friendly, diff-friendly,
+    ingestable by SIEM/pipelines). Indicators first, then attribution links tagged
+    with kind:'attribution' so a single file carries the whole set."""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        for i in inds:
+            rec = {"kind": "indicator", "category": i["category"], "type": i["type"],
+                   "value": i["value"], "role": i["role"], "confidence": i["confidence"],
+                   "platform": i.get("platform") or "", "source": i.get("source") or "",
+                   "subject_id": i.get("subject_id") or ""}
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        for a in attr:
+            f.write(json.dumps({"kind": "attribution", "from": a["from"], "rel": a["rel"],
+                                "to": a["to"], "reach": a["reach"]}, ensure_ascii=False) + "\n")
+
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -433,7 +448,7 @@ def main(argv):
             args.append(argv[i])
             i += 1
     if len(args) < 2:
-        print("usage: generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|all]")
+        print("usage: generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|jsonl|all]")
         return 2
     case_path, out = args[0], args[1]
     try:
@@ -463,6 +478,10 @@ def main(argv):
     if fmt in ("all", "stix"):
         p = (out + ".stix.json") if fmt == "all" else out
         write_stix(inds, attr, data, p)
+        written.append(p)
+    if fmt in ("all", "jsonl"):
+        p = (out + ".jsonl") if fmt == "all" else out
+        write_jsonl(inds, attr, p)
         written.append(p)
 
     by_cat = {}

@@ -459,6 +459,157 @@ def _is_converged(case: str, stale: int) -> bool:
     return all(r["new_hosts"] == 0 and r["new_indicators"] == 0 for r in rounds[-stale:])
 
 
+# Registrant identifiers -> reverse-WHOIS estate. Only email+phone (hard rung-1 IDs); NAME is
+# excluded (a common name false-merges unrelated domains — RULE 5).
+_REVERSE_FLAG_ORCH = {"email": "--reverse-email", "phone": "--reverse-phone"}
+_PLACEHOLDER_PHONES = {"14806242599", "4806242599", "15555555555", "5555555555",
+                       "0000000000", "9999999999", "1234567890", "11111111111"}
+
+
+def _rw_call(flag: str, term: str, mode: str) -> dict:
+    """One whois_enrich reverse call (preview=free count / purchase=spend). Returns the reverse_*
+    record or {} — never raises, so a network/credit failure degrades the frontier, never aborts."""
+    try:
+        r = subprocess.run([sys.executable, os.path.join("WebPivot", "tools", "whois_enrich.py"),
+                            flag, term, "--search-type", "historic", "--reverse-mode", mode, "--json"],
+                           cwd=ROOT, capture_output=True, text=True, timeout=150)
+        data = json.loads(r.stdout or "{}")
+    except Exception:  # noqa: BLE001
+        return {}
+    return (data.get("reverse_email") or data.get("reverse_name")
+            or data.get("reverse_phone") or {})
+
+
+def _case_registrant_terms(case: str) -> list[tuple[str, str]]:
+    """(kind, value) registrant email/phone from the case's collected raw — the estate-builder
+    seed. Privacy-proxy emails and placeholder/short phones are dropped so a shared registrar
+    default never seeds a false estate (same noise doctrine as the assessment renderer)."""
+    raw = os.path.join(ROOT, "cases", case, "raw")
+    emails: set = set()
+    phones: set = set()
+    for p in glob.glob(os.path.join(raw, "*.json")):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                wh = (json.load(fh).get("artifacts") or {}).get("whois") or {}
+        except Exception:  # noqa: BLE001
+            continue
+        em = (wh.get("registrant_email") or "").strip().lower()
+        ph = "".join(ch for ch in str(wh.get("registrant_phone") or "") if ch.isdigit())
+        if em and not T._is_noise_email(em):
+            emails.add(em)
+        if len(ph) >= 7 and len(set(ph)) > 1 and ph not in _PLACEHOLDER_PHONES:
+            phones.add(ph)
+    return [("email", e) for e in sorted(emails)] + [("phone", p) for p in sorted(phones)]
+
+
+def _reverse_whois_seeds(case: str, known: set, cap: int) -> dict:
+    """Auto reverse-WHOIS the case's registrant email/phone (preview→purchase when 0<count≤cap) and
+    return {apex: score} for domains not already known/collected. THIS is the whoisxml pivot that
+    turns one registrant into the whole estate — run deterministically so the loop no longer needs
+    an analyst to approve the single highest-yield lead. A >cap count is treated as shared-registrar
+    NOISE and skipped (never purchased). Each term is reversed at most once per case (marker file)
+    so successive rounds never re-spend credits."""
+    marker = os.path.join(ROOT, "cases", case, ".reversed_terms")
+    done: set = set()
+    if os.path.exists(marker):
+        try:
+            done = set(open(marker, encoding="utf-8").read().split())
+        except Exception:  # noqa: BLE001
+            done = set()
+    out: dict = {}
+    for kind, term in _case_registrant_terms(case):
+        tag = f"{kind}:{term}"
+        if tag in done:
+            continue
+        flag = _REVERSE_FLAG_ORCH[kind]
+        n = (_rw_call(flag, term, "preview") or {}).get("count", 0)
+        done.add(tag)
+        if n <= 0 or n > cap:            # empty, or >cap = shared-registrar noise → do not purchase
+            _log(f"  reverse-whois {kind}={term}: {n} domains — "
+                 f"{'noise (>cap), skipped' if n > cap else 'none'}")
+            continue
+        rec = _rw_call(flag, term, "purchase") or {}
+        got = 0
+        for d in rec.get("domains") or []:
+            d = T._host(str(d))
+            if d and "." in d and d not in known and not T._find_cached_raw(d):
+                out[d] = max(out.get(d, 0), 100)   # rung-1 registrant match → top frontier priority
+                got += 1
+        _log(f"  reverse-whois {kind}={term}: {n} domains → {got} new estate seed(s)")
+    try:
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        open(marker, "w", encoding="utf-8").write("\n".join(sorted(done)) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+# A Censys/FOFA reverse-IP returning more co-hosted names than this is a SHARED/reseller box —
+# its co-tenants are unrelated (§2.5 rung-10 noise) and must not seed. At/under it the box is
+# plausibly one operator's (rung-8), so its co-tenants are chased. Kept small and conservative.
+_DEDICATED_TENANT_MAX = int(os.environ.get("HARNESS_DEDICATED_TENANT_MAX", "8"))
+
+
+def _discovered_infra_seeds(case: str, known: set) -> dict:
+    """Hosts surfaced by the STRONG premium reverses that pivot_extract ran but the loop left on the
+    floor — re-seeded so the next round actually chases them. Restricted, on purpose, to the reverse
+    sources that carry same-operator weight: an EXACT-LEAF cert reverse (censys_cert, §2.5 rung-4)
+    and the target's OWN subdomains (validin_subs / securitytrails, same operator by construction).
+
+    The broad favicon/body/IP-co-tenant reverses (FOFA/Hunter.how/Validin/urlscan/pdns) are
+    DELIBERATELY EXCLUDED: on this very case they returned 54 hosts dominated by unrelated domains
+    sharing only the commodity Flatsome template (rung-9 kit noise) — auto-seeding them would balloon
+    the case with innocents (§2.5). Those stay LEADS in 'Discovered Infrastructure'; the verified way
+    to promote an IP co-tenant is IP→co-tenant→forward-WHOIS (registrant match), not a blind reseed."""
+    try:
+        _wp = os.path.join(ROOT, "WebPivot", "tools")
+        if _wp not in sys.path:
+            sys.path.insert(0, _wp)
+        import evidence_report as _er  # noqa: E402 — reuse its host extractor/noise filter
+    except Exception:  # noqa: BLE001 — enhancement; a missing renderer must not break the loop
+        return {}
+    # STRONG-only: exact-leaf cert co-hosts + the target's own subdomains. NOT the favicon/body/IP
+    # reverses (kit-level / shared-host = §2.5 noise; they remain unseeded leads).
+    disc_keys = ("censys_cert", "validin_subs", "securitytrails")
+    out: dict = {}
+    for p in glob.glob(os.path.join(ROOT, "cases", case, "raw", "*.json")):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        for piv in (doc.get("pivots") or []):
+            lr = piv.get("live_results") or {}
+            for key in disc_keys:
+                blk = lr.get(key) or {}
+                if not isinstance(blk, dict):
+                    continue
+                for h in (blk.get("hosts") or blk.get("domains")
+                          or blk.get("names") or blk.get("results") or []):
+                    hh = _er._discovered_host(h)
+                    if (hh and "." in hh and "*" not in hh and not hh.replace(".", "").isdigit()
+                            and hh not in known and not _er._is_infra_noise_host(hh)
+                            and not T._find_cached_raw(hh)):
+                        out[hh] = max(out.get(hh, 0), 50)   # moderate: a reverse-lookup lead
+        # Censys IP-host co-tenants (live_results["censys"].dns_names, wp_ippivot) — reseeded ONLY
+        # from a DEDICATED box (few co-hosted names). §2.5: co-tenancy on a dedicated host is a
+        # moderate same-operator signal (rung-8); on a shared/reseller box (many tenants) it is
+        # rung-10 NOISE, so a >threshold box is skipped rather than dumping innocents into the
+        # frontier. (A shared box's genuine siblings are recovered by registrant reverse-WHOIS +
+        # the forward-WHOIS-filtered path, not by a blind co-tenant reseed.)
+        for piv in (doc.get("pivots") or []):
+            cz = (piv.get("live_results") or {}).get("censys") or {}
+            tenants = cz.get("dns_names") if isinstance(cz, dict) else None
+            if not tenants or len(tenants) > _DEDICATED_TENANT_MAX:
+                continue
+            for h in tenants:
+                hh = _er._discovered_host(h)
+                if (hh and "." in hh and "*" not in hh and not hh.replace(".", "").isdigit()
+                        and hh not in known and not _er._is_infra_noise_host(hh)
+                        and not T._find_cached_raw(hh)):
+                    out[hh] = max(out.get(hh, 0), 40)   # moderate-: dedicated-box co-tenant (rung-8)
+    return out
+
+
 def _discover_new_seeds(case: str, known: list[str], max_new: int) -> list[str]:
     """The next round's frontier: KB cluster-peers of the case's collected domains that are NOT
     yet collected anywhere (genuinely new infrastructure). Uses --strong so peers linked only by
@@ -482,6 +633,15 @@ def _discover_new_seeds(case: str, known: list[str], max_new: int) -> list[str]:
             if peer in known_hosts or T._host(peer) != peer or T._find_cached_raw(peer):
                 continue
             scores[peer] = max(scores.get(peer, 0), nshared)
+    # AUTO REVERSE-WHOIS (whoisxml): the case registrant → its estate, merged at top priority so the
+    # loop pivots the whole operator estate without an analyst approving the single highest-yield lead.
+    rw_cap = int(os.environ.get("HARNESS_RWHOIS_CAP", "150"))
+    for d, sc in _reverse_whois_seeds(case, known_hosts, cap=rw_cap).items():
+        scores[d] = max(scores.get(d, 0), sc)
+    # REVERSE-DISCOVERED INFRA (fofa/urlscan/hunter.how/censys/validin/…): hosts the per-host
+    # reverses already surfaced, now re-seeded so the loop actually chases them (moderate priority).
+    for d, sc in _discovered_infra_seeds(case, known_hosts).items():
+        scores[d] = max(scores.get(d, 0), sc)
     return sorted(scores, key=lambda p: -scores[p])[:max_new]
 
 
