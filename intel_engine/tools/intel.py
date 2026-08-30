@@ -338,8 +338,14 @@ def cmd_open(a):
             md = evidence_report.render_cluster_report(
                 results, case=a.case, analyst=a.analyst,
                 classification=a.classification, kb_dir=KB)
-            with open(assess_path, "w", encoding="utf-8") as fh:
-                fh.write(md)
+            if _is_loop_authored_md(assess_path):
+                with open(assess_path, "w", encoding="utf-8") as fh:
+                    fh.write(md)
+            else:
+                with open(os.path.join(case_dir, "loop_assessment.md"), "w", encoding="utf-8") as fh:
+                    fh.write(md)
+                print("   analyst assessment.md present — not overwritten; "
+                      "loop view -> loop_assessment.md")
         except Exception as e:
             print(f"   note: assessment render failed ({e}); skipped.")
 

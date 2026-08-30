@@ -185,6 +185,7 @@ def _fresh_state(case):
         "round": 0, "depth_limit": None,
         "collected": [], "pending": [], "consumed": [],
         "metered_leads": [], "history": [], "reopen_count": 0, "note": None,
+        "enrichment_done": {},   # {lead_key: reason} — dict, NOT in the list-coercion guard below
     }
 
 
@@ -526,6 +527,50 @@ def _metered_leads_from_raw(obj, leads):
                     "why": f"reverse the origin IP {c['ip']} for co-hosted domains (from {host})"}
 
 
+def _enrichment_leads_from_raw(obj, leads):
+    """Leak/breach/OSINT/dork legs that the infra pipeline never runs — emitted as OPEN leads per
+    discovered registrant email and per case apex so a run can't quietly report 'done' while
+    `/intelx`, `/breach-deep`, `/dork-sweep` and `/github-osint` were never fired (the exact gap that
+    let a case look converged on infra alone). Keyed so they dedupe across hosts; each carries a
+    stable `key` that `enrichment_done` suppresses once the leg has run."""
+    art = obj.get("artifacts") or {}
+    host = (obj.get("meta") or {}).get("host") or "?"
+    apex = _frontier_apex(host)
+    benign = _benign_set()
+    # registrant emails (current + history) — the high-signal identities; skip privacy/registrar noise
+    emails = set()
+    who = art.get("whois") or {}
+    if who.get("registrant_email"):
+        emails.add(str(who["registrant_email"]).lower())
+    for e in (who.get("history") or {}).get("registrant_emails", []) or []:
+        emails.add(str(e).lower())
+    for piv in obj.get("pivots", []) or []:
+        if piv.get("kind") == "whois:registrant_email" and piv.get("value"):
+            emails.add(str(piv["value"]).lower())
+    for em in emails:
+        if (not em or "*" in em or em in benign
+                or _is_privacy(em) or _is_noise_email(em)):
+            continue
+        leads[("breach", em)] = {
+            "tool": "/breach-deep", "value": em, "key": f"breach:{em}", "cost": "metered",
+            "why": f"breach/exposure lookup for registrant email {em} ({host})"}
+        leads[("intelx", em)] = {
+            "tool": "/intelx", "value": em, "key": f"intelx:{em}", "cost": "metered (logs-first ~50% keyless)",
+            "why": f"breach dumps / infostealer logs / pastes / darknet for {em} — machine-tie is direct attribution"}
+    # per-apex OSINT/dork legs (deduped by apex) — skip benign/victim/shared-infra apexes so the
+    # legit impersonation target (e.g. the real hospital) never gets metered breach/leak leads (§2.5)
+    if apex and apex != "?" and apex not in benign and not _is_shared_infra(apex):
+        leads[("intelx-phonebook", apex)] = {
+            "tool": "/intelx --phonebook", "value": apex, "key": f"intelx-phonebook:{apex}", "cost": "metered",
+            "why": f"inventory every email/subdomain/URL IntelX has seen under {apex}"}
+        leads[("dork", apex)] = {
+            "tool": "/dork-sweep --filetype --docs", "value": apex, "key": f"dork:{apex}", "cost": "free",
+            "why": f"Google/Bing dork sweep + doc-leak hunt on {apex}"}
+        leads[("github", apex)] = {
+            "tool": "/github-osint + /secrets", "value": apex, "key": f"github:{apex}", "cost": "free",
+            "why": f"GitHub org/repo/code + exposed-secret recon for {apex}"}
+
+
 def frontier(case, max_new=8):
     """Compute the next FREE frontier + deferred metered leads for a case, from its raw/*.json.
 
@@ -537,7 +582,7 @@ def frontier(case, max_new=8):
     collected = collected_hosts(cdir)
     consumed = {h.lower() for h in st.get("consumed", [])}
     seed_apexes = {_frontier_apex(h) for h in collected} | {_frontier_apex(h) for h in consumed}
-    cands, leads = {}, {}
+    cands, leads, enr = {}, {}, {}
     deferred = _new_deferred()
     for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
         try:
@@ -547,6 +592,7 @@ def frontier(case, max_new=8):
             continue
         _free_candidates_from_raw(obj, cands, seed_apexes, deferred)
         _metered_leads_from_raw(obj, leads)
+        _enrichment_leads_from_raw(obj, enr)
     # drop apexes already collected or already queued/consumed; rank by # of corroborating sources
     already = {_frontier_apex(h) for h in collected} | {_frontier_apex(h) for h in consumed}
     fresh = {a: v for a, v in cands.items() if a not in already}
@@ -562,6 +608,13 @@ def frontier(case, max_new=8):
         # co-tenancy held back from seeding (multi-tenant certs / shared-hosting IPs) — free to
         # check by hand, never auto-chased, and surfaced so the suppression is visible not silent.
         "co_tenancy_leads": [v for slot in deferred.values() for v in slot.values()],
+        # leak/breach/OSINT/dork legs the infra pipeline never runs. OPEN = not yet closed;
+        # closed-with-a-reason (empty/unavailable/skipped) move to gaps so a keyless/passive/empty
+        # run can't stay permanently non-converged. NOTE: the engine loop converges on
+        # hosts/indicators (convergence.py), NOT on these — this is a /cti completeness checklist.
+        "enrichment_leads": [v for k, v in enr.items() if v["key"] not in _done_map(st)],
+        "enrichment_gaps": [{"key": k, "reason": r} for k, r in _done_map(st).items()
+                            if r in ("empty", "unavailable", "skipped")],
     }
 
 
@@ -600,6 +653,37 @@ def reopen(case, new_seeds=None):
     return st
 
 
+def _done_map(st):
+    """Normalise enrichment_done to {key: reason} (tolerates the legacy flat-list form)."""
+    d = st.get("enrichment_done", {})
+    if isinstance(d, list):
+        return {k: "ran" for k in d}
+    return dict(d) if isinstance(d, dict) else {}
+
+
+def mark_enrichment_done(case, keys, reason="ran"):
+    """Close leak/breach/OSINT/dork legs by key, so the frontier stops listing them as open.
+
+    `reason` records WHY the leg is closed and is distinct from never-ran, so a case can't be
+    trapped permanently non-converged when a leg legitimately can't produce more:
+      ran         — executed, results folded in
+      empty       — executed, found nothing (a collection gap, not a failure)
+      unavailable — could not run (missing API key / capability)
+      skipped     — deliberately not run (e.g. --passive posture, out-of-scope)
+    Idempotent; keys are the `key` field from frontier's enrichment_leads."""
+    reason = (reason or "ran").strip().lower()
+    if reason not in ("ran", "empty", "unavailable", "skipped"):
+        reason = "ran"
+    st = load_state(case)
+    done = _done_map(st)
+    for k in (keys or []):
+        if k and k.strip():
+            done[k.strip()] = reason
+    st["enrichment_done"] = done
+    save_state(case, st)
+    return st
+
+
 # ------------------------------------------------------------------------- CLI
 def _print_status(case):
     st = load_state(case)
@@ -616,6 +700,12 @@ def _print_status(case):
           f"recent +{v.get('new_hosts_recent', 0)} hosts / +{v.get('new_indicators_recent', 0)} indicators)")
     if st.get("metered_leads"):
         print(f"  metered leads awaiting approval: {len(st['metered_leads'])}")
+    try:
+        _open_enr = len(frontier(case).get("enrichment_leads", []))
+    except Exception:
+        _open_enr = 0
+    if _open_enr:
+        print(f"  enrichment : {_open_enr} OPEN leak/breach/OSINT/dork lead(s) — case NOT done on infra alone")
     for h in st.get("history", [])[-6:]:
         print(f"    r{h.get('round')}: +{h.get('new_hosts', 0)} hosts  {h.get('verdict', '')}  {h.get('ts', '')}")
     return 0
@@ -633,6 +723,11 @@ def main():
     r = sub.add_parser("reopen", help="cold-case reopen (+ optional new seeds), re-mine next run")
     r.add_argument("case")
     r.add_argument("seeds", nargs="*", help="optional new seed domains to merge into pending")
+    e = sub.add_parser("enrichment-done", help="mark leak/breach/OSINT/dork leads addressed (suppresses them)")
+    e.add_argument("case")
+    e.add_argument("--key", action="append", help="lead key to close, e.g. intelx:u@d.com (repeatable)")
+    e.add_argument("--reason", default="ran", choices=["ran", "empty", "unavailable", "skipped"],
+                   help="why the leg is closed: ran|empty|unavailable|skipped (default ran)")
     a = ap.parse_args()
 
     if a.cmd == "status":
@@ -656,6 +751,24 @@ def main():
                   f"(multi-tenant cert / shared hosting — free to check by hand):")
             for cl in fr["co_tenancy_leads"][:12]:
                 print(f"    [{cl['check']}] {cl.get('ip') or cl.get('cert_id') or ''}   — {cl['why']}")
+        if fr.get("enrichment_leads"):
+            print(f"  {len(fr['enrichment_leads'])} enrichment lead(s) OPEN — leak/breach/OSINT/dork "
+                  f"legs the infra pipeline never runs (a /cti completeness checklist, not an engine "
+                  f"stop-condition — close each once run/empty/unavailable):")
+            for el in fr["enrichment_leads"][:16]:
+                print(f"    {el['tool']} {el['value']}   — {el['why']}  [{el['cost']}]  key={el['key']}")
+            print(f"    close: python3 tools/case_state.py enrichment-done {a.case} "
+                  f"--key <key> --reason ran|empty|unavailable|skipped")
+        if fr.get("enrichment_gaps"):
+            print(f"  {len(fr['enrichment_gaps'])} enrichment lead(s) closed as GAP "
+                  f"(ran-empty / no-capability / skipped — auditable, not re-chased):")
+            for g in fr["enrichment_gaps"][:12]:
+                print(f"    [{g['reason']}] {g['key']}")
+        return 0
+    if a.cmd == "enrichment-done":
+        st = mark_enrichment_done(a.case, a.key or [], a.reason)
+        print(f"closed {len(a.key or [])} enrichment lead(s) as '{a.reason}' for '{a.case}' "
+              f"({len(_done_map(st))} total closed).")
         return 0
     if a.cmd == "reopen":
         st = reopen(a.case, a.seeds or None)

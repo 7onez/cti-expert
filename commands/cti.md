@@ -70,6 +70,33 @@ separate LLM key), egress **hard-gated** on hostile infra, `--no-harness` opts o
 SKILL.md §2 (AEAD deep-layer note) and the technique-activation / auto-fire matrices for the
 `/webpivot`·`/icp`·`/iban`·`/hash-id` auto-fires that also run in a full `/cti` (= `/case`) run.
 
+## Step 2c — Auto-pivot enrichment: leaks · breach · OSINT · dorks (NOT optional)
+
+The deterministic pipeline (Step 2) is **infra-only** — WHOIS/DNS/cert/IP/webpivot. It does **not**
+cover the identity/exposure surface. A `/cti` run is **not complete** until the enrichment layer has
+fired on the seed **and on every identifier the loop discovers** (email, username, person name,
+phone, wallet, GitHub handle, org). Do not report "nothing further found" from a run that never ran
+these — that is absence of collection, not absence of evidence (§2.5 *Dead seed*).
+
+Fire by identifier type, then feed every hit **back into the recursive pivot loop** as a new seed:
+
+| Discovered | Auto-fire (leaks / breach / OSINT / dork) |
+|---|---|
+| **email** | `/breach-deep` + `/email-deep` (LeakCheck·HudsonRock·CLD) → `/intelx <email>` (breach dumps, **infostealer logs**, pastes, darknet — logs-first pass is ~50% keyless) → `/github-osint` (commit attribution) → `/dork-sweep --telegram --docs` on the address and `@domain` |
+| **username** | `/username` (3000+ platforms) → social-platform recon → `/intelx` on any email the profiles expose → `/github-osint` if a GitHub profile/hit exists → `/dork-sweep --telegram --docs` |
+| **person name** | `/dork-sweep --docs` + `/docleak` (author/uploader fields) → `/github-osint` only after a likely handle/commit-email surfaces → `/email-permute` **against the case's own domains** (hypothesis only — never a finding, never ingested; §2.5) |
+| **phone** | `/phone` (carrier + reputation + **infostealer exposure** + VN scam reports) → `/intelx <phone>` → `/dork-sweep` |
+| **domain / org** | `/intelx --phonebook <apex>` (every email/subdomain/URL IntelX has seen) → `/secrets` + `/github-osint` (org, primary domain, discovered repos) → `/dork-sweep --filetype --docs` + `/docleak` on domain + org → `wayback_harvest --indicators` (Acquire already runs this) |
+| **wallet / IBAN / hash** | `/intelx <selector>` → `/iban`·`/hash-id` (auto per §Auto-fire matrix); credential-material hashes route to `/breach-deep`, never a public sandbox |
+
+Rules that keep this cheap and correct:
+- **`/intelx` takes a STRONG selector only** — email / domain (`*.apex`) / URL / IP / phone / wallet / IBAN. **Never** a brand or person name (refused locally, and a soft term still costs a unit).
+- **Reverse-WHOIS is the highest-yield estate pivot** — always `--reverse-mode preview` first (count is free), and **cross-check email vs name**: a name that returns unrelated domains is a **name-collision**, not one operator (§2.5). Confirm on the email/phone triple before clustering.
+- **Bulk-guard footgun:** `ingest-rwhois` (`--max-domains`, default 25) and `export-graph` (`--max-indicator-degree`, default 25) **silently drop** a legitimate large single-operator estate as "reseller noise." When rung-1 (email+name+phone) already confirms one operator, **raise the threshold above the estate size** (e.g. `--max-domains 60`) or the edge is lost.
+- **Posture:** on hostile infra prefer passive corpora (IntelX/Wayback/urlscan); `/intelx` and dorks do **not** touch the target. `--passive` propagates. Never submit the case's own sample to a public sandbox (§2.5).
+- **Metered discipline:** `/breach-deep`, `/intelx` (beyond the keyless logs-first pass) and reverse-WHOIS purchase spend credits — state what you spent. `--quick` skips this expansion; a full `/cti` (= `/case`) runs it.
+- **Enforced, and closable (no infinite loop).** `intel.py frontier <case>` emits these as **OPEN enrichment leads** (per registrant email + per apex — `/intelx`·`/breach-deep`·`/dork-sweep`·`/github-osint`); `frontier`/`status` print the open count. Treat them as a **/cti completeness checklist**: the case isn't done while actionable leads remain. **Close every leg with a reason** so it can't re-open forever — `intel.py enrichment-done <case> --key <key> --reason ran|empty|unavailable|skipped`: `ran`/`empty` after running (empty is a collection gap, not a failure), `unavailable` when a key is missing, `skipped` when `--passive`/scope blocks it. Closed-as-gap legs move to `enrichment_gaps` (auditable, not re-chased). **This is a checklist, not the engine stop-condition** — `intel.py loop`/`convergence` converge on new hosts/indicators and never block on enrichment leads, so the harness auto-escalation stays bounded. Never mark a leg `ran` that you did not run.
+
 ## Step 3 — Dead seed? Do not stop
 
 Zero pivots, a parked page or NXDOMAIN is not an answer. Run `fallback_probe` (crt.sh, full
@@ -89,7 +116,7 @@ Read SKILL.md §2.5 (Pivot Priority & False-Positive Control) and obey it:
 
 ## Flags
 
-- `--quick` — recall + one collection pass, no cluster expansion
+- `--quick` — recall + one collection pass; **no** cluster expansion and **no** Step 2c leak/breach/OSINT/dork enrichment (infra triage only)
 - `--deep` — **parallel sub-agent fan-out** (see below): expand every discovered identifier as a
   new seed, one sub-agent per seed, until the frontier is exhausted
 - `--passive` — no live contact with the target; work from Wayback/urlscan captures only.
@@ -120,8 +147,12 @@ wave of deep pivots, converged back into a single case.
    - **Depth cap:** default frontier depth **2 hops** from the original seed. A seed a sub-agent
      discovers goes into the *next* round's frontier, not an unbounded recursion.
    - **`--deep --passive`** propagates: every sub-agent runs `--quick --passive`.
-4. **Converge + cluster (you run it).** Ingest every sub-agent's pivot JSON, then run cluster →
-   risk over the **merged** set to partition it into distinct operator clusters. Apply SKILL.md
+4. **Converge + cluster + enrich (you run it).** Ingest every sub-agent's pivot JSON, then run cluster →
+   risk over the **merged** set to partition it into distinct operator clusters. Sub-agents ran
+   `--quick` (infra only, **no** enrichment), so the orchestrator owns **Step 2c** here: run the
+   leak/breach/OSINT/dork legs **once** over the **deduped** identifier frontier (skip any seed
+   already attributed in the KB or ruled shared-noise) so `/breach-deep`·`/intelx`·`/dork-sweep`·
+   `/github-osint` aren't fired redundantly per sub-agent. Apply SKILL.md
    §2.5 across the whole frontier — an edge is only real on the rung it rests on. Repeat rounds 1–4
    until a round adds no new un-attributed seed (frontier exhausted) or the depth cap is hit.
 4b. **Assess in parallel — one sub-agent per cluster (Assess-phase fan-out).** Collection is
@@ -147,3 +178,17 @@ overhead is not worth it. Fan-out earns its cost at 3+ live seeds.
 Report findings with two-axis confidence (Admiralty per finding, ICD-203 per judgment), state
 empty results as empty, and list what you did **not** cover. Write case artifacts to
 `$INTEL_HOME/cases/<CASE-ID>/` — never to a `cases/` directory at the repo root.
+
+**Shareable exports — mask uninvolved third parties (§2.5).** Before rendering a report to a
+shareable format (PDF/DOCX/HTML) or an IOC bundle, **mask the PII of any party you confirmed is
+NOT involved** — e.g. a name-collision innocent's email/phone (`ntp***@example.com`) — because a
+skim reader or an IOC scraper strips the exculpatory framing. Keep the **full** value only in the
+internal case files (`assessment.md`, `knowledge/reference.jsonl`) so the false-positive rejection
+stays auditable. The operator's own IOCs are the finding — keep those. Mask by hand for a couple of
+values, or run `scripts/redact.py` for a full pass (opt-in `--redact`).
+
+**Protect an analyst-authored `assessment.md`.** If you hand-write the authoritative assessment,
+title it with a heading the loop does **not** claim (e.g. `# Analyst Assessment (ICD-203) — …`, not
+`# Cluster Intelligence Assessment — …`) so `case_state.may_overwrite_assessment` treats it as
+precious; the loop render then diverts to `loop_assessment.md`. Snapshot it under the case's
+`assessments/` store as belt-and-suspenders.
