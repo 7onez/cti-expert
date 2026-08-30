@@ -98,6 +98,7 @@ DISPATCH = {
     "loop":          ("tools/intel.py",               ["loop"]),      # collect→assess to convergence
     "frontier":      ("tools/case_state.py",          ["frontier"]),  # unresolved free/metered gaps
     "reopen":        ("tools/case_state.py",          ["reopen"]),    # re-open on new seeds
+    "enrichment-done": ("tools/case_state.py",         ["enrichment-done"]),  # close leak/breach/dork leads
     "scope":         ("harness/case_scope.py",        []),   # intake: no-touch class, victim owner
     # ── acquire / collect (WebPivot engine collectors) ──────────────────
     "pivot-extract": ("WebPivot/tools/pivot_extract.py", []),
@@ -196,6 +197,7 @@ BLURB = {
     "loop": "collect → assess repeatedly until the case converges",
     "frontier": "unresolved gaps: free next seeds + deferred metered leads",
     "reopen": "re-open a converged case on newly discovered seeds",
+    "enrichment-done": "close leak/breach/OSINT/dork leads (suppress from frontier once run)",
     "scope": "case intake: no-touch class, victim ownership, egress gate",
     "pivot-extract": "engine WebPivot collector → pivot JSON (--render/--leads)",
     "fallback": "fallback probe when a page won't render",
