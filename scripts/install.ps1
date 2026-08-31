@@ -495,8 +495,10 @@ Install-WingetPackage "GitHub CLI" "gh" "GitHub.cli"
 Install-WingetPackage "jq" "jq" "jqlang.jq"
 Install-WingetPackage "ExifTool" "exiftool" "OliverBetz.ExifTool"
 Install-WingetPackage "Pandoc" "pandoc" "JohnMacFarlane.Pandoc"
+Install-WingetPackage "LibreOffice" "soffice" "TheDocumentFoundation.LibreOffice"   # DOCX->PDF (document-style report PDF)
 Install-WingetPackage "Poppler" "pdfinfo" "oschwartz10612.Poppler"
 Install-WingetPackage "QPDF" "qpdf" "QPDF.QPDF"
+Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # cloud architecture figure (`dot`)
 Install-WingetPackage "whois (Sysinternals)" "whois" "Microsoft.Sysinternals.Whois"
 Install-WingetPackage "dig (ISC BIND)" "dig" "ISC.Bind"
 Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # IntelGraph link graphs need the `dot` binary
@@ -562,6 +564,14 @@ if (Test-Path $deepRequirements) {
 else {
     Log-Skip "requirements.txt [deep layer] (not found at $deepRequirements)"
 }
+
+Write-Section "Python: report diagram figures (cairosvg + diagrams)"
+# cairosvg rasterizes the Diagram Design editorial SVGs into the DOCX report; diagrams
+# (+ the Graphviz `dot` binary above) renders the Diagram AI Generator cloud figure.
+# On Windows cairosvg needs cairo DLLs (ships via its wheels on most systems); if the
+# import fails the DOCX simply falls back to the matplotlib diagrams.
+Install-PipPackage "cairosvg"
+Install-PipPackage "diagrams"
 
 Write-Section "Python: OSINT tools"
 # CLI-only tools go in via `uv tool`, not into the shared venv: the venv's Scripts

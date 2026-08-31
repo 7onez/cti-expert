@@ -19,6 +19,7 @@ uv reads the inline dependency metadata below and provisions an ephemeral env.
 #     "python-docx>=1.0.0",
 #     "matplotlib>=3.8.0",
 #     "networkx>=3.2.0",
+#     "cairosvg>=2.7.0",
 # ]
 # ///
 import sys
@@ -39,7 +40,7 @@ for _stream in (sys.stdout, sys.stderr):
 # Auto-install dependencies — prefer uv (fast, cross-platform), fall back to pip.
 # Under `uv run` the inline metadata above already provides these, so this is a no-op.
 def ensure_deps():
-    required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx"}
+    required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx", "cairosvg": "cairosvg"}
     missing = []
     for pkg, mod in required.items():
         try:
@@ -75,10 +76,10 @@ from cti_docx_styles import (
     setup_styles, setup_header_footer, add_cover_page, add_table_of_contents
 )
 from cti_docx_charts import (
-    add_finding_type_pie, add_severity_bar, add_risk_gauge, add_timeline_chart,
+    add_finding_type_pie, add_severity_bar, add_timeline_chart,
     add_traffic_sources_bar, add_geographic_pie
 )
-from cti_docx_diagrams import add_entity_diagram, add_network_topology
+from cti_docx_diagrams import add_entity_diagram, add_network_topology, add_cloud_arch
 from cti_docx_sections import (
     add_executive_summary, add_subject_profile, add_findings_section,
     add_connections_section, add_source_list, add_intelligence_gaps,
@@ -146,12 +147,6 @@ def build_report(data: dict) -> Document:
     # 5. Executive summary
     add_executive_summary(doc, data)
 
-    # 6. Risk gauge (if exposure score available)
-    exposure = case.get("exposure_score")
-    if exposure is not None:
-        doc.add_heading("Risk Assessment", level=1)
-        add_risk_gauge(doc, int(exposure))
-        doc.add_paragraph()
 
     # 7. Subject profiles
     add_subject_profile(doc, data)
@@ -193,11 +188,13 @@ def build_report(data: dict) -> Document:
     connections = data.get("connections", [])
     if subjects and connections:
         doc.add_heading("Entity Relationships", level=1)
-        add_entity_diagram(doc, subjects, connections)
+        add_entity_diagram(doc, subjects, connections, data)
         doc.add_paragraph()
 
         doc.add_heading("Network Topology", level=1)
-        add_network_topology(doc, subjects, connections)
+        add_network_topology(doc, subjects, connections, data)
+        doc.add_paragraph()
+        add_cloud_arch(doc, data)
         doc.add_paragraph()
 
     # 12. Connections table

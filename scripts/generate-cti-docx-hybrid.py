@@ -22,6 +22,7 @@ uv reads the inline dependency metadata below and provisions an ephemeral env.
 #     "python-docx>=1.0.0",
 #     "matplotlib>=3.8.0",
 #     "networkx>=3.2.0",
+#     "cairosvg>=2.7.0",
 # ]
 # ///
 import sys
@@ -50,7 +51,7 @@ def ensure_deps():
     Under `uv run` the deps are already provided by the inline metadata above, so this
     is a no-op — it only does work under a bare `python script.py` invocation.
     """
-    required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx"}
+    required = {"python-docx": "docx", "matplotlib": "matplotlib", "networkx": "networkx", "cairosvg": "cairosvg"}
     missing = []
     for pkg, mod in required.items():
         try:
@@ -211,7 +212,7 @@ def resolve_output_path(md_path: str, json_data: dict) -> str:
 
 
 def parse_args():
-    """Parse CLI arguments into (md_path, json_path_or_none, output_path_or_none)."""
+    """Parse CLI args into (md_path, json_path_or_none, output_path_or_none, want_pdf)."""
     args = sys.argv[1:]
     if not args:
         print(__doc__)
@@ -220,18 +221,21 @@ def parse_args():
     md_path = args[0]
     json_path = None
     output_path = None
+    want_pdf = False
 
     for arg in args[1:]:
-        if arg.endswith(".json"):
+        if arg in ("--pdf", "-p"):
+            want_pdf = True
+        elif arg.endswith(".json"):
             json_path = arg
         elif arg.endswith(".docx"):
             output_path = arg
 
-    return md_path, json_path, output_path
+    return md_path, json_path, output_path, want_pdf
 
 
 def main():
-    md_path, json_path, output_path = parse_args()
+    md_path, json_path, output_path, want_pdf = parse_args()
 
     if not os.path.exists(md_path):
         print(f"Error: MD file not found: {md_path}")
@@ -257,7 +261,8 @@ def main():
         apply_cti_styles(doc)
 
         print("[Phase 2] Prepending cover page + TOC, injecting charts")
-        rebuild_with_cover_toc_and_charts(doc, json_data)
+        case_dir = os.path.dirname(os.path.abspath(json_path)) if json_path else os.path.dirname(os.path.abspath(output_path))
+        rebuild_with_cover_toc_and_charts(doc, json_data, case_dir)
 
         case = json_data["case"]
         setup_header_footer_compat(doc, case["id"], case.get("classification", "OPEN SOURCE"))
@@ -274,6 +279,16 @@ def main():
         if has_json:
             print(f"  Subjects: {len(subjects)}  Findings: {len(findings)}  "
                   f"Connections: {len(connections)}  Timeline: {len(timeline)}")
+
+        if want_pdf:
+            from cti_docx_pdf import convert_docx_to_pdf
+            pdf_path = os.path.splitext(output_path)[0] + ".pdf"
+            print("[Phase 3] LibreOffice: DOCX \u2192 PDF (document-style, same charts)")
+            try:
+                pdf_out = convert_docx_to_pdf(output_path, pdf_path)
+                print(f"Saved: {pdf_out}")
+            except Exception as e:
+                print(f"  PDF conversion skipped: {e}")
 
     finally:
         try:

@@ -526,6 +526,29 @@ apt_install qpdf qpdf
 if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
 apt_install graphviz dot            # IntelGraph link graphs need the `dot` binary
+# LibreOffice (soffice) renders the DOCX-style report PDF (generate-cti-docx-hybrid.py --pdf).
+# apt ships `libreoffice-writer`; on macOS it is a Homebrew cask (not a formula), so branch.
+if [[ "$OS" == "macos" ]]; then
+  if has brew; then brew install --cask libreoffice &>/dev/null 2>&1 && log_ok "libreoffice (brew cask)" || log_skip "libreoffice (brew install --cask libreoffice)"; fi
+elif [[ "$OS" == "linux" ]] && has apt-get; then
+  # --no-install-recommends keeps this to Writer + core (~10x smaller than the full suite)
+  if has soffice; then
+    log_skip "libreoffice-writer (present)"
+  elif $SUDO apt-get install -y --no-install-recommends libreoffice-writer &>/dev/null 2>&1; then
+    log_ok "libreoffice-writer"
+  else
+    log_fail "libreoffice-writer" "try: sudo apt-get install --no-install-recommends libreoffice-writer"
+  fi
+else
+  has soffice && log_skip "libreoffice (present)" || log_fail "libreoffice" "install libreoffice-writer via your package manager (dnf/pacman/zypper)"
+fi
+# cairo runtime + DejaVu fonts let cairosvg rasterize the Diagram Design editorial
+# SVGs into the DOCX report with consistent text (graphviz `dot` above also renders
+# the Diagram AI Generator cloud figure).
+apt_install libcairo2 libcairo2 cairo
+if [[ "$OS" == "linux" ]] && has apt-get; then
+  $SUDO apt-get install -y fonts-dejavu-core &>/dev/null 2>&1 && log_ok "fonts-dejavu-core (editorial raster text)" || log_skip "fonts-dejavu-core"
+fi
 # ── Media / vision toolchain ──────────────────────────────────
 # ffmpeg + imagemagick preprocess A/V and image evidence; Node/npx runs the multix
 # vision CLI (npx @mrgoonie/multix) and agent-browser. See techniques/media-vision-analysis.md.
@@ -659,6 +682,15 @@ if [[ -f "$DEEP_REQ" ]]; then
 else
   log_skip "requirements.txt [deep layer] (not found at $DEEP_REQ)"
 fi
+
+# ── Python: report diagram figures ────────────────────────────
+# cairosvg rasterizes the Diagram Design editorial SVGs into the DOCX report.
+# diagrams (+ the graphviz `dot` binary installed above) renders the Diagram AI
+# Generator cloud figure. Installing diagrams into the venv lets it render in-process;
+# without it the report falls back to an on-demand `uv run --with diagrams` subprocess.
+section "Python: report diagram figures (cairosvg + diagrams)"
+pip_install cairosvg cairosvg
+pip_install diagrams diagrams
 
 # ── Python: OSINT tools ───────────────────────────────────────
 section "Python: OSINT tools"

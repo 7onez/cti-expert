@@ -37,6 +37,31 @@ else
 fi
 rm -rf "$TMP"
 
+echo "▶ HTML report generator builds the primary deliverable (+ optional Archify Blueprint)"
+TMP="$(mktemp -d)"
+out="$(uv run "$S/generate-cti-html.py" "$S/sample-cti-report-data.json" "$TMP/r.html" 2>&1)"
+if [ -s "$TMP/r.html" ] && grep -q 'id="cti-data"' "$TMP/r.html"; then
+  ok "HTML report built"
+  if echo "$out" | grep -q "Blueprint (Archify): embedded"; then
+    ok "Archify Blueprint embedded (Node.js present)"
+  else
+    info "Archify Blueprint skipped ($(echo "$out" | grep -o 'not embedded — .*' | head -1))"
+  fi
+  echo "$out" | grep -q "Editorial (Diagram Design): embedded" && ok "Diagram Design editorial figures embedded" || info "editorial figures skipped"
+  echo "$out" | grep -q "Cloud arch (Diagram AI Generator): embedded" && ok "Diagram AI Generator cloud figure embedded" || info "cloud figure skipped (no cloud infra / graphviz)"
+else
+  bad "HTML report did not build"
+fi
+rm -rf "$TMP"
+
+echo "▶ diagram engines (Diagram Design editorial raster + graphviz)"
+if uv run --with cairosvg python3 -c "import sys;sys.path.insert(0,'$S');import json,cti_diagram_design as dd;d=json.load(open('$S/sample-cti-report-data.json'));assert dd.render_svg_to_png(dd.build_entity_svg(d))" 2>/dev/null; then
+  ok "editorial SVG rasterizes via cairosvg (DOCX figure path)"
+else
+  info "cairosvg raster unavailable — DOCX falls back to matplotlib"
+fi
+command -v dot >/dev/null 2>&1 && ok "graphviz dot (cloud architecture figure)" || info "graphviz not installed (cloud figure auto-skips)"
+
 echo "▶ IBAN validator: accepts a known-good account, rejects a mutated checksum"
 if uv run "$S/iban_analyze.py" GB29NWBK60161331926819 2>/dev/null | grep -q "VALID" \
    && uv run "$S/iban_analyze.py" GB29NWBK60161331926818 2>/dev/null | grep -q "INVALID"; then
@@ -94,7 +119,7 @@ for t in maigret holehe h8mail theHarvester trufflehog xeuledoc waymore; do
 done
 
 echo "▶ system tools (informational)"
-for t in pandoc exiftool jq whois dig; do
+for t in node pandoc exiftool jq whois dig; do
   if command -v "$t" >/dev/null 2>&1; then ok "$t"; else info "$t not present"; fi
 done
 

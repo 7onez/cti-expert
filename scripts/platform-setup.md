@@ -175,6 +175,7 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | jq | `jq` | `winget install jqlang.jq` | `brew install jq` | `sudo apt install -y jq` |
 | exiftool | `exiftool` | `winget install OliverBetz.ExifTool` | `brew install exiftool` | `sudo apt install -y libimage-exiftool-perl` |
 | pandoc | `pandoc` | `winget install JohnMacFarlane.Pandoc` | `brew install pandoc` | `sudo apt install -y pandoc` |
+| LibreOffice (soffice) | `soffice` | `winget install TheDocumentFoundation.LibreOffice` | `brew install --cask libreoffice` | `sudo apt install -y --no-install-recommends libreoffice-writer` |
 | poppler (pdfinfo) | `pdfinfo` | `winget install oschwartz10612.Poppler` | `brew install poppler` | `sudo apt install -y poppler-utils` |
 | qpdf | `qpdf` | `winget install QPDF.QPDF` | `brew install qpdf` | `sudo apt install -y qpdf` |
 | whois | `whois` | `winget install Microsoft.Sysinternals.Whois` (or use `whoisdomain` lib) | preinstalled / `brew install whois` | `sudo apt install -y whois` |
@@ -190,6 +191,8 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | rmbg-cli (optional) | `rmbg` | `npm i -g rmbg-cli` | `npm i -g rmbg-cli` | `npm i -g rmbg-cli` |
 | tesseract + OCR langs (fallback) | `tesseract` | `winget install UB-Mannheim.TesseractOCR` (bundles langs) | `brew install tesseract tesseract-lang` | `sudo apt install -y tesseract-ocr tesseract-ocr-vie tesseract-ocr-chi-sim` |
 | Whisper local ASR (optional) | `whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` |
+
+> **LibreOffice (soffice)** renders the **DOCX-style report PDF** — `generate-cti-docx-hybrid.py … --pdf` builds the DOCX (cover/TOC/charts injected post-pandoc via python-docx) then converts it with soffice, so the PDF matches the DOCX exactly. It is **not** an HTML-to-PDF print. The generator's `ensure_soffice()` auto-installs it on demand (apt uses `--no-install-recommends` → Writer + core only, ~10x smaller than the full suite); the bundled installers provision it too.
 
 > **agent-browser** ([vercel-labs](https://github.com/vercel-labs/agent-browser)) is the skill's primary interactive browser collector (CDP, accessibility-tree snapshots, screenshots). No API key for core automation. `agent-browser install` downloads Chrome for Testing (first run). It is complementary to Scrapling — see `techniques/agent-browser.md`. The bundled installers add it under `--headless`/`-Headless`.
 

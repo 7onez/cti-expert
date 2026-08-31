@@ -75,10 +75,20 @@ the report JSON once (see `SKILL.md` §8), then run the generators:
 S="$SKILL_DIR/scripts"
 # PRIMARY: interactive, self-contained, OFFLINE HTML report (opens in any browser)
 uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
+# ^ also embeds an interactive Archify "Blueprint" entity diagram inline. That one
+#   sub-step uses Node.js + the vendored Archify at scripts/vendor/archify/; it is
+#   best-effort (no Node / no subjects / CTI_ARCHIFY=0 -> report still built, tab omitted).
+# ^ also renders Diagram Design editorial figures (entity + topology; vector in HTML/PDF,
+#   rasterized via cairosvg in DOCX) and, when cloud infra is detected, a Diagram AI
+#   Generator cloud figure (diagrams + graphviz). Both best-effort; cloud auto-skips
+#   (no cloud infra / no graphviz / CTI_CLOUD_ARCH=0). DOCX embeds all three too.
 # Comprehensive IOC / selector bundle -> STIX 2.1 + flat + CSV
 uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
-# DOCX — on request / `/report legal` only:
-uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx   # narrative + charts
+# DOCX (narrative + charts + confidence matrix + campaign heatmaps) — on request / `/report legal`:
+uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx
+# PDF is a DOCX-STYLE document (same cover / TOC / tables / charts), NOT an HTML->PDF print.
+# Add --pdf to render REPORT.pdf from the just-built DOCX via LibreOffice (soffice):
+uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx --pdf
 # Shareable redacted copy — OPT-IN, not part of the default set. One --map across all
 # files so a selector keeps the same placeholder everywhere. Never ship the .map.json.
 uv run "$S/redact.py" REPORT.md -o REPORT.redacted.md --map REPORT.map.json
