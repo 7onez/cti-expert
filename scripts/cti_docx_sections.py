@@ -39,11 +39,6 @@ def add_executive_summary(doc: Document, data: dict) -> None:
         p = doc.add_paragraph(summary)
         p.paragraph_format.space_after = Pt(12)
 
-    # Exposure score callout if available
-    exposure = data.get("case", {}).get("exposure_score")
-    if exposure is not None:
-        _add_callout_box(doc, f"Overall Exposure Score: {exposure}/100",
-                        _severity_from_score(exposure))
 
 
 def add_subject_profile(doc: Document, data: dict) -> None:
@@ -288,32 +283,3 @@ def add_methodology_notes(doc: Document, data: dict) -> None:
     run.font.color.rgb = COLORS["muted"]
 
 
-def _add_callout_box(doc: Document, text: str, severity: str) -> None:
-    """Add a colored callout box."""
-    color_map = {
-        "CRITICAL": "EADAD9",   # brick tint
-        "HIGH": "F0E3C9",       # ochre tint
-        "MEDIUM": "ECE4CC",     # amber tint
-        "LOW": "E3E8D8",        # olive tint
-        "INFO": "F7F4ED",       # house callout background
-    }
-    bg = color_map.get(severity, "F7F4ED")
-
-    table = doc.add_table(rows=1, cols=1)
-    cell = table.rows[0].cells[0]
-    run = cell.paragraphs[0].add_run(text)
-    run.font.bold = True
-    run.font.size = Pt(12)
-    set_cell_shading(cell, bg)
-    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-
-def _severity_from_score(score: int) -> str:
-    if score >= 76:
-        return "CRITICAL"
-    elif score >= 51:
-        return "HIGH"
-    elif score >= 26:
-        return "MEDIUM"
-    else:
-        return "LOW"

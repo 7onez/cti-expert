@@ -126,6 +126,39 @@ def role_of(s):
         return "infrastructure"
     return "unknown"
 
+# --- §2.5 exclusion gate -------------------------------------------------
+# Subjects/findings marked rejected/masked (a §2.5 name-collision innocent, a
+# registrar privacy-proxy value, a false-positive attribution) must NEVER be
+# harvested as IOCs — even when the value is mentioned inside an otherwise
+# legitimate subject's `notes` or a finding's `description`. Two knobs:
+#   * per-item: subject/finding role in EXCLUDED_ROLES, an excluding tag/type,
+#     or an explicit `"excluded": true` / `"ioc_exclude": true` flag.
+#   * report-level: `data["ioc_exclude"]` = [values] dropped anywhere they are
+#     harvested from. Backward-compatible: absent markers → identical output.
+EXCLUDED_ROLES = {"rejected", "masked", "excluded", "uninvolved", "innocent",
+                  "false-positive", "false_positive", "fp"}
+EXCLUDED_FINDING_TYPES = {"false-positive", "false_positive", "rejected", "excluded"}
+EXCLUDED_TAGS = {"rejected", "masked", "excluded", "uninvolved",
+                 "false-positive", "false_positive", "name-collision", "§2.5"}
+
+
+def _is_excluded_subject(s):
+    if s.get("excluded") is True or s.get("ioc_exclude") is True:
+        return True
+    return str(s.get("role", "")).lower() in EXCLUDED_ROLES
+
+
+def _is_excluded_finding(f):
+    if f.get("excluded") is True or f.get("ioc_exclude") is True:
+        return True
+    if str(f.get("type", "")).lower() in EXCLUDED_FINDING_TYPES:
+        return True
+    return bool({str(t).lower() for t in (f.get("tags") or [])} & EXCLUDED_TAGS)
+
+
+def _exclude_values(data):
+    return {str(v).strip().lower() for v in (data.get("ioc_exclude") or []) if str(v).strip()}
+
 
 def detect_social(u):
     for rx, plat in SOCIAL:
@@ -158,12 +191,15 @@ def extract(data):
     conns = data.get("connections", []) or []
     sources = data.get("sources", []) or []
     out, seen = [], {}
+    exclude = _exclude_values(data)
 
     def add(cat, typ, value, role="unknown", conf=0, platform=None, source=None, sid=None):
         if value is None:
             return
         value = str(value).strip()
         if not value:
+            return
+        if value.lower() in exclude:  # §2.5: dropped no matter where it was harvested
             return
         key = "%s|%s|%s" % (cat, typ, value.lower())
         if key in seen:
@@ -226,6 +262,8 @@ def extract(data):
 
     # 1) subjects
     for s in subjects:
+        if _is_excluded_subject(s):     # §2.5: rejected/masked subject → no IOCs, no notes scan
+            continue
         role, conf, t = role_of(s), int(s.get("confidence") or 0), str(s.get("type", "")).lower()
         if t in SUBJECT_MAP:
             cat, typ = SUBJECT_MAP[t]
@@ -266,6 +304,8 @@ def extract(data):
     # 3) findings
     by_id = {s.get("id"): s for s in subjects}
     for f in findings:
+        if _is_excluded_finding(f):     # §2.5: false-positive/rejected finding → don't harvest its prose
+            continue
         sub = by_id.get(f.get("subject_id"))
         role = role_of(sub) if sub else "unknown"
         conf = int(f.get("confidence") or 0)

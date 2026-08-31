@@ -6,7 +6,7 @@
   Author: Hieu Ngo - chongluadao.vn
   Self-contained & OFFLINE: no CDN, no external fonts/scripts/styles, no network calls.
   Data is injected into the #cti-data island below by scripts/generate-cti-html.py
-  (placeholder token __CTI_CASE_DATA__). Charts, the 2D entity graph, the timeline and
+  (a single placeholder token in that script island, replaced at build time). Charts, the 2D entity graph, the timeline and
   the comprehensive indicator/selector extraction are all hand-rolled in vanilla JS/SVG.
 -->
 <style>
@@ -323,6 +323,8 @@ td .mono{font-family:var(--mono);font-size:12.5px}
     <section class="view" data-view="entities"></section>
     <section class="view" data-view="findings"></section>
     <section class="view" data-view="graph"></section>
+    <section class="view" data-view="blueprint"></section>
+    <section class="view" data-view="editorial"></section>
     <section class="view" data-view="topology"></section>
     <section class="view" data-view="timeline"></section>
     <section class="view" data-view="indicators"></section>
@@ -350,7 +352,7 @@ function loadData(){
   return DEMO; // fallback when template opened without injection
 }
 var DEMO={
-  case:{id:"CTI-DEMO-001",label:"Sample Investigation — Demo Data",classification:"INTERNAL",analyst:"CTI Expert",date:"2026-06-30",subject:"demo-target.com",status:"active",exposure_score:68},
+  case:{id:"CTI-DEMO-001",label:"Sample Investigation — Demo Data",classification:"INTERNAL",analyst:"CTI Expert",date:"2026-06-30",subject:"demo-target.com",status:"active"},
   executive_summary:"Demonstration report rendered from the template's built-in sample dataset (no real case injected). It exercises every view — overview charts, the entity graph, infrastructure topology, the event timeline, and the comprehensive indicator/selector panel including actor↔victim attribution. Generate a real report with: generate-cti-html.py <case.json> <out.html>.",
   subjects:[
     {id:"S1",label:"demo-target.com",type:"domain",confidence:95,verified:true,role:"infrastructure",aliases:["demo-target.net"],first_seen:"2019-02-11",notes:"Primary domain under investigation"},
@@ -402,6 +404,10 @@ var RECS=Array.isArray(DATA.recommendations)?DATA.recommendations:[];
 var VIS=DATA.visitor_stats||null;
 var CAVEATS=Array.isArray(DATA.caveats)?DATA.caveats:[];
 var EVID=Array.isArray(DATA.evidence_images)?DATA.evidence_images:[];
+var ARCHIFY=(DATA.archify_diagram_html&&typeof DATA.archify_diagram_html==='string')?DATA.archify_diagram_html:'';
+var ED_ENTITY=(DATA.editorial_entity_svg&&typeof DATA.editorial_entity_svg==='string')?DATA.editorial_entity_svg:'';
+var ED_TOPO=(DATA.editorial_topology_svg&&typeof DATA.editorial_topology_svg==='string')?DATA.editorial_topology_svg:'';
+var CLOUDIMG=(DATA.cloud_arch_png&&typeof DATA.cloud_arch_png==='string')?DATA.cloud_arch_png:'';
 
 /* ============================ helpers ============================ */
 function $(s,r){return (r||document).querySelector(s);}
@@ -442,6 +448,16 @@ function roleOf(s){
   if(['ip','domain','url','network_addr','device','asn'].indexOf(t)>=0) return 'infrastructure';
   return 'unknown';
 }
+
+/* §2.5 exclusion gate — mirrors scripts/generate-cti-iocs.py so a case that
+   relies on the gate (rather than defanged text) does not leak rejected/masked
+   values into the indicators panel or the entity graph / topology. */
+var EXCLUDED_ROLES={rejected:1,masked:1,excluded:1,uninvolved:1,innocent:1,'false-positive':1,false_positive:1,fp:1};
+var EXCLUDED_FTYPES={'false-positive':1,false_positive:1,rejected:1,excluded:1};
+var EXCLUDED_TAGS={rejected:1,masked:1,excluded:1,uninvolved:1,'false-positive':1,false_positive:1,'name-collision':1,'§2.5':1};
+function isExcludedSubject(s){if(!s)return false;if(s.excluded===true||s.ioc_exclude===true)return true;return !!EXCLUDED_ROLES[String(s.role||'').toLowerCase()];}
+function isExcludedFinding(f){if(!f)return false;if(f.excluded===true||f.ioc_exclude===true)return true;if(EXCLUDED_FTYPES[String(f.type||'').toLowerCase()])return true;return (f.tags||[]).some(function(t){return !!EXCLUDED_TAGS[String(t).toLowerCase()];});}
+var IOC_EXCLUDE={};(DATA.ioc_exclude||[]).forEach(function(v){if(v!=null&&String(v).trim())IOC_EXCLUDE[String(v).trim().toLowerCase()]=1;});
 
 /* ============================ indicator / selector extraction ============================ */
 var RX={
@@ -500,6 +516,7 @@ function detectMsg(u){
 function buildIndicators(){
   var out=[], seen={};
   function add(o){
+    if(o.value!=null&&IOC_EXCLUDE[String(o.value).trim().toLowerCase()])return; // §2.5: dropped wherever harvested
     var key=o.cat+'|'+o.type+'|'+String(o.value).toLowerCase();
     if(seen[key]){ // keep highest confidence / merge role
       var ex=seen[key]; if(num(o.confidence)>num(ex.confidence))ex.confidence=o.confidence;
@@ -532,6 +549,7 @@ function buildIndicators(){
 
   // 1) subjects → typed selectors
   SUBJECTS.forEach(function(s){
+    if(isExcludedSubject(s))return; // §2.5: rejected/masked subject → no indicators, no notes scan
     var role=roleOf(s), conf=num(s.confidence,0), t=String(s.type||'').toLowerCase();
     var map={domain:['network','domain'],ip:['network','ipv4'],network_addr:['network','ipv4'],url:['network','url'],
       email:['contact','email'],phone:['contact','phone'],username:['identity','username'],handle:['identity','username'],
@@ -563,6 +581,7 @@ function buildIndicators(){
 
   // 3) findings → regex sweep over description + source_url + tags
   FINDINGS.forEach(function(f){
+    if(isExcludedFinding(f))return; // §2.5: false-positive/rejected finding → don't sweep its prose
     var sub=SUBJECTS.filter(function(s){return s.id===f.subject_id;})[0];
     var role=sub?roleOf(sub):'unknown', conf=num(f.confidence,0);
     scan((f.description||'')+' '+(f.source_url||'')+' '+((f.tags||[]).join(' ')),role,conf,f.source_url,f.subject_id);
@@ -645,18 +664,14 @@ function renderOverview(){
     {lab:'Subjects',val:SUBJECTS.length,ic:'🎯',sub:SUBJECTS.filter(function(s){return s.verified;}).length+' verified'},
     {lab:'Findings',val:FINDINGS.length,ic:'🔬',sub:crit+' critical/high'},
     {lab:'Connections',val:CONNS.length,ic:'🕸',sub:ATTRIB.filter(function(a){return a.reach;}).length+' contact links'},
-    {lab:'Indicators',val:INDICATORS.length,ic:'📍',sub:INDICATORS.filter(function(i){return i.cat==='social'||i.cat==='messaging';}).length+' social/contact'},
-    {lab:'Exposure',val:(C.exposure_score!=null?C.exposure_score:'—'),ic:'⚠️',sub:'score / 100'}
+    {lab:'Indicators',val:INDICATORS.length,ic:'📍',sub:INDICATORS.filter(function(i){return i.cat==='social'||i.cat==='messaging';}).length+' social/contact'}
   ];
   html+='<div class="grid kpis">'+kpis.map(function(k){
     return '<div class="card kpi"><span class="ic">'+k.ic+'</span><div class="lab">'+k.lab+'</div><div class="val">'+(typeof k.val==='number'?fmtInt(k.val):k.val)+'</div><div class="sub">'+esc(k.sub)+'</div></div>';
   }).join('')+'</div>';
 
-  // exec summary + exposure gauge
-  html+='<div class="grid two" style="margin-top:16px">';
-  html+='<div class="card exec"><h3>Executive Summary</h3><p>'+esc(DATA.executive_summary||'—')+'</p></div>';
-  html+='<div class="card" style="text-align:center"><h3>Exposure Assessment</h3>'+(C.exposure_score!=null?gauge(C.exposure_score):'<div class="empty">No exposure score</div>')+'</div>';
-  html+='</div>';
+  // exec summary (full width)
+  html+='<div class="card exec" style="margin-top:16px"><h3>Executive Summary</h3><p>'+esc(DATA.executive_summary||'—')+'</p></div>';
 
   // finding-type pie + severity bar + confidence donut
   var ftypes=countBy(FINDINGS,function(f){return (f.type||'other').toLowerCase();});
@@ -769,7 +784,7 @@ function renderGraph(){
   };
 }
 function graphData(){
-  var nodes=SUBJECTS.filter(function(s){return GFILTER[String(s.type).toLowerCase()]!==false;})
+  var nodes=SUBJECTS.filter(function(s){return GFILTER[String(s.type).toLowerCase()]!==false&&!isExcludedSubject(s);})
     .map(function(s){return {id:s.id,label:s.label,type:String(s.type||'').toLowerCase(),role:roleOf(s),conf:num(s.confidence),verified:s.verified,primary:isPrimary(s)};});
   var nset={}; nodes.forEach(function(n){nset[n.id]=1;});
   var links=CONNS.filter(function(c){return nset[c.from_id]&&nset[c.to_id];})
@@ -843,11 +858,32 @@ function wireGraph(svg,byId,g){
   svg.addEventListener('wheel',function(ev){ev.preventDefault();var r=svg.getBoundingClientRect();var mx=ev.clientX-r.left,my=ev.clientY-r.top;var f=ev.deltaY<0?1.12:0.89;var nk=clamp(GVIEW.k*f,0.3,3.5);GVIEW.x=mx-(mx-GVIEW.x)*(nk/GVIEW.k);GVIEW.y=my-(my-GVIEW.y)*(nk/GVIEW.k);GVIEW.k=nk;applyGView();},{passive:false});
 }
 
+/* ============================ render: blueprint (Archify) ============================ */
+function renderBlueprint(){
+  var v=$('[data-view="blueprint"]');
+  if(!ARCHIFY){v.innerHTML='<div class="section-h"><h2>Entity Blueprint</h2></div><div class="empty">No Archify diagram embedded (re-generate the report with Node.js available).</div>';return;}
+  v.innerHTML='<div class="section-h"><h2>Entity Blueprint</h2><span class="hint">interactive architecture map · rendered by Archify · theme &amp; export live inside the frame</span></div>'+
+    '<div class="card" style="padding:6px;overflow:hidden"><iframe id="bpFrame" title="Archify entity blueprint" style="width:100%;height:80vh;border:0;display:block;border-radius:8px;background:#0b0f17"></iframe></div>';
+  $('#bpFrame',v).srcdoc=ARCHIFY;
+}
+
+/* ============================ render: editorial (Diagram Design) ============================ */
+function renderEditorial(){
+  var v=$('[data-view="editorial"]');
+  if(!ED_ENTITY&&!ED_TOPO){v.innerHTML='<div class="section-h"><h2>Editorial Diagrams</h2></div><div class="empty">No editorial diagrams for this case.</div>';return;}
+  var h='<style>.ed-fig{overflow:auto}.ed-fig svg{max-width:100%;height:auto;display:block;margin:0 auto}</style>';
+  h+='<div class="section-h"><h2>Editorial Diagrams</h2><span class="hint">print-ready vector figures · Diagram Design editorial style · included in PDF &amp; DOCX</span></div>';
+  if(ED_ENTITY)h+='<div class="card ed-fig">'+ED_ENTITY+'</div>';
+  if(ED_TOPO)h+='<div class="card ed-fig" style="margin-top:16px">'+ED_TOPO+'</div>';
+  if(CLOUDIMG)h+='<div class="section-h" style="margin-top:20px"><h2>Cloud Architecture</h2><span class="hint">detected cloud infrastructure · provider icons · Diagram AI Generator</span></div><div class="card ed-fig" style="text-align:center"><img src="'+CLOUDIMG+'" alt="Cloud architecture" style="max-width:100%;height:auto"></div>';
+  v.innerHTML=h;
+}
+
 /* ============================ render: topology ============================ */
 function renderTopology(){
   var v=$('[data-view="topology"]');
   var infraTypes={domain:1,ip:1,network_addr:1,url:1,device:1,asn:1,organization:1,org:1};
-  var infra=SUBJECTS.filter(function(s){return infraTypes[String(s.type).toLowerCase()];});
+  var infra=SUBJECTS.filter(function(s){return infraTypes[String(s.type).toLowerCase()]&&!isExcludedSubject(s);});
   var html='<div class="section-h"><h2>Infrastructure Topology</h2><span class="hint">organizations → domains → hosts</span></div>';
   if(!infra.length){v.innerHTML=html+'<div class="empty">No infrastructure entities.</div>';return;}
   // group by tier
@@ -1028,12 +1064,16 @@ var VIEWS=[
   ['entities','🎯','Entities',SUBJECTS.length],
   ['findings','🔬','Findings',FINDINGS.length],
   ['graph','🕸','Network Graph',CONNS.length],
+  ['blueprint','🗺','Blueprint',null],
+  ['editorial','🖋','Editorial',null],
   ['topology','🏗','Topology',null],
   ['timeline','🗓','Timeline',TIMELINE.length],
   ['indicators','📍','Indicators',INDICATORS.length],
   ['sources','📚','Sources',SOURCES.length],
   ['evidence','🖼','Evidence',EVID.length]
 ];
+if(!ARCHIFY){VIEWS=VIEWS.filter(function(v){return v[0]!=='blueprint';});}
+if(!ED_ENTITY&&!ED_TOPO&&!CLOUDIMG){VIEWS=VIEWS.filter(function(v){return v[0]!=='editorial';});}
 var RENDERED={};
 function buildNav(){
   var nav=$('#nav');
@@ -1045,7 +1085,7 @@ function buildNav(){
 function go(view){
   $$('.navitem').forEach(function(n){n.classList.toggle('active',n.getAttribute('data-go')===view);});
   $$('.view').forEach(function(s){s.classList.toggle('active',s.getAttribute('data-view')===view);});
-  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[view]();RENDERED[view]=1;}
+  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[view]();RENDERED[view]=1;}
   else if(view==='graph'){buildGraphSVG();}
   window.scrollTo(0,0);
 }
@@ -1093,7 +1133,7 @@ $('#themeBtn').addEventListener('click',function(){
 $('#defangBtn').addEventListener('click',function(){defangOn=!defangOn;toast('Defang '+(defangOn?'ON — values masked':'off'));if(RENDERED.indicators){RENDERED.indicators=0;}var a=$('.navitem.active');if(a&&a.getAttribute('data-go')==='indicators')go('indicators');});
 $('#printBtn').addEventListener('click',function(){
   // render every view so print shows the whole report
-  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[v[0]]();RENDERED[v[0]]=1;}});
+  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[v[0]]();RENDERED[v[0]]=1;}});
   setTimeout(function(){window.print();},120);
 });
 $('#menubtn').addEventListener('click',function(){$('#sidebar').classList.toggle('open');});

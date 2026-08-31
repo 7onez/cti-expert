@@ -454,7 +454,7 @@ Commands grouped by AEAD phase.
 | `/report brief` | Single-page executive brief | `/report brief` |
 | `/report json` | Raw data as JSON | `/report json` |
 | `/report csv` | Spreadsheet-compatible export | `/report csv` |
-| `/report docx` | Word document in the **PDF house style** (slate/steel palette, serif body + sans headings, cover/TOC, rich charts/diagrams) — on request | `/report docx` |
+| `/report docx` | Word document in the **PDF house style** (slate/steel palette, serif body + sans headings, cover/TOC, rich charts + Diagram Design editorial diagrams + cloud figure) — on request | `/report docx` |
 | `/report legal` | Evidence-formatted for legal proceedings (adds DOCX/PDF) | `/report legal` |
 | `/report journalist` | Source-citation-heavy format | `/report journalist` |
 | `/brief` | Plain-language summary (non-technical) | `/brief` |
@@ -804,7 +804,7 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
 
 - **`--yolo`:** save the five-format default set with no prompt.
 - **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
-- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). Every DOCX path now shares the **PDF editorial house style** (see `scripts/cti_docx_styles.py` and `IntelReport/templates/reference.docx`), so a Word file reads as the same document as its PDF. HTML **"Print → Save as PDF"** covers most PDF needs for free.
+- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). The DOCX carries the report's charts — including the **two-axis ICD-203 × Admiralty confidence matrix** and the **campaign heatmaps** (malicious-domain registration timeline, domain×indicator correlation, domain×domain possible-relation). **PDF is that same DOCX rendered to PDF by LibreOffice** (`generate-cti-docx-hybrid.py … --pdf`, via `scripts/cti_docx_pdf.py`) — one document, two file types, byte-for-byte the same layout/charts. **Do NOT** produce the PDF by printing the HTML report; that is a different, screenshot-style artifact.
 - Explicit machine-format subcommands always emit that format directly: `/report json`, `/report csv`, `/report ioc`.
 - **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
   ```bash
@@ -827,8 +827,7 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
     "analyst": "AI-Assisted CTI",  // string
     "date": "2026-04-08",          // ISO date
     "subject": "target.com",       // string, primary subject
-    "status": "active",            // string
-    "exposure_score": 72           // integer 0-100 (optional, enables risk gauge)
+    "status": "active"             // string
   },
   "executive_summary": "Full paragraph summarizing investigation findings...",
   "subjects": [
@@ -920,7 +919,29 @@ S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md
 uv run "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   # any OS, zero setup
 # no uv installed: python3 "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   (Windows: py …)
 ```
-It injects the report JSON into `cti-report-template.html` and renders, entirely client-side and offline (no CDN, no network calls): KPI cards, an exposure gauge, a finding-type pie, severity bars, a draggable/zoomable **2D entity graph**, **infrastructure topology**, an **event timeline**, and the **comprehensive Indicators & Selectors panel** (network IOCs + contacts + identities + social/messaging handles + wallets + actor↔victim attribution) — with global search, category menus, dark/light themes and a print-to-PDF stylesheet.
+It injects the report JSON into `cti-report-template.html` and renders, entirely client-side and offline (no CDN, no network calls): KPI cards, a finding-type pie, severity bars, a draggable/zoomable **2D entity graph**, **infrastructure topology**, an **event timeline**, and the **comprehensive Indicators & Selectors panel** (network IOCs + contacts + identities + social/messaging handles + wallets + actor↔victim attribution) — with global search, category menus, dark/light themes and a print-to-PDF stylesheet.
+
+The report also embeds an interactive **Blueprint** view — the case entity graph
+rendered as an [Archify](https://github.com/tt-a1i/archify) `architecture` diagram
+(typed nodes, directional relationships, exposure/finding cards) and inlined into
+the single offline file via an isolated iframe (theme + PNG/SVG export live inside
+it). This is the one build step that uses **Node.js** (a trimmed, zero-dependency
+Archify copy is vendored at `scripts/vendor/archify/`). It is best-effort: if
+Node.js is unavailable, the case has no subjects, or `CTI_ARCHIFY=0` is set, the
+report is still produced and the Blueprint tab is simply omitted — every other
+view (including the always-present 2D entity graph) is unaffected.
+
+It also renders two print-ready figures shared across HTML, **PDF** and **DOCX**:
+an **Editorial** view — the entity map and infrastructure topology drawn as
+[Diagram Design](https://github.com/cathrynlavery/diagram-design) editorial SVG
+(atomic-tangerine accent on 1–2 focal nodes, hairlines, no shadows), inlined as
+vector in HTML/PDF and rasterized via **cairosvg** for DOCX; and, only when a case
+reveals cloud infrastructure, a **Cloud Architecture** figure applying
+[Diagram AI Generator](https://github.com/carlosmgv02/diagram-ai-generator) —
+real AWS/Azure/GCP/K8s provider icons via the `diagrams` library + **graphviz**.
+Both are best-effort: the editorial figures fall back to the matplotlib DOCX
+diagrams if cairosvg is unavailable, and the cloud figure auto-skips when no cloud
+infra is detected, graphviz/`diagrams` are missing, or `CTI_CLOUD_ARCH=0` is set.
 
 **Step 3 — Generate the comprehensive IOC / selector bundle.**
 ```bash
@@ -936,6 +957,8 @@ Extracts EVERY indicator that profiles or can reach an actor/victim — network 
 S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md (Claude Code: ~/.claude/skills/cti-expert; Codex/clone: the repo)
 # Primary: HYBRID — full narrative from MD + charts/diagrams from JSON (zero content loss)
 uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"
+# PDF — DOCX-STYLE document (the DOCX rendered by LibreOffice), NOT an HTML print:
+uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx" --pdf
 # Fallback 1: JSON-only (charts + structured data; no pandoc needed)
 uv run "$S/generate-cti-docx.py" "REPORT.json" "REPORT.docx"
 # Fallback 2: MD-only (styled narrative, no charts)
@@ -952,9 +975,9 @@ uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
 1. **Phase 1:** pandoc converts the MD file to a base DOCX (preserving ALL narrative content — tables, lists, formatting)
 2. **Phase 2:** python-docx post-processes to add CTI professional styling, prepend cover page + TOC, and inject charts/diagrams from JSON at matching section headings
 
-**The MD file is the primary content source.** It carries the full narrative (detailed person profiles, infrastructure tables, wallet addresses, corporate structure, legal history, etc.). The JSON file provides structured data for visual elements (charts, diagrams, risk gauge). Using both together produces a complete report with zero content loss.
+**The MD file is the primary content source.** It carries the full narrative (detailed person profiles, infrastructure tables, wallet addresses, corporate structure, legal history, etc.). The JSON file provides structured data for visual elements (charts, diagrams, the ICD-203 × Admiralty confidence matrix, and the campaign heatmaps). Using both together produces a complete report with zero content loss.
 
-**Rich hybrid DOCX includes:** Cover page titled "CTI REPORT", table of contents, **all narrative content from MD** (every paragraph, table, list, code block), pie chart (finding types), bar chart (severity), risk gauge (exposure score), timeline chart, entity relationship diagram, network topology diagram, traffic/geo charts, CTI-themed styling (navy headings, styled tables), header/footer with classification and page numbers.
+**Rich hybrid DOCX includes:** Cover page titled "CTI REPORT", table of contents, **all narrative content from MD** (every paragraph, table, list, code block), pie chart (finding types), bar chart (severity), **two-axis ICD-203 × Admiralty confidence matrix**, **campaign heatmaps** (malicious-domain registration timeline, domain×indicator correlation, domain×domain possible-relation), timeline chart, entity relationship diagram, network topology diagram, traffic/geo charts, CTI-themed styling (navy headings, styled tables), header/footer with classification and page numbers. **No overall exposure score / risk gauge** (removed). The PDF (`--pdf`) is this same DOCX rendered by LibreOffice.
 
 **After saving, confirm all files to the user:**
 ```
@@ -965,7 +988,7 @@ uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
    → CTI-REPORT-CASE001-2026-03-30.csv
    → IOC-CASE001-2026-03-30.stix.json / .txt / .csv   (indicators & selectors)
 
-   Need a Word (.docx) or PDF too? (PDF = open the .html and Print → Save as PDF)
+   Need a Word (.docx) or PDF too? (PDF = the DOCX rendered by LibreOffice — add --pdf)
 ```
 
 ### Report Formats
@@ -1232,12 +1255,20 @@ cti-expert/
 │   ├── cld/cld_api.py               ChongLuaDao premium API client — IoC / denylist / breach + full data-leak module (async jobs) / AI URL analysis / STIX-MISP feeds (PEP 723 / `uv run`, zero-dep, X-API-Key)
 │   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
 │   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
-│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
+│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template + builds the embedded Archify Blueprint (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
+│   ├── cti_archify.py               CTI case → Archify `architecture` IR converter (drives the report's inline Blueprint diagram; stdlib-only)
+│   ├── vendor/archify/              Vendored zero-dep Archify render subset (v2.16.0, MIT) — renders the Blueprint diagram; needs Node.js (see vendor/archify/VENDOR.md)
+│   ├── cti_diagram_design.py        CTI case → Diagram Design editorial SVG (entity + topology); cairosvg rasterizer for DOCX (stdlib SVG)
+│   ├── cti_cloud_arch.py            CTI case → Diagram AI Generator cloud figure (diagrams+graphviz, cloud-gated, opt-in; isolated uv subprocess)
+│   ├── vendor/diagram-design/       Vendored Diagram Design style-guide + self_check + LICENSE (MIT) — editorial token/rule source
+│   ├── vendor/diagram-ai-generator/ LICENSE + VENDOR note (MIT) — cloud figure applies its spec/approach via the `diagrams` library
 │   ├── generate-cti-iocs.py         Comprehensive IOC/selector exporter → STIX 2.1 / flat / CSV (network IOCs + contacts + identities + social/messaging + wallets + attribution; PEP 723 / `uv run`, zero-dep)
 │   ├── generate-cti-docx-hybrid.py  Hybrid MD+JSON DOCX generator — on request / `/report legal` (PEP 723 / `uv run`; self-heals UTF-8 + pandoc)
 │   ├── generate-cti-docx.py         Fallback: JSON-only generator (PEP 723 / `uv run`)
 │   ├── cti_docx_postprocess.py      Post-processing: styling, chart injection, cover page
-│   ├── cti_docx_charts.py           Chart rendering (pie, bar, gauge, timeline, traffic, geo)
+│   ├── cti_docx_charts.py           Chart rendering (pie, bar, timeline, traffic, geo, ICD-203×Admiralty confidence matrix)
+│   ├── cti_docx_heatmaps.py         Campaign heatmaps (registration timeline, domain×indicator correlation, domain×domain relation)
+│   ├── cti_docx_pdf.py              DOCX→PDF via LibreOffice (document-style PDF; the --pdf path)
 │   ├── cti_docx_diagrams.py         Entity relationship + network topology diagrams
 │   ├── cti_docx_sections.py         Report section formatting (used by JSON-only generator)
 │   ├── cti_docx_styles.py           Document styling, colors, cover page, header/footer
@@ -1459,16 +1490,6 @@ When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX reco
 
 ---
 
-## Exposure Score Bands
-
-| Range | Label | Action |
-|-------|-------|--------|
-| 0–25 | Minimal | Passive monitoring sufficient |
-| 26–50 | Moderate | Periodic review advised |
-| 51–75 | Elevated | Address within 30 days |
-| 76–100 | Critical | Immediate escalation required |
-
----
 
 ## Tool Priority & Fallback
 

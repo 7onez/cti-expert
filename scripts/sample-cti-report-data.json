@@ -7,10 +7,9 @@
     "analyst": "AI-Assisted CTI Analyst",
     "date": "2026-03-30",
     "subject": "acme-corp.com",
-    "status": "active",
-    "exposure_score": 72
+    "status": "active"
   },
-  "executive_summary": "Investigation of Acme Corporation's digital footprint revealed significant exposure across multiple attack vectors. Critical findings include exposed employee credentials in breach databases, misconfigured cloud storage buckets with sensitive data, and outdated SSL certificates on production infrastructure. The organization's overall exposure score of 72/100 indicates elevated risk requiring immediate remediation of identified vulnerabilities.",
+  "executive_summary": "Investigation of Acme Corporation's digital footprint revealed significant exposure across multiple attack vectors. Critical findings include exposed employee credentials in breach databases, misconfigured cloud storage buckets with sensitive data, and outdated SSL certificates on production infrastructure. The severity and breadth of these findings indicate elevated risk requiring immediate remediation of identified vulnerabilities.",
   "subjects": [
     {
       "id": "SUB-001",

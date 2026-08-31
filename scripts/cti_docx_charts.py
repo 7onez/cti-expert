@@ -94,78 +94,91 @@ def add_severity_bar(doc, findings: list) -> None:
     last_para.alignment = 1
 
 
-def add_risk_gauge(doc, score: int, label: str = "Overall Exposure Score") -> None:
-    """Semi-circular gauge showing risk score 0-100."""
-    fig, ax = plt.subplots(figsize=(4, 2.5), dpi=150)
+_ICD203 = [
+    ("Almost\nno chance", 2), ("Very\nunlikely", 12), ("Unlikely", 32),
+    ("Roughly\neven", 50), ("Likely", 67), ("Very\nlikely", 87),
+    ("Almost\ncertain", 97),
+]
+_ADMIRALTY = [
+    ("A \u00b7 Completely reliable", ), ("B \u00b7 Usually reliable", ),
+    ("C \u00b7 Fairly reliable", ), ("D \u00b7 Not usually reliable", ),
+    ("E \u00b7 Unreliable", ), ("F \u00b7 Cannot be judged", ),
+]
 
-    # Draw gauge background arcs
-    theta = np.linspace(np.pi, 0, 100)
-    segments = [
-        (0, 25, SEVERITY_COLORS_HEX["LOW"]),
-        (25, 50, SEVERITY_COLORS_HEX["MEDIUM"]),
-        (50, 75, SEVERITY_COLORS_HEX["HIGH"]),
-        (75, 100, SEVERITY_COLORS_HEX["CRITICAL"]),
-    ]
-    for start, end, color in segments:
-        t = theta[start:end]
-        x_outer = 1.0 * np.cos(t)
-        y_outer = 1.0 * np.sin(t)
-        x_inner = 0.6 * np.cos(t)
-        y_inner = 0.6 * np.sin(t)
-        for i in range(len(t) - 1):
-            ax.fill(
-                [x_inner[i], x_outer[i], x_outer[i+1], x_inner[i+1]],
-                [y_inner[i], y_outer[i], y_outer[i+1], y_inner[i+1]],
-                color=color, alpha=0.3
-            )
 
-    # Draw needle
-    clamped = max(0, min(100, score))
-    angle = np.pi - (clamped / 100) * np.pi
-    needle_x = 0.85 * np.cos(angle)
-    needle_y = 0.85 * np.sin(angle)
-    ax.annotate("", xy=(needle_x, needle_y), xytext=(0, 0),
-                arrowprops=dict(arrowstyle="-|>", color=COLORS_HEX["text"], lw=2.5))
+def _likelihood_col(conf: int) -> int:
+    c = max(0, min(100, int(conf)))
+    for i, hi in enumerate((5, 20, 45, 55, 80, 95)):
+        if c < hi:
+            return i
+    return 6
 
-    # Draw filled arc up to score
-    t_fill = theta[:clamped] if clamped > 0 else []
-    if len(t_fill) > 1:
-        for i in range(len(t_fill) - 1):
-            idx = int((i / len(t_fill)) * 100)
-            c = (SEVERITY_COLORS_HEX["LOW"] if idx < 25 else
-                 SEVERITY_COLORS_HEX["MEDIUM"] if idx < 50 else
-                 SEVERITY_COLORS_HEX["HIGH"] if idx < 75 else
-                 SEVERITY_COLORS_HEX["CRITICAL"])
-            x_o = 1.0 * np.cos(t_fill[i:i+2])
-            y_o = 1.0 * np.sin(t_fill[i:i+2])
-            x_i = 0.6 * np.cos(t_fill[i:i+2])
-            y_i = 0.6 * np.sin(t_fill[i:i+2])
-            ax.fill(
-                [x_i[0], x_o[0], x_o[1], x_i[1]],
-                [y_i[0], y_o[0], y_o[1], y_i[1]],
-                color=c, alpha=0.9
-            )
 
-    # Center score text
-    ax.text(0, -0.15, str(score), ha="center", va="center",
-            fontsize=28, fontweight="bold", color=COLORS_HEX["text"])
-    ax.text(0, -0.35, label, ha="center", va="center",
-            fontsize=9, color=COLORS_HEX["muted"])
+def _reliability_row(verified) -> int:
+    # Admiralty source reliability derived from corroboration state.
+    if verified is True:
+        return 1   # B — usually reliable (independently corroborated)
+    if verified is False:
+        return 3   # D — not usually reliable (single, uncorroborated)
+    return 2       # C — fairly reliable (default OSINT posture)
 
-    # Scale labels
-    for val, pos in [(0, np.pi), (25, 3*np.pi/4), (50, np.pi/2), (75, np.pi/4), (100, 0)]:
-        x = 1.15 * np.cos(pos)
-        y = 1.15 * np.sin(pos)
-        ax.text(x, y, str(val), ha="center", va="center", fontsize=7,
-                color=COLORS_HEX["muted"])
 
-    ax.set_xlim(-1.4, 1.4)
-    ax.set_ylim(-0.5, 1.3)
-    ax.set_aspect("equal")
-    ax.axis("off")
+def add_confidence_matrix(doc, findings: list, subjects: list) -> None:
+    """Two-axis confidence explainer: ICD-203 likelihood (x) vs Admiralty source
+    reliability (y). The labelled grid IS the legend; each finding is plotted in its
+    cell, coloured by severity, so a reader sees both the scale and where the case's
+    evidence sits on it."""
+    ncol, nrow = len(_ICD203), len(_ADMIRALTY)
+    fig, ax = plt.subplots(figsize=(8.2, 4.4), dpi=150)
 
+    # faint reference grid
+    ax.imshow(np.zeros((nrow, ncol)), cmap="Greys", vmin=0, vmax=1, aspect="auto")
+    ax.set_xticks(np.arange(-.5, ncol, 1), minor=True)
+    ax.set_yticks(np.arange(-.5, nrow, 1), minor=True)
+    ax.grid(which="minor", color="#c8cdd3", linewidth=0.8)
+    ax.tick_params(which="minor", length=0)
+
+    ax.set_xticks(range(ncol))
+    ax.set_xticklabels(["%s\n%d%%" % (lbl, pct) for lbl, pct in _ICD203], fontsize=7)
+    ax.set_yticks(range(nrow))
+    ax.set_yticklabels([a[0] for a in _ADMIRALTY], fontsize=8)
+    ax.set_xlabel("ICD-203 likelihood  \u2014  probability the judgment is correct",
+                  fontsize=8.5, color=COLORS_HEX["text"])
+    ax.set_ylabel("Admiralty  \u2014  source reliability", fontsize=8.5,
+                  color=COLORS_HEX["text"])
+    ax.set_title("Confidence scale (two-axis): ICD-203 likelihood \u00d7 Admiralty reliability",
+                 fontsize=10, color=COLORS_HEX["text"], pad=10)
+
+    # plot findings, jittered within a cell so co-located markers stay visible
+    sub_verified = {s.get("id"): s.get("verified") for s in (subjects or [])}
+    rng = np.random.default_rng(7)
+    seen_counts = {}
+    handles = {}
+    for f in findings or []:
+        col = _likelihood_col(f.get("confidence", 0))
+        row = _reliability_row(sub_verified.get(f.get("subject_id")))
+        k = (row, col)
+        seen_counts[k] = seen_counts.get(k, 0) + 1
+        jx = (rng.random() - 0.5) * 0.5 if seen_counts[k] > 1 else 0.0
+        jy = (rng.random() - 0.5) * 0.5 if seen_counts[k] > 1 else 0.0
+        sev = str(f.get("weight", "INFO")).upper()
+        color = SEVERITY_COLORS_HEX.get(sev, COLORS_HEX["muted"])
+        ax.scatter(col + jx, row + jy, s=150, color=color, edgecolor="white",
+                   linewidth=1.2, zorder=3)
+        handles.setdefault(sev, color)
+
+    if handles:
+        order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+        patches = [mpatches.Patch(color=handles[s], label=s)
+                   for s in order if s in handles]
+        ax.legend(handles=patches, title="Finding severity", fontsize=7,
+                  title_fontsize=7.5, loc="upper left", bbox_to_anchor=(1.01, 1.0),
+                  frameon=False)
+
+    ax.set_xlim(-0.5, ncol - 0.5)
+    ax.set_ylim(nrow - 0.5, -0.5)  # A at top
     buf = _save_fig_to_buffer(fig)
-    doc.add_picture(buf, width=Inches(3.5))
+    doc.add_picture(buf, width=Inches(6.6))
     last_para = doc.paragraphs[-1]
     last_para.alignment = 1
 

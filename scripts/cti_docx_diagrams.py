@@ -63,9 +63,38 @@ def _save_fig_to_buffer(fig) -> BytesIO:
     return buf
 
 
-def add_entity_diagram(doc, subjects: list, connections: list) -> None:
-    """Render entity relationship diagram using networkx."""
-    if not subjects or not connections:
+def _embed_editorial(doc, kind: str, ctx: dict) -> bool:
+    """Try the Diagram Design editorial SVG (rasterized via cairosvg). True on success.
+
+    Returns False when the generator or cairosvg/cairo is unavailable, so callers
+    fall back to the matplotlib figure. This is what makes the DOCX diagrams match
+    the editorial HTML/PDF figures byte-for-byte in layout.
+    """
+    try:
+        from cti_diagram_design import build_entity_svg, build_topology_svg, render_svg_to_png
+    except Exception:
+        return False
+    try:
+        svg = build_entity_svg(ctx) if kind == "entity" else build_topology_svg(ctx)
+        png = render_svg_to_png(svg, scale=2.0)
+        if not png:
+            return False
+        doc.add_picture(BytesIO(png), width=Inches(6.4))
+        doc.paragraphs[-1].alignment = 1
+        return True
+    except Exception:
+        return False
+
+
+def add_entity_diagram(doc, subjects: list, connections: list, data: dict = None) -> None:
+    """Render entity relationship diagram — editorial SVG first, networkx fallback."""
+    if not subjects:
+        return
+    ctx = data if isinstance(data, dict) and data.get("subjects") else {
+        "subjects": subjects, "connections": connections}
+    if _embed_editorial(doc, "entity", ctx):
+        return
+    if not connections:
         return
 
     G = nx.DiGraph()
@@ -168,8 +197,13 @@ def add_entity_diagram(doc, subjects: list, connections: list) -> None:
     last_para.alignment = 1
 
 
-def add_network_topology(doc, subjects: list, connections: list) -> None:
-    """Render network topology (IP/domain/infra focused)."""
+def add_network_topology(doc, subjects: list, connections: list, data: dict = None) -> None:
+    """Render network topology — editorial SVG first, networkx fallback."""
+    if subjects:
+        ctx = data if isinstance(data, dict) and data.get("subjects") else {
+            "subjects": subjects, "connections": connections}
+        if _embed_editorial(doc, "topology", ctx):
+            return
     infra_types = {"domain", "ip", "organization"}
     infra_subjects = [s for s in subjects if s.get("type", "").lower() in infra_types]
     infra_ids = {s.get("id", s.get("label", "")) for s in infra_subjects}
@@ -228,3 +262,23 @@ def add_network_topology(doc, subjects: list, connections: list) -> None:
     doc.add_picture(buf, width=Inches(5.5))
     last_para = doc.paragraphs[-1]
     last_para.alignment = 1
+
+
+def add_cloud_arch(doc, data: dict) -> None:
+    """Embed the Diagram AI Generator cloud figure (PNG) when cloud infra is detected.
+
+    No-op when there is no cloud infrastructure, or when graphviz/`diagrams` are
+    unavailable — the rest of the report is unaffected.
+    """
+    if not isinstance(data, dict):
+        return
+    try:
+        from cti_cloud_arch import build_cloud_png
+    except Exception:
+        return
+    png, _ = build_cloud_png(data)
+    if not png:
+        return
+    doc.add_heading("Cloud Architecture", level=2)
+    doc.add_picture(BytesIO(png), width=Inches(5.6))
+    doc.paragraphs[-1].alignment = 1

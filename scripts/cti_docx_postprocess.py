@@ -21,10 +21,15 @@ from cti_docx_styles import (
     FONT_BODY, FONT_HEADING, SHADE_BAND, SHADE_ZEBRA,
 )
 from cti_docx_charts import (
-    add_finding_type_pie, add_severity_bar, add_risk_gauge,
+    add_finding_type_pie, add_severity_bar, add_confidence_matrix,
     add_timeline_chart, add_traffic_sources_bar, add_geographic_pie,
 )
-from cti_docx_diagrams import add_entity_diagram, add_network_topology
+from cti_docx_diagrams import add_entity_diagram, add_network_topology, add_cloud_arch
+from cti_docx_heatmaps import (
+    collect_registrations, add_registration_heatmap,
+    build_cooccurrence, add_cooccurrence_heatmap,
+    build_relation_strength, add_relation_heatmap,
+)
 
 
 def add_evidence_screenshots(doc, images) -> None:
@@ -63,10 +68,11 @@ def add_evidence_screenshots(doc, images) -> None:
 
 
 CHART_KEYWORDS = {
-    "risk_gauge": ["executive summary", "tom tat", "dieu hanh"],
+    "confidence_matrix": ["confidence", "assessment", "danh gia", "do tin cay", "icd-203", "admiralty", "nhan dinh", "key judgment"],
     "finding_charts": ["phat hien", "findings", "statistical"],
     "timeline_chart": ["timeline", "thoi gian", "dong thoi gian"],
     "entity_diagram": ["moi quan he", "relationship", "entity", "ban do"],
+    "heatmaps": ["correlation", "tuong quan", "registration", "dang ky", "lien ket", "cluster", "campaign", "chien dich", "infrastructure", "ha tang"],
     "visitor_charts": ["visitor", "traffic", "luong truy cap", "hien dien"],
     "evidence_screenshots": ["evidence screenshot", "screenshot", "visual evidence", "anh chup man hinh", "bang chung hinh anh"],
 }
@@ -332,7 +338,7 @@ def _style_table(table) -> None:
                     run.font.size = Pt(9)
 
 
-def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict) -> None:
+def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict, case_dir: str = None) -> None:
     """Remove all body content, prepend cover + TOC, re-add content with
     charts injected at matching section headings, then append remaining charts."""
     body = doc.element.body
@@ -349,6 +355,10 @@ def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict) -> None:
     for elem in existing:
         body.remove(elem)
 
+
+    # Keep the section properties as the final body child so python-docx section
+    # access works during cover/TOC; every subsequent add (cover, TOC, narrative,
+    # inline charts, appendix) is inserted BEFORE it, preserving document order.
     if sect_pr is not None:
         body.append(sect_pr)
 
@@ -359,28 +369,35 @@ def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict) -> None:
     case = json_data.get("case", {})
 
     for elem in content_elements:
-        body.append(elem)
+        if sect_pr is not None:
+            sect_pr.addprevious(elem)
+        else:
+            body.append(elem)
 
         level = _get_heading_level_from_xml(elem)
         if level == 0:
             continue
         text = _extract_text(elem)
-        _try_inject(doc, text, json_data, injected, case)
+        _try_inject(doc, text, json_data, injected, case, case_dir)
 
-    _append_remaining_charts(doc, json_data, injected, case)
+    _append_remaining_charts(doc, json_data, injected, case, case_dir)
 
     if sect_pr is not None:
         body.append(sect_pr)
 
 
-def _try_inject(doc, heading_text, json_data, injected, case):
-    if "risk_gauge" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["risk_gauge"]):
-        score = case.get("exposure_score")
-        if score is not None:
+def _try_inject(doc, heading_text, json_data, injected, case, case_dir=None):
+    if "confidence_matrix" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["confidence_matrix"]):
+        findings = json_data.get("findings", [])
+        if findings:
             doc.add_paragraph()
-            add_risk_gauge(doc, int(score))
+            add_confidence_matrix(doc, findings, json_data.get("subjects", []))
             doc.add_paragraph()
-            injected.add("risk_gauge")
+            injected.add("confidence_matrix")
+
+    if "heatmaps" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["heatmaps"]):
+        if _inject_heatmaps(doc, json_data, case_dir):
+            injected.add("heatmaps")
 
     if "finding_charts" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["finding_charts"]):
         findings = json_data.get("findings", [])
@@ -405,9 +422,10 @@ def _try_inject(doc, heading_text, json_data, injected, case):
         connections = json_data.get("connections", [])
         if subjects and connections:
             doc.add_paragraph()
-            add_entity_diagram(doc, subjects, connections)
+            add_entity_diagram(doc, subjects, connections, json_data)
             doc.add_paragraph()
-            add_network_topology(doc, subjects, connections)
+            add_network_topology(doc, subjects, connections, json_data)
+            add_cloud_arch(doc, json_data)
             doc.add_paragraph()
             injected.add("entity_diagram")
 
@@ -432,7 +450,19 @@ def _try_inject(doc, heading_text, json_data, injected, case):
             injected.add("evidence_screenshots")
 
 
-def _append_remaining_charts(doc, json_data, injected, case):
+def _inject_heatmaps(doc, json_data, case_dir=None):
+    """Render the three campaign heatmaps; return True if at least one was drawn."""
+    drawn = False
+    if add_registration_heatmap(doc, collect_registrations(json_data, case_dir)):
+        doc.add_paragraph(); drawn = True
+    if add_cooccurrence_heatmap(doc, build_cooccurrence(json_data, case_dir)):
+        doc.add_paragraph(); drawn = True
+    if add_relation_heatmap(doc, build_relation_strength(json_data, case_dir)):
+        doc.add_paragraph(); drawn = True
+    return drawn
+
+
+def _append_remaining_charts(doc, json_data, injected, case, case_dir=None):
     """Append any charts that were not injected inline as a Visual Analytics appendix."""
     remaining = set(CHART_KEYWORDS.keys()) - injected
     if not remaining:
@@ -440,16 +470,24 @@ def _append_remaining_charts(doc, json_data, injected, case):
 
     has_content = False
 
-    if "risk_gauge" in remaining:
-        score = case.get("exposure_score")
-        if score is not None:
+    if "confidence_matrix" in remaining:
+        findings = json_data.get("findings", [])
+        if findings:
             if not has_content:
                 doc.add_page_break()
                 _add_styled_heading(doc, "Visual Analytics", level=1)
                 has_content = True
-            _add_styled_heading(doc, "Risk Assessment", level=2)
-            add_risk_gauge(doc, int(score))
+            _add_styled_heading(doc, "Confidence Scale (ICD-203 \u00d7 Admiralty)", level=2)
+            add_confidence_matrix(doc, findings, json_data.get("subjects", []))
             doc.add_paragraph()
+
+    if "heatmaps" in remaining:
+        if not has_content:
+            doc.add_page_break()
+            _add_styled_heading(doc, "Visual Analytics", level=1)
+            has_content = True
+        _add_styled_heading(doc, "Campaign Heatmaps", level=2)
+        _inject_heatmaps(doc, json_data, case_dir)
 
     if "finding_charts" in remaining:
         findings = json_data.get("findings", [])
@@ -484,10 +522,11 @@ def _append_remaining_charts(doc, json_data, injected, case):
                 _add_styled_heading(doc, "Visual Analytics", level=1)
                 has_content = True
             _add_styled_heading(doc, "Entity Relationships", level=2)
-            add_entity_diagram(doc, subjects, connections)
+            add_entity_diagram(doc, subjects, connections, json_data)
             doc.add_paragraph()
             _add_styled_heading(doc, "Network Topology", level=2)
-            add_network_topology(doc, subjects, connections)
+            add_network_topology(doc, subjects, connections, json_data)
+            add_cloud_arch(doc, json_data)
             doc.add_paragraph()
 
     if "visitor_charts" in remaining:
