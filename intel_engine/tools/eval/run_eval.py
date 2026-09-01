@@ -263,6 +263,8 @@ def main():
                                "base-rate control (a generic path clusters NOTHING), template "
                                "normalisation, cross-host patterns, manifest hashing + tamper "
                                "detection"),
+        ("test_country_reconcile", "WHOIS geo — data-driven placeholder-country correction, rebuilt "
+                                   "addresses, current/history parity, no note on genuine Namibia"),
         ("test_references", "reference DATA layer — files documented, consumers not on fallback, no drift"),
         ("test_dashboard", "debug dashboard — exact vs estimated numbers kept apart, one API "
                             "response billed once however many records it spans, a bounded scan "
