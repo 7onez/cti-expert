@@ -235,11 +235,11 @@ CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json      # Structured data (input to DOCX gen
 
 ### Mandatory Auto-Save Rule
 
-**Every `/report`, `/brief`, and `/case` command must auto-save the default export set** — `.md` + `.html` + `.json` + `.csv` + the IOC bundle (`.stix.json` / `.txt` / `.csv`) — to disk. No user action required; files appear in CWD or `./osint-reports/` if it exists. Confirm all paths to the user after saving. DOCX is generated only on request (`/report docx`) or for `/report legal`. In `--yolo`, save the default set with no prompt; in interactive mode, offer DOCX/PDF at the end.
+**Every `/report`, `/brief`, and `/case` command works in three steps.** **Step 0 — ask whether to import more evidence collected by manual investigation** (extra findings/subjects/indicators/selectors/timeline/sources, or screenshots via `evidence-images.py`); merge it into the report JSON before building so every artifact includes it. **Step A — always auto-save the base data bundle** — `.md` + `.json` + `.csv` + the IOC bundle (`.stix.json` / `.txt` / `.csv` / `.jsonl`) — to disk, no user action required; files appear in CWD or `./osint-reports/` if it exists. **Step B — ask which presentation report to render** (default, interactive): **(a) PDF · (b) DOCX · (c) HTML · (d) All** (multi-select), then build the chosen format(s) on top of the base bundle. HTML is the primary human-facing deliverable; PDF is the DOCX rendered by LibreOffice. Confirm all paths after saving. In `--yolo`/guided-auto, skip both prompts and default to **HTML**; `/report legal` defaults to **All**. Explicit subcommands (`/report html|docx|pdf|json|csv|ioc`) bypass the prompts.
 
 ### Redacted variant (`/redact`) — opt-in, never automatic
 
-The default export set is **unredacted** — it is the analyst's working record. A redacted copy
+The base data bundle is **unredacted** — it is the analyst's working record. A redacted copy
 is a deliberately *weaker* artifact, so it is only produced when asked for: `/redact`, or
 `/case … --redact`. That way no one silently works from a degraded report, and no one hands
 over PII by accident either.

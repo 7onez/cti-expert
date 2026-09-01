@@ -250,36 +250,20 @@ def add_cover_page(doc: Document, data: dict) -> Document:
     return doc
 
 
-def add_table_of_contents(doc: Document) -> Document:
-    """Add a TOC field — requires Word to refresh on open."""
-    toc_heading = doc.add_paragraph("Table of Contents", style="Heading 1")
 
-    p = doc.add_paragraph()
-    run = p.add_run()
-    fldChar1 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>')
-    run._r.append(fldChar1)
+def enable_update_fields(doc: Document) -> Document:
+    """Flag document fields (esp. the TOC) to refresh when the file is opened.
 
-    run2 = p.add_run()
-    instrText = parse_xml(
-        f'<w:instrText {nsdecls("w")} xml:space="preserve">'
-        ' TOC \\o "1-3" \\h \\z \\u </w:instrText>'
-    )
-    run2._r.append(instrText)
-
-    run3 = p.add_run()
-    fldChar2 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="separate"/>')
-    run3._r.append(fldChar2)
-
-    run4 = p.add_run("[Right-click and Update Field to generate TOC]")
-    run4.font.color.rgb = COLORS["muted"]
-    run4.font.size = Pt(9)
-    run4.font.italic = True
-
-    run5 = p.add_run()
-    fldChar3 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="end"/>')
-    run5._r.append(fldChar3)
-
-    doc.add_page_break()
+    Word honors this and regenerates a page-numbered TOC automatically on open.
+    Headless LibreOffice (the PDF path) does NOT update fields, so the real,
+    clickable TOC is baked into the field's cache separately (see cti_docx_toc).
+    Idempotent."""
+    settings = doc.settings.element
+    existing = settings.find(qn("w:updateFields"))
+    if existing is None:
+        settings.append(parse_xml(f'<w:updateFields {nsdecls("w")} w:val="true"/>'))
+    else:
+        existing.set(qn("w:val"), "true")
     return doc
 
 

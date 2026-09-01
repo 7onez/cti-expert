@@ -73,8 +73,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from docx import Document
 from cti_docx_styles import (
-    setup_styles, setup_header_footer, add_cover_page, add_table_of_contents
+    setup_styles, setup_header_footer, add_cover_page
 )
+from cti_docx_toc import begin_toc, finalize_toc
 from cti_docx_charts import (
     add_finding_type_pie, add_severity_bar, add_timeline_chart,
     add_traffic_sources_bar, add_geographic_pie
@@ -141,8 +142,8 @@ def build_report(data: dict) -> Document:
     case = data["case"]
     setup_header_footer(doc, case.get("id", "CTI-001"), case.get("classification", "OPEN SOURCE"))
 
-    # 4. Table of contents
-    add_table_of_contents(doc)
+    # 4. Table of contents (anchor now; entries baked after the body is built)
+    toc_anchor = begin_toc(doc)
 
     # 5. Executive summary
     add_executive_summary(doc, data)
@@ -211,7 +212,8 @@ def build_report(data: dict) -> Document:
 
     # 16. Methodology notes
     add_methodology_notes(doc, data)
-
+    # Bake a real clickable TOC into the field cache (Word still auto-updates it).
+    finalize_toc(doc, toc_anchor)
     return doc
 
 
