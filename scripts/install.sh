@@ -526,6 +526,11 @@ apt_install qpdf qpdf
 if [[ "$OS" != "windows" ]]; then apt_install mat2 mat2; else log_skip "mat2 (requires GLib — Linux/macOS only)"; fi
 apt_install pandoc pandoc
 apt_install graphviz dot            # IntelGraph link graphs need the `dot` binary
+# PlantUML renders the workflow .puml sources -> SVG/PNG (assets/workflow-*.svg). The apt
+# `plantuml` package pulls a headless JRE + graphviz; brew's `plantuml` formula pulls openjdk.
+# Installed unconditionally (like pandoc/graphviz above); best-effort — a miss only means the
+# committed workflow diagram assets can't be regenerated locally, never a broken deliverable.
+apt_install plantuml plantuml plantuml
 # LibreOffice (soffice) renders the DOCX-style report PDF (generate-cti-docx-hybrid.py --pdf).
 # apt ships `libreoffice-writer`; on macOS it is a Homebrew cask (not a formula), so branch.
 if [[ "$OS" == "macos" ]]; then
