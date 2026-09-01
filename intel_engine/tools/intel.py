@@ -104,8 +104,27 @@ def _read_domains(path):
     return out
 
 
+# No pipeline sub-step may hang the whole run. Bound every _run() child; a hung child (a wedged
+# render, a stuck local tool) is a bounded, logged skip — never an unbounded stall. Generous by
+# default (a large-KB ingest/graph is legitimately slow); override with $INTEL_STEP_TIMEOUT.
+_STEP_TIMEOUT = int(os.environ.get("INTEL_STEP_TIMEOUT") or 600)
+
+
 def _run(cmd, **kw):
-    return subprocess.run(cmd, **kw)
+    """Run a pipeline sub-step, bounded so no single step can hang or crash the whole run. A
+    timeout or a failure to start degrades to a logged non-zero result (rc 124) instead of
+    stalling/aborting: callers that read .returncode skip the step, .stdout callers get ''; the
+    pipeline continues to the next step with whatever completed."""
+    kw.setdefault("timeout", _STEP_TIMEOUT)
+    try:
+        return subprocess.run(cmd, **kw)
+    except subprocess.TimeoutExpired:
+        label = os.path.basename(cmd[1] if cmd[:1] == [sys.executable] and len(cmd) > 1 else cmd[0])
+        print(f"   note: step '{label}' exceeded {kw['timeout']}s — skipped; pipeline continues.",
+              file=sys.stderr)
+    except (FileNotFoundError, OSError) as e:
+        print(f"   note: step could not start ({e}) — skipped; pipeline continues.", file=sys.stderr)
+    return subprocess.CompletedProcess(cmd, 124, stdout="", stderr="")
 
 
 def _load_operators():
@@ -303,6 +322,7 @@ def cmd_open(a):
 
     # 4) graph (default on; --no-graph to skip) -----------------------------
     graph_json = os.path.join(case_dir, "case_graph.json")
+    graph_ok = False
     if not a.no_graph:
         print(f"== building case graph -> {os.path.relpath(graph_json, ROOT)} ==")
         gcmd = [sys.executable, os.path.join(WP, "graph_build.py"), *raw_files, "-o", graph_json]
@@ -310,8 +330,12 @@ def cmd_open(a):
             gcmd += ["--operator", a.operator]
         if a.operator_links:
             gcmd += ["--operator-links", a.operator_links]
-        _run(gcmd)
-        if a.render:
+        rc = _run(gcmd).returncode
+        graph_ok = rc == 0 and os.path.isfile(graph_json)
+        if not graph_ok:
+            print(f"   WARNING: case graph build FAILED (rc={rc}); case_graph.json not written. "
+                  "Downstream render/report figures will be missing until this is re-run.")
+        elif a.render:
             net_html = os.path.join(case_dir, "network.html")
             rn = os.path.join(GRAPH, "render_network.py")
             if os.path.isfile(rn):
@@ -355,8 +379,8 @@ def cmd_open(a):
     if failed:
         print(f"   MISSES ({len(failed)}) — re-run these: {', '.join(failed)}")
     print(f"   case dir : {os.path.relpath(case_dir, ROOT)}/  (raw/, shared.txt, clusters.json"
-          + ("" if a.no_graph else ", case_graph.json")
-          + (", network.html" if a.render and not a.no_graph else "") + ")")
+          + (", case_graph.json" if graph_ok else "")
+          + (", network.html" if a.render and graph_ok else "") + ")")
     print(f"   next     : IntelAnalysis over knowledge/ -> cases/{a.case}/assessment.md "
           f"(hand-written; this loop's render stays in loop_assessment.md)")
 
@@ -390,8 +414,17 @@ def _write_shared(case_dir, min_shared, hosts=None):
     if hosts:
         cmd += ["--domains", ",".join(hosts)]
     r = _run(cmd, capture_output=True, text=True)
-    with open(os.path.join(case_dir, "shared.txt"), "w", encoding="utf-8") as fh:
-        fh.write(r.stdout or "")
+    shared = os.path.join(case_dir, "shared.txt")
+    if r.returncode == 0:
+        with open(shared, "w", encoding="utf-8") as fh:
+            fh.write(r.stdout or "")
+    elif not os.path.exists(shared):
+        open(shared, "w", encoding="utf-8").close()   # ensure it exists for the downstream read
+        print("   note: cluster-seed query did not complete — shared.txt left empty this run.",
+              file=sys.stderr)
+    else:
+        print("   note: cluster-seed query did not complete — kept the existing shared.txt.",
+              file=sys.stderr)
 
 
 def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):

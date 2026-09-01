@@ -450,7 +450,9 @@ def downsample(graph, max_nodes):
 
 
 def render_triple(mmd_path, stem, *, scale=2, width=0, pdf=False):
-    """Shell out to the sibling render_mermaid.py to emit PNG + SVG + thumb (+ vector PDF)."""
+    """Shell out to render_mermaid.py for PNG + SVG + thumb (+ vector PDF). Non-fatal and bounded:
+    a timeout or render failure warns, keeps the editable .mmd, and returns [] so the caller still
+    emits the legend/cluster companions and finishes."""
     render = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "render_mermaid.py")
     cmd = [sys.executable, render, mmd_path, stem, "--scale", str(scale)]
@@ -458,10 +460,18 @@ def render_triple(mmd_path, stem, *, scale=2, width=0, pdf=False):
         cmd += ["--width", str(width)]
     if pdf:
         cmd += ["--pdf"]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 200))
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(f"[graph_to_diagram] render timed out for {stem} — kept the .mmd, "
+                         "skipped raster; companion figures continue.\n")
+        return []
     if r.returncode != 0:
-        sys.stderr.write(r.stdout + r.stderr)
-        sys.exit(f"render_mermaid.py failed for {stem} (the .mmd is still written)")
+        sys.stderr.write((r.stdout or "") + (r.stderr or ""))
+        sys.stderr.write(f"[graph_to_diagram] render_mermaid.py failed for {stem} — kept the .mmd, "
+                         "skipped raster; companion figures continue.\n")
+        return []
     outs = [f"{stem}.svg", f"{stem}_hires.png", f"{stem}_thumb.png"]
     return outs + ([f"{stem}.pdf"] if pdf else [])
 

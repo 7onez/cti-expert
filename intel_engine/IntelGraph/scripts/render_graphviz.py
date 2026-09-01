@@ -19,8 +19,12 @@ def _via_dot(dot_path, src, stem):
     for fmt, out, extra in (("svg", f"{stem}.svg", []),
                             ("png", f"{stem}_hires.png", ["-Gdpi=300"]),
                             ("png", f"{stem}_thumb.png", ["-Gdpi=110"])):
-        r = subprocess.run([dot_path, f"-T{fmt}", *extra, src, "-o", out],
-                           capture_output=True, text=True)
+        try:
+            r = subprocess.run([dot_path, f"-T{fmt}", *extra, src, "-o", out],
+                               capture_output=True, text=True,
+                               timeout=int(os.environ.get("GRAPHVIZ_RENDER_TIMEOUT") or 90))
+        except subprocess.TimeoutExpired:
+            sys.exit(f"dot timed out for {out} — render aborted (the .dot is still written)")
         if r.returncode != 0:
             sys.stderr.write(r.stderr[-600:] + "\n")
             sys.exit(f"dot failed for {out}")
