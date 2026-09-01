@@ -67,13 +67,15 @@ The generators carry **PEP 723 inline dependencies**, so `uv run` provisions the
 automatically (the HTML/IOC generators are stdlib-only — nothing to install). They
 self-heal: force UTF-8 output and auto-locate pandoc — no `PYTHONUTF8`/PATH prelude needed.
 
-The **default export set** is `.md` + `.html` + `.json` + `.csv` + the IOC bundle. Build
-the report JSON once (see `SKILL.md` §8), then run the generators:
+**First ask the user whether to import more evidence collected by manual investigation** (extra findings/subjects/indicators/selectors/timeline/sources, or screenshots via `evidence-images.py`); merge any supplied data into the report JSON BEFORE building, so every artifact includes it. Then: **the base data bundle** (`.md` + `.json` + `.csv` + the IOC bundle: `.stix.json`/`.txt`/`.csv`/`.jsonl`) is **always** saved, no prompt, and **ask the user which presentation report to render** — **(a) PDF · (b) DOCX · (c) HTML · (d) all** (interactive default; `--yolo`/guided-auto skip both prompts and default to HTML, `/report legal` defaults to all). Build the structured JSON once, then run:
 
 ```bash
 # Bash (macOS / Linux / Git Bash). Windows PowerShell: use $env:USERPROFILE\... and backslashes.
 S="$SKILL_DIR/scripts"
-# PRIMARY: interactive, self-contained, OFFLINE HTML report (opens in any browser)
+# For a pipeline case (`/cti`·`/case`), build the report JSON deterministically — do NOT hand-author:
+#   uv run "$S/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/<CASE-ID>" -o REPORT.json
+# then apply the evidence-import merge above. Only hand-author REPORT.json when there is no case dir.
+# PRESENTATION choice (c) / (d): interactive, self-contained, OFFLINE HTML report (opens in any browser)
 uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
 # ^ also embeds an interactive Archify "Blueprint" entity diagram inline. That one
 #   sub-step uses Node.js + the vendored Archify at scripts/vendor/archify/; it is
@@ -82,12 +84,9 @@ uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
 #   rasterized via cairosvg in DOCX) and, when cloud infra is detected, a Diagram AI
 #   Generator cloud figure (diagrams + graphviz). Both best-effort; cloud auto-skips
 #   (no cloud infra / no graphviz / CTI_CLOUD_ARCH=0). DOCX embeds all three too.
-# Comprehensive IOC / selector bundle -> STIX 2.1 + flat + CSV
+# BASE bundle: comprehensive IOC / selector bundle -> STIX 2.1 + flat + CSV + JSONL
 uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
-# DOCX (narrative + charts + confidence matrix + campaign heatmaps) — on request / `/report legal`:
-uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx
-# PDF is a DOCX-STYLE document (same cover / TOC / tables / charts), NOT an HTML->PDF print.
-# Add --pdf to render REPORT.pdf from the just-built DOCX via LibreOffice (soffice):
+# PRESENTATION choice (a) / (b) / (d): dashboard-style DOCX + same-layout PDF
 uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx --pdf
 # Shareable redacted copy — OPT-IN, not part of the default set. One --map across all
 # files so a selector keeps the same placeholder everywhere. Never ship the .map.json.
