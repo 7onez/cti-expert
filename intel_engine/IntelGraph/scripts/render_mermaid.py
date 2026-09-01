@@ -78,7 +78,11 @@ def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False, pu
             cmd += ["-f"]                      # --pdfFit: crop the page to the chart
         if puppeteer:
             cmd += ["-p", puppeteer]        # puppeteer config (e.g. --no-sandbox for root)
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 180))
+        except subprocess.TimeoutExpired:
+            sys.exit(f"mmdc timed out for {out} — render aborted (the .mmd is still written)")
         if r.returncode != 0:
             sys.stderr.write(r.stderr[-600:] + "\n")
             sys.exit(f"mmdc failed for {out}")
