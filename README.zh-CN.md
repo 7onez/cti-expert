@@ -1226,19 +1226,19 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 </tr>
 </table>
 
-**每一种报告变体都只是一条命令** —— 五格式默认套件（`.md` · `.html` · `.json` · `.csv` · IOC 包）在每次 `/report`、`/brief` 与 `/case` 时自动保存；下面的变体则用于指定某种具体格式或读者对象：
+**每一种报告变体都只是一条命令** —— 基础数据套件（`.md` · `.json` · `.csv` · IOC 包：`.stix.json`/`.txt`/`.csv`/`.jsonl`）在每次 `/report`、`/brief` 与 `/case` 时始终自动保存，随后会询问你要渲染哪种呈现报告：**(a) PDF · (b) DOCX · (c) HTML · (d) 全部**（`--yolo`/引导自动模式默认 HTML）；下面的变体则用于指定某种具体格式或读者对象：
 
 | 命令 | 格式 | 最适合 |
 |---------|--------|----------|
-| `/report` · `/report html` | 交互式 HTML *（默认，主交付物）* | 所有人 —— 从分析师到高管 |
+| `/report html` · 选择 **c**/**d** | 交互式 HTML *（主交付物）* | 所有人 —— 从分析师到高管 |
 | `/report` | 技术 INTSUM（Markdown） | 分析师、安全团队 |
 | `/report brief` | 高管简报 | 决策者、管理层 |
 | `/brief` | 通俗语言摘要 | 非技术相关方 |
-| `/report legal` | 法务证据格式 *（自动附加 DOCX/PDF）* | 律师、合规团队 |
+| `/report legal` | 法务证据格式 *（默认全部：PDF + DOCX + HTML）* | 律师、合规团队 |
 | `/report journalist` | 侧重信源引用 | 记者、媒体 |
 | `/report json` · `/report csv` | JSON · CSV 导出 | 流水线、电子表格、SIEM |
 | `/report ioc` | IOC／选择子包（STIX 2.1 · 扁平 · CSV） | SIEM / TIP 摄入、威胁情报共享 |
-| `/report docx` | Word 文档 *（图表、封面、目录）* | 正式分享 —— 按需生成 |
+| `/report docx` · `/report pdf` · 选择 **a**/**b**/**d** | Word / PDF 文档 *（图表、封面、目录）* | 正式分享 |
 | `/cti-report <ID> --pdf` | IntelReport pandoc PDF/DOCX | 精美的、出版级案件交付物 |
 
 <sub>由 <code>scripts/generate-cti-html.py</code>（HTML）· <code>scripts/generate-cti-iocs.py</code>（IOC）· <code>scripts/generate-cti-docx-hybrid.py</code>（DOCX）· <code>intel_engine/IntelReport</code>（pandoc PDF/DOCX）生成</sub>

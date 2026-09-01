@@ -99,7 +99,7 @@ group #FFF3D6 DELIVER  //package output//
   CTI -> MCP : **api_usage**  //third-party credit ledger//
 end
 
-CTI --> A : **.md · .html · .json · .csv · IOC bundle (STIX 2.1)**\n+ relationship graph  +  PDF/DOCX assessment
+CTI --> A : **base bundle: .md · .json · .csv · IOC bundle (STIX 2.1 · JSONL)**\n+ relationship graph  +  chosen presentation (PDF / DOCX / HTML / all)
 deactivate CTI
 
 legend right

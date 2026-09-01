@@ -137,7 +137,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 **AEAD Workflow**
 
-**A**cquire raw data &rarr; **E**nrich with pivot expansion &rarr; **A**ssess findings &rarr; **D**eliver structured reports (interactive HTML + Markdown + JSON/CSV + IOC bundle; Word on request).
+**A**cquire raw data &rarr; **E**nrich with pivot expansion &rarr; **A**ssess findings &rarr; **D**eliver structured reports — the base bundle (Markdown + JSON + CSV + IOC bundle) always saves, then you pick a presentation report: PDF, DOCX, HTML, or all.
 
 </td>
 </tr>
@@ -394,7 +394,7 @@ The entire CTI Expert workflow is optimized for Claude Code CLI. The CLI gives y
 #### 🖥️ Where to run it — the CLI is best for this skill
 
 > [!IMPORTANT]
-> CTI Expert is **execution-heavy**: it runs `uv`/Python, installs OSINT tools, writes `.md`/`.html`/`.json`/`.csv` reports + IOC bundles, reaches many external sites, and saves case workspaces. What matters is a **real local shell + persistent files + open network** — a **CLI or local desktop agent** gives you that; an ephemeral **cloud sandbox does not**. This applies equally to **Claude** and **Codex**.
+> CTI Expert is **execution-heavy**: it runs `uv`/Python, installs OSINT tools, writes `.md`/`.json`/`.csv`/`.html`/`.docx`/`.pdf` reports + IOC bundles, reaches many external sites, and saves case workspaces. What matters is a **real local shell + persistent files + open network** — a **CLI or local desktop agent** gives you that; an ephemeral **cloud sandbox does not**. This applies equally to **Claude** and **Codex**.
 
 | Environment | Running cases | Why |
 |---|---|---|
@@ -685,7 +685,7 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /cti ./trader.apk         # file    → static IOCs, clustered with the web infra
 ```
 
-> `/cti` picks the right techniques for the target, then expands the pivot graph **to closure — no approval prompts.** Add `--deep` for parallel sub-agent fan-out, `--quick` for a single pass, or `--passive` for hostile targets (no live contact). Default output: Markdown + interactive HTML + JSON + CSV + IOC bundle.
+> `/cti` picks the right techniques for the target, then expands the pivot graph **to closure — no approval prompts.** Add `--deep` for parallel sub-agent fan-out, `--quick` for a single pass, or `--passive` for hostile targets (no live contact). Default output: the base bundle (Markdown + JSON + CSV + IOC bundle) plus your chosen presentation report (PDF, DOCX, HTML, or all).
 
 ### 2 &mdash; Run a case end-to-end
 
@@ -1062,7 +1062,7 @@ Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **coll
 
 | Command | Purpose |
 |---------|---------|
-| `/redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the default export set stays unredacted |
+| `/redact [file]` | Shareable report variant — stable `[EMAIL_1]` placeholders + reversible JSON map (`.md`/`.json`/`.csv`). Opt-in; the base data bundle stays unredacted |
 | `/hash-id [hash]` | Identify a hash's algorithm before lookup — file hash vs credential material |
 
 </details>
@@ -1245,26 +1245,26 @@ The same case, in formats other tools can read.
 - **Markdown** — the written report: INTSUM, executive brief, plain-language, or legal
 - **JSON** — structured case data to feed pipelines and other tools
 - **CSV** — findings and indicators, ready for a spreadsheet or SIEM
-- **IOC bundle** — STIX 2.1, flat list, and CSV of every selector
-- **Word (.docx)** — on request, or `/report legal` (cover page, table of contents, charts)
+- **IOC bundle** — STIX 2.1, flat list, CSV, and JSONL of every selector
+- **Word (.docx) / PDF** — pick at the prompt (choice **a**/**b**/**d**) or `/report legal`; cover page, table of contents, charts
 
 </td>
 </tr>
 </table>
 
-**Every report variant is one command** — the five-format default set (`.md` · `.html` · `.json` · `.csv` · IOC bundle) saves automatically on every `/report`, `/brief`, and `/case`; the variants below pick a specific format or audience:
+**Every report variant is one command** — the base data bundle (`.md` · `.json` · `.csv` · IOC bundle: `.stix.json`/`.txt`/`.csv`/`.jsonl`) saves automatically on every `/report`, `/brief`, and `/case`, then you're asked which presentation report to render: **(a) PDF · (b) DOCX · (c) HTML · (d) all** (`--yolo`/guided-auto default to HTML). The variants below pick a specific format or audience:
 
 | Command | Format | Best for |
 |---------|--------|----------|
-| `/report` · `/report html` | Interactive HTML *(default, primary deliverable)* | Everyone — analysts to execs |
+| `/report html` · choice **c**/**d** | Interactive HTML *(primary human-facing deliverable)* | Everyone — analysts to execs |
 | `/report` | Technical INTSUM (Markdown) | Analysts, security teams |
 | `/report brief` | Executive brief | Decision-makers, management |
 | `/brief` | Plain-language summary | Non-technical stakeholders |
-| `/report legal` | Legal evidence format *(auto-adds DOCX/PDF)* | Attorneys, compliance teams |
+| `/report legal` | Legal evidence format *(defaults to all: PDF + DOCX + HTML)* | Attorneys, compliance teams |
 | `/report journalist` | Source-citation-heavy | Reporters, media |
 | `/report json` · `/report csv` | JSON · CSV export | Pipelines, spreadsheets, SIEM |
 | `/report ioc` | IOC / selector bundle (STIX 2.1 · flat · CSV) | SIEM / TIP ingest, threat-intel sharing |
-| `/report docx` | Word document *(charts, cover, TOC)* | Formal sharing — on request |
+| `/report docx` · `/report pdf` · choice **a**/**b**/**d** | Word / PDF document *(charts, cover, TOC)* | Formal sharing |
 | `/cti-report <ID> --pdf` | IntelReport pandoc PDF/DOCX | Polished, publication-grade case deliverable |
 
 <sub>Generated by <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOCs) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX) · <code>intel_engine/IntelReport</code> (pandoc PDF/DOCX)</sub>
