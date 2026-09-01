@@ -74,6 +74,30 @@ function Test-Command {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+# winget/choco/scoop update the PERSISTED PATH, not the current process. Refresh $env:PATH from
+# the machine+user registry so a just-installed command is discoverable in THIS session.
+function Update-SessionPath {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:PATH = (@($machine, $user, $env:PATH) | Where-Object { $_ }) -join ';'
+}
+
+# Return an absolute java.exe path, or $null. Prefers PATH, then a Temurin install under
+# Program Files (winget drops it there but may not have refreshed PATH yet this session).
+function Resolve-JavaExe {
+    $cmd = Get-Command java -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    foreach ($root in @($env:ProgramW6432, ${env:ProgramFiles}, ${env:ProgramFiles(x86)})) {
+        if (-not $root) { continue }
+        $base = Join-Path $root "Eclipse Adoptium"
+        if (Test-Path $base) {
+            $j = Get-ChildItem -Path $base -Recurse -Filter java.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($j) { return $j.FullName }
+        }
+    }
+    return $null
+}
+
 # Detect OS architecture robustly. RuntimeInformation.OSArchitecture is absent on
 # some Windows PowerShell 5.1 / .NET Framework configs, where accessing it under
 # Set-StrictMode throws PropertyNotFoundStrict; fall back to PROCESSOR_ARCHITECTURE.
@@ -502,6 +526,63 @@ Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # cloud architectur
 Install-WingetPackage "whois (Sysinternals)" "whois" "Microsoft.Sysinternals.Whois"
 Install-WingetPackage "dig (ISC BIND)" "dig" "ISC.Bind"
 Install-WingetPackage "Graphviz" "dot" "Graphviz.Graphviz"   # IntelGraph link graphs need the `dot` binary
+
+# PlantUML renders the workflow .puml sources -> SVG/PNG (assets\workflow-*.svg). It needs Java
+# and Graphviz (installed above). Best-effort and unconditional: a miss only means the committed
+# workflow diagram assets can't be regenerated locally; it never blocks the report deliverables.
+# NOTE: winget has NO PlantUML package, so never guess an id for it — use choco/scoop, else run
+# the jar directly on a Temurin JRE (EclipseAdoptium.Temurin.17.JRE is the confirmed winget id).
+if (Test-Command "plantuml") {
+    Log-Skip "PlantUML (present)"
+}
+else {
+    $plantumlDone = $false
+    # 1) A package manager, if one is present, gives a real `plantuml` command (pulls JDK+graphviz).
+    if (Test-Command "choco") {
+        choco install plantuml -y 2>&1 | Out-Null
+        Update-SessionPath
+        if (Test-Command "plantuml") { Log-Ok "PlantUML (choco)"; $plantumlDone = $true }
+    }
+    if (-not $plantumlDone -and (Test-Command "scoop")) {
+        scoop install plantuml 2>&1 | Out-Null
+        Update-SessionPath
+        if (Test-Command "plantuml") { Log-Ok "PlantUML (scoop)"; $plantumlDone = $true }
+    }
+    # 2) Universal fallback: ensure a JRE (winget), fetch plantuml.jar from the latest GitHub
+    #    release, and write a `plantuml.cmd` shim that invokes the resolved java.exe by ABSOLUTE
+    #    path — robust whether or not winget has refreshed PATH, now or at render time.
+    if (-not $plantumlDone) {
+        $javaExe = Resolve-JavaExe
+        if (-not $javaExe -and (Test-Command "winget")) {
+            winget install --id EclipseAdoptium.Temurin.17.JRE --exact --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+            Update-SessionPath
+            $javaExe = Resolve-JavaExe
+        }
+        if ($javaExe) {
+            try {
+                $plantumlDir = Join-Path $VendorDir "plantuml"
+                New-Item -ItemType Directory -Force -Path $plantumlDir | Out-Null
+                $plantumlJar = Join-Path $plantumlDir "plantuml.jar"
+                if (-not (Test-Path $plantumlJar)) {
+                    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/plantuml/plantuml/releases/latest" -Headers @{ "User-Agent" = "cti-expert-installer" } -ErrorAction Stop
+                    $asset = $rel.assets | Where-Object { $_.name -match '^plantuml-\d[\d.]*\.jar$' } | Select-Object -First 1
+                    if (-not $asset) { $asset = $rel.assets | Where-Object { $_.name -match '\.jar$' } | Select-Object -First 1 }
+                    if (-not $asset) { throw "no .jar asset in latest PlantUML release" }
+                    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $plantumlJar -ErrorAction Stop
+                }
+                $plantumlWrapper = Join-Path $UvToolBin "plantuml.cmd"
+                Set-Content -Path $plantumlWrapper -Value "@echo off`r`n`"$javaExe`" -jar `"$plantumlJar`" %*" -Encoding ASCII -ErrorAction Stop
+                Log-Ok "PlantUML (plantuml.jar + $javaExe -> $plantumlWrapper)"
+            }
+            catch {
+                Log-Skip "PlantUML (download failed: $($_.Exception.Message); install manually: choco install plantuml)"
+            }
+        }
+        else {
+            Log-Skip "PlantUML (needs Java; install: winget install EclipseAdoptium.Temurin.17.JRE, then choco install plantuml)"
+        }
+    }
+}
 
 # Media / vision toolchain — ffmpeg + imagemagick preprocess A/V + image evidence;
 # Node/npx runs the multix vision CLI (npx @mrgoonie/multix). See techniques/media-vision-analysis.md.

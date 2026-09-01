@@ -176,6 +176,7 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | exiftool | `exiftool` | `winget install OliverBetz.ExifTool` | `brew install exiftool` | `sudo apt install -y libimage-exiftool-perl` |
 | pandoc | `pandoc` | `winget install JohnMacFarlane.Pandoc` | `brew install pandoc` | `sudo apt install -y pandoc` |
 | LibreOffice (soffice) | `soffice` | `winget install TheDocumentFoundation.LibreOffice` | `brew install --cask libreoffice` | `sudo apt install -y --no-install-recommends libreoffice-writer` |
+| PlantUML (workflow diagram regen) | `plantuml` | no winget package → `choco install plantuml` / `scoop install plantuml`, else JRE (`winget install EclipseAdoptium.Temurin.17.JRE`) + `plantuml.jar` shim on PATH | `brew install plantuml` | `sudo apt install -y plantuml` |
 | poppler (pdfinfo) | `pdfinfo` | `winget install oschwartz10612.Poppler` | `brew install poppler` | `sudo apt install -y poppler-utils` |
 | qpdf | `qpdf` | `winget install QPDF.QPDF` | `brew install qpdf` | `sudo apt install -y qpdf` |
 | whois | `whois` | `winget install Microsoft.Sysinternals.Whois` (or use `whoisdomain` lib) | preinstalled / `brew install whois` | `sudo apt install -y whois` |
@@ -193,6 +194,8 @@ The **Kind** column says which uv command to use: `CLI` → `uv tool`, `lib` →
 | Whisper local ASR (optional) | `whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` | `uv tool install whisper-ctranslate2` |
 
 > **LibreOffice (soffice)** renders the **DOCX-style report PDF** — `generate-cti-docx-hybrid.py … --pdf` builds the DOCX (cover/TOC/charts injected post-pandoc via python-docx) then converts it with soffice, so the PDF matches the DOCX exactly. It is **not** an HTML-to-PDF print. The generator's `ensure_soffice()` auto-installs it on demand (apt uses `--no-install-recommends` → Writer + core only, ~10x smaller than the full suite); the bundled installers provision it too.
+
+> **PlantUML** regenerates the workflow diagram sources (`assets/workflow-*.svg` from `workflow-*.puml`) and needs Java + Graphviz. The bundled installers provision it **unconditionally, best-effort**: apt/brew `plantuml` pull a headless JRE + graphviz; **winget has no PlantUML package**, so on Windows it uses choco/scoop when present, otherwise installs a Temurin JRE (`EclipseAdoptium.Temurin.17.JRE`) and writes a `plantuml.cmd` shim that runs `plantuml.jar` via the resolved `java.exe` (absolute path). A miss only blocks local diagram regeneration — never a report deliverable.
 
 > **agent-browser** ([vercel-labs](https://github.com/vercel-labs/agent-browser)) is the skill's primary interactive browser collector (CDP, accessibility-tree snapshots, screenshots). No API key for core automation. `agent-browser install` downloads Chrome for Testing (first run). It is complementary to Scrapling — see `techniques/agent-browser.md`. The bundled installers add it under `--headless`/`-Headless`.
 
