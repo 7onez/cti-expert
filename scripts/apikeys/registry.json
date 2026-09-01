@@ -2,14 +2,14 @@
   "_note": "Canonical premium/pro service catalog for cti-expert. Managed by apikeys.py (/apikeys). Keys resolve env-var first, then the skill-root .env. Keyless/free mode always works without any of these; premium keys are strictly additive. Never commit .env.",
   "services": [
     {
-      "id": "shodan", "name": "Shodan", "env": "SHODAN_API_KEY", "category": "infra",
+      "id": "shodan", "name": "Shodan", "env": "SHODAN_API_KEY", "aliases": ["SHODAN_KEY"], "category": "infra",
       "tier": "freemium", "url": "https://account.shodan.io",
       "unlocks": "/webpivot: reverse favicon mmh3 hash -> hosts; /cert-pivot: reverse TLS cert fingerprint -> hosts; host/service intelligence",
       "test": {"url": "https://api.shodan.io/api-info?key={key}", "expect_json": "query_credits"}
     },
     {
       "id": "validin", "name": "Validin", "env": "VALIDIN_API_KEY",
-      "extra": ["VALIDIN_API_KEY_FALLBACK"], "category": "infra", "tier": "free",
+      "aliases": ["VALIDIN_API_KEY_FALLBACK"], "category": "infra", "tier": "free",
       "url": "https://app.validin.com/",
       "unlocks": "/webpivot + /cti + /impersonate + harness: passive DNS, subdomains, reverse-IP, favicon/cert/body-hash reverse -> co-hosted hosts, quick reputation, Levenshtein lookalikes (FREE Community key; WHOIS history is paid-tier)",
       "test": {"url": "https://app.validin.com/api/ping", "bearer": true, "expect_json": "status"}
@@ -29,7 +29,7 @@
     },
     {
       "id": "securitytrails", "name": "SecurityTrails", "env": "SECURITYTRAILS_API_KEY",
-      "extra": ["SECURITYTRAILS_API_KEY_FALLBACK"], "category": "dns", "tier": "freemium",
+      "aliases": ["SECURITYTRAILS_API_KEY_FALLBACK"], "category": "dns", "tier": "freemium",
       "url": "https://securitytrails.com/app/account/credentials",
       "unlocks": "/webpivot + /dns-history: passive DNS, subdomains, WHOIS + DNS history",
       "test": {"url": "https://api.securitytrails.com/v1/ping", "header": {"APIKEY": "{key}"}, "expect_json": "success"}
@@ -41,24 +41,24 @@
       "test": {"url": "https://urlscan.io/user/quotas/", "header": {"API-Key": "{key}"}, "expect_status": 200}
     },
     {
-      "id": "quake", "name": "Quake (360)", "env": "QUAKE_API_KEY", "category": "infra",
+      "id": "quake", "name": "Quake (360)", "env": "QUAKE_API_KEY", "aliases": ["QUAKE_TOKEN", "QUAKE_API_KEY_FALLBACK"], "category": "infra",
       "tier": "freemium", "url": "https://quake.360.net/quake/#/help?id=5eba54d8fda2a52f7bde6bb0&title=API",
       "unlocks": "/webpivot + /icp: independent CN cyberspace index — favicon mmh3, body/ICP-string search -> hosts Shodan and FOFA miss",
       "test": {"url": "https://quake.360.net/api/v3/user/info", "header": {"X-QuakeToken": "{key}"}, "expect_status": 200}
     },
     {
-      "id": "zoomeye", "name": "ZoomEye", "env": "ZOOMEYE_API_KEY", "category": "infra",
+      "id": "zoomeye", "name": "ZoomEye", "env": "ZOOMEYE_API_KEY", "aliases": ["ZOOMEYE_KEY", "ZOOMEYE_API_KEY_FALLBACK"], "category": "infra",
       "tier": "freemium", "url": "https://www.zoomeye.ai/profile",
       "unlocks": "/webpivot + /cert-pivot: reverse favicon iconhash (mmh3) -> hosts; CN-weighted asset search (also drives the kunyu console)",
       "test": {"url": "https://api.zoomeye.ai/resources-info", "header": {"API-KEY": "{key}"}, "expect_status": 200}
     },
     {
-      "id": "dnslytics", "name": "DNSLytics", "env": "DNSLYTICS_API_KEY", "category": "analytics",
+      "id": "dnslytics", "name": "DNSLytics", "env": "DNSLYTICS_API_KEY", "aliases": ["DNSLYTICS_API_KEY_FALLBACK"], "category": "analytics",
       "tier": "freemium", "url": "https://dnslytics.com/api",
       "unlocks": "/webpivot: reverse AdSense (ca-pub-) / legacy GA (UA-) ID -> sibling domains"
     },
     {
-      "id": "whoisxml", "name": "WhoisXML", "env": "WHOISXML_API_KEY", "category": "dns",
+      "id": "whoisxml", "name": "WhoisXML", "env": "WHOISXML_API_KEY", "aliases": ["WHOISXMLAPI_KEY", "WHOIS_API_KEY"], "category": "dns",
       "tier": "freemium", "url": "https://whoisxmlapi.com",
       "unlocks": "/webpivot --whois + /whois: current + historic WHOIS, reverse-WHOIS by email/name",
       "test": {"url": "https://user.whoisxmlapi.com/service/account-balance?apiKey={key}&output_format=json", "expect_status": 200}
@@ -85,7 +85,7 @@
       "test": {"url": "https://feeds.chongluadao.vn/external/checkburneremail?q=mailinator.com", "header": {"X-API-Key": "{key}"}, "expect_json": "is_burner_email"}
     },
     {
-      "id": "intelx", "name": "Intelligence X (IntelX)", "env": "INTELX_API_KEY", "category": "breach",
+      "id": "intelx", "name": "Intelligence X (IntelX)", "env": "INTELX_API_KEY", "aliases": ["INTELX_KEY", "INTELLIGENCEX_KEY"], "category": "breach",
       "tier": "freemium", "url": "https://intelx.io/account?tab=developer",
       "unlocks": "/breach-deep + darknet search: dark-web, paste, and leak selectors"
     },
@@ -96,7 +96,7 @@
       "test": {"url": "https://api.github.com/user", "header": {"Authorization": "token {key}"}, "expect_status": 200}
     },
     {
-      "id": "serpapi", "name": "SerpAPI", "env": "SERPAPI_KEY", "category": "dork",
+      "id": "serpapi", "name": "SerpAPI", "env": "SERPAPI_KEY", "aliases": ["SERPAPI_API_KEY", "SERP_API_KEY"], "category": "dork",
       "tier": "freemium", "url": "https://serpapi.com/manage-api-key",
       "unlocks": "/webpivot --serp: Google Ads Transparency (the VERIFIED paying-advertiser identity behind a domain's ads) + multi-engine SERP results. NOTE: does NOT power /dork-sweep or /query — that engine (search_pivot.py) is keyless and reads no SERPAPI_KEY",
       "test": {"url": "https://serpapi.com/account?api_key={key}", "expect_status": 200}

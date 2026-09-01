@@ -223,6 +223,39 @@
         "without_it": "the ZoomEye favicon-hash reverse is unqueried; only the manual query string is emitted for the web UI",
         "free_fallback": "the other favicon reverses if keyed (FOFA/Hunter.how/Quake) and the emitted ZoomEye query string",
         "signup": "https://www.zoomeye.ai/profile"
+      },
+      "SECURITYTRAILS_API_KEY": {
+        "service": "SecurityTrails",
+        "aliases": ["SECURITYTRAILS_API_KEY_FALLBACK"],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "current subdomain enumeration and historical DNS-record snapshots (A/AAAA/MX/NS/SOA/TXT) on a freemium key (50 calls/month total)",
+        "without_it": "the SecurityTrails historical-DNS and subdomain view is unqueried; a host's pre-CDN DNS history and its sibling subdomains come only from the other indexes, so an empty subdomain list is a coverage fact, not a finding",
+        "free_fallback": "Validin (free Community) subdomains + passive DNS, the crt.sh subdomain harvest, and CIRCL passive DNS when PDNS is keyed",
+        "signup": "https://securitytrails.com/app/account/credentials"
+      },
+      "DNSLYTICS_API_KEY": {
+        "service": "DNSLytics",
+        "aliases": ["DNSLYTICS_API_KEY_FALLBACK"],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "reverse a Google AdSense (ca-pub-/pub-) or Analytics/Tag (UA-/G-/GTM-/AW-/DC-/GT-) id to every domain CURRENTLY carrying it — the same-operator tracker reverse — plus premium reverse-IP co-hosting",
+        "without_it": "the AdSense/Analytics-id reverse (a same-operator link WHOIS privacy cannot hide and a re-skin cannot change) is only emitted as a manual query string; sibling sites sharing the operator's tracker are not discovered automatically",
+        "free_fallback": "the emitted DNSLytics / PublicWWW query strings for the web UI, and FOFA's tracker-body reverse when FOFA is keyed",
+        "signup": "https://dnslytics.com/api"
+      },
+      "CERTSPOTTER_API_KEY": {
+        "service": "SSLMate CertSpotter",
+        "aliases": [],
+        "companion": [],
+        "metered": false,
+        "impact": "low",
+        "unlocks": "higher-rate authenticated CertSpotter CT-log queries for the near-real-time brand watch (ct_monitor)",
+        "without_it": "certificate-transparency monitoring still runs on crt.sh plus the keyless CertSpotter fallback, only at a lower rate limit — a busy brand baseline is slower, never blocked",
+        "free_fallback": "keyless crt.sh issuance polling and anonymous CertSpotter (both rate-limited)",
+        "signup": "https://sslmate.com/certspotter/"
       }
     }
   },
