@@ -89,7 +89,7 @@ partition "**DELIVER**  (package output)" {
     :**/redact**  ->  stable [EMAIL_1] placeholders\n+ reversible JSON map;
   else (no)
   endif
-  :auto-save   .md + .html + .json + .csv + IOC bundle (STIX 2.1);
+  :always save  .md + .json + .csv + IOC bundle (STIX 2.1 · JSONL)\nthen ASK presentation: (a) PDF · (b) DOCX · (c) HTML · (d) all;
 }
 stop
 

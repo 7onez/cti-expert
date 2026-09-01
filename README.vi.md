@@ -1226,19 +1226,19 @@ Cùng một vụ việc, ở những định dạng mà công cụ khác đọc 
 </tr>
 </table>
 
-**Mỗi biến thể báo cáo chỉ là một lệnh** — bộ mặc định năm định dạng (`.md` · `.html` · `.json` · `.csv` · gói IOC) tự động lưu ở mọi lượt `/report`, `/brief` và `/case`; các biến thể dưới đây chọn một định dạng hoặc một đối tượng người đọc cụ thể:
+**Mỗi biến thể báo cáo chỉ là một lệnh** — bộ dữ liệu nền luôn được lưu (`.md` · `.json` · `.csv` · gói IOC: `.stix.json`/`.txt`/`.csv`/`.jsonl`) ở mọi lượt `/report`, `/brief` và `/case`, sau đó bạn được hỏi muốn xuất báo cáo trình bày nào: **(a) PDF · (b) DOCX · (c) HTML · (d) tất cả** (`--yolo`/luồng tự động mặc định HTML); các biến thể dưới đây chọn một định dạng hoặc một đối tượng người đọc cụ thể:
 
 | Lệnh | Định dạng | Phù hợp nhất cho |
 |---------|--------|----------|
-| `/report` · `/report html` | HTML tương tác *(mặc định, sản phẩm bàn giao chính)* | Tất cả mọi người — từ nhà phân tích đến lãnh đạo |
+| `/report html` · chọn **c**/**d** | HTML tương tác *(sản phẩm bàn giao chính)* | Tất cả mọi người — từ nhà phân tích đến lãnh đạo |
 | `/report` | INTSUM kỹ thuật (Markdown) | Nhà phân tích, đội bảo mật |
 | `/report brief` | Bản tóm tắt điều hành | Người ra quyết định, ban quản lý |
 | `/brief` | Bản tóm tắt bằng ngôn ngữ phổ thông | Các bên liên quan không chuyên kỹ thuật |
-| `/report legal` | Định dạng bằng chứng pháp lý *(tự động thêm DOCX/PDF)* | Luật sư, đội tuân thủ |
+| `/report legal` | Định dạng bằng chứng pháp lý *(mặc định tất cả: PDF + DOCX + HTML)* | Luật sư, đội tuân thủ |
 | `/report journalist` | Nặng về trích dẫn nguồn | Phóng viên, cơ quan truyền thông |
 | `/report json` · `/report csv` | Xuất JSON · CSV | Pipeline, bảng tính, SIEM |
 | `/report ioc` | Gói IOC / selector (STIX 2.1 · danh sách phẳng · CSV) | Nạp vào SIEM / TIP, chia sẻ tình báo mối đe dọa |
-| `/report docx` | Tài liệu Word *(biểu đồ, trang bìa, mục lục)* | Chia sẻ chính thức — khi có yêu cầu |
+| `/report docx` · `/report pdf` · chọn **a**/**b**/**d** | Tài liệu Word / PDF *(biểu đồ, trang bìa, mục lục)* | Chia sẻ chính thức |
 | `/cti-report <ID> --pdf` | PDF/DOCX qua pandoc của IntelReport | Sản phẩm bàn giao chỉn chu, đạt chuẩn xuất bản |
 
 <sub>Được tạo bởi <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOC) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX) · <code>intel_engine/IntelReport</code> (pandoc PDF/DOCX)</sub>
