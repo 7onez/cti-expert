@@ -48,7 +48,10 @@
       },
       "WHOISXML_API_KEY": {
         "service": "WhoisXML API",
-        "aliases": [],
+        "aliases": [
+          "WHOISXMLAPI_KEY",
+          "WHOIS_API_KEY"
+        ],
         "companion": [],
         "metered": true,
         "impact": "high",
@@ -188,8 +191,10 @@
       },
       "VALIDIN_API_KEY": {
         "service": "Validin",
-        "aliases": [],
-        "companion": ["VALIDIN_API_KEY_FALLBACK"],
+        "aliases": [
+          "VALIDIN_API_KEY_FALLBACK"
+        ],
+        "companion": [],
         "metered": false,
         "impact": "high",
         "unlocks": "DNS + certs + favicon + response-body hashes in one graph on a FREE Community key: passive DNS, subdomain enumeration, reverse-IP, and favicon/cert/body-hash reverse -> co-hosted hosts, plus quick reputation and Levenshtein lookalikes",
@@ -199,8 +204,8 @@
       },
       "QUAKE_API_KEY": {
         "service": "Quake (360)",
-        "aliases": ["QUAKE_TOKEN"],
-        "companion": ["QUAKE_API_KEY_FALLBACK"],
+        "aliases": ["QUAKE_TOKEN", "QUAKE_API_KEY_FALLBACK"],
+        "companion": [],
         "metered": true,
         "impact": "medium",
         "unlocks": "independent CN-dense cyberspace index — favicon mmh3 reverse -> hosts serving the same icon (re-skinned kit siblings FOFA/Hunter.how may miss)",
@@ -210,8 +215,8 @@
       },
       "ZOOMEYE_API_KEY": {
         "service": "ZoomEye",
-        "aliases": ["ZOOMEYE_KEY"],
-        "companion": ["ZOOMEYE_API_KEY_FALLBACK"],
+        "aliases": ["ZOOMEYE_KEY", "ZOOMEYE_API_KEY_FALLBACK"],
+        "companion": [],
         "metered": true,
         "impact": "medium",
         "unlocks": "independent cyberspace index — favicon iconhash (mmh3) reverse -> hosts serving the same icon; corroborates or extends FOFA/Hunter.how/Quake",
