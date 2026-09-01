@@ -143,11 +143,41 @@ def test_alias_only_key_is_not_reported_missing():
             os.environ.pop(n, None) if v is None else os.environ.__setitem__(n, v)
 
 
+# Services that live in the /apikeys catalog (scripts/apikeys/registry.json) but are NOT WebPivot
+# capability legs — other skills/commands consume them. They MUST NOT appear in api_keys.json, or
+# the WebPivot keyless banner would caveat a run on keys it never uses.
+NON_WEBPIVOT_KEYS = {
+    "HUDSONROCK_API_KEY", "CHONGLUADAO_API_KEY", "CLD_API_KEY", "BLOCKCHAIR_API_KEY",
+    "GITHUB_TOKEN", "SUBSCAN_API_KEY", "BRIGHTDATA_SERP_KEY", "GEMINI_API_KEY",
+    "GOOGLE_API_KEY", "ZONECRUNCHER_API_KEY",
+}
+
+
+def test_capability_registry_is_exactly_the_webpivot_tool_key_set():
+    """The WebPivot banner registry must be EXACTLY the WebPivot capability legs — no missing key
+    (silent banner) and no stray key (false caveat on a key WebPivot never reads)."""
+    _cap, cap_reg = _cap_registry()
+    assert set(cap_reg) == set(TOOL_LOOKUPS), (
+        f"api_keys.json canonical set drifted from TOOL_LOOKUPS: "
+        f"extra={sorted(set(cap_reg) - set(TOOL_LOOKUPS))} "
+        f"missing={sorted(set(TOOL_LOOKUPS) - set(cap_reg))}")
+
+
+def test_unrelated_keys_stay_out_of_the_webpivot_banner():
+    """A key another skill owns (breach/crypto/code/AI) must never leak into api_keys.json."""
+    _cap, cap_reg = _cap_registry()
+    all_banner_names = {n for keys in cap_reg.values() for n in keys} | set(cap_reg)
+    leaked = sorted(NON_WEBPIVOT_KEYS & all_banner_names)
+    assert not leaked, f"non-WebPivot key(s) leaked into the capability banner: {leaked}"
+
+
 _TESTS = [test_capability_registry_covers_every_tool_lookup,
           test_apikeys_registry_covers_every_tool_lookup,
           test_companion_vars_never_declared_as_aliases,
           test_three_previously_silent_keys_now_registered,
-          test_alias_only_key_is_not_reported_missing]
+          test_alias_only_key_is_not_reported_missing,
+          test_capability_registry_is_exactly_the_webpivot_tool_key_set,
+          test_unrelated_keys_stay_out_of_the_webpivot_banner]
 
 
 def check():
