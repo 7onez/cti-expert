@@ -209,12 +209,117 @@ def _phone(contact):
     return raw or None
 
 
-def _address(contact):
-    """Single-line street/city/state/postal/country address, pivot-ready."""
-    parts = [contact.get(k) for k in
-             ("street1", "street2", "city", "state", "postalCode", "country")]
+def _address(contact, country_override=None):
+    """Single-line street/city/state/postal/country address, pivot-ready. `country_override`
+    substitutes a reconciled country so a placeholder like 'NAMIBIA' is not re-injected."""
+    country = country_override or contact.get("country")
+    parts = [contact.get("street1"), contact.get("street2"), contact.get("city"),
+             contact.get("state"), contact.get("postalCode"), country]
     parts = [str(p).strip() for p in parts if p and str(p).strip()]
     return ", ".join(parts) or None
+
+
+# Country reconciliation — data-driven (references/whois_geo.json), not a per-country special case.
+# ISO-3166 alpha-2 "NA" is Namibia's code AND the universal WHOIS "Not Available" placeholder;
+# WhoisXML expands the token to "NAMIBIA", which then reads as a deliberately-false country. A
+# placeholder-token country is overridden only when an INDEPENDENT signal — RDAP adr.cc, the
+# phone's E.164 calling code, or a country NAME in street/city/state (never the country field) —
+# resolves to a different country. A genuine +264 (or no contradicting signal) keeps it untouched.
+_GEO_FALLBACK = {
+    "calling_codes": {"49": "DE", "264": "NA", "1": ["US", "CA"]},
+    "country_aliases": {"GERMANY": "DE", "NAMIBIA": "NA"},
+    "placeholder_countries": ("NA", "NAMIBIA"),
+}
+_GEO = load_ref(ref_path(__file__, "whois_geo.json"), _GEO_FALLBACK)
+_CALLING_CODES = dict(_GEO["calling_codes"])
+_COUNTRY_ALIASES = {str(k).upper(): v for k, v in dict(_GEO["country_aliases"]).items()}
+_PLACEHOLDER_COUNTRIES = {str(v).upper() for v in _GEO["placeholder_countries"]}
+_PLACEHOLDER_ISO = "NA"   # the ISO code the placeholder token collides with
+
+
+def _country_from_phone(phone):
+    """ISO country of an unambiguous E.164 calling code, or None. Longest-prefix (3,2,1) match;
+    a zone shared by several ISO countries resolves to None rather than guessing one member."""
+    digits = re.sub(r"\D", "", phone or "")
+    digits = re.sub(r"^00", "", digits)          # drop an international access prefix
+    if not digits:
+        return None
+    for n in (3, 2, 1):
+        if digits[:n] in _CALLING_CODES:
+            c = _CALLING_CODES[digits[:n]]
+            return c if isinstance(c, str) else None
+    return None
+
+
+def _country_from_address_fields(contact):
+    """ISO of a country NAME appearing in street/city/state (never the country field), or None."""
+    hay = " ".join(str(contact.get(k)) for k in ("street1", "street2", "city", "state")
+                   if contact.get(k)).upper()
+    if not hay:
+        return None
+    for name, iso in _COUNTRY_ALIASES.items():
+        if re.search(r"\b" + re.escape(name) + r"\b", hay):
+            return iso
+    return None
+
+
+def _vcard_param(vcard, field, param):
+    """One jCard field parameter (e.g. adr.params.cc), or None."""
+    for item in (vcard or []):
+        if not isinstance(item, list) or len(item) < 4 or item[0] != field:
+            continue
+        params = item[1] if isinstance(item[1], dict) else {}
+        value = params.get(param)
+        if value is not None:
+            return str(value).strip() or None
+    return None
+
+
+def _rdap_registrant_country(data):
+    """Registrant adr.params.cc from an RDAP object, or None."""
+    if not isinstance(data, dict):
+        return None
+    for ent in data.get("entities") or []:
+        roles = [str(r).lower() for r in (ent.get("roles") or [])]
+        if "registrant" not in roles:
+            continue
+        cc = _vcard_param((ent.get("vcardArray") or [None, []])[1], "adr", "cc")
+        if cc:
+            return cc.upper()
+    return None
+
+
+def _rdap_country_from_whois_record(rec):
+    """Registrant adr.params.cc from WhoisXML's embedded RDAP text — no extra request. WhoisXML
+    reports the placeholder country ("NAMIBIA") in its normalized fields but preserves the true
+    ISO cc in the raw RDAP jCard adr params, so this recovers it without another lookup."""
+    for key in ("rawText", "strippedText"):
+        raw = rec.get(key)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            continue
+        cc = _rdap_registrant_country(data)
+        if cc:
+            return cc
+    return None
+
+
+def _reconcile_country(contact, rdap_cc=None):
+    """Corrected ISO country for a contact, or None when the value stands as-is. Only a placeholder
+    token (whois_geo.json) is changed, and only when an independent signal resolves to a different
+    country. Never emits a note; callers keep the raw value for audit."""
+    raw = (contact.get("country") or contact.get("countryCode") or "").strip()
+    if raw.upper() not in _PLACEHOLDER_COUNTRIES:
+        return None
+    signal = ((str(rdap_cc).upper() if rdap_cc else None)
+              or _country_from_phone(_phone(contact))
+              or _country_from_address_fields(contact))
+    if signal and signal != _PLACEHOLDER_ISO:
+        return signal
+    return None
 
 
 def whois_current(domain, timeout=30, keep_raw=True):
@@ -250,21 +355,25 @@ def whois_current(domain, timeout=30, keep_raw=True):
         or _contact(reg_data, "registrantContact", "registrant") or {}
     ns = ((rec.get("nameServers") or {}).get("hostNames")
           or (reg_data.get("nameServers") or {}).get("hostNames") or [])
+    country_raw = reg.get("country") or reg.get("countryCode") or None
+    country_override = _reconcile_country(reg, rdap_cc=_rdap_country_from_whois_record(rec))
     res = {
         "domain": domain,
         "registrant_email": (reg.get("email") or rec.get("contactEmail")
                              or reg_data.get("contactEmail") or "").lower() or None,
         "registrant_name": reg.get("name") or None,
         "registrant_org": reg.get("organization") or None,
-        "registrant_country": reg.get("country") or reg.get("countryCode") or None,
+        "registrant_country": country_override or country_raw,
         "registrant_phone": _phone(reg),
-        "registrant_address": _address(reg),
+        "registrant_address": _address(reg, country_override=country_override),
         "registrar": _f("registrarName"),
         "created": _f("createdDateNormalized", "createdDate"),
         "updated": _f("updatedDateNormalized", "updatedDate"),
         "expires": _f("expiresDateNormalized", "expiresDate"),
         "name_servers": sorted({n.lower() for n in ns if n}),
     }
+    if country_override:
+        res["registrant_country_raw"] = country_raw
     if keep_raw:
         res["_raw"] = data   # full unmodified WhoisXML record, archived for later ref
     return res
@@ -302,7 +411,9 @@ def whois_history(domain, mode="purchase", timeout=40, keep_raw=True):
         nm = (reg.get("name") or reg.get("organization") or "").strip()
         rg = (rec.get("registrarName") or "").strip()
         ph = _phone(reg)
-        ad = _address(reg)
+        country_raw = reg.get("country") or reg.get("countryCode") or None
+        country_override = _reconcile_country(reg, rdap_cc=_rdap_country_from_whois_record(rec))
+        ad = _address(reg, country_override=country_override)
         if nm and any(0x80 <= ord(c) <= 0x9f for c in nm):
             nm = ""  # drop C1-mojibake-corrupted names (double-encoding artifacts)
         if em:
@@ -315,13 +426,16 @@ def whois_history(domain, mode="purchase", timeout=40, keep_raw=True):
             phones.add(ph)
         if ad:
             addresses.add(ad)
-        out.append({
+        item = {
             "email": em or None, "name": nm or None, "registrar": rg or None,
-            "phone": ph, "address": ad,
+            "phone": ph, "address": ad, "country": country_override or country_raw,
             "created": rec.get("createdDateNormalized") or rec.get("createdDateISO8601"),
             "updated": rec.get("updatedDateNormalized"),
             "expires": rec.get("expiresDateNormalized"),
-        })
+        }
+        if country_override:
+            item["country_raw"] = country_raw
+        out.append(item)
     res = {
         "count": data.get("recordsCount", len(recs)),
         "registrant_emails": sorted(emails),
@@ -448,7 +562,8 @@ def rdap_lookup(domain, timeout=25, keep_raw=True):
         "registrant_email": (_vcard_get(reg_vcard, "email") or "").lower() or None,
         "registrant_name": _vcard_get(reg_vcard, "fn"),
         "registrant_org": _vcard_get(reg_vcard, "org"),
-        "registrant_country": _vcard_get(reg_vcard, "country-name"),
+        "registrant_country": (_vcard_param(reg_vcard, "adr", "cc")
+                               or _vcard_get(reg_vcard, "country-name")),
         "registrant_phone": _vcard_get(reg_vcard, "tel"),
         "registrant_address": _vcard_get(reg_vcard, "adr"),
         "registrar": registrar.get("name"),
