@@ -20,6 +20,7 @@ from cti_docx_styles import (
     COLORS, set_cell_shading, add_page_number,
     FONT_BODY, FONT_HEADING, SHADE_BAND, SHADE_ZEBRA,
 )
+from cti_docx_toc import begin_toc, finalize_toc
 from cti_docx_charts import (
     add_finding_type_pie, add_severity_bar, add_confidence_matrix,
     add_timeline_chart, add_traffic_sources_bar, add_geographic_pie,
@@ -200,29 +201,6 @@ def _add_cover_page_compat(doc: Document, data: dict) -> None:
     doc.add_page_break()
 
 
-def _add_toc_compat(doc: Document) -> None:
-    """Table of contents that works with pandoc-generated DOCX."""
-    _add_styled_heading(doc, "Table of Contents", level=1)
-
-    p = doc.add_paragraph()
-    run = p.add_run()
-    run._r.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>'))
-    run2 = p.add_run()
-    run2._r.append(parse_xml(
-        f'<w:instrText {nsdecls("w")} xml:space="preserve">'
-        ' TOC \\o "1-3" \\h \\z \\u </w:instrText>'
-    ))
-    run3 = p.add_run()
-    run3._r.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="separate"/>'))
-    run4 = p.add_run("[Right-click and Update Field to generate TOC]")
-    run4.font.color.rgb = COLORS["muted"]
-    run4.font.size = Pt(9)
-    run4.font.italic = True
-    run5 = p.add_run()
-    run5._r.append(parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="end"/>'))
-
-    doc.add_page_break()
-
 
 def setup_header_footer_compat(doc: Document, report_id: str,
                                 classification: str = "OPEN SOURCE") -> None:
@@ -363,7 +341,7 @@ def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict, case_dir: 
         body.append(sect_pr)
 
     _add_cover_page_compat(doc, json_data)
-    _add_toc_compat(doc)
+    toc_anchor = begin_toc(doc)
 
     injected: set[str] = set()
     case = json_data.get("case", {})
@@ -381,6 +359,10 @@ def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict, case_dir: 
         _try_inject(doc, text, json_data, injected, case, case_dir)
 
     _append_remaining_charts(doc, json_data, injected, case, case_dir)
+
+    # Bake a real clickable TOC into the field cache now that all headings exist
+    # (Word still auto-updates it to a page-numbered TOC on open).
+    finalize_toc(doc, toc_anchor)
 
     if sect_pr is not None:
         body.append(sect_pr)
@@ -462,6 +444,19 @@ def _inject_heatmaps(doc, json_data, case_dir=None):
     return drawn
 
 
+def _has_heatmap_data(json_data, case_dir=None):
+    """True when at least one heatmap builder has drawable data.
+
+    Probe before adding the appendix page/headings: _inject_heatmaps intentionally degrades to
+    False on empty data, but by then an empty page would already be in the document.
+    """
+    return any(bool(built) for built in (
+        collect_registrations(json_data, case_dir),
+        build_cooccurrence(json_data, case_dir),
+        build_relation_strength(json_data, case_dir),
+    ))
+
+
 def _append_remaining_charts(doc, json_data, injected, case, case_dir=None):
     """Append any charts that were not injected inline as a Visual Analytics appendix."""
     remaining = set(CHART_KEYWORDS.keys()) - injected
@@ -480,8 +475,7 @@ def _append_remaining_charts(doc, json_data, injected, case, case_dir=None):
             _add_styled_heading(doc, "Confidence Scale (ICD-203 \u00d7 Admiralty)", level=2)
             add_confidence_matrix(doc, findings, json_data.get("subjects", []))
             doc.add_paragraph()
-
-    if "heatmaps" in remaining:
+    if "heatmaps" in remaining and _has_heatmap_data(json_data, case_dir):
         if not has_content:
             doc.add_page_break()
             _add_styled_heading(doc, "Visual Analytics", level=1)

@@ -88,7 +88,12 @@ def ensure_soffice() -> str:
 def convert_docx_to_pdf(docx_path: str, out_pdf: str | None = None,
                         timeout: int = 180) -> str:
     """Convert `docx_path` to PDF; return the PDF path. `out_pdf` defaults to the
-    DOCX path with a .pdf extension."""
+    DOCX path with a .pdf extension.
+
+    The DOCX already carries a real, clickable TOC baked into the field cache
+    (see cti_docx_toc), so a plain headless `--convert-to` renders it faithfully —
+    headless LibreOffice never updates fields, and the minimal libreoffice-writer
+    install ships no pyuno/macro bridge, so there is nothing to update here."""
     docx_path = os.path.abspath(docx_path)
     if not os.path.isfile(docx_path):
         raise RuntimeError(f"DOCX not found: {docx_path}")

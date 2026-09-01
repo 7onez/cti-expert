@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from io import BytesIO
 from docx.shared import Inches
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 from cti_docx_styles import COLORS_HEX
 
@@ -279,6 +281,11 @@ def add_cloud_arch(doc, data: dict) -> None:
     png, _ = build_cloud_png(data)
     if not png:
         return
-    doc.add_heading("Cloud Architecture", level=2)
+    # pandoc-generated DOCX lacks the named "Heading 2" style, so add_heading(...)
+    # by name raises KeyError. Set the style id in XML instead (matches the report's
+    # Heading2 style and appears in the TOC), the same approach used elsewhere.
+    heading = doc.add_paragraph("Cloud Architecture")
+    heading._p.get_or_add_pPr().insert(
+        0, parse_xml(f'<w:pStyle {nsdecls("w")} w:val="Heading2"/>'))
     doc.add_picture(BytesIO(png), width=Inches(5.6))
     doc.paragraphs[-1].alignment = 1
