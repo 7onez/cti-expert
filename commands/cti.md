@@ -179,6 +179,17 @@ Report findings with two-axis confidence (Admiralty per finding, ICD-203 per jud
 empty results as empty, and list what you did **not** cover. Write case artifacts to
 `$INTEL_HOME/cases/<CASE-ID>/` — never to a `cases/` directory at the repo root.
 
+**Deliver — build the report bundle deterministically (do NOT hand-author the report JSON).** Once
+the case has an `assessment.md`, turn it into the presentation bundle via the converter, then the
+generators (see SKILL.md §8 for the full flow and the format prompt):
+```bash
+uv run "$SKILL_DIR/scripts/build_report_data.py" "$INTEL_HOME/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"
+```
+This emits the exact flat schema the generators consume — operator/registrant subjects with
+selectors, the full domain estate as network indicators, findings/timeline/connections, and the
+§2.5 exclusion set in `ioc_exclude` (so no excluded CDN/shared IP, registrar, or nameserver leaves
+as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering.
+
 **Shareable exports — mask uninvolved third parties (§2.5).** Before rendering a report to a
 shareable format (PDF/DOCX/HTML) or an IOC bundle, **mask the PII of any party you confirmed is
 NOT involved** — e.g. a name-collision innocent's email/phone (`ntp***@example.com`) — because a

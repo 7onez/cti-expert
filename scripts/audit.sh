@@ -93,7 +93,8 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_kit_template_fingerprint.py tests/test_render_confirm.py \
          tests/test_phishtrace_features.py tests/test_engine_additions.py \
          tests/test_whois_phone_ingest.py tests/test_wildcard_frontier_guard.py \
-         tests/test_title_pivot.py; do
+         tests/test_title_pivot.py tests/test_case_pipeline_smoke.py \
+         tests/test_pipeline_step_timeout.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
 done
 

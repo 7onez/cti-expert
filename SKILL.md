@@ -1,7 +1,7 @@
 ---
 name: cti-expert
 description: "Cyber threat intelligence and OSINT analysis toolkit. Runs structured investigations and delivers analyst-grade intelligence products with sourced, trust-scored findings. Use for OSINT and CTI cases, digital-footprint and exposure review, domain/subdomain/DNS/certificate recon, web-infrastructure pivoting (favicon hashes, tracker IDs, TLS certs, phishing-kit fingerprinting, campaign clustering), username/email/phone enumeration, breach and infostealer-log triage, image forensics, geolocation, crypto-wallet and IBAN/bank-account tracing, darknet search, M365/Azure and SaaS tenant recon, China/Sinophone recon (ICP filings, PRC corporate registries, Baidu/FOFA/Quake/ZoomEye), vulnerability and ransomware lookup, threat modeling, PII redaction, and structured reporting. Commands include /case, /sweep, /query, /webpivot, /username, /phone, /email-deep, /breach-deep, /icp, /cn-corp, /iban, /stealer-log, /exposure, /threat-model, /report, /brief, /redact, /apikeys."
-version: "2.11"
+version: "2.12"
 author: "Hieu Ngo - chongluadao.vn"
 ---
 
@@ -41,7 +41,7 @@ Every investigation follows four phases:
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/breach-deep`, `/subdomain`, `/webpivot` + `/icp` (domain/URL targets), `/dork-sweep` · `/docleak` · `/github-osint`/`/secrets`, `/cn-corp` · `/iban` · `/hash-id` on discovery |
 | **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) **automatically until the frontier is exhausted**, no approval prompts (`autonomy=auto`). Each discovered identifier auto-fires its leak/breach/OSINT/dork legs — email→`/breach-deep`+`/intelx` (breach dumps·**infostealer logs**·pastes·darknet), username→`/username`+socials, name→`/dork-sweep`+`/docleak`, apex→`/intelx --phonebook`+`/secrets`+`/github-osint` — see §"Leak / breach / infostealer auto-fire" + the Dork/GitHub auto-fire matrices. Acquire↔Enrich iterate, not run once. |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)). **If the case has not converged** (frontier still open after the pivot loop + deterministic pipeline) and posture is active, `/case` **auto-escalates to the `/harness` deepening loop** — keyless-first (the CLI's own model), egress hard-gated on hostile infra; `--no-harness` opts out |
-| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **auto-saves .md + .html + .json + .csv + IOC bundle**. When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). **Deep-layer persist (automatic, ZERO extra egress):** when `/backend` is live, `/case` **reuses the pivots it already collected** — never re-fetches — to persist the versioned case at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` and correlate it cross-case; see the auto-chain note below. See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
+| **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **first ASKS whether to import more evidence from manual investigation** (merged into the report JSON before anything is built), **always auto-saves the base data bundle (.md + .json + .csv + IOC bundle: .stix.json/.txt/.csv/.jsonl), then ASKS which presentation report to render — (a) PDF · (b) DOCX · (c) HTML · (d) all** (both prompts skipped under `--yolo`/guided-auto, which default to HTML). When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). **Deep-layer persist (automatic, ZERO extra egress):** when `/backend` is live, `/case` **reuses the pivots it already collected** — never re-fetches — to persist the versioned case at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` and correlate it cross-case; see the auto-chain note below. See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
 
@@ -449,7 +449,7 @@ Commands grouped by AEAD phase.
 
 | Command | What It Does | Example |
 |---------|-------------|---------|
-| `/report` | Full report — auto-saves .md + .html + .json + .csv + IOC bundle | `/report` |
+| `/report` | Full report — always saves the base data bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl), then **asks which presentation to render: (a) PDF · (b) DOCX · (c) HTML · (d) all** | `/report` |
 | `/report html` | Interactive self-contained HTML report (primary deliverable) | `/report html` |
 | `/report brief` | Single-page executive brief | `/report brief` |
 | `/report json` | Raw data as JSON | `/report json` |
@@ -470,7 +470,7 @@ Commands grouped by AEAD phase.
 | `/render threat-path` | ASCII attack path flow diagram | `/render threat-path` |
 | `/render attack-surface` | ASCII attack surface exposure map | `/render attack-surface` |
 | `/report ioc` | Export IOCs as STIX 2.1 or flat list | `/report ioc --format stix` |
-| `/redact [file]` | Shareable variant of a report — stable numbered placeholders (`[EMAIL_1]`) + reversible JSON map; `.md`/`.json`/`.csv`. **Opt-in** — the default export set stays unredacted; request with `/redact` or `--redact` | `/redact REPORT.md` |
+| `/redact [file]` | Shareable variant of a report — stable numbered placeholders (`[EMAIL_1]`) + reversible JSON map; `.md`/`.json`/`.csv`. **Opt-in** — the base data bundle stays unredacted; request with `/redact` or `--redact` | `/redact REPORT.md` |
 
 ### UX & Navigation
 
@@ -763,15 +763,30 @@ per domain; for a large sweep show the top 20 by risk and note how many rows wer
 
 ### Mandatory File Export (CRITICAL)
 
-**Every `/report`, `/brief`, and `/case` command MUST auto-save the default export set to disk at the end of delivery:**
+**Every `/report`, `/brief`, and `/case` command runs three steps at the end of delivery — an import prompt, then the always-saved base bundle, then the presentation prompt:**
+
+**Step 0 — ASK whether to import more manually-collected evidence** (before building ANYTHING, so it enriches every artifact). Ask the user — via `AskUserQuestion` — **"Import more evidence data collected by manual investigation? (extra findings, subjects, indicators, selectors, timeline events, sources, screenshots, notes)"**. If **yes**, fold it into the report JSON (see Step 1) BEFORE Step A:
+- **Findings / subjects / indicators / selectors / timeline / sources** — append them to the corresponding arrays of the report JSON (same schema as Step 1); each still needs a `source_url`/source note and a confidence.
+- **Screenshots / evidence images** — base64-embed into `evidence_images[]` with `evidence-images.py`: explicit files `uv run "$SKILL_DIR/scripts/evidence-images.py" shot1.png shot2.png --caption "…" [--finding FND-003] --into REPORT.json`, or a whole case dir `… --case <case-dir> --into REPORT.json`.
+Re-run the Step 1 build / dash-normalizer after merging, then continue. Only once the manual evidence is in the JSON do Step A and Step B run — so the base bundle, the IOC bundle, and the chosen presentation report all include it. If **no**, proceed straight to Step A. (`--yolo`/guided-auto skip this prompt.)
+
+**Step A — ALWAYS auto-save the base data bundle** (no prompt, every run):
 
 | # | Format | File | Role |
 |---|--------|------|------|
-| 1 | **Markdown** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md` | Diffable, greppable source of truth; also the input to the HTML/DOCX generators |
-| 2 | **Interactive HTML** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].html` | **Primary human-facing deliverable** — self-contained, OFFLINE; charts + 2D entity graph + topology + timeline + indicator panel + search |
-| 3 | **JSON** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json` | Structured case data (the report JSON below); feeds the generators and downstream tooling |
-| 4 | **CSV** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv` | Findings (and indicators, via the IOC export) for spreadsheets / SIEM lookups |
-| 5 | **IOC / selector bundle** | `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv}` | Comprehensive indicators & selectors — STIX 2.1 + flat + CSV |
+| 1 | **Markdown** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md` | Diffable, greppable source of truth; also the input to the HTML/DOCX/PDF generators |
+| 2 | **JSON** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json` | Structured case data (the report JSON below); feeds the generators and downstream tooling |
+| 3 | **CSV** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv` | Findings (and indicators, via the IOC export) for spreadsheets / SIEM lookups |
+| 4 | **IOC / selector bundle** | `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv,jsonl}` | Comprehensive indicators & selectors — STIX 2.1 + flat + CSV + JSONL |
+
+**Step B — ASK which presentation report to render**, then build the choice on top of the base bundle. This prompt is the default (interactive) behavior:
+
+| Choice | Format | Builder |
+|--------|--------|---------|
+| **a** | **PDF** — the DOCX rendered by LibreOffice (fixed layout, charts, cover/TOC) | `generate-cti-docx-hybrid.py … --pdf` |
+| **b** | **DOCX** — Word document in the PDF house style (charts + ICD-203×Admiralty confidence matrix + campaign heatmaps) | `generate-cti-docx-hybrid.py` |
+| **c** | **HTML** — interactive, self-contained, OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search); the primary human-facing deliverable | `generate-cti-html.py` |
+| **d** | **All** — build PDF **and** DOCX **and** HTML | all of the above |
 **Save location:** Current working directory, or `./osint-reports/` subdirectory if it exists.
 
 **Attribution (MANDATORY — every exported artifact).** Every deliverable MUST credit this
@@ -802,10 +817,10 @@ Infrastructure (URL/domain/IP) stays visible even then — in a CTI report the a
 infrastructure is the analysis, not incidental PII; add `--all-types` to cover it too.
 **Never ship the `.map.json`** — it reverses the redaction.
 
-- **`--yolo`:** save the five-format default set with no prompt.
-- **Interactive mode:** save the default set, then ask the user at the end whether they also want **DOCX** (Word) or **PDF**.
-- **DOCX is NOT in the default set** (heaviest, most failure-prone toolchain). Generate it on request (`/report docx`) or automatically for `/report legal` (evidentiary, where a fixed Word/PDF artifact is expected). The DOCX carries the report's charts — including the **two-axis ICD-203 × Admiralty confidence matrix** and the **campaign heatmaps** (malicious-domain registration timeline, domain×indicator correlation, domain×domain possible-relation). **PDF is that same DOCX rendered to PDF by LibreOffice** (`generate-cti-docx-hybrid.py … --pdf`, via `scripts/cti_docx_pdf.py`) — one document, two file types, byte-for-byte the same layout/charts. **Do NOT** produce the PDF by printing the HTML report; that is a different, screenshot-style artifact.
-- Explicit machine-format subcommands always emit that format directly: `/report json`, `/report csv`, `/report ioc`.
+- **Interactive mode (DEFAULT) — two prompts, in order:** (1) first ask **"Import more evidence data collected by manual investigation?"** (Step 0) and merge any supplied data into the report JSON; (2) then, after saving the base data bundle, ask — via `AskUserQuestion` — **"Which report format(s) do you want? (a) PDF · (b) DOCX · (c) HTML · (d) All"** (multi-select allowed) and build exactly the chosen presentation format(s). Every choice ships alongside the base bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl).
+- **`--yolo` / guided-auto / non-interactive:** skip **both** prompts — no evidence-import question, and default to **HTML** (lightest, zero external toolchain) on top of the base bundle. `/report legal` defaults to **All** (evidentiary — a fixed Word/PDF artifact is expected).
+- **Explicit subcommands bypass the prompt** and emit that format directly on top of the base bundle: `/report html`, `/report docx`, `/report pdf`, plus the machine-only `/report json`, `/report csv`, `/report ioc`.
+- **DOCX/PDF caveat:** these are the heaviest, most failure-prone toolchain (pandoc + LibreOffice). Both carry the report's charts — the **two-axis ICD-203 × Admiralty confidence matrix** and the **campaign heatmaps** (malicious-domain registration timeline, domain×indicator correlation, domain×domain possible-relation). **PDF is that same DOCX rendered to PDF by LibreOffice** (`generate-cti-docx-hybrid.py … --pdf`, via `scripts/cti_docx_pdf.py`) — one document, two file types, byte-for-byte the same layout/charts. **Do NOT** produce the PDF by printing the HTML report; that is a different, screenshot-style artifact.
 - **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
   ```bash
   S="$SKILL_DIR/scripts"; R="CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]"
@@ -815,7 +830,14 @@ infrastructure is the analysis, not incidental PII; add `--all-types` to cover i
 
 **The HTML, JSON, CSV and IOC outputs all derive from one `report JSON`.** Build it once, then run the generators below.
 
-**Step 1 — Build the report JSON file.** The generators expect a SPECIFIC flat format (NOT the engine case-schema.json). You MUST construct the JSON matching this exact structure before calling the scripts. Reference: `scripts/sample-cti-report-data.json`.
+**Step 1 — Build the report JSON file.** The generators expect a SPECIFIC flat format (NOT the engine `case-schema.json`).
+
+- **For a case produced by the pipeline (`/cti` · `/case` · `/harness`) — build it deterministically. Do NOT hand-author.** Run the converter; it reads `raw/*.json`, `whois/*.json`, `assessment.md` (BLUF + recommendations), `evidence/*.json` (leak-sweep, estate-seo-sweep) and the operator ledger (`knowledge/operators.jsonl`) — and consults `clusters.json` only to flag a multi-operator case — then emits the exact flat schema below: operator/registrant subject with selectors, the full domain estate as network indicators, findings/timeline/connections, and the §2.5 exclusion set (CDN/shared IPs, registrar, nameservers) in `ioc_exclude` so no excluded value ever leaves as an IOC:
+  ```bash
+  uv run "$SKILL_DIR/scripts/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/[CASE-ID]" -o "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json"
+  ```
+  Then apply the Step 0 import (merge any analyst-supplied findings/subjects/selectors/timeline) onto that JSON before rendering. The manual schema below is the field reference for that enrichment — and the fallback when there is no case dir (e.g. a report authored purely from pasted evidence).
+- **Otherwise (no case dir) — construct the JSON by hand** matching this exact structure. Reference: `scripts/sample-cti-report-data.json`.
 
 ```json
 {
@@ -981,21 +1003,21 @@ uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
 
 **After saving, confirm all files to the user:**
 ```
-📄 Report saved (default export set):
+📄 Base data bundle saved (always):
    → CTI-REPORT-CASE001-2026-03-30.md
-   → CTI-REPORT-CASE001-2026-03-30.html   (interactive — open in any browser, fully offline)
    → CTI-REPORT-CASE001-2026-03-30.json
    → CTI-REPORT-CASE001-2026-03-30.csv
-   → IOC-CASE001-2026-03-30.stix.json / .txt / .csv   (indicators & selectors)
+   → IOC-CASE001-2026-03-30.stix.json / .txt / .csv / .jsonl   (indicators & selectors)
 
-   Need a Word (.docx) or PDF too? (PDF = the DOCX rendered by LibreOffice — add --pdf)
+📄 Presentation report (your choice) — e.g. when (c) HTML was chosen:
+   → CTI-REPORT-CASE001-2026-03-30.html   (interactive — open in any browser, fully offline)
 ```
 
 ### Report Formats
 
 | Format | Command | Audience |
 |--------|---------|---------|
-| Interactive HTML | `/report` (default) · `/report html` | Everyone — analysts to execs; the primary deliverable |
+| Interactive HTML | `/report html` · choose **c** at the prompt | Everyone — analysts to execs; the primary deliverable |
 | Technical INTSUM | `/report` | Analysts, security teams |
 | Executive Brief | `/report brief` | Decision-makers, management |
 | Plain-Language Summary | `/brief` | Non-technical stakeholders |
@@ -1004,9 +1026,10 @@ uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
 | JSON Export | `/report json` | Downstream tools, pipelines |
 | CSV Export | `/report csv` | Spreadsheets, databases |
 | IOC / selector bundle | `/report ioc` | SIEM/TIP ingest, threat-intel sharing |
-| Word document | `/report docx` | Formal sharing (on request) |
+| Word document | `/report docx` · **b**/**d** at the prompt | Formal sharing |
+| PDF document | `/report pdf` · **a**/**d** at the prompt | Formal sharing / print (the DOCX rendered by LibreOffice) |
 
-Every narrative report auto-saves the **default export set** (.md + .html + .json + .csv + IOC bundle — see Mandatory File Export above). `/report legal` additionally produces DOCX/PDF. Machine-only subcommands (`json`, `csv`, `ioc`) emit their native format directly.
+Every narrative report **always** auto-saves the **base data bundle** (.md + .json + .csv + IOC bundle: .stix.json/.txt/.csv/.jsonl — see Mandatory File Export above), then **asks which presentation format to render** — (a) PDF · (b) DOCX · (c) HTML · (d) all. `/report legal` defaults to **all**; `--yolo`/guided-auto default to **HTML**. Machine-only subcommands (`json`, `csv`, `ioc`) emit their native format directly.
 
 ### Visual Outputs
 
@@ -1021,7 +1044,7 @@ Every narrative report auto-saves the **default export set** (.md + .html + .jso
 
 **Diagram tradecraft:** [`output/visuals/diagram-patterns.md`](output/visuals/diagram-patterns.md) — compile-check a Mermaid diagram before presenting it, and pick the right diagram type per CTI question (attack → sequence, lifecycle → state, handoffs → swimlane, infra → graph).
 
-The **interactive HTML report** (default deliverable) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
+The **interactive HTML report** (the primary human-facing deliverable, and the `--yolo`/guided-auto default) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
 
 **IntelGraph — use it whenever a case has a graph.** For any multi-node case
 (`/case`, `/pipeline`, `/harness`, or a `/report` with an entity/infra graph),
@@ -1125,7 +1148,7 @@ Append `--yolo` to any command or activate at session start.
 - No clarifying questions — analyst infers context and proceeds
 - No confirmation prompts — scope expands automatically on new discoveries
 - Guided flows skip Q&A — reasonable defaults applied
-- Both `/report` and `/brief` generated without asking
+- Both `/report` and `/brief` generated without asking — the presentation-format prompt is skipped and defaults to **HTML** on top of the always-saved base data bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl)
 
 **What stays the same:**
 - Ethics and legal boundaries — always enforced
