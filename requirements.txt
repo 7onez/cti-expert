@@ -18,6 +18,8 @@ rich>=13.0                # harness console output
 
 # --- deliver / visualize (IntelGraph) ---
 matplotlib>=3.7           # charts, timelines, gantt (theme.py house style)
+cairosvg>=2.7             # rasterizes the Diagram Design entity map into the house PDF/DOCX (best-effort)
+numpy>=1.24               # heatmap / confidence-scatter grids (cti_report_figures.py)
 graphviz>=0.20            # entity/infrastructure link graphs (also needs the `dot` binary)
 
 # --- collector extras (light; close silent-degrade paths) ---

@@ -31,7 +31,7 @@ import matplotlib.patches as mpatches  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from cti_docx_styles import COLORS_HEX, SEVERITY_COLORS_HEX  # noqa: E402
+from cti_palette import COLORS_HEX, SEVERITY_COLORS_HEX  # noqa: E402  — no python-docx needed
 
 
 def fig_png(fig) -> bytes:
@@ -196,7 +196,8 @@ def build_all(data: dict, case_dir: str | None, out_dir: str) -> dict:
     jobs = {
         "fig_confidence": lambda: confidence_matrix_png(data.get("findings") or [], data.get("subjects") or []),
         "fig_registrations": lambda: registration_heatmap_png(collect_registrations(data, case_dir)),
-        "fig_cooccurrence": lambda: cooccurrence_heatmap_png(build_cooccurrence(data, case_dir), _attr_label),
+        # cap=None: the house report shows every estate domain (Rule 19 — no sampling)
+        "fig_cooccurrence": lambda: cooccurrence_heatmap_png(build_cooccurrence(data, case_dir, cap=None), _attr_label),
         "fig_entity_map": lambda: entity_map_png(data),
     }
     for name, job in jobs.items():

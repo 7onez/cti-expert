@@ -11,75 +11,15 @@ from docx.oxml import parse_xml
 import datetime
 
 # --- CTI House Palette ---------------------------------------------------------
-# Muted editorial palette, IDENTICAL to the PDF (IntelGraph/scripts/theme.py +
-# IntelReport/templates/house-header.tex): slate / steel / ochre / brick / grid.
-# So a report's DOCX reads as the same document as its PDF, not a different tool's
-# output. Change a colour HERE and every DOCX chart, table and heading follows.
-FONT_BODY = "Georgia"      # serif body — the house choice (read in print, at length)
-FONT_HEADING = "Arial"     # sans headings / furniture — distinct from the serif body
-FONT_MONO = "Consolas"     # inline code: domains, hashes, endpoints
+# The palette lives in cti_palette.py (hex, dependency-free) so the matplotlib figures can read it
+# without python-docx; the RGBColor table below is DERIVED from it. Change a colour there and every
+# DOCX chart, table, heading and house-report figure follows.
+from cti_palette import (FONT_BODY, FONT_HEADING, FONT_MONO,  # noqa: E402,F401
+                         COLORS_HEX, CYCLE_HEX, SEVERITY_COLORS_HEX, hex_rgb)
 
-COLORS = {
-    "primary": RGBColor(0x22, 0x33, 0x3F),       # slate — H1, cover title, strong
-    "steel":   RGBColor(0x3B, 0x55, 0x66),       # steel — H2/H3, links
-    "accent":  RGBColor(0x3B, 0x55, 0x66),       # steel (alias kept for callers)
-    "ochre":   RGBColor(0xB0, 0x79, 0x0F),
-    "brick":   RGBColor(0x8C, 0x2D, 0x2D),
-    "olive":   RGBColor(0x5A, 0x6B, 0x3B),
-    "critical": RGBColor(0x8C, 0x2D, 0x2D),       # brick
-    "high":    RGBColor(0xB0, 0x79, 0x0F),        # ochre
-    "medium":  RGBColor(0x9A, 0x5B, 0x2F),        # muted amber-brown
-    "low":     RGBColor(0x5A, 0x6B, 0x3B),        # olive
-    "info":    RGBColor(0x3B, 0x55, 0x66),        # steel
-    "text":    RGBColor(0x1F, 0x1D, 0x1A),        # ink
-    "muted":   RGBColor(0x6F, 0x6A, 0x61),        # muted
-    "white":   RGBColor(0xFF, 0xFF, 0xFF),
-    "band":    RGBColor(0xDE, 0xE4, 0xE8),        # table header band (light steel-grey)
-    "bg_light": RGBColor(0xF2, 0xF2, 0xF2),       # zebra stripe / subtle fill
-    "callout": RGBColor(0xF7, 0xF4, 0xED),        # IC callout background
-    "border":  RGBColor(0xD9, 0xD3, 0xC7),        # grid
-}
+COLORS = {k: RGBColor(*hex_rgb(v)) for k, v in COLORS_HEX.items()}
 
-# Hex versions for matplotlib (charts) — same palette.
-COLORS_HEX = {
-    "primary": "#22333F",   # slate
-    "steel":   "#3B5566",
-    "accent":  "#3B5566",   # steel
-    "ochre":   "#B0790F",
-    "brick":   "#8C2D2D",
-    "olive":   "#5A6B3B",
-    "critical": "#8C2D2D",
-    "high":    "#B0790F",
-    "medium":  "#9A5B2F",
-    "low":     "#5A6B3B",
-    "info":    "#3B5566",
-    "text":    "#1F1D1A",
-    "muted":   "#6F6A61",
-    "band":    "#DEE4E8",
-    "bg_light": "#F2F2F2",
-    "border":  "#D9D3C7",
-}
-
-# Ordered categorical cycle for charts (colorblind-safe, no default matplotlib
-# blue) — matches theme.py CYCLE so a DOCX pie and a PDF figure agree.
-CYCLE_HEX = ["#3B5566", "#8C2D2D", "#B0790F", "#5A6B3B", "#22333F", "#C9B892",
-             "#5A4A7A", "#2F6B6B"]
-
-SEVERITY_COLORS_HEX = {
-    "CRITICAL": "#8C2D2D",
-    "HIGH": "#B0790F",
-    "MEDIUM": "#9A5B2F",
-    "LOW": "#5A6B3B",
-    "INFO": "#3B5566",
-}
-
-SEVERITY_COLORS = {
-    "CRITICAL": COLORS["critical"],
-    "HIGH": COLORS["high"],
-    "MEDIUM": COLORS["medium"],
-    "LOW": COLORS["low"],
-    "INFO": COLORS["info"],
-}
+SEVERITY_COLORS = {k: RGBColor(*hex_rgb(v)) for k, v in SEVERITY_COLORS_HEX.items()}
 
 # Cell-shading strings (raw hex, no '#') DERIVED from the palette above — so the
 # one place to change the header band / zebra colour is COLORS_HEX, not scattered

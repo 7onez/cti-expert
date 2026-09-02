@@ -217,15 +217,24 @@ def _append_manifest(case_dir: str, entry: dict) -> None:
     json.dump(arr, open(man, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
-def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int) -> dict | None:
-    """Latest public web-scan screenshot of the host (urlscan.io keeps one PNG per scan)."""
+def _same_host(url: str, h: str) -> bool:
+    n = _host_of(url or "")
+    return n == h or n == "www." + h
+
+
+
+def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int, created: str | None = None) -> dict | None:
+    """Newest public web-scan screenshot of the host itself (never a subdomain's), preferring scans
+    made after the current registration."""
     import wp_net  # noqa: E402  (WP_TOOLS already on sys.path)
-    intel = wp_net.urlscan_intel(h, limit=5, max_pages=1)
-    scans = [s for s in (intel or {}).get("all_scans") or [] if s.get("uuid")]
+    intel = wp_net.urlscan_intel(h, limit=10, max_pages=1)
+    scans = [s for s in (intel or {}).get("all_scans") or [] if s.get("uuid") and _same_host(s.get("url") or "", h)]
     if not scans:
         return None
     scans.sort(key=lambda s: s.get("time") or "", reverse=True)
-    for s in scans[:3]:
+    cut = (created or "")[:10]
+    after = [s for s in scans if cut and (s.get("time") or "")[:10] >= cut]
+    for s in (after or scans)[:3]:
         try:
             png = _http_get(f"https://urlscan.io/screenshots/{s['uuid']}.png", proxy, timeout)
         except Exception:  # noqa: BLE001
@@ -241,32 +250,55 @@ def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int) -> 
         if png[:8] == b"\x89PNG\r\n\x1a\n":
             import struct
             w, hgt = struct.unpack(">II", png[16:24])
-        entry = {"url": s.get("url") or f"https://{h}/", "final_url": None,
-                 "captured_at": (s.get("time") or "")[:19].replace(" ", "T") + ("Z" if s.get("time") and not str(s.get("time")).endswith("Z") else ""),
+        scan_time = (s.get("time") or "")[:19].replace(" ", "T")
+        scan_time = scan_time + ("Z" if scan_time and not scan_time.endswith("Z") else "")
+        entry = {"url": f"https://{h}/", "final_url": None, "captured_at": scan_time,
                  "path": path, "sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png),
                  "width": w, "height": hgt, "title": None, "proxy": bool(proxy), "label": "landing page (public web-scan capture)",
                  "actions": [], "full_page": False, "tool": "house_report_captures", "host": h,
-                 "source": "urlscan", "source_url": s.get("result"), "archived_at": s.get("time"),
+                 "source": "urlscan", "source_url": s.get("result"), "archived_at": scan_time,
                  "retrieved_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
         _append_manifest(case_dir, entry)
         return entry
     return None
 
 
-def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: int) -> dict | None:
-    """Render the nearest web-archive snapshot of the host (toolbar-free `if_` view) in Chromium."""
+def _wayback_after(h: str, created: str | None) -> tuple:
+    """(snapshot_ts, note). The newest 200-OK snapshot on/after the registration date via the CDX API;
+    else the nearest snapshot of any date (the previous owner's page, flagged by the caller)."""
     import wp_net  # noqa: E402
-    import wp_screenshot  # noqa: E402
+    cut = re.sub(r"\D", "", (created or "")[:10])
+    if cut:
+        import urllib.request
+        cdx = (f"http://web.archive.org/cdx/search/cdx?url={h}&output=json&filter=statuscode:200"
+               f"&from={cut}&limit=-1")
+        try:
+            req = urllib.request.Request(cdx, headers={"User-Agent": _ARCHIVE_UA})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                rows = json.load(r)
+            if rows and len(rows) > 1:
+                return rows[-1][1], ""
+        except Exception as ex:  # noqa: BLE001
+            if "429" in str(ex):
+                return None, "rate-limited"
     snap, ts = wp_net.wayback_closest(f"https://{h}/")
     if not snap:
-        # archive.org throttles bursts of availability lookups (HTTP 429); one spaced retry
-        # separates "not archived" from "asked too fast"
-        time.sleep(6)
+        time.sleep(6)                     # archive.org throttles bursts (HTTP 429): one spaced retry
         snap, ts = wp_net.wayback_closest(f"https://{h}/")
     if not snap or not ts:
-        return None
+        return None, ""
     m = re.search(r"/web/(\d{14})", snap)
-    ts = m.group(1) if m else str(ts)
+    return (m.group(1) if m else str(ts)), ""
+
+
+def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: int, created: str | None = None) -> dict | None:
+    """Render a web-archive snapshot of the host (toolbar-free `if_` view) in Chromium."""
+    import wp_screenshot  # noqa: E402
+    ts, note = _wayback_after(h, created)
+    if not ts:
+        if note:
+            sys.stderr.write(f"web archive {note} for {h}\n")
+        return None
     render_url = f"https://web.archive.org/web/{ts}if_/https://{h}/"
     archived_at = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"
     e = wp_screenshot.capture_screenshot(render_url, case=case, root=root, proxy=proxy, timeout=timeout,
@@ -277,13 +309,52 @@ def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: i
     # the ARCHIVE date is when the page looked like this; the render time is kept as retrieved_at
     e["retrieved_at"] = e["captured_at"]
     e["captured_at"] = archived_at
+    e["url"] = f"https://{h}/"
     return e
 
 
-def _archive_copy(h: str, case_dir: str, case: str, root: str, proxy, timeout: int) -> dict | None:
-    """Public web-scan screenshot first (an actual capture), then a rendered web-archive snapshot."""
-    for fetch in (lambda: _urlscan_capture(h, case_dir, proxy, timeout),
-                  lambda: _wayback_capture(h, case, root, proxy, timeout)):
+# Negative results are remembered so a "regenerate the PDF" does not re-ask both archives for hosts
+# that have no copy anywhere; a check older than this is repeated (archives grow).
+_NEGATIVE_TTL_DAYS = 7
+
+
+def _archive_checks_path(case_dir: str) -> str:
+    return os.path.join(case_dir, "evidence", "screenshots", "archive_checks.json")
+
+
+def _recent_negative(case_dir: str, h: str) -> bool:
+    try:
+        d = json.load(open(_archive_checks_path(case_dir), encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    when = (d.get(h) or {}).get("checked_at")
+    if not when:
+        return False
+    try:
+        t = dt.datetime.strptime(when[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return False
+    return (dt.datetime.now(dt.timezone.utc) - t).days < _NEGATIVE_TTL_DAYS
+
+
+def _record_negative(case_dir: str, h: str) -> None:
+    p = _archive_checks_path(case_dir)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    d[h] = {"source": "none", "checked_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
+def _archive_copy(h: str, case_dir: str, case: str, root: str, proxy, timeout: int, created: str | None = None) -> dict | None:
+    """Public web-scan screenshot first (an actual capture), then a rendered web-archive snapshot;
+    both prefer a copy made after the current registration. Negative results are cached."""
+    if _recent_negative(case_dir, h):
+        return None
+    for fetch in (lambda: _urlscan_capture(h, case_dir, proxy, timeout, created),
+                  lambda: _wayback_capture(h, case, root, proxy, timeout, created)):
         try:
             got = fetch()
         except Exception as ex:  # noqa: BLE001
@@ -291,14 +362,17 @@ def _archive_copy(h: str, case_dir: str, case: str, root: str, proxy, timeout: i
             got = None
         if got:
             return got
+    _record_negative(case_dir, h)
+    time.sleep(2)                          # pace the next host's archive lookups
     return None
 
 
 def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: int = 40,
-                    timeout: int = 30, budget_s: int = 600, archives: bool = True) -> tuple:
+                    timeout: int = 30, budget_s: int = 600, archives: bool = True, created_of=None) -> tuple:
     """Render every host without a capture; fall back to a public web-scan / web-archive copy when the
     live page will not render — or rendered near-empty (an error line, an interstitial), which shows the
     server's state, not the page. Returns (new_entries: dict, skipped: list[(host, why)])."""
+    created_of = created_of or (lambda h: None)
     todo = [h for h in hosts if h not in existing][:max_hosts]
     skipped = [(h, "capture cap reached") for h in hosts[max_hosts:] if h not in existing]
     # live captures that are near-empty get an archive attempt (never a live re-render: same server)
@@ -343,7 +417,7 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
             skipped.append((h, f"page did not render ({live_why})"))
             continue
         # Live render failed: the archives are the record of what the page showed.
-        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60))   # archives are slow
+        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60), created_of(h))   # archives are slow
         if got:
             new[h] = _entry(h, got)
         else:
@@ -355,7 +429,7 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
             continue
         if time.monotonic() > deadline:
             break
-        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60))
+        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60), created_of(h))
         if got and not _near_empty(got["path"]):
             new[h] = _entry(h, got)          # replaces the near-empty live capture in the report
     return new, skipped
@@ -404,22 +478,23 @@ def landing_pages_md(entries: dict, hosts: list, seed: str, skipped: list, rep_d
     shown = [h for h in order if not _near_empty(entries[h]["path"])]
     empty = [h for h in order if h not in shown]
     L = ["## Landing pages", ""]
-    n_arch = sum(1 for h in shown if (entries[h].get("source") or "live") != "live")
-    n_prior = sum(1 for h in shown if predates_registration(entries[h], created_of(h)))
+    prior = [h for h in shown if predates_registration(entries[h], created_of(h))]
+    current = [h for h in shown if h not in prior]
+    n_arch = sum(1 for h in current if (entries[h].get("source") or "live") != "live")
     if shown:
         L += [f"Each estate host below was rendered in a headless desktop browser and captured as evidence; "
-              f"{len(shown)} of {len(hosts)} pages rendered with content"
+              f"{len(current)} of {len(hosts)} pages rendered with content"
               + (f", {n_arch} of them from a public web-scan or web-archive copy because the live page would "
                  f"not render or rendered empty (each such caption says so and dates the copy)" if n_arch else "")
-              + (f"; {n_prior} archive cop{'y' if n_prior == 1 else 'ies'} predate{'s' if n_prior == 1 else ''} the "
-                 f"current registration and show a previous owner's site, which is evidence of drop-catching, "
-                 f"not of this operator's content" if n_prior else "")
+              + (f". A further {len(prior)} archive cop{'y' if len(prior) == 1 else 'ies'} predate{'s' if len(prior) == 1 else ''} the "
+                 f"current registration and show{'s' if len(prior) == 1 else ''} a previous owner's site — evidence for drop-catching, not this "
+                 f"operator's content; {'it is' if len(prior) == 1 else 'they are'} shown last and not counted above" if prior else "")
               + ". The capture time (UTC) is in each caption and the full-page SHA-256 in the evidence ledger "
               "(Appendix B).", ""]
     else:
         L += ["No landing page with content could be captured for this build; the reasons are recorded "
               "below so the absence is a stated result, not a silent one.", ""]
-    for h in shown:
+    for h in current + prior:
         e = entries[h]
         png, cropped = page_fit_png(e, rep_dir)
         when = (e.get("captured_at") or "")[:16].replace("T", " ") + " UTC"
