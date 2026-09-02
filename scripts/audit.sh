@@ -84,6 +84,21 @@ echo "== 5. core modules byte-compile =="
 if python3 -m py_compile intel_engine/tools/collect_core.py intel_engine/tools/intel.py \
         intel_engine/harness/tools.py 2>/tmp/audit_pc; then note "compile ok"; else cat /tmp/audit_pc; bad "compile failed"; fi
 
+echo "== 5b. no live credential in the committed tree (values, not names) =="
+# A pasted key must live in .env (gitignored) only. Match common vendor key SHAPES against every
+# tracked file; .env.example is allowed to carry the NAME but never a value after '='.
+if git ls-files -z | xargs -0 grep -nE \
+     -e '\b(sk|pk)_(live|test)_[A-Za-z0-9]{16,}' \
+     -e '\bAKIA[0-9A-Z]{16}\b' \
+     -e '\bghp_[A-Za-z0-9]{36}\b' \
+     -e '\bxox[abpr]-[A-Za-z0-9-]{20,}' \
+     -e '^[A-Z][A-Z0-9_]*(API_)?(KEY|TOKEN|PAT|SECRET|PASSWORD)=[^# ]{16,}' \
+     2>/dev/null | grep -v 'scripts/audit.sh'; then
+  bad "credential-shaped value in a tracked file — move it to .env"
+else
+  note "no credential-shaped values in tracked files"
+fi
+
 echo "== 6. zero-dep test runners =="
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \

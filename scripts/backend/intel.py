@@ -127,6 +127,8 @@ DISPATCH = {
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
     "exhaust":       ("WebPivot/tools/wp_exhaust.py", []),     # which collection layers actually
                                                                # RAN vs silently never fired
+    "netlas":        ("WebPivot/tools/wp_netlas.py", []),    # Netlas DNS/scan/WHOIS/cert index —
+                                                             # ip|ns|spf|domain|san|title|plan|raw
     "buckets":       ("WebPivot/tools/wp_buckets.py", []),   # GrayHatWarfare open-bucket /
                                                              # exposed-file search (/secrets, /docleak)
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
@@ -223,6 +225,7 @@ BLURB = {
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "exhaust": "which collection layers RAN vs silently never fired",
+    "netlas": "Netlas index: reverse a NON-CDN origin IP / NS / SPF include to apexes (ip|ns|spf|domain|san|title|plan|raw; --count)",
     "buckets": "GrayHatWarfare open-bucket / exposed-file search (/secrets, /docleak)",
     "kb": "query the KB (--stats/--entity/--cluster/--shared)",
     "recall": "\"seen this seed before?\" — query.py --entity fallback",
