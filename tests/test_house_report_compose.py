@@ -376,6 +376,57 @@ def test_urlscan_fallback_takes_the_host_itself_and_prefers_post_registration_sc
         assert not hre._recent_negative(case, "b.example.com")
 
 
+def test_cooccurrence_matrix_drops_excluded_indicators_and_keeps_join_keys():
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    try:
+        import cti_docx_heatmaps as hm
+    except ImportError:          # zero-dep runner without matplotlib/numpy: the figure path is optional there
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        case = os.path.join(tmp, "cases", "CASE-0001")
+        os.makedirs(os.path.join(case, "whois"))
+        os.makedirs(os.path.join(tmp, "knowledge"))
+        hosts = ["a.example.com", "b.example.com", "c.example.com"]
+        for h in hosts:
+            json.dump({"registrant_email": "persona@example.com", "registrant_phone": "+1.2025550100"},
+                      open(os.path.join(case, "whois", h + ".json"), "w"))
+        json.dump({"edges": [{"source": h, "target": "favicon:123456789", "rel": "favicon"} for h in hosts]
+                   + [{"source": h, "target": "js_bundle:abcdef", "rel": "js_bundle"} for h in hosts[:2]]},
+                  open(os.path.join(case, "case_graph.json"), "w"))
+        open(os.path.join(tmp, "knowledge", "reference.jsonl"), "w").write(
+            json.dumps({"type": "favicon", "value": "favicon:123456789", "verdict": "benign"}) + "\n")
+        data = {"subjects": [{"type": "domain", "label": h} for h in hosts], "connections": [],
+                "ioc_exclude": ["abcdef"]}
+        dom, shared, mat = hm.build_cooccurrence(data, case, cap=None)
+    assert dom == hosts
+    assert shared == ["registrant_email:persona@example.com", "registrant_phone:+1.2025550100"]   # join keys only
+    assert not any("favicon" in t or "js_bundle" in t for t in shared)       # benign ledger + ioc_exclude honoured
+    assert hm._domains({"subjects": [{"type": "domain", "label": f"d{i}.example.com"} for i in range(30)]}, None).__len__() == 30
+    assert len(hm._domains({"subjects": [{"type": "domain", "label": f"d{i}.example.com"} for i in range(30)]})) == 24
+
+
+def test_archive_negative_is_cached_only_when_both_sources_answered():
+    import house_report_captures as hre
+    with tempfile.TemporaryDirectory() as tmp:
+        case = os.path.join(tmp, "cases", "CASE-0001")
+        os.makedirs(case)
+        calls = []
+        orig_u, orig_w = hre._urlscan_capture, hre._wayback_capture
+        try:
+            hre._urlscan_capture = lambda *a, **k: (_ for _ in ()).throw(hre._Transient("throttled"))
+            hre._wayback_capture = lambda *a, **k: None
+            hre.time.sleep = lambda s: calls.append(s)
+            assert hre._archive_copy("x.example.com", case, "CASE-0001", tmp, None, 5) is None
+            assert not hre._recent_negative(case, "x.example.com")             # transient -> not cached
+            hre._urlscan_capture = lambda *a, **k: None
+            assert hre._archive_copy("x.example.com", case, "CASE-0001", tmp, None, 5) is None
+            assert hre._recent_negative(case, "x.example.com")                 # both answered "no copy" -> cached
+        finally:
+            hre._urlscan_capture, hre._wayback_capture = orig_u, orig_w
+            import time as _t
+            hre.time.sleep = _t.sleep
+
+
 def test_capture_failure_reasons_are_a_closed_vocabulary():
     import house_report_captures as hre
     assert hre._reason(Exception("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.example/")) == "DNS did not resolve"
@@ -405,6 +456,8 @@ _TESTS = [
     test_analytic_charts_embed_where_they_belong_and_absences_are_stated,
     test_archive_copy_before_registration_is_a_previous_owner_not_the_landing_page,
     test_urlscan_fallback_takes_the_host_itself_and_prefers_post_registration_scans,
+    test_cooccurrence_matrix_drops_excluded_indicators_and_keeps_join_keys,
+    test_archive_negative_is_cached_only_when_both_sources_answered,
 ]
 
 

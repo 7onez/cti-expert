@@ -184,7 +184,36 @@ def _attr_map(json_data, case_dir=None, cap=DOMAIN_CAP):
                 if frm in attrs and to and re.match(
                         r"^(favicon|css_hash|js_bundle|indicator|ip|cert|dom_skeleton|comment):", to):
                     attrs[frm].add(to)
+    # §2.5 false-positive control: an attribute the report itself excludes from the IOC set
+    # (ioc_exclude) or that the reference ledger marks benign (a saturated favicon, a provider SPF
+    # include) must not appear as a "correlation" — the figure would contradict the text.
+    excluded = _excluded_tokens(json_data, case_dir)
+    if excluded:
+        for d in attrs:
+            attrs[d] = {t for t in attrs[d] if t.lower() not in excluded
+                        and t.partition(":")[2].lower() not in excluded}
     return attrs
+
+
+def _excluded_tokens(json_data, case_dir=None):
+    """Lower-cased values from the report's ioc_exclude list plus every 'benign' verdict in the
+    knowledge reference ledger (looked up beside the case dir: <root>/knowledge/reference.jsonl)."""
+    out = set()
+    for v in json_data.get("ioc_exclude") or []:
+        s = v if isinstance(v, str) else (v.get("value") if isinstance(v, dict) else None)
+        if s:
+            out.add(str(s).lower())
+    if case_dir:
+        ref = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(case_dir))), "knowledge", "reference.jsonl")
+        if os.path.isfile(ref):
+            for line in open(ref, encoding="utf-8"):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get("verdict") == "benign" and r.get("value"):
+                    out.add(str(r["value"]).lower())
+    return out
 
 
 def build_cooccurrence(json_data, case_dir=None, cap=DOMAIN_CAP):

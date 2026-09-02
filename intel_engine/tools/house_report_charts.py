@@ -113,8 +113,10 @@ def heatmaps_md(figs: dict, observed: str) -> str:
         L += [f"![Registration heatmap — estate domains registered per month. Observed {observed}.]"
               f"({os.path.basename(figs['fig_registrations'])}){{width=85%}}", ""]
     if figs.get("fig_cooccurrence"):
-        L += [f"![Domain × shared-indicator matrix — a filled cell means the domain carries that indicator; "
-              f"only indicators shared by two or more estate hosts are shown. Observed {observed}.]"
+        L += [f"![Domain × shared-indicator matrix — a filled cell means the domain carries that indicator. "
+              f"Only indicators shared by two or more estate hosts are shown, and none that the false-positive "
+              f"control excluded (shared providers, kit defaults, saturated favicons); a domain whose registration "
+              f"is privacy-redacted has no such indicator and is absent. Observed {observed}.]"
               f"({os.path.basename(figs['fig_cooccurrence'])}){{width=85%}}", ""]
     return "\n".join(L).rstrip()
 
