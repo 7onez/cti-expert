@@ -102,7 +102,8 @@ def _playwright_proxy(proxy: str) -> dict:
 def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str = ".",
                        proxy: str = None, timeout: int = None, ua: str = None,
                        label: str = None, click: str = None, wait_selector: str = None,
-                       wait_after: float = None, full_page: bool = True) -> dict:
+                       wait_after: float = None, full_page: bool = True,
+                       extra: dict = None, host: str = None) -> dict:
     """Render `url` to a full-page PNG and record it as evidence. Returns the manifest entry.
 
     Many evidence pages sit behind ONE interaction — a splash/"enter" gate, a cookie wall, a
@@ -110,10 +111,14 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     string (e.g. "ENTER NETWORK") and re-waits; `wait_selector` waits for a CSS selector to
     appear; `wait_after` is a final settle in seconds. Every action taken is recorded in the
     manifest entry (`actions`), because a capture that clicked through a gate must SAY it did.
+
+    `extra` is merged into the manifest entry (provenance such as source="wayback", the archive
+    URL and its archived_at) and `host` files the capture under the SUBJECT host when `url` is a
+    third-party copy of it (a web-archive snapshot URL is not the host it shows).
     """
     from playwright.sync_api import sync_playwright              # lazy: playwright only needed here
 
-    host = _host_slug(url)
+    host = _host_slug(host) if host else _host_slug(url)
     if outdir:
         base = outdir
         man_dir = outdir
@@ -191,7 +196,10 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
         "actions": actions,
         "full_page": full_page,
         "tool": "wp_screenshot",
+        "host": host,
     }
+    if extra:
+        entry.update(extra)
     # Append to the per-case manifest (one file listing every capture in the case).
     os.makedirs(man_dir, exist_ok=True)
     man = os.path.join(man_dir, LAYOUT["manifest_filename"])

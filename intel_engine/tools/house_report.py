@@ -33,7 +33,7 @@ the body (Rule 12) while every indicator VALUE is kept (Rule 12a).
 Usage:
     python3 tools/house_report.py <CASE-ID|case-dir> [--stem NAME] [--classification TLP:AMBER]
                                   [--audience technical|executive|le] [--no-figures] [--md-only]
-                                  [--no-screenshots] [--max-screenshots 40] [--screenshot-timeout 30]
+                                  [--no-screenshots] [--max-screenshots 40] [--screenshot-timeout 30] [--no-archive-fallback]
 """
 from __future__ import annotations
 
@@ -99,6 +99,7 @@ from cti_case_meta import resolve_seed, case_classification  # noqa: E402
 import house_report_captures as hrc  # noqa: E402
 import house_report_correlations as hrx  # noqa: E402
 import house_report_dossier as hrd  # noqa: E402
+import house_report_charts as hrg  # noqa: E402
 
 _KEEP: set = set()
 _HOSTS: set = set()
@@ -768,6 +769,9 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           f"Findings are graded for the decision stated above: an *assessed* same-operator link is actionable; "
           f"a named individual is not asserted below *high confidence*. Current confidence: **{conf}**.", "",
           "## Confidence scales used", "", SCALES_MD, ""]
+    charts = figs.get("charts") or {}
+    if hrg.confidence_md(charts, observed):
+        L += ["The case's own judgments, placed on both scales:", "", hrg.confidence_md(charts, observed), ""]
 
     # III — Scope and seed
     L += ["# Scope and the seed", ""]
@@ -807,24 +811,31 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += [f"![{cap}]({os.path.basename(figs['relationship'])})", ""]
     if figs.get("legend"):
         L += [f"![Legend — edge classes.]({os.path.basename(figs['legend'])})", ""]
+    if hrg.entity_map_md(charts, observed):
+        L += [hrg.entity_map_md(charts, observed), ""]
     waves = registration_waves(c)
     if waves:
         L += ["## Registration waves", "", waves, ""]
     if figs.get("captures") or figs.get("captures_skipped"):
         L += [hrc.landing_pages_md(figs.get("captures") or {}, figs.get("capture_hosts") or c["hosts"], seed,
                                    figs.get("captures_skipped") or [], figs.get("rep_dir") or c["dir"],
-                                   _sector, _md_escape), ""]
+                                   _sector, _md_escape,
+                                   created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created")), ""]
 
     # VI — Infrastructure lifecycle
     L += ["# Infrastructure and lifecycle", ""]
     if figs.get("timeline"):
         L += [f"![Temporal view — registrations, hosting windows and certificate validity per domain. Observed {observed}.]({os.path.basename(figs['timeline'])})", ""]
+    if hrg.heatmaps_md(charts, observed):
+        L += [hrg.heatmaps_md(charts, observed), ""]
+    if charts and hrg.missing_md(charts):
+        L += [hrg.missing_md(charts), ""]
     corr, dated_ledger = condense_timeline_ledger(figs.get("timeline_md", ""), figs.get("timeline_events"))
     if corr:
         L += ["## Temporal correlations", "", corr, ""]
     excluded = find_section(secs, "excluded")
     if excluded:
-        L += ["## Tested and excluded", "", demote_headings(scrub(excluded)), ""]
+        L += ["## Tested and excluded (false-positive control)", "", demote_headings(scrub(excluded)), ""]
 
     # VII — Attribution
     L += ["# Attribution", ""]
@@ -882,7 +893,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           "# Evidence ledger", "", evidence_ledger(c), ""]
     if dated_ledger:
         L += ["## Dated observations", "", dated_ledger, ""]
-    caps = hrc.captures_ledger_md(figs.get("captures") or {})
+    caps = hrc.captures_ledger_md(figs.get("captures") or {},
+                                  created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created"))
     if caps:
         L += ["## Captured pages", "", caps, ""]
     L += [
@@ -904,7 +916,7 @@ def cluster_hosts(c: dict) -> list:
 
 def build(case_arg: str, stem: str | None, classification: str, audience: str,
           no_figures: bool, md_only: bool, screenshots: bool = True,
-          max_screenshots: int = 40, screenshot_timeout: int = 30) -> dict:
+          max_screenshots: int = 40, screenshot_timeout: int = 30, archives: bool = True) -> dict:
     case_dir = _case_dir(case_arg)
     if not os.path.isdir(case_dir):
         sys.exit(f"case dir not found: {case_dir}")
@@ -958,7 +970,7 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
     skipped: list = []
     if screenshots and not no_figures:
         new, skipped = hrc.capture_missing(case_dir, hosts, existing, max_hosts=max_screenshots,
-                                           timeout=screenshot_timeout)
+                                           timeout=screenshot_timeout, archives=archives)
         existing.update(new)
         for h, why in skipped:
             sys.stderr.write(f"landing page not captured: {h} — {why}\n")
@@ -966,13 +978,23 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
     figs["captures_skipped"] = skipped
     figs["capture_hosts"] = hosts
     figs["rep_dir"] = rep_dir
+    # Analytic charts shared with the dashboard (confidence scatter, heatmaps, entity map).
+    if not no_figures:
+        figs["charts"] = hrg.build_figures(case_dir, rep_dir)
+        for k, why in (figs["charts"].get("_notes") or {}).items():
+            sys.stderr.write(f"analytic figure {k}: {why}\n")
+    else:
+        figs["charts"] = {n: (os.path.join(rep_dir, n + ".png") if os.path.exists(os.path.join(rep_dir, n + ".png")) else None)
+                          for n in hrg.FIGURES}
 
     md = compose(c, figs, classification, observed)
     md = normalize_dashes(md)
     md_path = os.path.join(rep_dir, stem + ".md")
     open(md_path, "w", encoding="utf-8").write(md)
-    out = {"markdown": md_path, **{k: v for k, v in figs.items() if k not in ("timeline_md", "timeline_events", "captures", "captures_skipped", "capture_hosts", "rep_dir")},
-           "landing_pages": f"{len(figs['captures'])}/{len(hosts)} captured"}
+    out = {"markdown": md_path, **{k: v for k, v in figs.items() if k not in ("timeline_md", "timeline_events", "captures", "captures_skipped", "capture_hosts", "rep_dir", "charts")},
+           "landing_pages": f"{len(figs['captures'])}/{len(hosts)} captured"
+           + (f" ({sum(1 for e in figs['captures'].values() if (e.get('source') or 'live') != 'live')} from archives)" if figs["captures"] else ""),
+           "analytic_charts": ", ".join(n for n in hrg.FIGURES if figs["charts"].get(n)) or "none"}
     if md_only:
         return out
     cmd = [PY, RENDER_REPORT, md_path, os.path.join(rep_dir, stem), "--case-id", c["case"],
@@ -1002,10 +1024,12 @@ def main():
                     help="do not capture missing landing pages (existing captures under the case are still embedded)")
     ap.add_argument("--max-screenshots", type=int, default=40, help="cap on hosts to capture in one build")
     ap.add_argument("--screenshot-timeout", type=int, default=30, help="per-page navigation timeout, seconds")
+    ap.add_argument("--no-archive-fallback", action="store_true",
+                    help="when a live page will not render, do NOT fall back to a public web-scan / web-archive copy")
     a = ap.parse_args()
     out = build(a.case, a.stem, a.classification, a.audience, a.no_figures, a.md_only,
                 screenshots=not a.no_screenshots, max_screenshots=a.max_screenshots,
-                screenshot_timeout=a.screenshot_timeout)
+                screenshot_timeout=a.screenshot_timeout, archives=not a.no_archive_fallback)
     for k, v in out.items():
         print(f"  {k:14s} {v if k != 'render_error' else chr(10) + v}")
     sys.exit(1 if "render_error" in out else 0)
