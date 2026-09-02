@@ -88,8 +88,10 @@ uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
 uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
 # PRESENTATION choice (a) / (b) / (d) — pipeline case (has a case dir): the editorial house report
 #   (IntelReport: pandoc + xelatex; sections I–XI, both confidence scales, relationship graph, inference
-#   chain, temporal view, Appendices A–D). Deterministic; masks third-party selectors; writes
-#   cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}
+#   chain, temporal view, landing-page captures, domain dossiers, Appendices A–E). Deterministic; masks
+#   third-party selectors; writes cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}.
+#   Only egress: missing landing pages are rendered via the research-egress proxy policy (blocked ->
+#   stated, never forced); add --no-screenshots for a fully offline build.
 python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>
 # PRESENTATION choice (a) / (b) / (d) — no case dir (report JSON only): dashboard-style DOCX + same-layout PDF
 uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx --pdf

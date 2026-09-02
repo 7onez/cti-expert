@@ -4,10 +4,12 @@ house_report.py — deterministic case dir -> IntelReport house-style PDF + DOCX
 
 The harness emits the editorial deliverable (Roman-numbered sections, Methodology with the
 Admiralty / ICD-203 scales, relationship graph, attribution inference chain, temporal view,
-Appendices A–D) only when an LLM writes the report body. The deterministic `/cti` path
-(`pipeline open`, `case-store snapshot`) stopped at the dashboard generators, so a case worked
-without the harness never got the house PDF. This module composes that document from what the
-case dir already holds — zero LLM, zero egress:
+landing-page captures, Appendices A–E) only when an LLM writes the report body. The deterministic
+`/cti` path (`pipeline open`, `case-store snapshot`) stopped at the dashboard generators, so a case
+worked without the harness never got the house PDF. This module composes that document from what
+the case dir already holds — zero LLM. The ONLY egress is the landing-page capture of estate hosts
+that have no screenshot yet (Rule 15a); it goes through the research-egress proxy policy exactly as
+a pipeline fetch does and is skipped, not forced, when that policy blocks (`--no-screenshots` opts out):
 
   assessment.json      engine schema (bluf, decision_supported, attribution_level, confidence,
                        cluster[], evidence[], alternatives[], gaps[], next_pivots[])
@@ -21,14 +23,17 @@ case dir already holds — zero LLM, zero egress:
   knowledge/reference.jsonl   §2.5 verdicts (benign rows are marked "excluded")
   knowledge/operators.jsonl   confirmed-operator ledger
 
-House rules enforced here (IntelReport SKILL Rules 0–13): decision statement first, BLUF table,
-Methodology early with both scales, headings unnumbered (the template numbers them), appendices
-after a raw `\\appendix` marker, appendices = evidence only, no internal tool/vendor/path names
-in the body (Rule 12) while every indicator VALUE is kept (Rule 12a).
+House rules enforced here (IntelReport SKILL Rules 0–23): decision statement first, BLUF table and
+bottom-line callout, Methodology early with both scales, headings unnumbered (the template numbers
+them), one captured landing page per estate host inline in the cluster section, per-domain dossiers,
+appendices after a raw `\\appendix` marker, appendices = evidence only (full capture hashes in the
+ledger), a glossary of the terms the report actually uses, no internal tool/vendor/path names in
+the body (Rule 12) while every indicator VALUE is kept (Rule 12a).
 
 Usage:
     python3 tools/house_report.py <CASE-ID|case-dir> [--stem NAME] [--classification TLP:AMBER]
                                   [--audience technical|executive|le] [--no-figures] [--md-only]
+                                  [--no-screenshots] [--max-screenshots 40] [--screenshot-timeout 30]
 """
 from __future__ import annotations
 
@@ -91,6 +96,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "scripts"))
 from cti_text_normalize import normalize_dashes  # noqa: E402
 from cti_third_party_mask import mask_third_parties as _mask, load_case_mask  # noqa: E402
 from cti_case_meta import resolve_seed, case_classification  # noqa: E402
+import house_report_captures as hrc  # noqa: E402
+import house_report_correlations as hrx  # noqa: E402
+import house_report_dossier as hrd  # noqa: E402
 
 _KEEP: set = set()
 _HOSTS: set = set()
@@ -260,62 +268,24 @@ def demote_headings(text: str) -> str:
     return re.sub(r"^#{1,6} ", "### ", text, flags=re.M)
 
 
-def condense_timeline_ledger(md: str) -> tuple:
+def condense_timeline_ledger(md: str, events: dict | None = None) -> tuple:
     """case_timeline markdown -> (body correlations, appendix ledger table).
 
-    Body: only the non-empty temporal findings, cert batches as one compact table, none of the
-    per-item guidance boilerplate. Appendix: the dated rows minus our own collection provenance
-    ('collected by us' is internal working, Rule 13) with the explanatory tail of each 'What'
-    cell dropped."""
-    if not md:
+    Body: the non-empty temporal findings as tables with one judgment sentence each — never the
+    tool's per-row guidance or its raw field dumps (house_report_correlations.temporal_correlations_md).
+    Appendix: the dated rows minus our own collection provenance ('collected by us' is internal
+    working, Rule 13) with the explanatory tail of each 'What' cell dropped."""
+    if not md and not events:
         return "", ""
-    lines = md.splitlines()
-    # ---- appendix table
     tbl = ["| When (UTC) | Host | Observation | Source (grade) |", "|:--:|:------------|:------------------|:------|"]
-    for ln in lines:
+    for ln in md.splitlines():
         m = re.match(r"\|\s*(\d{4}-\d{2}-\d{2}[^|]*)\|\s*([^|]*)\|\s*([^|]*)\|\s*([^|]*)\|", ln)
         if not m or "collected by us" in m.group(3):
             continue
         what = m.group(3).split(" — ")[0].strip()
         tbl.append(f"| {m.group(1).strip()[:10]} | {m.group(2).strip()} | {_md_escape(what)} | {m.group(4).strip()} |")
     ledger = "\n".join(tbl) if len(tbl) > 2 else ""
-    # ---- body correlations
-    body, sec, items = [], None, []
-    def flush():
-        nonlocal sec, items, body
-        if sec and items:
-            body.append(f"### {sec}")
-            body.append("")
-            if sec.lower().startswith("certificate issuance"):
-                batches = []
-                for it in items:
-                    mm = re.match(r"\*\*(.+?)\*\*\s*—\s*(.*)", it)
-                    if mm:
-                        batches.append((mm.group(1)[:10], [h.strip() for h in mm.group(2).split(",")]))
-                big = sorted(batches, key=lambda b: -len(b[1]))[:3]
-                body += [f"{len(batches)} certificate-issuance windows were shared by two or more estate hosts"
-                         + (" — largest: " + "; ".join(f"{d} ({', '.join('`' + h + '`' for h in hs)})" for d, hs in big) if big else "")
-                         + ". Shared CAs with 90-day auto-renewal synchronise unrelated sites too, so this corroborates provisioning habits and does not bind domains.", ""]
-            else:
-                body += [f"- {it}" for it in items]
-            body.append("")
-        sec, items = None, []
-    in_corr = False
-    for ln in lines:
-        if ln.startswith("## Temporal correlations"):
-            in_corr = True
-            continue
-        if not in_corr:
-            continue
-        if ln.startswith("### "):
-            flush(); sec = ln[4:].strip(); continue
-        st = ln.strip()
-        if not st or st.startswith("_Nothing found") or st.startswith("- issuers:") or st.startswith("- _"):
-            continue
-        if st.startswith("- "):
-            items.append(st[2:])
-    flush()
-    return "\n".join(body).strip(), ledger
+    return hrx.temporal_correlations_md(md, _md_escape, events), ledger
 
 
 def parse_judgments(section: str) -> list:
@@ -686,15 +656,8 @@ def evidence_ledger(c: dict) -> str:
 
 
 def domain_profiles(c: dict) -> str:
-    rows = ["| Domain | Registered | Expires | Registrar | Registrant (WHOIS) | Nameservers |",
-            "|:----------------|:--:|:--:|:--------|:------------|:--------|"]
-    for h in c["hosts"]:
-        w = c["whois"].get(h, {})
-        reg = " / ".join(x for x in (w.get("registrant_name"), w.get("registrant_email"), w.get("registrant_phone")) if x) or "privacy-redacted"
-        ns = ", ".join((w.get("name_servers") or [])[:2]) or "—"
-        rows.append(f"| `{h}` | {(w.get('created') or '—')[:10]} | {(w.get('expires') or '—')[:10]} | "
-                    f"{_md_escape(w.get('registrar'))} | {_md_escape(reg)} | {_md_escape(ns)} |")
-    return "\n".join(rows)
+    """Rule 17: one Field · Value dossier per domain (status, registration, hosting, TLS, mail, stack, artifacts)."""
+    return hrd.domain_profiles_md(c, _load_json, _md_escape)
 
 
 def cluster_enumeration(c: dict) -> str:
@@ -785,14 +748,15 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           f"classification: {classification}", f"date: {observed}", "---", ""]
 
     # I — Executive summary
-    L += ["# Executive Summary — Key Judgments", "", f"*{purpose}*", "", f"**BLUF.** {bluf}", ""]
+    L += ["# Executive Summary — Key Judgments", "", f"*{purpose}*", ""]
     L += ["| # | Key judgment | Confidence | Grade |", "|:-:|:----------------------------|:--------|:--:|"]
     if judgments:
         for i, j in enumerate(judgments, 1):
             L.append(f"| {i} | {_md_escape(j['title'])} | {_md_escape(j['confidence'] or conf)} | {j['grade'] or '—'} |")
     else:
         L.append(f"| 1 | {_md_escape(attribution)} | {conf} | — |")
-    L += ["", f"- **Attribution:** {_md_escape(attribution)}", f"- **Confidence:** {conf}"]
+    L += ["", f"> **Bottom line.** {bluf}", ""]
+    L += [f"- **Attribution:** {_md_escape(attribution)}", f"- **Confidence:** {conf}"]
     if a.get("premise_verdict"):
         L.append(f"- **Stated premise:** {_md_escape(scrub(a.get('premise', '')))} — verdict **{a['premise_verdict']}**")
     if brand:
@@ -846,12 +810,16 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     waves = registration_waves(c)
     if waves:
         L += ["## Registration waves", "", waves, ""]
+    if figs.get("captures") or figs.get("captures_skipped"):
+        L += [hrc.landing_pages_md(figs.get("captures") or {}, figs.get("capture_hosts") or c["hosts"], seed,
+                                   figs.get("captures_skipped") or [], figs.get("rep_dir") or c["dir"],
+                                   _sector, _md_escape), ""]
 
     # VI — Infrastructure lifecycle
     L += ["# Infrastructure and lifecycle", ""]
     if figs.get("timeline"):
         L += [f"![Temporal view — registrations, hosting windows and certificate validity per domain. Observed {observed}.]({os.path.basename(figs['timeline'])})", ""]
-    corr, dated_ledger = condense_timeline_ledger(figs.get("timeline_md", ""))
+    corr, dated_ledger = condense_timeline_ledger(figs.get("timeline_md", ""), figs.get("timeline_events"))
     if corr:
         L += ["## Temporal correlations", "", corr, ""]
     excluded = find_section(secs, "excluded")
@@ -914,15 +882,29 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           "# Evidence ledger", "", evidence_ledger(c), ""]
     if dated_ledger:
         L += ["## Dated observations", "", dated_ledger, ""]
+    caps = hrc.captures_ledger_md(figs.get("captures") or {})
+    if caps:
+        L += ["## Captured pages", "", caps, ""]
     L += [
           "# Domain and infrastructure profiles", "", domain_profiles(c), "",
           "# Cluster enumeration", "", cluster_enumeration(c), ""]
-    return "\n".join(L)
+    body = "\n".join(L)
+    return body + "\n# Glossary\n\n" + hrd.glossary_md(body) + "\n"
 
 
 # --------------------------------------------------------------------------- main
+def cluster_hosts(c: dict) -> list:
+    """Seed first, then every non-singleton cluster member — the hosts whose landing pages the report shows."""
+    members = {d for k in (c["clusters"].get("clusters") or []) if not k.get("singleton")
+               for d in (k.get("domains") or []) if "." in d}
+    members = members or set(c["hosts"])
+    members.add(c["seed"])
+    return [c["seed"]] + sorted(members - {c["seed"]})
+
+
 def build(case_arg: str, stem: str | None, classification: str, audience: str,
-          no_figures: bool, md_only: bool) -> dict:
+          no_figures: bool, md_only: bool, screenshots: bool = True,
+          max_screenshots: int = 40, screenshot_timeout: int = 30) -> dict:
     case_dir = _case_dir(case_arg)
     if not os.path.isdir(case_dir):
         sys.exit(f"case dir not found: {case_dir}")
@@ -966,12 +948,31 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
             figs["timeline"] = tl
         if tl_md:
             figs["timeline_md"] = tl_md
+    ev = os.path.join(rep_dir, "timeline_events.json")
+    if os.path.exists(ev):
+        figs["timeline_events"] = _load_json(ev, {}) or {}
+
+    # Landing-page captures (Rule 15a): reuse what the case holds; capture the rest through the egress policy.
+    hosts = cluster_hosts(c)
+    existing = hrc.existing_screenshots(case_dir)
+    skipped: list = []
+    if screenshots and not no_figures:
+        new, skipped = hrc.capture_missing(case_dir, hosts, existing, max_hosts=max_screenshots,
+                                           timeout=screenshot_timeout)
+        existing.update(new)
+        for h, why in skipped:
+            sys.stderr.write(f"landing page not captured: {h} — {why}\n")
+    figs["captures"] = {h: existing[h] for h in hosts if h in existing}
+    figs["captures_skipped"] = skipped
+    figs["capture_hosts"] = hosts
+    figs["rep_dir"] = rep_dir
 
     md = compose(c, figs, classification, observed)
     md = normalize_dashes(md)
     md_path = os.path.join(rep_dir, stem + ".md")
     open(md_path, "w", encoding="utf-8").write(md)
-    out = {"markdown": md_path, **{k: v for k, v in figs.items() if k != "timeline_md"}}
+    out = {"markdown": md_path, **{k: v for k, v in figs.items() if k not in ("timeline_md", "timeline_events", "captures", "captures_skipped", "capture_hosts", "rep_dir")},
+           "landing_pages": f"{len(figs['captures'])}/{len(hosts)} captured"}
     if md_only:
         return out
     cmd = [PY, RENDER_REPORT, md_path, os.path.join(rep_dir, stem), "--case-id", c["case"],
@@ -997,8 +998,14 @@ def main():
     ap.add_argument("--audience", default="technical", choices=["technical", "executive", "le"])
     ap.add_argument("--no-figures", action="store_true", help="skip figure generation")
     ap.add_argument("--md-only", action="store_true", help="compose the markdown only; do not render")
+    ap.add_argument("--no-screenshots", action="store_true",
+                    help="do not capture missing landing pages (existing captures under the case are still embedded)")
+    ap.add_argument("--max-screenshots", type=int, default=40, help="cap on hosts to capture in one build")
+    ap.add_argument("--screenshot-timeout", type=int, default=30, help="per-page navigation timeout, seconds")
     a = ap.parse_args()
-    out = build(a.case, a.stem, a.classification, a.audience, a.no_figures, a.md_only)
+    out = build(a.case, a.stem, a.classification, a.audience, a.no_figures, a.md_only,
+                screenshots=not a.no_screenshots, max_screenshots=a.max_screenshots,
+                screenshot_timeout=a.screenshot_timeout)
     for k, v in out.items():
         print(f"  {k:14s} {v if k != 'render_error' else chr(10) + v}")
     sys.exit(1 if "render_error" in out else 0)

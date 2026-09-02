@@ -87,6 +87,18 @@ def _title(html: str):
     return re.sub(r"\s+", " ", m.group(1)).strip()[:200] if m else None
 
 
+def _playwright_proxy(proxy: str) -> dict:
+    """Chromium rejects credentials inside the proxy URL — split `scheme://user:pass@host:port`
+    (the form the research-egress pool stores) into Playwright's server/username/password."""
+    from urllib.parse import urlsplit, unquote
+    u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+    out = {"server": f"{u.scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")}
+    if u.username:
+        out["username"] = unquote(u.username)
+        out["password"] = unquote(u.password or "")
+    return out
+
+
 def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str = ".",
                        proxy: str = None, timeout: int = None, ua: str = None,
                        label: str = None, click: str = None, wait_selector: str = None,
@@ -118,12 +130,26 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     with sync_playwright() as p:
         launch = {"headless": True}
         if proxy:
-            launch["proxy"] = {"server": proxy}
+            launch["proxy"] = _playwright_proxy(proxy)
         browser = p.chromium.launch(**launch)
         ctx = browser.new_context(user_agent=ua or CAP["user_agent"],
                                   viewport={"width": 1280, "height": 800})
         page = ctx.new_page()
-        page.goto(url, timeout=to_ms, wait_until="networkidle")
+        try:
+            page.goto(url, timeout=to_ms, wait_until="networkidle")
+        except Exception as e:                                   # noqa: BLE001
+            m = re.search(r"net::(ERR_CERT_[A-Z_]+)", str(e))
+            if not m:
+                browser.close()
+                raise
+            # A certificate that does not match the hostname is itself evidence (a shared or
+            # mis-provisioned cert). Render anyway and SAY so in the manifest, never silently.
+            ctx.close()
+            ctx = browser.new_context(user_agent=ua or CAP["user_agent"],
+                                      viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
+            page = ctx.new_page()
+            page.goto(url, timeout=to_ms, wait_until="networkidle")
+            actions.append(f"TLS certificate error ignored ({m.group(1)})")
         if click:
             try:
                 page.get_by_text(click, exact=False).first.click(timeout=8000)
