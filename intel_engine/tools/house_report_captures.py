@@ -228,7 +228,9 @@ def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int, cre
     made after the current registration."""
     import wp_net  # noqa: E402  (WP_TOOLS already on sys.path)
     intel = wp_net.urlscan_intel(h, limit=10, max_pages=1)
-    scans = [s for s in (intel or {}).get("all_scans") or [] if s.get("uuid") and _same_host(s.get("url") or "", h)]
+    if not intel or intel.get("error") or not intel.get("pages"):
+        raise _Transient("web-scan index did not answer")       # not a 'no copy' — never cache it
+    scans = [s for s in intel.get("all_scans") or [] if s.get("uuid") and _same_host(s.get("url") or "", h)]
     if not scans:
         return None
     scans.sort(key=lambda s: s.get("time") or "", reverse=True)
@@ -261,6 +263,10 @@ def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int, cre
         _append_manifest(case_dir, entry)
         return entry
     return None
+
+
+class _Transient(Exception):
+    """An archive did not answer (throttled, proxy fault, timeout): the negative is NOT definitive."""
 
 
 def _wayback_after(h: str, created: str | None) -> tuple:
@@ -297,7 +303,7 @@ def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: i
     ts, note = _wayback_after(h, created)
     if not ts:
         if note:
-            sys.stderr.write(f"web archive {note} for {h}\n")
+            raise _Transient(f"web archive {note}")
         return None
     render_url = f"https://web.archive.org/web/{ts}if_/https://{h}/"
     archived_at = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"
@@ -353,16 +359,19 @@ def _archive_copy(h: str, case_dir: str, case: str, root: str, proxy, timeout: i
     both prefer a copy made after the current registration. Negative results are cached."""
     if _recent_negative(case_dir, h):
         return None
+    definitive = True
     for fetch in (lambda: _urlscan_capture(h, case_dir, proxy, timeout, created),
                   lambda: _wayback_capture(h, case, root, proxy, timeout, created)):
         try:
             got = fetch()
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:  # noqa: BLE001 — any failure to ASK is transient; only an answered
+            definitive = False                                   # "no copy" from both sources is cached
             sys.stderr.write(f"archive fallback detail ({h}): {str(ex).splitlines()[0][:200]}\n")
             got = None
         if got:
             return got
-    _record_negative(case_dir, h)
+    if definitive:
+        _record_negative(case_dir, h)
     time.sleep(2)                          # pace the next host's archive lookups
     return None
 
