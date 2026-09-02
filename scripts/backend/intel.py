@@ -166,6 +166,7 @@ DISPATCH = {
     "graphviz":      ("IntelGraph/scripts/render_graphviz.py", []),
     "mermaid":       ("IntelGraph/scripts/render_mermaid.py",  []),
     "report":        ("IntelReport/scripts/render_report.py",  []),
+    "house-report":  ("tools/house_report.py",         []),   # case dir → editorial PDF+DOCX, deterministic
     "evidence-report": ("WebPivot/tools/evidence_report.py",   []),
     "timeline":      ("IntelGraph/scripts/case_timeline.py",   []),  # infrastructure lifecycle
     # ── disseminate (IntelShare) ─────────────────────────────────────────
@@ -255,6 +256,7 @@ BLURB = {
     "graphviz": "IntelGraph: render a .dot → PNG/SVG",
     "mermaid": "IntelGraph: render Mermaid → PNG/SVG",
     "report": "IntelReport: assessment .md → PDF/DOCX (house style)",
+    "house-report": "case dir → IntelReport editorial PDF+DOCX (I–XI + Appendices, figures) — no LLM",
     "evidence-report": "build an evidence report / MISP export for a case",
     "timeline": "infrastructure lifecycle timeline + dated evidence ledger",
     "misp-export": "build a MISP event from the case (local only, no network)",
