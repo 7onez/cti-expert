@@ -18,8 +18,11 @@ Pass **absolute paths** — the dispatcher runs with its own working directory a
 will not resolve.
 
 **House report** (the editorial PDF + DOCX, composed deterministically from the case dir — sections
-I–XI, both confidence scales, relationship graph, inference chain, temporal view, Appendices A–D;
-third-party selectors masked, internal tool/path names scrubbed):
+I–XI, both confidence scales + confidence scatter, relationship graph + entity map, inference chain,
+temporal view + heatmaps, landing-page captures (web-scan / web-archive stand-ins for dead pages),
+per-domain dossiers, Appendices A–E incl. glossary; third-party selectors masked, internal tool/path
+names scrubbed; the landing-page step is the only egress — proxy-gated, `--no-screenshots` to skip,
+`--no-archive-fallback` to forbid the stand-ins):
 
 ```bash
 python3 scripts/backend/intel.py house-report <CASE-ID>          # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}
