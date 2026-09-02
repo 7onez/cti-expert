@@ -15,6 +15,7 @@ import re
 import glob
 import json
 import datetime as _dt
+from io import BytesIO
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -121,36 +122,15 @@ def collect_registrations(json_data, case_dir=None):
             if role_by_label.get(d, "") not in _NON_MALICIOUS_ROLES]
 
 
+from cti_report_figures import registration_heatmap_png, cooccurrence_heatmap_png  # noqa: E402
+
+
 def add_registration_heatmap(doc, regs):
     """Year x month heatmap; cell = count of malicious domains registered that month."""
-    if not regs:
+    png = registration_heatmap_png(regs)
+    if not png:
         return False
-    years = sorted({ym[0] for _, ym in regs})
-    grid = np.zeros((len(years), 12), dtype=int)
-    yidx = {y: i for i, y in enumerate(years)}
-    for _, (y, mo) in regs:
-        grid[yidx[y], mo - 1] += 1
-
-    fig, ax = plt.subplots(figsize=(7.4, max(1.5, 0.5 * len(years) + 1.0)), dpi=150)
-    im = ax.imshow(grid, cmap="OrRd", aspect="auto", vmin=0,
-                   vmax=max(1, grid.max()))
-    ax.set_xticks(range(12))
-    ax.set_xticklabels(["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], fontsize=8)
-    ax.set_yticks(range(len(years)))
-    ax.set_yticklabels([str(y) for y in years], fontsize=9)
-    for i in range(len(years)):
-        for j in range(12):
-            if grid[i, j]:
-                ax.text(j, i, str(grid[i, j]), ha="center", va="center",
-                        fontsize=9, fontweight="bold",
-                        color="white" if grid[i, j] > grid.max() * 0.6 else COLORS_HEX["text"])
-    ax.set_title("Malicious-domain registration timeline (count per month)",
-                 fontsize=10, color=COLORS_HEX["text"], pad=8)
-    cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
-    cbar.ax.tick_params(labelsize=7)
-    fig.tight_layout()
-    doc.add_picture(_save_fig_to_buffer(fig), width=Inches(6.4))
+    doc.add_picture(BytesIO(png), width=Inches(6.4))
     doc.paragraphs[-1].alignment = 1
     return True
 
@@ -224,26 +204,10 @@ def _attr_label(token):
 
 def add_cooccurrence_heatmap(doc, built):
     """domains (rows) x shared indicators (cols); filled cell = domain carries indicator."""
-    if not built:
+    png = cooccurrence_heatmap_png(built, _attr_label)
+    if not png:
         return False
-    domains, shared, mat = built
-    fig, ax = plt.subplots(
-        figsize=(max(6.0, 0.5 * len(shared) + 2.5), max(2.0, 0.34 * len(domains) + 1.2)),
-        dpi=150)
-    ax.imshow(mat, cmap="Blues", aspect="auto", vmin=0, vmax=1)
-    ax.set_xticks(range(len(shared)))
-    ax.set_xticklabels([_attr_label(a) for a in shared], rotation=45,
-                       ha="right", fontsize=7)
-    ax.set_yticks(range(len(domains)))
-    ax.set_yticklabels([_short(d) for d in domains], fontsize=7)
-    ax.set_xticks(np.arange(-.5, len(shared), 1), minor=True)
-    ax.set_yticks(np.arange(-.5, len(domains), 1), minor=True)
-    ax.grid(which="minor", color="#d9dde2", linewidth=0.6)
-    ax.tick_params(which="minor", length=0)
-    ax.set_title("Domain \u00d7 shared-indicator correlation", fontsize=10,
-                 color=COLORS_HEX["text"], pad=8)
-    fig.tight_layout()
-    doc.add_picture(_save_fig_to_buffer(fig), width=Inches(6.4))
+    doc.add_picture(BytesIO(png), width=Inches(6.4))
     doc.paragraphs[-1].alignment = 1
     return True
 

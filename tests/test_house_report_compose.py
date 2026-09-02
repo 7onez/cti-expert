@@ -284,6 +284,80 @@ def test_landing_pages_section_and_capture_ledger():
         assert f"`{s['sha256']}`" in ledger                                             # full hash, Rule 21, blank included
 
 
+def test_archive_copies_are_captioned_as_such_and_outranked_by_live():
+    import house_report_captures as hre
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        rep = os.path.join(case, "report")
+        os.makedirs(rep)
+        sd = os.path.join(case, "evidence", "screenshots", "sibling-a.example.com")
+        os.makedirs(sd)
+        w = 64
+        content = _png(w, 90, lambda y: (b"\x00\x00\x00" if y < 45 else b"\xff\xff\xff") * w)
+        open(os.path.join(sd, "a_urlscan.png"), "wb").write(content)
+        open(os.path.join(sd, "b_live.png"), "wb").write(content)
+        json.dump([
+            {"url": "https://sibling-a.example.com/", "path": os.path.join(sd, "a_urlscan.png"), "host": "sibling-a.example.com",
+             "captured_at": "2026-06-28T15:14:00Z", "sha256": "a" * 64, "source": "urlscan",
+             "source_url": "https://urlscan.io/result/0000/", "archived_at": "2026-06-28T15:14:00Z"},
+            {"url": "https://sibling-a.example.com/", "path": os.path.join(sd, "b_live.png"), "host": "sibling-a.example.com",
+             "captured_at": "2026-01-01T00:00:00Z", "sha256": "b" * 64},
+        ], open(os.path.join(case, "evidence", "screenshots", "manifest.json"), "w"))
+        shots = hre.existing_screenshots(case)
+        assert shots["sibling-a.example.com"]["source"] == "live"          # older live render outranks the archive copy
+        # now only the archive copy remains
+        json.dump([{"url": "https://sibling-a.example.com/", "path": os.path.join(sd, "a_urlscan.png"), "host": "sibling-a.example.com",
+                    "captured_at": "2026-06-28T15:14:00Z", "sha256": "a" * 64, "source": "urlscan",
+                    "source_url": "https://urlscan.io/result/0000/", "archived_at": "2026-06-28T15:14:00Z"}],
+                  open(os.path.join(case, "evidence", "screenshots", "manifest.json"), "w"))
+        shots = hre.existing_screenshots(case)
+        hr.KB = os.path.join(tmp, "kb-empty")
+        os.makedirs(hr.KB, exist_ok=True)
+        c = hr.load_case(case)
+        md = hr.compose(c, {"captures": shots, "captures_skipped": [], "capture_hosts": c["hosts"], "rep_dir": rep},
+                        "TLP:AMBER", "2026-01-01")
+    sec = md.split("## Landing pages")[1].split("# Infrastructure and lifecycle")[0]
+    assert "1 of them from a public web-scan or web-archive copy" in sec
+    assert "as recorded by a public web-scan service, scanned 2026-06-28 15:14 UTC; the live page did not render" in sec
+    ledger = md.split("## Captured pages")[1].split("# Domain and infrastructure profiles")[0]
+    assert "| public web-scan capture | https://urlscan.io/result/0000/ |" in ledger      # frozen public link, Rule 21
+
+
+def test_analytic_charts_embed_where_they_belong_and_absences_are_stated():
+    import house_report_charts as hrg
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        rep = os.path.join(case, "report")
+        os.makedirs(rep)
+        for n in ("fig_confidence", "fig_entity_map", "fig_registrations"):
+            open(os.path.join(rep, n + ".png"), "wb").write(_png(8, 8, lambda y: b"\xff\xff\xff" * 8))
+        charts = {"fig_confidence": os.path.join(rep, "fig_confidence.png"), "fig_entity_map": os.path.join(rep, "fig_entity_map.png"),
+                  "fig_registrations": os.path.join(rep, "fig_registrations.png"), "fig_cooccurrence": None,
+                  "_notes": {"fig_cooccurrence": "nothing to draw"}}
+        hr.KB = os.path.join(tmp, "kb-empty")
+        os.makedirs(hr.KB, exist_ok=True)
+        c = hr.load_case(case)
+        md = hr.compose(c, {"charts": charts}, "TLP:AMBER", "2026-01-01")
+    meth = md.split("# Methodology")[1].split("# Scope and the seed")[0]
+    assert "(fig_confidence.png)" in meth and "placed on both scales" in meth           # §II, under the scales
+    clus = md.split("# The cluster")[1].split("# Infrastructure and lifecycle")[0]
+    assert "(fig_entity_map.png)" in clus                                              # §V
+    infra = md.split("# Infrastructure and lifecycle")[1].split("# Attribution")[0]
+    assert "(fig_registrations.png){width=85%}" in infra
+    assert "Not drawn for this build: shared-indicator matrix" in infra                 # Rule 19
+    assert hrg.missing_md({n: "x" for n in hrg.FIGURES}) == ""
+
+
+def test_archive_copy_before_registration_is_a_previous_owner_not_the_landing_page():
+    import house_report_captures as hre
+    e = {"source": "wayback", "archived_at": "2025-12-30T10:00:29Z", "captured_at": "2025-12-30T10:00:29Z"}
+    assert hre.predates_registration(e, "2026-05-21 03:27:49 UTC")
+    assert not hre.predates_registration(e, "2025-01-01 00:00:00 UTC")
+    assert not hre.predates_registration({"source": "live", "captured_at": "2020-01-01T00:00:00Z"}, "2026-05-21")
+    md = hre.landing_pages_md({}, [], "seed.example.com", [], "/tmp", lambda h: "Medical", lambda s: s)
+    assert "## Landing pages" in md and "No landing page with content" in md
+
+
 def test_capture_failure_reasons_are_a_closed_vocabulary():
     import house_report_captures as hre
     assert hre._reason(Exception("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.example/")) == "DNS did not resolve"
@@ -309,6 +383,9 @@ _TESTS = [
     test_registrant_country_drops_the_namibia_placeholder,
     test_temporal_correlations_prefer_structured_events_and_survive_scrub,
     test_capture_failure_reasons_are_a_closed_vocabulary,
+    test_archive_copies_are_captioned_as_such_and_outranked_by_live,
+    test_analytic_charts_embed_where_they_belong_and_absences_are_stated,
+    test_archive_copy_before_registration_is_a_previous_owner_not_the_landing_page,
 ]
 
 

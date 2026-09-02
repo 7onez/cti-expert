@@ -5,7 +5,6 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 from io import BytesIO
 from docx.shared import Inches
@@ -94,93 +93,17 @@ def add_severity_bar(doc, findings: list) -> None:
     last_para.alignment = 1
 
 
-_ICD203 = [
-    ("Almost\nno chance", 2), ("Very\nunlikely", 12), ("Unlikely", 32),
-    ("Roughly\neven", 50), ("Likely", 67), ("Very\nlikely", 87),
-    ("Almost\ncertain", 97),
-]
-_ADMIRALTY = [
-    ("A \u00b7 Completely reliable", ), ("B \u00b7 Usually reliable", ),
-    ("C \u00b7 Fairly reliable", ), ("D \u00b7 Not usually reliable", ),
-    ("E \u00b7 Unreliable", ), ("F \u00b7 Cannot be judged", ),
-]
-
-
-def _likelihood_col(conf: int) -> int:
-    c = max(0, min(100, int(conf)))
-    for i, hi in enumerate((5, 20, 45, 55, 80, 95)):
-        if c < hi:
-            return i
-    return 6
-
-
-def _reliability_row(verified) -> int:
-    # Admiralty source reliability derived from corroboration state.
-    if verified is True:
-        return 1   # B — usually reliable (independently corroborated)
-    if verified is False:
-        return 3   # D — not usually reliable (single, uncorroborated)
-    return 2       # C — fairly reliable (default OSINT posture)
+from cti_report_figures import confidence_matrix_png  # noqa: E402  — one figure source for DOCX + house report
 
 
 def add_confidence_matrix(doc, findings: list, subjects: list) -> None:
-    """Two-axis confidence explainer: ICD-203 likelihood (x) vs Admiralty source
-    reliability (y). The labelled grid IS the legend; each finding is plotted in its
-    cell, coloured by severity, so a reader sees both the scale and where the case's
-    evidence sits on it."""
-    ncol, nrow = len(_ICD203), len(_ADMIRALTY)
-    fig, ax = plt.subplots(figsize=(8.2, 4.4), dpi=150)
-
-    # faint reference grid
-    ax.imshow(np.zeros((nrow, ncol)), cmap="Greys", vmin=0, vmax=1, aspect="auto")
-    ax.set_xticks(np.arange(-.5, ncol, 1), minor=True)
-    ax.set_yticks(np.arange(-.5, nrow, 1), minor=True)
-    ax.grid(which="minor", color="#c8cdd3", linewidth=0.8)
-    ax.tick_params(which="minor", length=0)
-
-    ax.set_xticks(range(ncol))
-    ax.set_xticklabels(["%s\n%d%%" % (lbl, pct) for lbl, pct in _ICD203], fontsize=7)
-    ax.set_yticks(range(nrow))
-    ax.set_yticklabels([a[0] for a in _ADMIRALTY], fontsize=8)
-    ax.set_xlabel("ICD-203 likelihood  \u2014  probability the judgment is correct",
-                  fontsize=8.5, color=COLORS_HEX["text"])
-    ax.set_ylabel("Admiralty  \u2014  source reliability", fontsize=8.5,
-                  color=COLORS_HEX["text"])
-    ax.set_title("Confidence scale (two-axis): ICD-203 likelihood \u00d7 Admiralty reliability",
-                 fontsize=10, color=COLORS_HEX["text"], pad=10)
-
-    # plot findings, jittered within a cell so co-located markers stay visible
-    sub_verified = {s.get("id"): s.get("verified") for s in (subjects or [])}
-    rng = np.random.default_rng(7)
-    seen_counts = {}
-    handles = {}
-    for f in findings or []:
-        col = _likelihood_col(f.get("confidence", 0))
-        row = _reliability_row(sub_verified.get(f.get("subject_id")))
-        k = (row, col)
-        seen_counts[k] = seen_counts.get(k, 0) + 1
-        jx = (rng.random() - 0.5) * 0.5 if seen_counts[k] > 1 else 0.0
-        jy = (rng.random() - 0.5) * 0.5 if seen_counts[k] > 1 else 0.0
-        sev = str(f.get("weight", "INFO")).upper()
-        color = SEVERITY_COLORS_HEX.get(sev, COLORS_HEX["muted"])
-        ax.scatter(col + jx, row + jy, s=150, color=color, edgecolor="white",
-                   linewidth=1.2, zorder=3)
-        handles.setdefault(sev, color)
-
-    if handles:
-        order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
-        patches = [mpatches.Patch(color=handles[s], label=s)
-                   for s in order if s in handles]
-        ax.legend(handles=patches, title="Finding severity", fontsize=7,
-                  title_fontsize=7.5, loc="upper left", bbox_to_anchor=(1.01, 1.0),
-                  frameon=False)
-
-    ax.set_xlim(-0.5, ncol - 0.5)
-    ax.set_ylim(nrow - 0.5, -0.5)  # A at top
-    buf = _save_fig_to_buffer(fig)
-    doc.add_picture(buf, width=Inches(6.6))
-    last_para = doc.paragraphs[-1]
-    last_para.alignment = 1
+    """Two-axis confidence explainer: ICD-203 likelihood (x) vs Admiralty source reliability (y);
+    drawn by cti_report_figures so the house report shows the identical picture."""
+    png = confidence_matrix_png(findings, subjects)
+    if not png:
+        return
+    doc.add_picture(BytesIO(png), width=Inches(6.6))
+    doc.paragraphs[-1].alignment = 1
 
 
 # The Event Timeline lives in its own module (cti_docx_timeline_chart.py); re-exported here so

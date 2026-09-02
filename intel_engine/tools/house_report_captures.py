@@ -84,14 +84,28 @@ def existing_screenshots(case_dir: str) -> dict:
             p = next((x for x in cands if x and os.path.exists(x)), None)
             if not p:
                 continue
-            host = _host_of(e.get("url") or "")
+            host = (e.get("host") or "").lower() or _host_of(e.get("url") or "")
+            src = e.get("source") or "live"
+            # an archive copy is dated by the ARCHIVE (when the page looked like this), the file by our fetch
+            cand = {"host": host, "path": p, "url": e.get("url") or f"https://{host}/",
+                    "captured_at": (e.get("archived_at") if src != "live" else None) or e.get("captured_at") or _mtime_utc(p),
+                    "retrieved_at": e.get("retrieved_at") or e.get("captured_at"), "sha256": e.get("sha256"),
+                    "title": e.get("title"), "actions": e.get("actions") or [],
+                    "final_url": e.get("final_url"), "source": src,
+                    "source_url": e.get("source_url"), "archived_at": e.get("archived_at")}
             prev = out.get(host)
-            if prev and prev.get("sha256") and (prev.get("captured_at") or "") > (e.get("captured_at") or ""):
-                continue   # keep the newer capture
-            out[host] = {"host": host, "path": p, "url": e.get("url") or f"https://{host}/",
-                         "captured_at": e.get("captured_at") or _mtime_utc(p), "sha256": e.get("sha256"),
-                         "title": e.get("title"), "actions": e.get("actions") or [],
-                         "final_url": e.get("final_url")}
+            if prev and prev.get("sha256"):
+                # a live render outranks an archive copy; among equals the newer capture wins. The best
+                # archive copy is kept under "archive" so a near-empty live render can fall back to it.
+                rank = {"live": 2, "urlscan": 1, "wayback": 1}
+                if (rank.get(prev.get("source") or "live", 0), prev.get("captured_at") or "") > \
+                        (rank.get(src, 0), cand["captured_at"] or ""):
+                    if src != "live" and (not prev.get("archive") or (prev["archive"].get("captured_at") or "") < cand["captured_at"]):
+                        prev["archive"] = cand
+                    continue
+                if (prev.get("source") or "live") != "live":
+                    cand["archive"] = prev
+            out[host] = cand
     for e in out.values():
         if not e.get("sha256"):
             e["sha256"] = _sha256(e["path"])
@@ -164,12 +178,133 @@ def _caption_safe(s: str) -> str:
     return re.sub(r"[\[\]\\]", " ", s).strip()
 
 
+def _entry(h: str, e: dict) -> dict:
+    return {"host": h, "path": e["path"], "url": e["url"], "captured_at": e["captured_at"],
+            "sha256": e["sha256"], "title": e.get("title"), "actions": e.get("actions") or [],
+            "final_url": e.get("final_url"), "source": e.get("source") or "live",
+            "source_url": e.get("source_url"), "archived_at": e.get("archived_at")}
+
+
+# --------------------------------------------------------------------------- archive fallback
+# When the live page will not render (host offline, DNS gone, TLS dead) the site is still on record
+# at two public archives. Both are third parties, not the target, so they are fetched through the
+# research proxy when one is configured and directly otherwise — the egress policy guards the
+# analyst's IP against the OPERATOR's infrastructure, not against archive.org.
+_ARCHIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+
+def _http_get(url: str, proxy: str | None, timeout: int = 30) -> bytes:
+    import urllib.request
+    handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
+    opener = urllib.request.build_opener(*handlers)
+    req = urllib.request.Request(url, headers={"User-Agent": _ARCHIVE_UA})
+    with opener.open(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _append_manifest(case_dir: str, entry: dict) -> None:
+    man_dir = os.path.join(case_dir, "evidence", "screenshots")
+    os.makedirs(man_dir, exist_ok=True)
+    man = os.path.join(man_dir, "manifest.json")
+    arr = []
+    if os.path.exists(man):
+        try:
+            arr = json.load(open(man, encoding="utf-8"))
+        except ValueError:
+            arr = []
+    arr = arr if isinstance(arr, list) else []
+    arr.append(entry)
+    json.dump(arr, open(man, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+
+def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int) -> dict | None:
+    """Latest public web-scan screenshot of the host (urlscan.io keeps one PNG per scan)."""
+    import wp_net  # noqa: E402  (WP_TOOLS already on sys.path)
+    intel = wp_net.urlscan_intel(h, limit=5, max_pages=1)
+    scans = [s for s in (intel or {}).get("all_scans") or [] if s.get("uuid")]
+    if not scans:
+        return None
+    scans.sort(key=lambda s: s.get("time") or "", reverse=True)
+    for s in scans[:3]:
+        try:
+            png = _http_get(f"https://urlscan.io/screenshots/{s['uuid']}.png", proxy, timeout)
+        except Exception:  # noqa: BLE001
+            continue
+        if len(png) < 1000:
+            continue
+        out_dir = os.path.join(case_dir, "evidence", "screenshots", re.sub(r"[^A-Za-z0-9._-]", "_", h))
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = os.path.join(out_dir, f"{stamp}_urlscan.png")
+        open(path, "wb").write(png)
+        w, hgt = (None, None)
+        if png[:8] == b"\x89PNG\r\n\x1a\n":
+            import struct
+            w, hgt = struct.unpack(">II", png[16:24])
+        entry = {"url": s.get("url") or f"https://{h}/", "final_url": None,
+                 "captured_at": (s.get("time") or "")[:19].replace(" ", "T") + ("Z" if s.get("time") and not str(s.get("time")).endswith("Z") else ""),
+                 "path": path, "sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png),
+                 "width": w, "height": hgt, "title": None, "proxy": bool(proxy), "label": "landing page (public web-scan capture)",
+                 "actions": [], "full_page": False, "tool": "house_report_captures", "host": h,
+                 "source": "urlscan", "source_url": s.get("result"), "archived_at": s.get("time"),
+                 "retrieved_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        _append_manifest(case_dir, entry)
+        return entry
+    return None
+
+
+def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: int) -> dict | None:
+    """Render the nearest web-archive snapshot of the host (toolbar-free `if_` view) in Chromium."""
+    import wp_net  # noqa: E402
+    import wp_screenshot  # noqa: E402
+    snap, ts = wp_net.wayback_closest(f"https://{h}/")
+    if not snap:
+        # archive.org throttles bursts of availability lookups (HTTP 429); one spaced retry
+        # separates "not archived" from "asked too fast"
+        time.sleep(6)
+        snap, ts = wp_net.wayback_closest(f"https://{h}/")
+    if not snap or not ts:
+        return None
+    m = re.search(r"/web/(\d{14})", snap)
+    ts = m.group(1) if m else str(ts)
+    render_url = f"https://web.archive.org/web/{ts}if_/https://{h}/"
+    archived_at = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"
+    e = wp_screenshot.capture_screenshot(render_url, case=case, root=root, proxy=proxy, timeout=timeout,
+                                         label="landing page (web-archive snapshot)", host=h,
+                                         extra={"source": "wayback", "source_url": f"https://web.archive.org/web/{ts}/https://{h}/",
+                                                "archived_at": archived_at,
+                                                "retrieved_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+    # the ARCHIVE date is when the page looked like this; the render time is kept as retrieved_at
+    e["retrieved_at"] = e["captured_at"]
+    e["captured_at"] = archived_at
+    return e
+
+
+def _archive_copy(h: str, case_dir: str, case: str, root: str, proxy, timeout: int) -> dict | None:
+    """Public web-scan screenshot first (an actual capture), then a rendered web-archive snapshot."""
+    for fetch in (lambda: _urlscan_capture(h, case_dir, proxy, timeout),
+                  lambda: _wayback_capture(h, case, root, proxy, timeout)):
+        try:
+            got = fetch()
+        except Exception as ex:  # noqa: BLE001
+            sys.stderr.write(f"archive fallback detail ({h}): {str(ex).splitlines()[0][:200]}\n")
+            got = None
+        if got:
+            return got
+    return None
+
+
 def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: int = 40,
-                    timeout: int = 30, budget_s: int = 600) -> tuple:
-    """Render every host without a capture. Returns (new_entries: dict, skipped: list[(host, why)])."""
+                    timeout: int = 30, budget_s: int = 600, archives: bool = True) -> tuple:
+    """Render every host without a capture; fall back to a public web-scan / web-archive copy when the
+    live page will not render — or rendered near-empty (an error line, an interstitial), which shows the
+    server's state, not the page. Returns (new_entries: dict, skipped: list[(host, why)])."""
     todo = [h for h in hosts if h not in existing][:max_hosts]
     skipped = [(h, "capture cap reached") for h in hosts[max_hosts:] if h not in existing]
-    if not todo:
+    # live captures that are near-empty get an archive attempt (never a live re-render: same server)
+    empties = [h for h in hosts if h in existing and (existing[h].get("source") or "live") == "live"
+               and _near_empty(existing[h]["path"])] if archives else []
+    if not todo and not empties:
         return {}, skipped
     try:
         import playwright  # noqa: F401
@@ -190,19 +325,39 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
             continue
         # One retry through the NEXT egress on a proxy-side fault (tunnel refused/reset) — a proxy
         # hiccup must not read as "the page did not render".
+        live_why = None
         for attempt, proxy in enumerate(pool[:2]):
             try:
                 e = wp_screenshot.capture_screenshot(f"https://{h}/", case=case, root=root, proxy=proxy,
                                                      timeout=timeout, label="landing page")
-                new[h] = {"host": h, "path": e["path"], "url": e["url"], "captured_at": e["captured_at"],
-                          "sha256": e["sha256"], "title": e.get("title"), "actions": e.get("actions") or [],
-                          "final_url": e.get("final_url")}
+                new[h] = _entry(h, e)
                 break
             except Exception as ex:  # noqa: BLE001
                 if attempt == 0 and len(pool) > 1 and _PROXY_FAULT.search(str(ex)):
                     continue
-                skipped.append((h, f"page did not render ({_reason(ex)})"))
+                live_why = _reason(ex)
                 break
+        if h in new or live_why is None:
+            continue
+        if not archives:
+            skipped.append((h, f"page did not render ({live_why})"))
+            continue
+        # Live render failed: the archives are the record of what the page showed.
+        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60))   # archives are slow
+        if got:
+            new[h] = _entry(h, got)
+        else:
+            skipped.append((h, f"page did not render ({live_why}); no public web-scan or web-archive copy either"))
+    for h in empties:
+        held = existing[h].get("archive")                 # an archive copy already on disk from an earlier build
+        if held and not _near_empty(held["path"]):
+            new[h] = dict(held)
+            continue
+        if time.monotonic() > deadline:
+            break
+        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60))
+        if got and not _near_empty(got["path"]):
+            new[h] = _entry(h, got)          # replaces the near-empty live capture in the report
     return new, skipped
 
 
@@ -231,17 +386,36 @@ def page_fit_png(entry: dict, rep_dir: str) -> tuple:
         return dst, False
 
 
+def predates_registration(entry: dict, created: str | None) -> bool:
+    """An archive copy taken BEFORE the current WHOIS creation date shows a previous owner's page,
+    not this operator's — it is drop-catch evidence and must never be captioned as the landing page."""
+    if (entry.get("source") or "live") == "live" or not created:
+        return False
+    when = (entry.get("archived_at") or entry.get("captured_at") or "")[:10]
+    return bool(when) and when < created[:10]
+
+
 def landing_pages_md(entries: dict, hosts: list, seed: str, skipped: list, rep_dir: str,
-                     sector_of, escape) -> str:
-    """The per-host figure blocks for §V, seed first, then the estate alphabetically."""
+                     sector_of, escape, created_of=None) -> str:
+    """The per-host figure blocks for §V, seed first, then the estate alphabetically. `created_of(host)`
+    returns the WHOIS creation date so a pre-registration archive copy is labelled as a prior owner's."""
+    created_of = created_of or (lambda h: None)
     order = [h for h in dict.fromkeys([seed] + sorted(hosts)) if h in entries]
     shown = [h for h in order if not _near_empty(entries[h]["path"])]
     empty = [h for h in order if h not in shown]
     L = ["## Landing pages", ""]
+    n_arch = sum(1 for h in shown if (entries[h].get("source") or "live") != "live")
+    n_prior = sum(1 for h in shown if predates_registration(entries[h], created_of(h)))
     if shown:
         L += [f"Each estate host below was rendered in a headless desktop browser and captured as evidence; "
-              f"{len(shown)} of {len(hosts)} pages rendered with content. The capture time (UTC) is in each "
-              f"caption and the full-page SHA-256 in the evidence ledger (Appendix B).", ""]
+              f"{len(shown)} of {len(hosts)} pages rendered with content"
+              + (f", {n_arch} of them from a public web-scan or web-archive copy because the live page would "
+                 f"not render or rendered empty (each such caption says so and dates the copy)" if n_arch else "")
+              + (f"; {n_prior} archive cop{'y' if n_prior == 1 else 'ies'} predate{'s' if n_prior == 1 else ''} the "
+                 f"current registration and show a previous owner's site, which is evidence of drop-catching, "
+                 f"not of this operator's content" if n_prior else "")
+              + ". The capture time (UTC) is in each caption and the full-page SHA-256 in the evidence ledger "
+              "(Appendix B).", ""]
     else:
         L += ["No landing page with content could be captured for this build; the reasons are recorded "
               "below so the absence is a stated result, not a silent one.", ""]
@@ -250,7 +424,20 @@ def landing_pages_md(entries: dict, hosts: list, seed: str, skipped: list, rep_d
         png, cropped = page_fit_png(e, rep_dir)
         when = (e.get("captured_at") or "")[:16].replace("T", " ") + " UTC"
         title = _caption_safe((e.get("title") or "").strip())
-        cap = f"Landing page of `{h}`" + (" (the seed)" if h == seed else "") + f", captured {when}."
+        src = e.get("source") or "live"
+        who = " (the seed)" if h == seed else ""
+        created = created_of(h)
+        if predates_registration(e, created):
+            where = "public web-scan service" if src == "urlscan" else "web archive"
+            cap = (f"`{h}`{who} as held by the {where} on {when} — BEFORE the current registration "
+                   f"({created[:10]}): a previous owner's page, not this operator's. The live page did not render "
+                   f"with content at build time.")
+        elif src == "urlscan":
+            cap = f"Landing page of `{h}`{who} as recorded by a public web-scan service, scanned {when}; the live page did not render with content at build time."
+        elif src == "wayback":
+            cap = f"Landing page of `{h}`{who} as archived by the web archive, snapshot {when}; the live page did not render with content at build time."
+        else:
+            cap = f"Landing page of `{h}`{who}, captured {when}."
         if title:
             cap += f" Page title: \u201c{escape(title[:90])}\u201d."
         cap += f" Sector by domain label: {sector_of(h)}."
@@ -276,14 +463,22 @@ def landing_pages_md(entries: dict, hosts: list, seed: str, skipped: list, rep_d
     return "\n".join(L)
 
 
-def captures_ledger_md(entries: dict) -> str:
+def captures_ledger_md(entries: dict, created_of=None) -> str:
+    """Appendix B rows: one per capture, with the frozen public link for archive copies (Rule 21)."""
     if not entries:
         return ""
-    rows = ["| When (UTC) | Host | Capture | SHA-256 (full-page PNG) |", "|:--:|:------------|:--------|:------------------|"]
+    rows = ["| When (UTC) | Host | Capture | Evidence link | SHA-256 (PNG) |",
+            "|:--:|:------------|:--------|:----------|:------------------|"]
     for h in sorted(entries):
         e = entries[h]
-        what = "rendered landing page" + (", " + "; ".join(e["actions"]) if e.get("actions") else "")
-        rows.append(f"| {(e.get('captured_at') or '')[:19].replace('T', ' ')} | `{h}` | {what} | `{e['sha256']}` |")
+        src = e.get("source") or "live"
+        what = {"urlscan": "public web-scan capture", "wayback": "web-archive snapshot, rendered"}.get(src, "rendered landing page")
+        if predates_registration(e, (created_of or (lambda h: None))(h)):
+            what += " — predates current registration (previous owner)"
+        if e.get("actions"):
+            what += ", " + "; ".join(e["actions"])
+        link = e.get("source_url") or "—"
+        rows.append(f"| {(e.get('captured_at') or '')[:19].replace('T', ' ')} | `{h}` | {what} | {link} | `{e['sha256']}` |")
     return "\n".join(rows)
 
 
