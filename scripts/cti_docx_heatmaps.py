@@ -19,10 +19,8 @@ from io import BytesIO
 
 import numpy as np
 import matplotlib.pyplot as plt
-from docx.shared import Inches
 
-from cti_docx_charts import _save_fig_to_buffer
-from cti_docx_styles import COLORS_HEX
+from cti_palette import COLORS_HEX
 
 # Roles that mark a domain as NOT the operator's own infrastructure — excluded from
 # the "malicious domains" registration timeline (the impersonated brand, confirmed
@@ -33,8 +31,11 @@ _NON_MALICIOUS_ROLES = {"victim", "legitimate", "legit", "benign", "witness"}
 _ATTR_RELATIONSHIPS = {"registrant", "registrant_email", "registrar", "nameserver", "ns"}
 
 
-def _domains(json_data):
-    """Ordered list of domain subject labels (dedup, capped for readability)."""
+DOMAIN_CAP = 24   # dashboard readability cap; the house report (Rule 19: no sampling) passes cap=None
+
+
+def _domains(json_data, cap=DOMAIN_CAP):
+    """Ordered list of domain subject labels (dedup, capped for readability unless cap=None)."""
     seen, out = set(), []
     for s in json_data.get("subjects", []) or []:
         if str(s.get("type", "")).lower() != "domain":
@@ -43,7 +44,7 @@ def _domains(json_data):
         if label and label not in seen:
             seen.add(label)
             out.append(label)
-    return out[:24]
+    return out if cap is None else out[:cap]
 
 
 def _short(label, n=26):
@@ -127,6 +128,7 @@ from cti_report_figures import registration_heatmap_png, cooccurrence_heatmap_pn
 
 def add_registration_heatmap(doc, regs):
     """Year x month heatmap; cell = count of malicious domains registered that month."""
+    from docx.shared import Inches   # lazy: python-docx only where a Document is in hand
     png = registration_heatmap_png(regs)
     if not png:
         return False
@@ -138,10 +140,26 @@ def add_registration_heatmap(doc, regs):
 # --------------------------------------------------------------------------- #
 # 2. Domain x indicator co-occurrence (correlation) heatmap
 # --------------------------------------------------------------------------- #
-def _attr_map(json_data, case_dir=None):
-    """domain -> set(shared-attribute tokens). From report connections + case_graph edges."""
-    domains = set(_domains(json_data))
+def _attr_map(json_data, case_dir=None, cap=DOMAIN_CAP):
+    """domain -> set(shared-attribute tokens). From report connections, case_graph indicator edges
+    and — when the case dir holds WHOIS sidecars — the registrant e-mail / phone join keys, so the
+    matrix shows the rung-1 link that binds an estate and not only the page-level artifacts."""
+    domains = set(_domains(json_data, cap))
     attrs = {d: set() for d in domains}
+
+    if case_dir:
+        for d in domains:
+            wp = os.path.join(case_dir, "whois", d + ".json")
+            if not os.path.isfile(wp):
+                continue
+            try:
+                w = json.load(open(wp, encoding="utf-8")) or {}
+            except Exception:
+                continue
+            for key, tag in (("registrant_email", "registrant_email"), ("registrant_phone", "registrant_phone")):
+                v = (w.get(key) or "").strip().lower()
+                if v and "privacy" not in v and "redacted" not in v and not v.startswith("abuse@"):
+                    attrs[d].add(f"{tag}:{v}")
 
     for c in json_data.get("connections", []) or []:
         rel = str(c.get("relationship") or c.get("rel") or "").lower()
@@ -169,10 +187,10 @@ def _attr_map(json_data, case_dir=None):
     return attrs
 
 
-def build_cooccurrence(json_data, case_dir=None):
+def build_cooccurrence(json_data, case_dir=None, cap=DOMAIN_CAP):
     """(domains, attr_labels, matrix 0/1). Only attributes shared by >=2 domains."""
-    attrs = _attr_map(json_data, case_dir)
-    domains = [d for d in _domains(json_data) if attrs.get(d)]
+    attrs = _attr_map(json_data, case_dir, cap)
+    domains = [d for d in _domains(json_data, cap) if attrs.get(d)]
     if len(domains) < 2:
         return None
     counts = {}
@@ -192,7 +210,7 @@ def build_cooccurrence(json_data, case_dir=None):
 
 def _attr_label(token):
     kind, _, val = token.partition(":")
-    pretty = {"ns": "nameserver", "registrant_email": "registrant email",
+    pretty = {"ns": "nameserver", "registrant_email": "registrant email", "registrant_phone": "registrant phone",
               "registrant": "registrant", "registrar": "registrar",
               "css_hash": "CSS", "js_bundle": "JS bundle", "favicon": "favicon",
               "dom_skeleton": "DOM template", "comment": "HTML comment", "ip": "IP"}.get(kind, kind)
@@ -204,6 +222,7 @@ def _attr_label(token):
 
 def add_cooccurrence_heatmap(doc, built):
     """domains (rows) x shared indicators (cols); filled cell = domain carries indicator."""
+    from docx.shared import Inches
     png = cooccurrence_heatmap_png(built, _attr_label)
     if not png:
         return False
@@ -274,6 +293,8 @@ def add_relation_heatmap(doc, built):
     cbar = fig.colorbar(im, ax=ax, fraction=0.045, pad=0.02)
     cbar.ax.tick_params(labelsize=7)
     fig.tight_layout()
-    doc.add_picture(_save_fig_to_buffer(fig), width=Inches(5.8))
+    from docx.shared import Inches
+    from cti_report_figures import fig_png
+    doc.add_picture(BytesIO(fig_png(fig)), width=Inches(5.8))
     doc.paragraphs[-1].alignment = 1
     return True

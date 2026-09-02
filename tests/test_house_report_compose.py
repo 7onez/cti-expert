@@ -358,6 +358,24 @@ def test_archive_copy_before_registration_is_a_previous_owner_not_the_landing_pa
     assert "## Landing pages" in md and "No landing page with content" in md
 
 
+def test_urlscan_fallback_takes_the_host_itself_and_prefers_post_registration_scans():
+    import house_report_captures as hre
+    assert hre._same_host("https://www.a.example.com/x", "a.example.com")
+    assert not hre._same_host("https://mail.a.example.com/", "a.example.com")     # a subdomain's scan is not the landing page
+    # the newest scan wins among those on/after the registration; older ones only when nothing newer exists
+    scans = [{"time": "2025-01-01T00:00:00Z"}, {"time": "2026-06-28T15:14:00Z"}, {"time": "2026-03-01T00:00:00Z"}]
+    cut = "2026-05-21"
+    after = [s for s in sorted(scans, key=lambda s: s["time"], reverse=True) if s["time"][:10] >= cut]
+    assert [s["time"][:10] for s in after] == ["2026-06-28"]
+    with tempfile.TemporaryDirectory() as tmp:
+        case = os.path.join(tmp, "CASE-0001")
+        os.makedirs(case)
+        assert not hre._recent_negative(case, "a.example.com")
+        hre._record_negative(case, "a.example.com")
+        assert hre._recent_negative(case, "a.example.com")                        # no re-check inside the TTL
+        assert not hre._recent_negative(case, "b.example.com")
+
+
 def test_capture_failure_reasons_are_a_closed_vocabulary():
     import house_report_captures as hre
     assert hre._reason(Exception("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.example/")) == "DNS did not resolve"
@@ -386,6 +404,7 @@ _TESTS = [
     test_archive_copies_are_captioned_as_such_and_outranked_by_live,
     test_analytic_charts_embed_where_they_belong_and_absences_are_stated,
     test_archive_copy_before_registration_is_a_previous_owner_not_the_landing_page,
+    test_urlscan_fallback_takes_the_host_itself_and_prefers_post_registration_scans,
 ]
 
 

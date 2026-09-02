@@ -127,6 +127,8 @@ def missing_md(figs: dict) -> str:
     gone = [names[n] for n in FIGURES if not figs.get(n)]
     if not gone:
         return ""
-    why = notes.get("report_json") or notes.get("interpreter") or notes.get("render")
+    # Rule 12: the detail (interpreter, tracebacks, paths) goes to stderr in build_figures; the body
+    # gets a closed phrase only.
+    tooling = any(k in notes for k in ("report_json", "interpreter", "render"))
     return ("Not drawn for this build: " + ", ".join(gone)
-            + (f" ({why})." if why else " (nothing to draw from the collected data)."))
+            + (" (not rendered in this build)." if tooling else " (nothing to draw from the collected data)."))

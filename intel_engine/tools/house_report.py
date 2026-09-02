@@ -970,7 +970,8 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
     skipped: list = []
     if screenshots and not no_figures:
         new, skipped = hrc.capture_missing(case_dir, hosts, existing, max_hosts=max_screenshots,
-                                           timeout=screenshot_timeout, archives=archives)
+                                           timeout=screenshot_timeout, archives=archives,
+                                           created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created"))
         existing.update(new)
         for h, why in skipped:
             sys.stderr.write(f"landing page not captured: {h} — {why}\n")
