@@ -48,6 +48,7 @@ TOOL_LOOKUPS = {
     "SECURITYTRAILS_API_KEY": ["SECURITYTRAILS_API_KEY", "SECURITYTRAILS_API_KEY_FALLBACK"],
     "DNSLYTICS_API_KEY": ["DNSLYTICS_API_KEY", "DNSLYTICS_API_KEY_FALLBACK"],
     "CERTSPOTTER_API_KEY": ["CERTSPOTTER_API_KEY"],
+    "NETLAS_API_KEY": ["NETLAS_API_KEY", "NETLAS_KEY"],
 }
 
 # Vars that are companions/requirements, never key values — must NOT appear in any `aliases`.

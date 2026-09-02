@@ -204,7 +204,10 @@
       },
       "QUAKE_API_KEY": {
         "service": "Quake (360)",
-        "aliases": ["QUAKE_TOKEN", "QUAKE_API_KEY_FALLBACK"],
+        "aliases": [
+          "QUAKE_TOKEN",
+          "QUAKE_API_KEY_FALLBACK"
+        ],
         "companion": [],
         "metered": true,
         "impact": "medium",
@@ -215,7 +218,10 @@
       },
       "ZOOMEYE_API_KEY": {
         "service": "ZoomEye",
-        "aliases": ["ZOOMEYE_KEY", "ZOOMEYE_API_KEY_FALLBACK"],
+        "aliases": [
+          "ZOOMEYE_KEY",
+          "ZOOMEYE_API_KEY_FALLBACK"
+        ],
         "companion": [],
         "metered": true,
         "impact": "medium",
@@ -226,7 +232,9 @@
       },
       "SECURITYTRAILS_API_KEY": {
         "service": "SecurityTrails",
-        "aliases": ["SECURITYTRAILS_API_KEY_FALLBACK"],
+        "aliases": [
+          "SECURITYTRAILS_API_KEY_FALLBACK"
+        ],
         "companion": [],
         "metered": true,
         "impact": "medium",
@@ -237,7 +245,9 @@
       },
       "DNSLYTICS_API_KEY": {
         "service": "DNSLytics",
-        "aliases": ["DNSLYTICS_API_KEY_FALLBACK"],
+        "aliases": [
+          "DNSLYTICS_API_KEY_FALLBACK"
+        ],
         "companion": [],
         "metered": true,
         "impact": "medium",
@@ -256,6 +266,19 @@
         "without_it": "certificate-transparency monitoring still runs on crt.sh plus the keyless CertSpotter fallback, only at a lower rate limit — a busy brand baseline is slower, never blocked",
         "free_fallback": "keyless crt.sh issuance polling and anonymous CertSpotter (both rate-limited)",
         "signup": "https://sslmate.com/certspotter/"
+      },
+      "NETLAS_API_KEY": {
+        "service": "Netlas",
+        "aliases": [
+          "NETLAS_KEY"
+        ],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "an INDEPENDENT DNS + scan + WHOIS + certificate index. Its `domains` collection reverses a NON-CDN origin IP (the estate's shared mail/web host) to every apex pointing at it with dates — measured live: 32 apexes, 15 estate members + same-MO siblings under other registrant personas; also ns:/txt:spf reverses (provider-level, reported as counts) and a per-domain registrar/created cross-check",
+        "without_it": "the mail-server reverse-IP is covered by Validin ip/dns/history when keyed, so the loss is redundancy; the Netlas `responses` index had not scanned the small doorway hosts in the test case, so no web-layer pivot is lost",
+        "free_fallback": "Validin ip/dns/history, urlscan page.ip search, and the emitted Netlas query string + web-UI link for the analyst",
+        "signup": "https://app.netlas.io/registration/"
       }
     }
   },
