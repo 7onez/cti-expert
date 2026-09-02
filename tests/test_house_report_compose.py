@@ -74,8 +74,10 @@ def test_structure_is_the_house_order_with_appendix_marker():
     assert heads[:4] == ["Executive Summary — Key Judgments", "Methodology", "Scope and the seed", "Findings"]
     assert "\\appendix" in md
     tail = heads[heads.index("Artifact register"):]
-    assert tail == ["Artifact register", "Evidence ledger", "Domain and infrastructure profiles", "Cluster enumeration"]
-    assert md.index("Supports an abuse referral.") < md.index("**BLUF.**")  # decision statement first
+    assert tail == ["Artifact register", "Evidence ledger", "Domain and infrastructure profiles",
+                    "Cluster enumeration", "Glossary"]
+    assert md.index("Supports an abuse referral.") < md.index("> **Bottom line.**")  # decision statement first
+    assert md.index("| # | Key judgment |") < md.index("> **Bottom line.**")           # table, then the callout
     assert "| A | Completely reliable |" in md and "almost certain" in md  # both scales present
 
 
@@ -142,6 +144,155 @@ def test_alternatives_table_parses_status_with_digits_and_words():
     assert "| **rejected** |" in alt and "| **cannot rule out** |" in alt
 
 
+def test_glossary_lists_only_terms_the_report_uses():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, md = _compose(_synthetic_case(tmp))
+    gl = md.split("# Glossary")[1]
+    assert "| WHOIS / RDAP |" in gl and "| NATO Admiralty code |" in gl and "| TLP |" in gl
+    assert "JARM" not in gl and "Headless browser" not in gl      # never mentioned -> never defined
+
+
+def test_domain_dossiers_are_one_field_value_table_per_domain():
+    with tempfile.TemporaryDirectory() as tmp:
+        _, md = _compose(_synthetic_case(tmp))
+    prof = md.split("# Domain and infrastructure profiles")[1].split("# Cluster enumeration")[0]
+    assert prof.count("### ") == 3 and prof.count("| Field | Value |") == 3
+    assert prof.count("{.unnumbered .unlisted}") == 3                  # dossiers never flood the TOC
+    assert "| Registrar · created | Example Registrar LLC · 2025-01-05 |" in prof
+    assert "| Nameservers | ns1.example.net, ns2.example.net |" in prof
+
+
+def test_registrant_country_drops_the_namibia_placeholder():
+    import house_report_dossier as hre
+    assert hre.registrant_country({"registrant_country": "VN"}) == "VN"
+    assert hre.registrant_country({"registrant_country": "NAMIBIA"}) == ""          # WhoisXML 'NA' placeholder
+    assert hre.registrant_country({"registrant_country": "NAMIBIA",
+                                   "_raw": {"WhoisRecord": {"registrant": {"country": "NAMIBIA", "countryCode": "NA",
+                                                                           "telephone": "84987654321"}}}}) == "VN"
+
+
+_TIMELINE_MD = """## Evidence ledger
+
+| When (UTC) | Host | What | Source |
+|---|---|---|---|
+| 2026-01-01 | a.example.com | registered — via registrar | WHOIS (A1) |
+
+## Temporal correlations
+
+### Registration cohorts (one provisioning sitting)
+
+- **2026-01-01** — a.example.com, b.example.com
+  - registrars: ['Example Registrar']
+  - _registered on one day = one sitting; guidance text_
+
+### Expiry / renewal cohorts (one payer)
+
+- **2027-01-01** — a.example.com, b.example.com
+  - independent_signal: False
+  - distinct_creation_days: ['2026-01-01']
+  - term_days: [365]
+  - _same expiry only because they share a creation date + term_
+
+### IP tenancy overlap
+
+_Nothing found. That is a finding only if the inputs carried the dates to find it in._
+"""
+
+
+def test_temporal_correlations_are_tables_not_field_dumps():
+    body, ledger = hr.condense_timeline_ledger(_TIMELINE_MD)
+    assert "| 2026-01-01 | `a.example.com`, `b.example.com` | Example Registrar |" in body
+    assert "mirror the registration cohorts exactly (same creation day, same 365-day term)" in body
+    assert "No IP tenancy overlap could be derived" in body
+    for raw in ("registrars: [", "independent_signal", "distinct_creation_days", "term_days", "guidance text"):
+        assert raw not in body, f"raw tool field leaked: {raw}"
+    assert "| 2026-01-01 | a.example.com | registered | WHOIS (A1) |" in ledger
+
+
+def test_temporal_correlations_prefer_structured_events_and_survive_scrub():
+    events = {"correlations": {
+        "registration_cohorts": [{"date": "2026-01-01", "hosts": ["a.example.com", "b.example.com"],
+                                  "registrars": ["Example Registrar"], "reading": "guidance"}],
+        "expiry_cohorts": [{"expires": "2027-01-01", "hosts": ["a.example.com", "b.example.com"],
+                            "distinct_creation_days": ["2026-01-01"], "independent_signal": False, "term_days": [365]}],
+        "ip_tenancy": [], "shared_artifact_windows": [], "lapse_cohorts": []}}
+    body, _ = hr.condense_timeline_ledger("", events)
+    assert "| 2026-01-01 | `a.example.com`, `b.example.com` | Example Registrar |" in body
+    assert "same 365-day term" in body and "guidance" not in body
+    assert "No IP tenancy overlap, shared artifacts or abandonment cohorts could be derived" in body
+    # fallback path, through the Rule-12 scrubber that eats trailing `[tag]`s (it took `[365]` before)
+    body2, _ = hr.condense_timeline_ledger(hr.scrub(_TIMELINE_MD))
+    assert "same creation day, same" in body2 and "same - -day" not in body2
+
+
+def _png(width, height, rows):
+    """Minimal stdlib PNG writer (8-bit RGB): `rows(y)` -> bytes of width*3 for scanline y."""
+    import struct
+    import zlib
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    raw = b"".join(b"\x00" + rows(y) for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def test_landing_pages_section_and_capture_ledger():
+    import house_report_captures as hre
+    try:
+        from PIL import Image
+    except ImportError:          # zero-dep runner: the fit/near-empty branches are PIL-only by design
+        Image = None
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        rep = os.path.join(case, "report")
+        os.makedirs(rep)
+        shots_dir = os.path.join(case, "screenshots")
+        os.makedirs(shots_dir)
+        w = 64
+        # a page with content: top half black, bottom half white; and an (almost) blank sheet
+        open(os.path.join(shots_dir, "seed-brand.example.com.png"), "wb").write(
+            _png(w, 90, lambda y: (b"\x00\x00\x00" if y < 45 else b"\xff\xff\xff") * w))
+        open(os.path.join(shots_dir, "sibling-b.example.com.png"), "wb").write(
+            _png(w, 40, lambda y: (b"\x00\x00\x00" * 2 + b"\xff\xff\xff" * (w - 2)) if y == 2 else b"\xff\xff\xff" * w))
+        shots = hre.existing_screenshots(case)
+        assert sorted(shots) == ["seed-brand.example.com", "sibling-b.example.com"]
+        assert all(len(s["sha256"]) == 64 for s in shots.values())
+        hr.KB = os.path.join(tmp, "kb-empty")
+        os.makedirs(hr.KB, exist_ok=True)
+        c = hr.load_case(case)
+        figs = {"captures": shots, "captures_skipped": [("sibling-a.example.com", "page did not render (timed out)")],
+                "capture_hosts": c["hosts"], "rep_dir": rep}
+        md = hr.compose(c, figs, "TLP:AMBER", "2026-01-01")
+        assert os.path.exists(os.path.join(rep, "shot_seed-brand.example.com.png"))
+        if Image is not None:
+            assert not os.path.exists(os.path.join(rep, "shot_sibling-b.example.com.png"))   # near-empty: not a figure
+            fitted = Image.open(os.path.join(rep, "shot_seed-brand.example.com.png"))
+            assert fitted.size == (w, int(w * hre.SHOWN_ASPECT))                             # first-screen crop
+            assert round(fitted.info.get("dpi", (0,))[0]) == 150                              # dpi so Word sizes it
+    sec = md.split("## Landing pages")[1].split("# Infrastructure and lifecycle")[0]
+    assert "![Landing page of `seed-brand.example.com` (the seed), captured" in sec
+    assert "### seed-brand.example.com {.unnumbered .unlisted}" in sec               # never a TOC entry
+    if Image is not None:
+        assert "1 of 3 pages rendered with content" in sec
+        assert "near-empty at capture time" in sec and "`sibling-b.example.com`" in sec
+    else:
+        assert "2 of 3 pages rendered with content" in sec
+    assert "`sibling-a.example.com` — page did not render (timed out)." in sec
+    assert md.index("## Landing pages") < md.index("# Infrastructure and lifecycle")   # inline in §V (Rule 15a)
+    ledger = md.split("## Captured pages")[1].split("# Domain and infrastructure profiles")[0]
+    for s in shots.values():
+        assert f"`{s['sha256']}`" in ledger                                             # full hash, Rule 21, blank included
+
+
+def test_capture_failure_reasons_are_a_closed_vocabulary():
+    import house_report_captures as hre
+    assert hre._reason(Exception("Page.goto: net::ERR_NAME_NOT_RESOLVED at https://x.example/")) == "DNS did not resolve"
+    assert hre._reason(Exception("Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://x.example/")) == "not reachable through the research egress"
+    assert hre._reason(Exception("Timeout 30000ms exceeded.")) == "timed out"
+    leak = hre._reason(Exception("Executable doesn't exist at /root/.cache/ms-playwright/chromium"))
+    assert leak == "browser error" and "/root" not in leak                            # Rule 12: no raw tool text
+
+
 _TESTS = [
     test_structure_is_the_house_order_with_appendix_marker,
     test_seed_comes_from_scope_claim_not_alphabetical_order,
@@ -151,6 +302,13 @@ _TESTS = [
     test_sector_typology_from_domain_tokens,
     test_third_parties_are_masked_but_operator_join_key_is_kept,
     test_composer_degrades_without_assessment_json,
+    test_glossary_lists_only_terms_the_report_uses,
+    test_domain_dossiers_are_one_field_value_table_per_domain,
+    test_temporal_correlations_are_tables_not_field_dumps,
+    test_landing_pages_section_and_capture_ledger,
+    test_registrant_country_drops_the_namibia_placeholder,
+    test_temporal_correlations_prefer_structured_events_and_survive_scrub,
+    test_capture_failure_reasons_are_a_closed_vocabulary,
 ]
 
 
