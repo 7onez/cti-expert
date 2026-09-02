@@ -396,10 +396,18 @@ def _ingest_case(raw_files):
     _run([sys.executable, os.path.join(KB_TOOLS, "ingest_webpivot.py"), "--kb", KB, *raw_files])
 
 
+# raw/ files that are evidence bundles keyed like a host but are NOT hosts (same set as
+# scripts/build_report_data.py _NON_HOST_STEMS) — counting them as hosts inflates clusters.json,
+# shared.txt scope and the convergence snapshot ("+1 host: harvest.indicators").
+_NON_HOST_STEMS = {"leak-sweep", "estate-seo-sweep", "shared-infra-note", "harvest.indicators"}
+
+
 def _case_hosts(case_dir):
     """The hosts THIS case has collected (from raw/*.json) — the scope for shared/components."""
     return sorted({os.path.basename(p)[:-5].lower()
-                   for p in _all_raw(case_dir) if not p.endswith(".impersonation.json")})
+                   for p in _all_raw(case_dir)
+                   if not p.endswith(".impersonation.json")
+                   and os.path.basename(p)[:-5] not in _NON_HOST_STEMS})
 
 
 def _write_shared(case_dir, min_shared, hosts=None):

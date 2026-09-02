@@ -86,7 +86,12 @@ uv run "$S/generate-cti-html.py"  REPORT.json  REPORT.html
 #   (no cloud infra / no graphviz / CTI_CLOUD_ARCH=0). DOCX embeds all three too.
 # BASE bundle: comprehensive IOC / selector bundle -> STIX 2.1 + flat + CSV + JSONL
 uv run "$S/generate-cti-iocs.py"  REPORT.json  IOC-PREFIX  --format all
-# PRESENTATION choice (a) / (b) / (d): dashboard-style DOCX + same-layout PDF
+# PRESENTATION choice (a) / (b) / (d) — pipeline case (has a case dir): the editorial house report
+#   (IntelReport: pandoc + xelatex; sections I–XI, both confidence scales, relationship graph, inference
+#   chain, temporal view, Appendices A–D). Deterministic; masks third-party selectors; writes
+#   cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}
+python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>
+# PRESENTATION choice (a) / (b) / (d) — no case dir (report JSON only): dashboard-style DOCX + same-layout PDF
 uv run "$S/generate-cti-docx-hybrid.py" REPORT.md REPORT.json REPORT.docx --pdf
 # Shareable redacted copy — OPT-IN, not part of the default set. One --map across all
 # files so a selector keeps the same placeholder everywhere. Never ship the .map.json.

@@ -183,42 +183,9 @@ def add_confidence_matrix(doc, findings: list, subjects: list) -> None:
     last_para.alignment = 1
 
 
-def add_timeline_chart(doc, events: list) -> None:
-    """Horizontal timeline chart for dated events."""
-    if not events:
-        return
-
-    # Sort by date
-    sorted_events = sorted(events, key=lambda e: e.get("date", ""))
-    labels = [e.get("event", "")[:40] for e in sorted_events]
-    dates = [e.get("date", "N/A") for e in sorted_events]
-
-    fig, ax = plt.subplots(figsize=(6, max(2, len(labels) * 0.4)), dpi=150)
-
-    y_pos = range(len(labels))
-    ax.scatter([0.5] * len(labels), y_pos, s=80, c=COLORS_HEX["accent"],
-              zorder=5, edgecolors="white", linewidths=1.5)
-
-    for i, (date, label) in enumerate(zip(dates, labels)):
-        ax.text(0.55, i, f"  {date}  —  {label}", va="center", fontsize=8,
-                color=COLORS_HEX["text"])
-
-    # Vertical line connecting dots
-    if len(y_pos) > 1:
-        ax.vlines(0.5, min(y_pos), max(y_pos), color=COLORS_HEX["border"],
-                 linewidth=2, zorder=1)
-
-    ax.set_xlim(0, 5)
-    ax.invert_yaxis()
-    ax.axis("off")
-    ax.set_title("Event Timeline", fontsize=12, fontweight="bold",
-                 color=COLORS_HEX["primary"], pad=15, loc="left")
-
-    buf = _save_fig_to_buffer(fig)
-    doc.add_picture(buf, width=Inches(5.5))
-    last_para = doc.paragraphs[-1]
-    last_para.alignment = 1
-
+# The Event Timeline lives in its own module (cti_docx_timeline_chart.py); re-exported here so
+# cti_docx_postprocess keeps importing add_timeline_chart from this namespace.
+from cti_docx_timeline_chart import add_timeline_chart  # noqa: E402,F401
 
 def add_traffic_sources_bar(doc, traffic_sources: dict) -> None:
     """Horizontal bar chart: traffic source breakdown (direct/search/referral/social/paid)."""

@@ -190,6 +190,22 @@ selectors, the full domain estate as network indicators, findings/timeline/conne
 §2.5 exclusion set in `ioc_exclude` (so no excluded CDN/shared IP, registrar, or nameserver leaves
 as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering.
 
+**Deliver — the editorial PDF/DOCX is deterministic too.** The polished house report (cover, sections
+I–XI, Methodology with both confidence scales, relationship graph, attribution inference chain,
+temporal view, Appendices A–D — the format of the reference reports) is composed from the case dir,
+not hand-written and not harness-only:
+```bash
+python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>      # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md} + figures
+```
+It reads `assessment.json` when present (engine schema — `harness/schemas.py:Assessment`; the harness
+and `loop` write it, an analyst can author it, and `case-store snapshot --assessment <json>` copies it to
+the head) and **degrades without it**: the body is then composed from `assessment.md` alone and the
+inference-chain figure is skipped. It also reads `assessment.md`
+for the analyst narrative, `whois/`, `raw/`, `clusters.json`, `shared.txt`, `scope.json` and the
+operator/reference ledgers. Internal tool, vendor and path names are scrubbed to public source
+classes on the way in (house Rule 12); the impersonated brand's genuine domain never becomes an
+indicator. Run it after the JSON/HTML/IOC bundle above — both come from the same case dir.
+
 **Shareable exports — mask uninvolved third parties (§2.5).** Before rendering a report to a
 shareable format (PDF/DOCX/HTML) or an IOC bundle, **mask the PII of any party you confirmed is
 NOT involved** — e.g. a name-collision innocent's email/phone (`ntp***@example.com`) — because a

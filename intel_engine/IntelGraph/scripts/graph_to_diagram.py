@@ -150,6 +150,13 @@ def esc(text, maxlen=42):
     return s
 
 
+def yaml_title(text, maxlen=120):
+    """Frontmatter `title:` is YAML — an unquoted scalar breaks on ': ' or ' #' (the reduced-subset
+    note contains both), which mmdc reports as a bare YAMLException. Always emit a quoted scalar."""
+    s = esc(text, maxlen).replace("\\", "\\\\").replace('"', "'")
+    return '"' + s + '"'
+
+
 def node_stmt(nid, node):
     icon = node.get("icon") or ICON.get(node.get("type", ""), "•")
     label = f"{icon} {esc(node.get('label', node.get('id', '')))}".strip()
@@ -187,7 +194,7 @@ def build_mermaid(graph, title, direction, legend, *, dedup_labels=True):
 
     out = []
     if title:
-        out += ["---", f"title: {esc(title, 120)}", "---"]
+        out += ["---", f"title: {yaml_title(title)}", "---"]
     out.append(mermaid_init())
     out.append(f"flowchart {direction}")
 
@@ -301,7 +308,7 @@ def build_legend(graph, title="Legend — how to read the graph"):
     #     direction governs the flow axis, and unconnected nodes stack across it.
     # A key card wants to be compact: the graph's generous rank spacing here just puts air
     # between four small boxes and makes the figure taller than the graph it explains.
-    out = ["---", f"title: {esc(title, 120)}", "---",
+    out = ["---", f"title: {yaml_title(title)}", "---",
            mermaid_init({"rankSpacing": 34, "nodeSpacing": 30}), "flowchart TB"]
     styles, boxes = [], []
 

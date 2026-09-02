@@ -17,16 +17,25 @@ python3 scripts/backend/intel.py graph "$PWD/<case_graph.json>" "$PWD/<out-stem>
 Pass **absolute paths** — the dispatcher runs with its own working directory and relative paths
 will not resolve.
 
-**Report** (PDF/DOCX from the assessment markdown):
+**House report** (the editorial PDF + DOCX, composed deterministically from the case dir — sections
+I–XI, both confidence scales, relationship graph, inference chain, temporal view, Appendices A–D;
+third-party selectors masked, internal tool/path names scrubbed):
+
+```bash
+python3 scripts/backend/intel.py house-report <CASE-ID>          # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}
+```
+
+**Raw render** (when you have hand-authored house-rules markdown yourself):
 
 ```bash
 python3 scripts/backend/intel.py report <assessment.md> <out-stem> --pdf --docx
 ```
 
-`intel.py report` is the **IntelReport** house-style renderer (xelatex/pandoc PDF + DOCX) rendered
-straight from the assessment. For the **flat-JSON deliverable bundle** — interactive HTML, the
-IOC/selector exports (STIX/CSV/JSONL/TXT), and the chart-rich hybrid DOCX/PDF — build the report
-JSON deterministically first, then run the generators (see SKILL.md §8):
+`intel.py report` is the **IntelReport** renderer (xelatex/pandoc PDF + DOCX) applied to markdown you
+wrote; `house-report` composes that markdown for you from `assessment.json`/`assessment.md`, `whois/`,
+`raw/`, `clusters.json` and the ledgers. For the **flat-JSON deliverable bundle** — interactive HTML,
+the IOC/selector exports (STIX/CSV/JSONL/TXT), and the chart-rich dashboard DOCX/PDF for cases with no
+case dir — build the report JSON deterministically first, then run the generators (see SKILL.md §8):
 
 ```bash
 uv run "$SKILL_DIR/scripts/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"

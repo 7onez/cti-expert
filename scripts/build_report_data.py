@@ -42,6 +42,10 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling helpers
+from cti_case_meta import case_classification  # noqa: E402
+from cti_text_normalize import normalize_obj  # noqa: E402
+
 GENERATOR = "CTI Expert — https://github.com/7onez/cti-expert"
 SEVERITY = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
 # raw sidecars that are not collected hosts (evidence bundles keyed like a host but not one)
@@ -184,11 +188,12 @@ def _recommendations(case_dir):
     return [r for r in out if r]
 
 
-def build(case_dir, kb_dir):
+def build(case_dir, kb_dir, classification=None):
     case_id = os.path.basename(os.path.abspath(case_dir).rstrip("/"))
     raws = dict(_iter_raw(case_dir))
     hosts = sorted(raws)
-    seed = hosts[0] if hosts else case_id
+    from cti_case_meta import resolve_seed
+    seed = resolve_seed(case_dir, hosts, [os.path.join(case_dir, "raw", h + ".json") for h in hosts]) if hosts else case_id
 
     op_rec = _operator_record(kb_dir, hosts)
     estate = sorted({d.lower() for d in (op_rec or {}).get("domains") or []} | set(hosts))
@@ -387,12 +392,20 @@ def build(case_dir, kb_dir):
         f"{len(estate)} domain(s) sharing the registrant identity. Shared infrastructure signals "
         "were excluded from operator-level clustering per §2.5.")
 
+    # third-party masking for the shareable bundle — prose fields only; indicator VALUES are the
+    # operator's own IOCs (already gated by ioc_exclude) and are never rewritten.
+    from cti_third_party_mask import mask_third_parties, load_case_mask
+    keep = {v for v in (reg_email, reg_phone) if v}
+    extra = load_case_mask(case_dir)
+    _mask = lambda s: mask_third_parties(s, keep=keep, hosts=set(estate) | {seed}, extra=extra, current_case=case_id)  # noqa: E731
+    exec_sum = _mask(exec_sum)
+
     report = {
         "generator": GENERATOR,
         "case": {
             "id": case_id,
             "label": (op_rec or {}).get("label") or f"{case_id} — {seed}",
-            "classification": "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
+            "classification": classification or case_classification(case_dir) or "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
             "analyst": "AI-Assisted CTI Analyst",
             "date": _today(),
             "subject": seed,
@@ -429,11 +442,12 @@ def main():
     ap.add_argument("-o", "--out", default=None, help="output path (default: <case>/report-data.json)")
     ap.add_argument("--kb", default=None, help="knowledge dir (default: engine knowledge/)")
     ap.add_argument("--print", action="store_true", dest="show", help="also print the JSON")
+    ap.add_argument("--classification", default=None, help="handling caveat for the cover/header (default: the case's TLP marking, else UNCLASSIFIED//FOUO)")
     a = ap.parse_args()
     if not os.path.isdir(a.case_dir):
         sys.exit(f"not a case directory: {a.case_dir}")
     kb = a.kb or os.path.normpath(os.path.join(a.case_dir, "..", "..", "knowledge"))
-    report = build(a.case_dir, kb)
+    report = normalize_obj(build(a.case_dir, kb, a.classification))
     out = a.out or os.path.join(a.case_dir, "report-data.json")
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
