@@ -191,12 +191,23 @@ selectors, the full domain estate as network indicators, findings/timeline/conne
 as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering.
 
 **Deliver — the editorial PDF/DOCX is deterministic too.** The polished house report (cover, sections
-I–XI, Methodology with both confidence scales, relationship graph, attribution inference chain,
-temporal view, Appendices A–D — the format of the reference reports) is composed from the case dir,
-not hand-written and not harness-only:
+I–XI, Methodology with both confidence scales and the ICD-203 × Admiralty confidence scatter, relationship
+graph + entity relationship map, attribution inference chain, temporal view + registration heatmap +
+domain × shared-indicator matrix, a captured landing page per estate host inline in the cluster section,
+per-domain dossiers, Appendices A–E incl. glossary — the format of the reference reports) is composed
+from the case dir, not hand-written and not harness-only:
 ```bash
 python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>      # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md} + figures
+#   flags: --no-screenshots (fully offline) · --no-archive-fallback · --max-screenshots N · --screenshot-timeout S
 ```
+Its only egress is the landing-page step: hosts without a screenshot on disk are rendered in headless
+Chromium through the research-egress proxy policy (proxied, or direct only if the store allows it;
+blocked → stated in the report, never forced). A page that will not render, or renders near-empty, falls
+back to the newest public web-scan screenshot, then a rendered web-archive snapshot — captioned as such,
+dated by the archive, linked in Appendix B, and labelled a previous owner's page when it predates the
+current registration (drop-catch evidence, not the operator's landing page). Negative archive lookups are
+cached 7 days. Note the Assess phase may run the `/harness` deepening loop first when the frontier has
+not converged (`--no-harness` opts out); the Deliver prompts come after it.
 It reads `assessment.json` when present (engine schema — `harness/schemas.py:Assessment`; the harness
 and `loop` write it, an analyst can author it, and `case-store snapshot --assessment <json>` copies it to
 the head) and **degrades without it**: the body is then composed from `assessment.md` alone and the
