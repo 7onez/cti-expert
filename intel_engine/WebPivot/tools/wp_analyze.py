@@ -572,6 +572,50 @@ def _resource_filename_for(result: dict, kind: str, val, seed_reg: str):
             return base
     return None
 
+def _mo_neighbours(origin_ip: str, seed_host: str, classified: dict):
+    """Tri-state wrapper over wp_mo_neighbours.discover(): the block, or {"error": …} — never raises
+    (enrich_live's executor re-raises worker exceptions, so a vendor hiccup here must not take the
+    whole host's enrichment down). Lazy import: the module reaches back into case_state thresholds."""
+    try:
+        import wp_mo_neighbours  # noqa: WPS433
+        return wp_mo_neighbours.discover(origin_ip, seed_host, classified=classified)   # case_dir: $WP_CASE_DIR
+    except Exception as e:  # noqa: BLE001
+        return {"origin_ip": origin_ip, "error": str(e), "candidates": [], "bulk_skipped": False}
+
+
+def _shodan_configured() -> bool:
+    try:
+        from wp_ippivot import shodan_configured   # lazy: circular at module level
+        return shodan_configured()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _shodan_search(query: str):
+    """Tri-state wrapper over wp_ippivot.shodan_search — never raises (the pivot loop is not inside
+    the executor, but a raising leg would still poison the host's whole enrichment)."""
+    try:
+        from wp_ippivot import shodan_search   # lazy: circular at module level
+        return shodan_search(query)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e), "query": query}
+
+
+def measured_tier(vendor: str, plans: dict = None) -> str:
+    """The MEASURED entitlement tier for `vendor` from the per-case store (wp_plans:
+    cases/<id>/capability_plans.json, located via $WP_CASE_DIR) — 'unknown' when nothing is recorded
+    or the store is unreadable. Read-only: enrichment never probes. Callers gate ONLY on a positive
+    `free` verdict ("skip what would 403"); unknown keeps the productive call as the probe."""
+    try:
+        import wp_plans
+        plans = wp_plans.load() if plans is None else plans
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    p = (plans or {}).get(vendor)
+    tier = p.get("tier") if isinstance(p, dict) else p
+    return str(tier) if tier else "unknown"
+
+
 def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) -> dict:
     """Run live pivots and attach the real hits to each pivot as pivot['live_results'].
 
@@ -590,6 +634,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     """
     have_fofa = bool(_secret("FOFA_KEY", "FOFA_API_KEY")) and not free_only
     have_urlscan = bool(_secret("URLSCAN_API_KEY")) and not free_only  # gates only Pro similarity
+    # MEASURED entitlement (wp_plans store) — read-only here, never probe from inside enrichment.
+    # A key measured `free` on urlscan skips the two Pro calls (similar + hostname) that would 403
+    # per host. Censys is NOT gated on a plan (its search records its own verdict — see wp_censys).
+    have_urlscan_pro = have_urlscan and measured_tier("urlscan") != "free"
     have_pdns = bool(_secret("PDNS_USERNAME") and _secret("PDNS_PASSWORD")) and not free_only
     # Censys is metered in CREDITS (1 per lookup, and a free plan gets only 100 a month), so it is
     # gated exactly like FOFA. Only the two LOOKUP endpoints are used here — they work on the free
@@ -611,6 +659,9 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # peers of FOFA/Hunter.how. Gated `and not free_only` — held back from the autonomous loop.
     have_quake = wp_quake.quake_configured() and not free_only
     have_zoomeye = wp_zoomeye.zoomeye_configured() and not free_only
+    # Shodan SEARCH (cert SHA1 / JARM reverse) is metered and Membership-gated; the host lookup that
+    # IPPivot already runs is a different endpoint. Gated like FOFA; degrades on 401/402 to a skip.
+    have_shodan = _shodan_configured() and not free_only
     # Passive SSL rides the SAME CIRCL credential pair as passive DNS. The two are the historical
     # name->IP and cert->IP halves of one question, so a run that has pDNS should always have
     # pSSL as well — before this layer existed the cert->IP direction was simply never asked.
@@ -619,7 +670,15 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # hosting/proxy/VPN flags. It runs keyless too (rate-limited), so the gate is --free-only
     # rather than the token: without a token it still returns country + org for the live IP.
     have_ipinfo = not free_only
+    # MO-neighbour pivot (reverse a NON-CDN origin + WHOIS-verify each co-tenant's own registrant).
+    # The verification leg is METERED WhoisXML, so it is gated exactly like FOFA: a key AND not
+    # free_only (posture no_spend maps to free_only upstream). The block it attaches is
+    # UNCLASSIFIED — case_state classifies it case-wide and only a join-key-verified
+    # same_registrant ever seeds the frontier; the raw block is never mined by the frontier.
+    have_mo_neighbours = HAVE_WHOIS and whois_enrich.whois_configured() and not free_only
     sources = ["crtsh", "passivedns", "urlscan"]  # keyless domain enrichment
+    if have_urlscan_pro:
+        sources.append("urlscan-hostname")   # Pro lifecycle index (A/NS/MX eras, CT/zonefile firsts)
     if have_fofa:
         sources.append("fofa-full" if fofa_full else "fofa")
     if have_pdns:
@@ -642,6 +701,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("quake")
     if have_zoomeye:
         sources.append("zoomeye")
+    if have_mo_neighbours:
+        sources.append("mo-neighbours")
+    if have_shodan:
+        sources.append("shodan-search")
+    if have_securitytrails:
+        sources.append("securitytrails-dns-history")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -656,9 +721,13 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     "urlscan": lambda: urlscan_search(f"domain:{val}", free_only=free_only)}
             if have_pdns:
                 jobs["pdns"] = lambda: pdns_search(val)   # CIRCL-COF passive DNS (historical IPs + co-hosted names)
-            if have_urlscan:
+            if have_urlscan_pro:
                 # urlscan Pro structure-similarity: clusters re-skinned kits (skipped under free-only)
                 jobs["urlscan_similar"] = lambda: urlscan_similar(val, free_only=free_only)
+                # urlscan Pro hostname lifecycle: every A/NS/MX record with dates, CT + zonefile
+                # first-sightings — the previous-owner record for a drop-catch host, without a
+                # Wayback render. Timeline-only consumer (dated eras, not co-hosted domains).
+                jobs["urlscan_hostname"] = lambda: urlscan_hostname(val, free_only=free_only)
             if have_censys:
                 # Censys web property (hostname:443): the cert, favicon hashes, body hash, software
                 # and threat labels Censys recorded for THIS hostname — the server's own view of
@@ -671,6 +740,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 jobs["validin_subs"] = lambda: wp_validin.subdomains(val)
             if have_securitytrails:
                 jobs["securitytrails"] = lambda: wp_securitytrails.subdomains(val)
+                # The historical A-record eras (dated ip spans) — the call that was never wired:
+                # the registry line for `securitytrails` existed, the invocation did not. IP-valued,
+                # so it feeds the case timeline (hosting eras), never the host-yielding frontier.
+                jobs["securitytrails_dns_history"] = lambda: wp_securitytrails.dns_history(val, "a")
             with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
                 futures = {k: ex.submit(fn) for k, fn in jobs.items()}
                 lr = {k: fu.result() for k, fu in futures.items()}
@@ -680,6 +753,15 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 # degrades to a skipped note, on Professional it fires.
                 if have_validin:
                     lr["validin_reputation"] = wp_validin.reputation(val)
+                # urlscan verdict/labels for the host's latest scan (Pro: engine scores + labels).
+                # One RESULT retrieve, reusing the uuid urlscan_similar already found; a lead for
+                # the evidence ledger, never a verdict of ours. urlscan_verdict never raises.
+                if have_urlscan:
+                    _uuid = (lr.get("urlscan_similar") or {}).get("uuid") if isinstance(lr.get("urlscan_similar"), dict) else None
+                    if _uuid:
+                        _v = urlscan_verdict(_uuid)
+                        if _v:
+                            lr["urlscan_verdict"] = _v
             # Anchor pivots to the LIVE IP: reverse-search FOFA on what DNS resolves to
             # right now, and flag any passive source still reporting a different (stale) IP.
             live_ips = lr.get("dns", {}).get("ips", []) or []
@@ -703,6 +785,19 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 if have_validin and origin_ips:
                     # IP reputation on the origin candidate only (bounded), corroborating exposure.
                     lr["validin_ip_reputation"] = {origin_ips[0]: wp_validin.ip_reputation(origin_ips[0])}
+                if have_mo_neighbours and origin_ips:
+                    # Who else runs from this origin? Bulk-guarded + per-origin memoised inside;
+                    # never raises. Attached unclassified — see the gate comment above.
+                    lr["mo_neighbours"] = _mo_neighbours(origin_ips[0], val, classified[live_ips.index(origin_ips[0])])
+                if have_dnslytics and origin_ips:
+                    # DNSLytics reverse-IP on the origin (5 credits). UNDER A DISTINCT KEY: the existing
+                    # `dnslytics` key is a host-yielding registry entry (GA/AdSense siblings, no co-tenancy
+                    # risk) that the frontier seeds from with NO co-tenancy filter — landing reverse-IP
+                    # rows there would auto-seed every co-tenant. `dnslytics_reverseip` is routed through
+                    # case_state._cohost_candidates (MAX_IP_COHOSTS / BULK_IP_RESULTS) instead.
+                    _rv = wp_dnslytics.reverse_ip(origin_ips[0])
+                    if _rv is not None:
+                        lr["dnslytics_reverseip"] = dict(_rv, ip=origin_ips[0]) if isinstance(_rv, dict) else _rv
                 if cdn_ips:
                     lr["dns"]["cdn_note"] = (
                         "live IP(s) are shared CDN/cloud edge (%s) — hosting IP is noise, "
@@ -749,6 +844,34 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     lr["dns"]["stale_passive_ips"] = stale
                     lr["dns"]["note"] = ("passive sources report IP(s) not in live DNS — "
                                          "likely a migrated/IP-hopping host; trust live DNS")
+        elif kind == "mail_server" and val and have_mo_neighbours:
+            # The MX host is the estate's one non-CDN origin in the common CDN-fronted-web case —
+            # the audit's 87-apex mail server. Resolve it live, take the first non-CDN address and
+            # run the same bulk-guarded MO-neighbour reverse the domain pivot runs on its origin.
+            try:
+                dns = resolve_live_dns(str(val))
+            except Exception as e:  # noqa: BLE001
+                dns = {"error": str(e), "ips": []}
+            mx_ips = list((dns or {}).get("ips") or [])
+            if mx_ips:
+                classified = [classify_ip(ip) for ip in mx_ips]
+                dns["ip_classification"] = classified
+                origin = next((c for c in classified if c.get("cdn") is False), None)
+                lr["dns"] = dns
+                if origin:
+                    seed_host = (result.get("meta") or {}).get("host") or str(val)
+                    lr["mo_neighbours"] = _mo_neighbours(origin["ip"], seed_host, origin)
+                    if have_dnslytics:
+                        # a CDN-fronted estate has NO web origin — the MX host is its only non-CDN
+                        # address, so the reverse-IP corroborator belongs here too (distinct key,
+                        # co-tenancy-routed; bought once per case inside wp_dnslytics)
+                        _rv = wp_dnslytics.reverse_ip(origin["ip"])
+                        if _rv is not None:
+                            lr["dnslytics_reverseip"] = dict(_rv, ip=origin["ip"]) if isinstance(_rv, dict) else _rv
+                else:
+                    lr["note"] = "MX resolves only to CDN/cloud edge addresses — no origin to reverse"
+            elif dns:
+                lr["dns"] = dns
         else:
             fofa_q = None
             if kind == "favicon_hash":
@@ -827,6 +950,17 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     vc = wp_validin.cert_hosts(fp1)   # every host on this exact cert
                     if vc is not None:
                         lr["validin_cert"] = vc
+            if have_shodan and kind == "tls_cert:fingerprint_sha256":
+                # Shodan cert reverse keys on the SHA1; the JARM branch below covers the other Shodan filter
+                fp1 = ((result.get("artifacts") or {}).get("tls_cert") or {}).get("fingerprint_sha1")
+                if fp1:
+                    sh = _shodan_search(f"ssl.cert.fingerprint:{fp1}")
+                    if sh is not None:
+                        lr["shodan_search"] = sh
+            if have_shodan and kind == "jarm:hash" and val:
+                sh = _shodan_search(f"ssl.jarm:{val}")
+                if sh is not None:
+                    lr["shodan_search"] = sh
             if have_validin and kind == "favicon_hash":
                 fsha1 = ((result.get("artifacts") or {}).get("favicon") or {}).get("sha1")
                 if fsha1:
@@ -902,6 +1036,23 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                 r = whois_enrich.reverse_whois(em, "email", search_type=st)
                 if r is not None:
                     piv.setdefault("live_results", {})[f"reverse_whois_{st}"] = r
+            # SecurityTrails' DSL is an INDEPENDENT registrant index (metered 50/mo Free; gated like
+            # every other metered leg — do_reverse is already `and not free_only` at the caller). Same
+            # {term,count,domains} shape, so case_state._whois_candidates applies the same privacy +
+            # MAX_WHOIS_SIBLINGS guards; the diff shows where the two indexes disagree.
+            if (wp_securitytrails.securitytrails_configured() and not free_only
+                    and em == str(w.get("registrant_email") or "").lower()):
+                # CURRENT registrant only: a prior-era e-mail is a third party (Phase 1), and the term
+                # is bought once per case (wp_casememo inside reverse_whois_email).
+                try:
+                    strw = wp_securitytrails.reverse_whois_email(em)
+                except Exception as e:  # noqa: BLE001
+                    strw = {"error": str(e), "term": em}
+                if strw is not None:
+                    lr_ = piv.setdefault("live_results", {})
+                    lr_["securitytrails_reverse_whois"] = strw
+                    lr_["reverse_whois_diff"] = wp_securitytrails.reverse_whois_diff(
+                        strw, [lr_.get("reverse_whois_current"), lr_.get("reverse_whois_historic")])
         result["pivots"].append(piv)
 
     name = w.get("registrant_name") or w.get("registrant_org")

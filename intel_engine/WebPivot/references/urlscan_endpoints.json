@@ -1,0 +1,27 @@
+{
+  "_comment": "urlscan.io endpoint path templates + paging/budget knobs for wp_net.urlscan_hostname (the Pro `hostname` lifecycle index — every A/AAAA/NS/MX/SOA record, CT first-seen, zonefile first-seen and scan sighting urlscan ever recorded for one host, as DAILY rows). Measured live 2026-09-03 on a Pro team key + OpenAPI (docs.urlscan.io/apis/urlscan-openapi/hostnames/gethostnamehistory): GET /api/v1/hostname/{host} takes `limit` (10..10000, default 1000) and `pageState` (cursor), NO source/type filter; returns `results` rows {seen_on (YYYY-MM-DD), source ∈ ct|scan|pdns|zonefile|scan-link|scan-cert-subject, sub_id 'TYPE#rdata' (may be empty), first_seen, last_seen, data_type ('json'|null), data}. Rows are PER DAY per record (568 of the first 1000 example.com rows were recent daily A/NS rows), newest first, so the client MUST fold rows by sub_id into eras and MUST mark eras that touch the oldest day reached as left-censored when the walk is truncated — otherwise a busy host's hosting 'start' is a pagination artefact. Per-source summary rows carry seen_on 2100-01-01/2200-01-01 and null data. Overrides the inline _USCAN_FALLBACK in wp_net.py; a missing/bad file degrades to that fallback with a warning. HOSTNAME-ONLY by design — the livescan/scan submission surface is out of scope for the collector (outbound, actionguard-gated).",
+  "endpoints": {
+    "_comment": "paths joined to https://urlscan.io; {host} is the bare hostname; {limit} the page size; {page_state} the opaque cursor from the previous page.",
+    "hostname": "/api/v1/hostname/{host}?limit={limit}",
+    "hostname_page": "/api/v1/hostname/{host}?limit={limit}&pageState={page_state}",
+    "result": "/api/v1/result/{uuid}/",
+    "screenshot": "/screenshots/{uuid}.png",
+    "dom": "/dom/{uuid}/",
+    "quotas": "/api/v1/quotas/",
+    "_quotas_comment": "ENTITLEMENT probe (free, account-side, no target touched). Measured live 2026-09-04 on a Pro team key: body {scope, limits}; limits.products = ['livescan','pro'] (the tier signal: 'pro' present -> tier pro, present-but-without-pro -> free, field ABSENT -> unknown, never free); limits.features = [...]; per-scope limits.<search|retrieve|public|unlisted|private>.day.{limit,used,remaining,percent,reset}; limits.maxSearchResults. /user/username also carries isPro but with account-holder name/e-mail — never persisted, never read by the probe."
+  },
+  "hostname": {
+    "_comment": "page_limit = rows per page (API max 10000 — one retrieve credit per page regardless of size, so the max is the cheapest way to reach a drop-catch host's years-old parking era); max_pages bounds the walk and sets `truncated`; era_types are the pdns sub_id prefixes turned into dated eras; summary_seen_on marks the per-source rollup rows read for the *_first fields and never treated as daily observations.",
+    "page_limit": 10000,
+    "max_pages": 3,
+    "era_types": ["A", "AAAA", "NS", "MX", "SOA"],
+    "scan_prefix": "VIA-SCAN",
+    "summary_seen_on": ["2100-01-01", "2200-01-01"],
+    "first_seen_sources": {"ct": "ct_first", "zonefile": "zonefile_first", "scan": "scan_first", "seenDates": "first_seen"}
+  },
+  "verdict": {
+    "_comment": "Result `labels` that describe page STRUCTURE / hosting class, not a finding (measured on a benign example.com result: domain.apexdomain, content.rootdir, hosting.cdn). A verdict row for the evidence ledger is emitted only on SIGNAL — malicious (overall or engines), overall score > 0, a brand match, or a label outside this set — so a benign estate host never fills Appendix B with non-evidence. Add a label here when it shows up on benign scans; never remove a `visual.*`/`threat.*`-class label.",
+    "structural_labels": ["domain.apexdomain", "domain.subdomain", "content.rootdir", "content.index",
+                          "hosting.cdn", "hosting.cloud", "hosting.shared", "tls.valid", "http.redirect"]
+  }
+}

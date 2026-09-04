@@ -107,6 +107,31 @@ BULK_IP_RESULTS = 120    # truncation backstop: total hits on one IP that mean b
 # Reverse-WHOIS: harness/tools.py gates an INTERACTIVE reverse at 150 and asks the analyst. Auto-
 # seeding has no analyst in the loop, so the bar is much lower — a real operator portfolio is small.
 MAX_WHOIS_SIBLINGS = 25  # domains on one registrant term before it reads as a bulk/reseller term
+# MO-neighbour pivot (Phase B lives here — see mo_neighbour_classification). The discovery block
+# a collector attaches is UNCLASSIFIED and is deliberately absent from _HOST_YIELDING_SOURCES; only
+# a join-key-verified same_registrant row, read back from cases/<id>/mo_neighbours.json, seeds.
+# Classification POLICY is reference DATA: tools/kb/references/mo_neighbours.json (RULE 3 label in
+# kb_refs). The fallback is the conservative minimum — a broken file narrows, never widens, same_mo.
+_MO_FALLBACK = {
+    "classification": {"window_days": 60, "persona_handle_regex": r"^[a-z]+\d{4,}$", "min_token_len": 4,
+                       "stop_tokens": ["www", "mail", "shop", "store", "online", "site", "web", "app", "info"]},
+    "discovery": {"max_candidates": 40, "whois_run_cap": 160, "whois_workers": 4, "sibling_wait_s": 90},
+}
+try:
+    import kb_refs as _kb_refs   # tools/kb/kb_refs.py
+    _MO_REF = _kb_refs.load_ref(_kb_refs.ref_path(_kb_refs.__file__, "mo_neighbours.json"), _MO_FALLBACK)
+except Exception:
+    _MO_REF = dict(_MO_FALLBACK)
+_MO_CLS = _MO_REF.get("classification") or _MO_FALLBACK["classification"]
+_MO_DISC = _MO_REF.get("discovery") or _MO_FALLBACK["discovery"]
+MO_MAX_CANDIDATES = int(_MO_DISC["max_candidates"])   # wp_mo_neighbours reads this — one source of truth
+MO_WHOIS_RUN_CAP = int(_MO_DISC["whois_run_cap"])
+MO_WHOIS_WORKERS = int(_MO_DISC["whois_workers"])
+MO_SIBLING_WAIT_S = int(_MO_DISC["sibling_wait_s"])
+MO_WINDOW_DAYS = int(_MO_CLS["window_days"])           # a same-MO registration sits within the estate's window ± this
+MO_PERSONA_HANDLE_RE = re.compile(_MO_CLS["persona_handle_regex"])   # throwaway-mailbox shape
+MO_MIN_TOKEN_LEN = int(_MO_CLS["min_token_len"])
+_MO_STOP = frozenset(_MO_CLS["stop_tokens"])
 
 
 def _new_deferred():
@@ -288,6 +313,10 @@ _HOST_YIELDING_SOURCES = (
 )
 
 
+# candidate source labels that mean "looks like the brand", not "belongs to the operator"
+_LOOKALIKE_SOURCES = frozenset({"impersonation", "archive_related_domain"})
+
+
 def _row_host(row):
     """A host/domain string from a frontier row that may be a bare string or an engine dict."""
     if isinstance(row, dict):
@@ -361,11 +390,14 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
                 _add_cand(cands, h.get("host") if isinstance(h, dict) else h, "passive_dns", seed_apexes)
             for d in (lr.get("urlscan") or {}).get("domains") or []:
                 _add_cand(cands, d, "urlscan_related", seed_apexes)
-            # co-hosted domains from a PRIOR keyed run (already paid for — reusing is free)
-            for key in ("fofa_ip_reverse", "pdns_ip_reverse"):
+            # co-hosted domains from a PRIOR keyed run (already paid for — reusing is free). DNSLytics
+            # reverse-IP lives under its own key ON PURPOSE: `dnslytics` (GA/AdSense siblings) is a
+            # host-yielding source with no co-tenancy filter; reverse-IP rows must take this route.
+            for key in ("fofa_ip_reverse", "pdns_ip_reverse", "dnslytics_reverseip"):
                 _cohost_candidates(lr.get(key) or {}, cands, seed_apexes, deferred, host, key)
-        # reverse-WHOIS siblings left behind by a prior --whois-reverse run
-        for st in ("reverse_whois_current", "reverse_whois_historic"):
+        # reverse-WHOIS siblings left behind by a prior --whois-reverse run (WhoisXML current/historic
+        # + SecurityTrails' DSL — same shape, same privacy + MAX_WHOIS_SIBLINGS guards)
+        for st in ("reverse_whois_current", "reverse_whois_historic", "securitytrails_reverse_whois"):
             _whois_candidates(lr.get(st) or {}, cands, seed_apexes, deferred, host, st)
         # ARTIFACT-REVERSE hosts -> frontier seeds, REGISTRY-DRIVEN (Phase 10 universal
         # consumption). Every host/domain-yielding engine is one _HOST_YIELDING_SOURCES entry
@@ -456,14 +488,15 @@ def _cohost_candidates(blk, cands, seed_apexes, deferred, host, source):
     an IP answering with more than MAX_IP_COHOSTS registrable apexes is shared/bulk hosting whose
     co-tenants are unrelated. Rejected IPs become `cohost` leads carrying the count, so the analyst
     sees the co-tenancy rather than silently losing it."""
-    rows = blk.get("results") or blk.get("hosts") or []
+    rows = blk.get("results") or blk.get("hosts") or blk.get("domains") or []   # FOFA / PDNS / DNSLytics shapes
     if not rows:
         return
-    ip = ""
+    ip = str(blk.get("ip") or "").strip()              # DNSLytics reverse_ip carries the origin explicitly
     for row in rows:
+        if ip:
+            break
         if isinstance(row, dict) and row.get("ip"):
             ip = str(row["ip"]).strip()
-            break
     if not ip:
         m = re.search(r'ip="?([0-9a-fA-F:.]+)"?', str(blk.get("query") or ""))
         ip = m.group(1) if m else ""
@@ -569,6 +602,310 @@ def _enrichment_leads_from_raw(obj, leads):
         leads[("github", apex)] = {
             "tool": "/github-osint + /secrets", "value": apex, "key": f"github:{apex}", "cost": "free",
             "why": f"GitHub org/repo/code + exposed-secret recon for {apex}"}
+        # GrayHatWarfare: open-bucket EXPOSURE for the brand label — an exposure/leak lead (graded as
+        # such in the report's Exposure section), never a same-operator pivot, never a frontier seed.
+        # Keyless the tool degrades to its dork fallback, so the lead is always emittable.
+        leads[("grayhatwarfare", apex)] = {
+            "tool": "/secrets", "value": apex, "key": f"grayhatwarfare:{apex}",      # /secrets owns the GHW layer
+            "cost": "metered (keyless dork fallback)",
+            "why": f"open S3/Azure/GCS buckets carrying the {apex.split('.')[0]} label — exposure, not attribution"}
+
+
+def _censys_search_candidates(cdir, cands, seed_apexes, deferred=None):
+    """Frontier seeds from cases/<id>/censys_search.json — hostnames Censys saw serving one of the
+    estate's EXACT leaf certificates. An exact cert SHA-256 match is an owner link (the same standard
+    as `censys_cert` names in _HOST_YIELDING_SOURCES) — UNLESS the certificate is itself shared: a CDN
+    / hoster bundle cert returns hundreds of unrelated tenants. So the SAME guard `_crtsh_candidates`
+    applies to CT certs applies here, per query: more than MAX_CERT_APEXES distinct apexes (or a total
+    beyond what was returned) reads as a multi-tenant cert -> a deferred `cert` lead, never seeds.
+    A skipped/errored search contributes nothing."""
+    p = os.path.join(cdir, "censys_search.json")
+    if not os.path.isfile(p):
+        return
+    try:
+        blk = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(blk, dict) or blk.get("skipped") or blk.get("error"):
+        return
+    deferred = _new_deferred() if deferred is None else deferred
+    # per-query rows (attributable to their fingerprint chunk) when present; else the legacy union
+    rows = [q for q in (blk.get("queries") or []) if isinstance(q, dict) and q.get("hostnames")] or \
+           [{"fingerprints": blk.get("fingerprints") or [], "hostnames": blk.get("hostnames") or [],
+             "total": blk.get("hits") or 0}]
+    for q in rows:
+        names = {n for n in (_clean_name(x) for x in (q.get("hostnames") or [])) if n}
+        apexes = {_frontier_apex(n) for n in names}
+        apexes = {a for a in apexes if not _is_noise_apex(a, seed_apexes)}
+        total = q.get("total") if isinstance(q.get("total"), int) else 0
+        truncated = total > len(names)
+        if len(apexes) > MAX_CERT_APEXES or (truncated and total > BULK_IP_RESULTS):
+            key = ",".join(sorted(q.get("fingerprints") or [])[:3]) or "censys_search"
+            deferred["cert"][key] = {
+                "check": "cert_overlap", "cost": "free", "seen_on": "censys_search.json",
+                "fingerprints": q.get("fingerprints") or [], "apex_count": max(len(apexes), total),
+                "sample_apexes": sorted(apexes)[:6],
+                "why": (f"Censys returns {max(len(apexes), total)} apex(es) on this certificate (> {MAX_CERT_APEXES}) — "
+                        "a shared CDN/hoster certificate, so its hosts were NOT seeded. Run cert_overlap on a "
+                        "specific pair if you suspect a genuine SAN cross-cover."),
+            }
+            continue
+        for n in names:
+            _add_cand(cands, n, "censys_search", seed_apexes)
+
+
+# ----------------------------------------------------------------- MO-neighbour classification
+def _mo_json(cdir):
+    return os.path.join(cdir, "mo_neighbours.json")
+
+
+def _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred):
+    """Frontier seeds from cases/<id>/mo_neighbours.json — the `same_registrant` rows ONLY.
+
+    A join-key match (the candidate's OWN registrant e-mail/phone equals an estate registrant) is the
+    same standard reverse-WHOIS seeding uses, so it is seeded directly — an origin's co-tenant count
+    is irrelevant once identity is verified. What still applies is the bulk-term guard: one
+    registrant matching more than MAX_WHOIS_SIBLINGS neighbours is a reseller mailbox, not an
+    operator, and is held back as a lead exactly like _whois_candidates does."""
+    p = _mo_json(cdir)
+    if not os.path.isfile(p):
+        return
+    try:
+        blk = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return
+    by_term = {}
+    for row in blk.get("same_registrant") or []:
+        if not isinstance(row, dict) or not row.get("apex"):
+            continue
+        by_term.setdefault(str(row.get("registrant") or "?").lower(), []).append(row)
+    for term, rows in by_term.items():
+        if len(rows) > MAX_WHOIS_SIBLINGS:
+            deferred["whois"][f"mo_neighbour:{term}"] = {
+                "check": "bulk registrant term", "cost": "free", "seen_on": "mo_neighbours.json",
+                "source": "mo_neighbour_same_registrant", "term": term, "sibling_count": len(rows),
+                "sample_domains": sorted(str(r["apex"]).lower() for r in rows)[:6],
+                "why": (f"registrant '{term}' matches {len(rows)} co-tenants (> {MAX_WHOIS_SIBLINGS}) — "
+                        "reads as a reseller/agency mailbox, not one operator; not seeded")}
+            continue
+        for r in rows:
+            _add_cand(cands, str(r["apex"]).lower(), "mo_neighbour_same_registrant", seed_apexes)
+
+
+def _whois_identity(w):
+    """(emails, phones, name, registrar, created) from a whois row — CURRENT registrant only.
+
+    History is deliberately NOT folded in: Phase 1 established that a previous registrant era is a
+    third party (a drop-caught estate domain's prior owner), so a co-tenant registered to that prior
+    owner must never become a `same_registrant` join and seed the frontier. Privacy/noise values are
+    dropped, and a privacy-proxied RECORD contributes no phone and no name (whois_current fills the
+    proxy's own contact phone in — two unrelated proxied domains would otherwise "share" it; same
+    rule as wp_analyze.whois_enrich_result._proxied)."""
+    if not isinstance(w, dict) or w.get("error"):
+        return set(), set(), "", "", ""
+    emails, phones = set(), set()
+    em = str(w.get("registrant_email") or "").strip().lower()
+    if em and "*" not in em and not _is_privacy(em) and not _is_noise_email(em):
+        emails.add(em)
+    proxied = any(_is_privacy(str(v)) for v in
+                  (w.get("registrant_email"), w.get("registrant_org"), w.get("registrant_name")) if v)
+    if not proxied:
+        ph = re.sub(r"[^\d+]", "", str(w.get("registrant_phone") or ""))
+        if len(ph) >= 8 and not _is_privacy(str(w.get("registrant_phone") or "")):
+            phones.add(ph)
+    name = str(w.get("registrant_name") or w.get("registrant_org") or "").strip()
+    if proxied or _is_privacy(name):
+        name = ""
+    return emails, phones, name, str(w.get("registrar") or "").strip().lower(), str(w.get("created") or "")[:10]
+
+
+def _label_tokens(apex):
+    """Alphabetic tokens (>= MO_MIN_TOKEN_LEN chars) of an apex's first label, digits stripped — the
+    estate's OWN naming vocabulary, computed per case (no static lexicon: house_report._sector() is a
+    VN regex and reusing it would be a false generalisation). Stop tokens come from the reference."""
+    label = str(apex or "").lower().split(".")[0]
+    toks = set()
+    for t in re.split(r"[^a-z]+", label):
+        if len(t) >= MO_MIN_TOKEN_LEN and t not in _MO_STOP:
+            toks.add(t)
+    return toks
+
+
+def _date_ord(s):
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").toordinal()
+    except Exception:
+        return None
+
+
+def _estate_context(cdir):
+    """Estate registrants/registrars/created-window/tokens from the WHOIS sidecar, falling back to
+    raw/*.json artifacts.whois so a FIRST cmd_open (sidecar not yet written) still has identities."""
+    hosts = sorted(collected_hosts(cdir))
+    rows = {}
+    for p in glob.glob(os.path.join(cdir, "whois", "*.json")):
+        try:
+            rows[os.path.basename(p)[:-5].lower()] = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            continue
+    if not rows:
+        for p in glob.glob(os.path.join(cdir, "raw", "*.json")):
+            try:
+                obj = json.load(open(p, encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            w = (obj.get("artifacts") or {}).get("whois")
+            h = (obj.get("meta") or {}).get("host")
+            if isinstance(w, dict) and h:
+                rows[str(h).lower()] = w
+    emails, phones, registrars, created = set(), set(), set(), []
+    for w in rows.values():
+        e, ph, _n, rg, cr = _whois_identity(w)
+        emails |= e
+        phones |= ph
+        if rg:
+            registrars.add(rg)
+        o = _date_ord(cr)
+        if o:
+            created.append(o)
+    tokens = set()
+    for h in hosts:
+        tokens |= _label_tokens(_frontier_apex(h))
+    return {"hosts": hosts, "apexes": {_frontier_apex(h) for h in hosts}, "emails": emails, "phones": phones,
+            "registrars": registrars, "created_min": min(created) if created else None,
+            "created_max": max(created) if created else None, "tokens": tokens,
+            "source": "whois sidecar" if glob.glob(os.path.join(cdir, "whois", "*.json")) else "raw artifacts.whois"}
+
+
+def _mo_blocks(cdir):
+    """Every mo_neighbours discovery block in the case's raw files -> [(seen_on_host, block)]."""
+    out = []
+    for p in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
+        try:
+            obj = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        host = (obj.get("meta") or {}).get("host") or os.path.basename(p)[:-5]
+        for piv in obj.get("pivots") or []:
+            blk = (piv.get("live_results") or {}).get("mo_neighbours")
+            if isinstance(blk, dict) and not blk.get("error"):
+                out.append((str(host).lower(), blk))
+    return out
+
+
+def mo_neighbour_classification(case, whois_window_days=MO_WINDOW_DAYS):
+    """Phase B: classify every WHOIS-verified co-tenant of the estate's origins against the ESTATE.
+
+    same_registrant  — candidate's own registrant e-mail/phone equals an estate registrant (join key;
+                       the ONLY class the frontier seeds)
+    same_mo          — different registrant, but registrar ∈ estate registrars, created within the
+                       estate window ± whois_window_days, and (shares a naming token with the estate
+                       OR the mailbox has the throwaway-handle shape). A rung-10 candidate: rendered
+                       as a related persona, never an estate member, never a KB edge.
+    unrelated        — counted + a domain sample only; identities never enumerated
+    unverifiable     — WHOIS errored / no record; kept separate so it is never read as 'unrelated'
+    Pure read. Returns the block intel.py persists as cases/<id>/mo_neighbours.json."""
+    cdir = _case_dir(case)
+    est = _estate_context(cdir)
+    lo = (est["created_min"] - whois_window_days) if est["created_min"] else None
+    hi = (est["created_max"] + whois_window_days) if est["created_max"] else None
+    reseller_estate = len(est["emails"] | est["phones"]) > MAX_WHOIS_SIBLINGS
+    # merge candidates across every origin block (one apex may sit behind several estate hosts)
+    cands, origins, bulk, unverified = {}, {}, {}, set()
+    for host, blk in _mo_blocks(cdir):
+        ip = str(blk.get("origin_ip") or "")
+        o = origins.setdefault(ip, {"origin_ip": ip, "seen_on": set(), "fan_out": 0, "sources": {}})
+        o["seen_on"].add(host)
+        o["fan_out"] = max(o["fan_out"], int(blk.get("fan_out") or 0))
+        o["sources"].update({k: v for k, v in (blk.get("sources") or {}).items()})
+        if blk.get("bulk_skipped"):
+            bulk[ip] = {"origin_ip": ip, "fan_out": blk.get("fan_out"), "sample_apexes": blk.get("sample_apexes") or [],
+                        "seen_on": host, "why": blk.get("note") or "bulk hosting"}
+            continue
+        for a in blk.get("unverified") or []:                 # over-cap / run-cap: seen, not yet verified
+            a = str(a or "").lower()
+            if a and a not in est["apexes"]:
+                unverified.add(a)
+        for row in blk.get("candidates") or []:
+            apex = str(row.get("apex") or "").lower()
+            if not apex or apex in est["apexes"]:
+                continue
+            slot = cands.setdefault(apex, {"apex": apex, "origin_ips": set(), "sources": set(), "whois": row.get("whois") or {}})
+            slot["origin_ips"].add(ip)
+            slot["sources"].update(row.get("sources") or [])
+            if slot["whois"].get("error") and not (row.get("whois") or {}).get("error"):
+                slot["whois"] = row.get("whois") or {}
+    same_reg, personas, unrelated, unverifiable, verified = [], {}, [], [], []
+    for apex in sorted(cands):
+        c = cands[apex]
+        w = c["whois"]
+        emails, phones, name, registrar, created = _whois_identity(w)
+        base = {"apex": apex, "origin_ips": sorted(c["origin_ips"]), "sources": sorted(c["sources"])}
+        if not isinstance(w, dict) or w.get("error") or not w:
+            unverifiable.append(apex)
+            verified.append({**base, "class": "unverifiable", "whois": w})
+            continue
+        hit_e = sorted(emails & est["emails"])
+        hit_p = sorted(phones & est["phones"])
+        if hit_e or hit_p:
+            same_reg.append({**base, "join_key": "registrant_email" if hit_e else "registrant_phone",
+                             "registrant": (hit_e or hit_p)[0], "registrar": registrar, "created": created})
+            verified.append({**base, "class": "same_registrant", "whois": w})
+            continue
+        signals = []
+        # a persona needs a non-privacy SELECTOR (e-mail or phone); a bare name behind a privacy
+        # proxy is not an identity anyone could be recalled by, so it can only be 'unrelated'
+        ident = next(iter(sorted(emails)), "") or next(iter(sorted(phones)), "")
+        if ident and not reseller_estate and registrar and registrar in est["registrars"]:
+            o = _date_ord(created)
+            in_window = bool(o and lo and hi and lo <= o <= hi)
+            toks = _label_tokens(apex) & est["tokens"]
+            handle = bool(emails and MO_PERSONA_HANDLE_RE.match(next(iter(sorted(emails))).split("@")[0]))
+            if in_window and (toks or handle):
+                signals = ["same registrar", "created in estate window"] + \
+                          ([f"naming token(s) {', '.join(sorted(toks))}"] if toks else []) + \
+                          (["throwaway-handle mailbox"] if handle else [])
+        if signals:
+            p = personas.setdefault(ident, {"persona": ident, "name": name, "domains": [], "registrar": registrar,
+                                            "created": [], "origin_ips": set(), "signals": set()})
+            p["domains"].append(apex)
+            if created:
+                p["created"].append(created)
+            p["origin_ips"] |= c["origin_ips"]
+            p["signals"] |= set(signals)
+            verified.append({**base, "class": "same_mo", "whois": w})
+        else:
+            unrelated.append(apex)
+            verified.append({**base, "class": "unrelated", "whois": w})
+    related = []
+    for ident in sorted(personas):
+        p = personas[ident]
+        related.append({"persona": p["persona"], "name": p["name"], "domains": sorted(p["domains"]),
+                        "registrar": p["registrar"],
+                        "created_span": [min(p["created"]), max(p["created"])] if p["created"] else [],
+                        "origin_ips": sorted(p["origin_ips"]), "signals": sorted(p["signals"]),
+                        "rung": 10, "caveat": "candidate, single-indicator (rung 10): shared provider + same MO; not estate membership"})
+    return {
+        "case": os.path.basename(cdir.rstrip("/")), "generated": _now(), "window_days": whois_window_days,
+        "estate": {"hosts": len(est["hosts"]), "registrant_terms": len(est["emails"] | est["phones"]),
+                   "registrars": sorted(est["registrars"]), "tokens": sorted(est["tokens"]),
+                   "created_window": [datetime.fromordinal(lo).date().isoformat() if lo else None,
+                                      datetime.fromordinal(hi).date().isoformat() if hi else None],
+                   "context_source": est["source"],
+                   "reseller_estate": reseller_estate},
+        "origins": [{**o, "seen_on": sorted(o["seen_on"])} for o in origins.values()],
+        "bulk_origins": sorted(bulk.values(), key=lambda b: b["origin_ip"]),
+        "same_registrant": same_reg,
+        "related_personas": related,
+        "unrelated_count": len(unrelated), "unrelated_sample": unrelated[:6],
+        "unverifiable_count": len(unverifiable), "unverifiable": unverifiable,
+        "unverified_count": len(unverified - set(cands)), "unverified_sample": sorted(unverified - set(cands))[:6],
+        "verified": verified,
+    }
 
 
 def frontier(case, max_new=8):
@@ -593,10 +930,24 @@ def frontier(case, max_new=8):
         _free_candidates_from_raw(obj, cands, seed_apexes, deferred)
         _metered_leads_from_raw(obj, leads)
         _enrichment_leads_from_raw(obj, enr)
+    # MO-neighbour: seed ONLY from the CLASSIFIED case-wide file (Phase B), never from the raw
+    # per-host discovery block — a same_mo / unrelated co-tenant must not grow the estate.
+    _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred)
+    # Censys case-level cert search (exact leaf-cert match = owner link) — seeds directly.
+    _censys_search_candidates(cdir, cands, seed_apexes, deferred)
     # drop apexes already collected or already queued/consumed; rank by # of corroborating sources
     already = {_frontier_apex(h) for h in collected} | {_frontier_apex(h) for h in consumed}
     fresh = {a: v for a, v in cands.items() if a not in already}
-    ranked = sorted(fresh.items(), key=lambda kv: (-len(kv[1]["sources"]), kv[0]))
+    # RANK: owner-link candidates (reverse-WHOIS, CT/cert, co-host, passive DNS, engine reverses) before
+    # candidates whose ONLY sources are lookalike miners (`impersonation`): those are impersonation
+    # CANDIDATES to triage, not owner links, and with max_new=8 an alphabetical tie-break would hand
+    # every slot to `ba…` typo-variants while a genuine cert/registrant sibling never entered pending.
+    # Within a class: corroboration (|sources|) desc, then name.
+    def _rank(kv):
+        srcs = kv[1]["sources"]
+        owner = 0 if srcs and srcs <= _LOOKALIKE_SOURCES else 1
+        return (-owner, -len(srcs), kv[0])
+    ranked = sorted(fresh.items(), key=_rank)
     pending = [a for a, _ in ranked][:max_new] if max_new else [a for a, _ in ranked]
     return {
         "case": st["case"], "round": st.get("round", 0),

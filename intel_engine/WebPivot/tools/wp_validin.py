@@ -150,6 +150,31 @@ def permitted_paths(timeout=15):
     return set(data.keys()) if isinstance(data, dict) else set()
 
 
+_PATHS = None
+
+
+def entitlement(timeout=15):
+    """Measured plan for `meta.capability.plans['validin']` — decided by CALLING (/api/paths +
+    /api/profile/usage, both free), never read off the catalogue (`roles: null` there was measured
+    to mean nothing: the registration endpoints still answered 403). Cached per process.
+    -> {'tier': 'community'|'professional'|'unknown', 'registration': bool, 'bulk': bool,
+        'paths': [...], 'usage': {...}} | None (keyless). Never raises."""
+    global _PATHS
+    if not validin_configured():
+        return None
+    try:
+        if _PATHS is None:
+            _PATHS = sorted(permitted_paths(timeout=timeout))
+        paths = _PATHS
+        registration = any("registration" in p or "/whois" in p for p in paths)
+        bulk = any("/bulk/" in p for p in paths)
+        tier = "unknown" if not paths else ("professional" if (registration or bulk) else "community")
+        return {"tier": tier, "registration": registration, "bulk": bulk, "paths": paths,
+                "usage": usage(timeout=timeout) or {}}
+    except Exception as e:  # noqa: BLE001
+        return {"tier": "unknown", "error": str(e)}
+
+
 def _allow(bucket):
     """Per-domain cap + per-run ceiling + quota gate, all BEFORE any HTTP call. Increments the
     counters when it allows. `bucket` is the domain/IP the call is attributed to."""

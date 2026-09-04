@@ -54,7 +54,15 @@ def registrant_country(w: dict) -> str:
         import whois_enrich  # noqa: E402
         placeholders = whois_enrich._PLACEHOLDER_COUNTRIES
         if cc.upper() in placeholders or not cc:
-            contact = ((w.get("_raw") or {}).get("WhoisRecord") or {}).get("registrant") or {}
+            # whois_current() keeps the raw record at top-level `_raw`; whois_summary() (the
+            # sidecar's shape once history is requested) nests it at raw.current — read both.
+            raw_rec = w.get("_raw") or ((w.get("raw") or {}).get("current")) or {}
+            # Same contact resolution as the collector: WhoisXML's primary key is `registrantContact`
+            # (legacy `registrant`), with `registryData` as the fallback record.
+            rec = (raw_rec.get("WhoisRecord") or {})
+            contact = (whois_enrich._contact(rec, "registrantContact", "registrant")
+                       or whois_enrich._contact(rec.get("registryData") or {}, "registrantContact", "registrant")
+                       or {})
             fixed = whois_enrich._reconcile_country(contact) if contact else None
             return fixed or ""
     except Exception:  # noqa: BLE001 — helper unavailable: drop anything that is not a clean code

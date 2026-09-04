@@ -190,6 +190,34 @@ def check():
        and ct.link_name("https://web.archive.org/web/1/x") == "Wayback",
        "link_name labels a citation by the service it points at")
 
+    # --- 9. registrant eras from WHOIS history (the drop-catch record) ------------------------
+    whois_hist = {"domain": "recycled.example", "registrar": "Example Registrar",
+                  "created": "2015-03-01", "expires": "2027-05-21",
+                  "history": {"count": 4, "mode": "purchase", "records": [
+                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar", "updated": "2015-03-01"},
+                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar", "updated": "2018-03-01"},
+                      {"email": "privacy@proxy.invalid", "registrar": "Mid Registrar", "updated": "2021-11-02"},
+                      {"email": "operator@synthetic.invalid", "registrar": "Example Registrar", "updated": "2026-05-21"},
+                  ]}}
+    eras_out = []
+    ct.whois_events("recycled.example", whois_hist, eras_out)
+    eras = [e for e in eras_out if e and e["kind"] == "registrant_era"]
+    ok(len(eras) == 3, "four history records with three distinct identities -> exactly three eras "
+                       "(a repeated identity collapses into its era)")
+    ok([e["value"]["identity"] for e in eras] == ["first@synthetic.invalid", "privacy@proxy.invalid",
+                                                   "operator@synthetic.invalid"],
+       "eras are ordered by date and carry the registrant identity")
+    ok(eras[0]["end"][:10] == "2021-11-02" and eras[1]["end"][:10] == "2026-05-21",
+       "an era ends where the NEXT identity's first record begins")
+    ok(eras[2]["end"][:10] == "2027-05-21",
+       "the current era ends at the WHOIS expiry when no later record exists")
+    ok(all(e.get("url") for e in eras), "every registrant-era row cites its public register")
+    empty_out = []
+    ct.whois_events("fresh.example", {"created": "2026-05-21", "expires": "2027-05-21",
+                                      "history": {"count": 1, "records": []}}, empty_out)
+    ok(not [e for e in empty_out if e and e["kind"] == "registrant_era"],
+       "a preview-mode history (count, no records) yields no era rows — no invented eras")
+
     return passed, failed, out
 
 

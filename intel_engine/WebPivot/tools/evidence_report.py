@@ -153,18 +153,33 @@ _HIT_SOURCES = (("fofa", "FOFA"), ("urlscan", "urlscan"),
                 ("validin", "Validin"), ("validin_subs", "Validin subdomains"),
                 ("validin_cert", "Validin cert-reverse"), ("validin_favicon", "Validin favicon-reverse"),
                 ("hunterhow", "Hunter.how"),
-                ("securitytrails", "SecurityTrails"), ("dnslytics", "DNSLytics"))
+                ("securitytrails", "SecurityTrails"), ("dnslytics", "DNSLytics"),
+                # Vendor-wiring residue: keys that are NEW (a result under an existing key reuses its row).
+                ("securitytrails_dns_history", "SecurityTrails DNS history"),
+                ("securitytrails_reverse_whois", "SecurityTrails reverse-WHOIS"),
+                ("dnslytics_reverseip", "DNSLytics reverse-IP"),
+                ("censys_search", "Censys search"), ("shodan_search", "Shodan search"))
 
 
 # Phase 10 cross-engine merge — the source label shown per discovered host. IP-reverse engines run
 # on the domain pivot; artifact-reverse engines run on any (favicon/cert/tracker) pivot. A host
 # found by several is listed with ALL its sources, so corroboration is visible, not collapsed.
+# `dnslytics_reverseip` is an IP reverse (co-tenancy) and lives HERE, never in the artifact map —
+# the frontier mirrors the split (case_state._cohost_candidates vs _HOST_YIELDING_SOURCES).
 _IP_REVERSE_DISCOVERY = {"fofa_ip_reverse": "FOFA reverse-IP", "fofa": "FOFA", "urlscan": "urlscan",
-                         "pdns": "PDNS", "pdns_ip_reverse": "PDNS reverse-IP"}
+                         "pdns": "PDNS", "pdns_ip_reverse": "PDNS reverse-IP",
+                         "dnslytics_reverseip": "DNSLytics reverse-IP"}
 _ARTIFACT_DISCOVERY = {"validin": "Validin", "validin_subs": "Validin subdomains",
                        "hunterhow": "Hunter.how", "censys_cert": "Censys cert",
                        "securitytrails": "SecurityTrails", "dnslytics": "DNSLytics",
                        "quake": "Quake", "zoomeye": "ZoomEye"}
+# NOT in either discovery map, on purpose:
+#  - `shodan_search`: a JARM hit is a shared TLS-stack fingerprint, not an owner link; the block is
+#    shown as a hit count (_HIT_SOURCES) and the analyst reads its hosts in the pivot detail.
+#  - `censys_search`: case-level (cases/<id>/censys_search.json), merged by the frontier on exact
+#    cert SHA-256 — the report reads that file, not a per-pivot block.
+#  - GrayHatWarfare: an open bucket carrying the brand label is EXPOSURE (a leak lead), not a
+#    same-operator pivot — it gets its own report section, never a discovered host.
 
 
 def _discovered_host(h):
@@ -717,7 +732,10 @@ def render_cluster_report(results: list,
                           classification: str = "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
                           analyst: Optional[str] = None,
                           graph: Optional[dict] = None,
-                          kb_dir: Optional[str] = None) -> str:
+                          kb_dir: Optional[str] = None,
+                          whois_history: str = "off",
+                          whois_history_for: Optional[set] = None,
+                          free_only: bool = False) -> str:
     """Render ONE ICD-203 assessment across a whole case (many pivot_extract results).
 
     Rolls per-host artifacts up into cluster-level Key Judgments: hosts sharing >=2
@@ -854,7 +872,10 @@ def render_cluster_report(results: list,
     # analyst can judge the whole cluster before reading the narrative.
     if render_domain_table is not None:
         try:
-            tbl = render_domain_table(results, case=case)
+            # WHOIS-history spend on the sidecar is the CALLER's decision (posture + seed/cluster
+            # scope); the default reproduces the historical current-WHOIS-only behaviour.
+            tbl = render_domain_table(results, case=case, history_mode=whois_history,
+                                      history_for=whois_history_for, free_only=free_only)
             if tbl:
                 L += [tbl, ""]
         except Exception:
@@ -921,6 +942,35 @@ def render_cluster_report(results: list,
             L.append(f"- {len(suppressed_ips)} shared CDN/cloud edge IP(s) (low attribution value): "
                      + ", ".join(f"{ip} ({prov})" for ip, prov in list(suppressed_ips.items())[:6]))
         L.append("")
+
+    # Exposure — leak surface, NEVER attribution. GrayHatWarfare open-bucket hits (when a collection
+    # carried them under artifacts.buckets) and the per-label bucket check as an open lead otherwise.
+    # Deliberately not "discovered infrastructure": a bucket carrying the brand label may be the
+    # brand's own, a squatter's, or an unrelated tenant's — it is a thing to READ, not a host to seed.
+    exposure, labels = [], []
+    for r in results:
+        host = _norm(r["meta"]["host"])
+        try:
+            from wp_common import _registrable as _reg   # noqa: WPS433 — same dir; PSL-aware apex
+            apex = _reg(host) or host
+        except Exception:  # noqa: BLE001
+            apex = host
+        label = apex.split(".")[0]
+        if label and label not in labels and not _is_infra_noise_host(host):
+            labels.append(label)
+        for b in ((r.get("artifacts") or {}).get("buckets") or {}).get("buckets") or []:
+            if isinstance(b, dict) and b.get("bucket"):
+                exposure.append((host, b.get("bucket"), b.get("fileCount") or b.get("files") or "?"))
+    L += ["## Exposure (leak surface — not attribution)", ""]
+    if exposure:
+        L += ["| Host | Open bucket | Files |", "|---|---|---|"]
+        for host, bucket, n in exposure[:20]:
+            L.append(f"| {host} | `{bucket}` | {n} |")
+        L.append("")
+    L.append("- Open-bucket check (GrayHatWarfare, keyless dork fallback) for the estate's label(s): "
+             + ", ".join(f"`{x}`" for x in labels[:8]) + " — "
+             + ("results above." if exposure else "open lead; graded EXPOSURE when it returns, never a same-operator link."))
+    L.append("")
 
     # Gaps
     L += ["## Intelligence Gaps & Recommended Collection", ""]

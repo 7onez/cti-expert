@@ -100,6 +100,9 @@ else
 fi
 
 echo "== 6. zero-dep test runners =="
+# Tests stub vendor HTTP but the clients still ledger the (mocked) call; that must never land in the
+# real MEMORY/api_usage.jsonl — it inflates the Censys/urlscan monthly budgets with phantom credits.
+export API_USAGE_LOG="$(mktemp)"   # bare mktemp: portable (BSD/macOS reject a non-X suffix)
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
          tests/test_email_permute.py tests/test_hooks.py \
@@ -110,9 +113,18 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_whois_phone_ingest.py tests/test_wildcard_frontier_guard.py \
          tests/test_title_pivot.py tests/test_case_pipeline_smoke.py \
          tests/test_pipeline_step_timeout.py tests/test_key_alias_registry.py \
-         tests/test_house_report_compose.py tests/test_docx_timeline_chart.py; do
+         tests/test_house_report_compose.py tests/test_docx_timeline_chart.py \
+         tests/test_deep_archive.py tests/test_house_report_mo_neighbours.py \
+         tests/test_intelx_autofire.py tests/test_shodan_search.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
+  # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
+  # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.
+  if ! grep -qE 'SystemExit\(|sys\.exit\(' "$t"; then bad "$t has no nonzero-exit path (SystemExit/sys.exit) — it can never redden this gate"; fi
 done
+# …and prove the shape works: a deliberately failing file MUST redden the same check.
+_smoke="$(mktemp)"; printf 'raise SystemExit(1)\n' > "$_smoke"
+if python3 "$_smoke" >/dev/null 2>&1; then bad "§6 exit-contract smoke: a failing test file did NOT exit nonzero"; else note "§6 exit-contract smoke: a failing file reddens the gate"; fi
+rm -f "$_smoke"
 
 echo "== 7. every hook the plugin registers exists on disk (RULE 3, hook layer) =="
 # A hooks.json entry pointing at a script that was moved or renamed fails SILENTLY: Claude Code

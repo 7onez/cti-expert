@@ -40,6 +40,20 @@ FAKE_DOMAIN = "site-a.example"
 FAKE_SHA256 = "a" * 64
 
 
+_IX_KEYS = ("INTELX_KEY", "INTELX_API_KEY", "INTELLIGENCEX_KEY")   # every alias wp_intelx.intelx_key() reads
+
+
+def _pop_ix_keys():
+    return {k: os.environ.pop(k, None) for k in _IX_KEYS}
+
+
+def _restore_ix_keys(saved):
+    for k, v in saved.items():
+        os.environ.pop(k, None)
+        if v is not None:
+            os.environ[k] = v
+
+
 def check():
     """Return (passed, failed, [outcome lines])."""
     out, passed, failed = [], 0, 0
@@ -73,7 +87,7 @@ def check():
     ok(ix.classify_selector("*.site-a.example")[0] == "domain", "a wildcard apex still classifies")
 
     # --- 3. the KEYLESS query builder produces a runnable URL with no key ---------------------
-    was_key = os.environ.pop("INTELX_KEY", None)
+    was_key = _pop_ix_keys()
     try:
         ok(not ix.intelx_configured(), "no INTELX_KEY -> the layer reports itself unconfigured")
         qs = ix.intelx_queries("email", FAKE_EMAIL)
@@ -91,9 +105,9 @@ def check():
         ok(bool(ix.banner_lines()), "keyless IntelX prints a banner")
         ok(not ix.banner_lines(free_only=False) == [], "banner is non-empty in keyless mode")
     finally:
-        if was_key is not None:
-            os.environ["INTELX_KEY"] = was_key
+        _restore_ix_keys(was_key)
     # Fully keyed, the banner must be SILENT — a caveat on every run trains people to skip it.
+    _was_real = _pop_ix_keys()
     os.environ["INTELX_KEY"] = "test-key-not-a-real-credential"
     try:
         ok(ix.capability()["power_pct"] == 100, "with a key, IntelX reports full capability")
@@ -102,8 +116,7 @@ def check():
            "--free-only reports ~50% even when the key exists (it is suppressed, not absent)")
     finally:
         os.environ.pop("INTELX_KEY", None)
-        if was_key is not None:
-            os.environ["INTELX_KEY"] = was_key
+        _restore_ix_keys(_was_real)
 
     # --- 4. kinds IntelX cannot search emit NOTHING -------------------------------------------
     ok(ix.intelx_queries("favicon_hash", "123456789") == [],
@@ -173,7 +186,9 @@ def check():
     ok(ar.build_query("file:sha256", "") == "", "an empty value never builds a query")
 
     # --- 7. ANY.RUN keyless capability + query attachment --------------------------------------
-    was_ar = os.environ.pop("ANYRUN_API_KEY", None)
+    _AR_KEYS7 = ("ANYRUN_API_KEY", "ANY_RUN_API_KEY", "ANYRUN_KEY")
+    ar.anyrun_key()                    # prime bp_anyrun's one-shot .env loader BEFORE popping (else the pop is undone)
+    was_ar = {k: os.environ.pop(k, None) for k in _AR_KEYS7}
     try:
         cap = ar.capability()
         ok(cap["power_pct"] == 50 and cap["mode"] == "keyless",
@@ -192,8 +207,10 @@ def check():
         ok(len([q for q in pivots[0]["queries"] if "ANY.RUN" in q["service"]]) == 2,
            "attach is idempotent — a second pass does not duplicate the entries")
     finally:
-        if was_ar is not None:
-            os.environ["ANYRUN_API_KEY"] = was_ar
+        for k, v in was_ar.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
 
     # --- 7b. THE SUBMISSION GATE -------------------------------------------------------------
     # A submission is outbound, attributable and irreversible: it hands case material to a third
@@ -272,7 +289,13 @@ def check():
         ix._RUN_SPENT, ar._RUN_SPENT = saved
 
     # --- 10. the two layers never crash a keyless run -----------------------------------------
-    was_ix, was_ar = os.environ.pop("INTELX_KEY", None), os.environ.pop("ANYRUN_API_KEY", None)
+    _AR_KEYS = ("ANYRUN_API_KEY", "ANY_RUN_API_KEY", "ANYRUN_KEY")   # every alias bp_anyrun.anyrun_key() reads
+    ar.anyrun_key()                    # prime bp_anyrun's one-shot .env loader BEFORE popping (else the pop is undone)
+    was_ix, was_ar = _pop_ix_keys(), {k: os.environ.pop(k, None) for k in _AR_KEYS}
+    # belt and braces: even if a new alias appears, the transport must not be reachable from here
+    _saved_call, _saved_ar_call = ix._call, ar._call
+    ix._call = lambda *a, **k: (_ for _ in ()).throw(AssertionError("IntelX network reached from the keyless gate"))
+    ar._call = lambda *a, **k: (_ for _ in ()).throw(AssertionError("ANY.RUN network reached from the keyless gate"))
     try:
         ok(ix.search(FAKE_EMAIL) is None, "keyless IntelX search returns None, never raises")
         ok(ix.phonebook(FAKE_DOMAIN) is None, "keyless IntelX phonebook returns None, never raises")
@@ -286,10 +309,12 @@ def check():
         ok(bres["anyrun"]["capability"]["power_pct"] == 50,
            "keyless ANY.RUN enrich_result records the capability instead of an empty result set")
     finally:
-        if was_ix is not None:
-            os.environ["INTELX_KEY"] = was_ix
-        if was_ar is not None:
-            os.environ["ANYRUN_API_KEY"] = was_ar
+        ix._call, ar._call = _saved_call, _saved_ar_call
+        _restore_ix_keys(was_ix)
+        for k, v in was_ar.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
 
     return passed, failed, out
 

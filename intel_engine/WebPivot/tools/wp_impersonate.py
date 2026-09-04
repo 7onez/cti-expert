@@ -260,15 +260,48 @@ def fofa_keyword_hunt(label: str, size: int = 100, timeout: int = 30):
             "total": res.get("total")}
 
 
-def urlscan_keyword_hunt(label: str, timeout: int = 30):
-    """Opt-in urlscan keyword hunt via page.domain wildcard. METERED — urlscan_search records it."""
+def urlscan_keyword_hunt(label: str, timeout: int = 30, brand: str = None, max_age_days: int = 120):
+    """Opt-in urlscan keyword hunt. METERED — urlscan_search records every query.
+
+    Three measured query shapes (audit 2026-09-02), unioned:
+      * `page.domain:*label*`            — the hostname carries the brand label (original hunt);
+      * `page.url.keyword:https\\://*label* AND page.apexDomainAgeDays:<N>` — a YOUNG apex whose URL
+        carries the label anywhere (path, subdomain, other TLD): the MO drifting to other TLDs
+        (measured: 123 hits for `*tuyendung*` under 120 days, incl. `.com.ph` / `.asia`);
+      * `page.title:"<brand>"`           — the page TITLES itself as the brand (measured: 120 hits /
+        56 domains for "Bạch Mai"); only when a display `brand` is supplied.
+    Every hit is a lookalike LEAD for `/impersonate` — never estate binding. Returns
+    {'source','domains','count','total','queries'} or {'source','error'}."""
     from wp_recon import urlscan_search
-    res = urlscan_search(f"page.domain:*{label}*", timeout=timeout)
-    if not res or res.get("error"):
-        return {"source": "urlscan", "error": (res or {}).get("error", "no result")}
-    domains = sorted({_registrable(d) for d in res.get("domains", []) if label in d.lower()})
-    return {"source": "urlscan", "domains": domains, "count": len(domains),
-            "total": res.get("total")}
+    queries = [f"page.domain:*{label}*"]
+    if max_age_days:
+        queries.append(f"page.url.keyword:https\\://*{label}* AND page.apexDomainAgeDays:<{int(max_age_days)}")
+    if brand and brand.strip() and brand.strip().lower() != label.lower():
+        b = brand.strip().replace('"', "")
+        queries.append(f'page.title:"{b}"')
+    domains, total, errors, ran = set(), 0, [], []
+    for q in queries:
+        try:
+            res = urlscan_search(q, timeout=timeout)
+        except Exception as e:  # noqa: BLE001 — never raise into the hunt
+            res = {"error": str(e)}
+        if not res or res.get("error"):
+            errors.append((res or {}).get("error", "no result"))
+            continue
+        ran.append(q)
+        total += int(res.get("total") or 0)
+        for d in res.get("domains", []):
+            dl = (d or "").lower()
+            # the title query can match pages whose hostname never mentions the label — keep those
+            # (that is the point of the brand-title pivot); the label queries are filtered on label.
+            if q.startswith("page.title") or label in dl:
+                r = _registrable(d)
+                if r:
+                    domains.add(r)
+    if not ran:
+        return {"source": "urlscan", "error": "; ".join(errors) or "no result"}
+    return {"source": "urlscan", "domains": sorted(domains), "count": len(domains),
+            "total": total, "queries": ran}
 
 
 
@@ -289,7 +322,7 @@ def validin_lookalike_hunt(domain: str):
 
 # --- orchestration + WebPivot-shaped result ---------------------------------
 def build_impersonation_result(domain: str, *, max_variants: int = 600, fofa: bool = False,
-                               urlscan: bool = False, case=None) -> dict:
+                               urlscan: bool = False, case=None, brand: str = None) -> dict:
     """Run the full hunt for `domain` and return a WebPivot result {meta, artifacts, pivots}.
 
     Explicit keyword contract (not an opaque args object) so both callers — this module's CLI and
@@ -308,7 +341,7 @@ def build_impersonation_result(domain: str, *, max_variants: int = 600, fofa: bo
     if fofa:
         jobs["fofa"] = lambda: fofa_keyword_hunt(label)
     if urlscan:
-        jobs["urlscan"] = lambda: urlscan_keyword_hunt(label)
+        jobs["urlscan"] = lambda: urlscan_keyword_hunt(label, brand=brand)
     import wp_validin
     if wp_validin.validin_configured():
         jobs["validin"] = lambda: validin_lookalike_hunt(domain)
@@ -393,6 +426,9 @@ def main():
     ap.add_argument("--max", type=int, default=600, help="cap on generated candidates (default 600)")
     ap.add_argument("--fofa", action="store_true", help="also run the FOFA cert= keyword sweep (metered)")
     ap.add_argument("--urlscan", action="store_true", help="also run the urlscan keyword sweep (metered)")
+    ap.add_argument("--brand", default=None,
+                    help="display name of the impersonated brand (e.g. \"Bach Mai\") — adds the "
+                         "urlscan page.title:\"<brand>\" hunt (with --urlscan; metered)")
     ap.add_argument("--case", default=None, help="case id (for the api_usage ledger context)")
     ap.add_argument("--generate-only", action="store_true",
                     help="just print the generated candidate list (offline, no DNS/CT)")
@@ -408,7 +444,7 @@ def main():
         return
 
     result = build_impersonation_result(args.domain, max_variants=args.max, fofa=args.fofa,
-                                        urlscan=args.urlscan, case=args.case)
+                                        urlscan=args.urlscan, case=args.case, brand=args.brand)
     print(json.dumps(result, indent=2 if args.pretty else None, ensure_ascii=False))
 
 

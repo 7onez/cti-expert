@@ -127,6 +127,52 @@ check("'m0on' is tagged as a homoglyph", moon.get("m0on"), "homoglyph")
 
 
 # ---------------------------------------------------------------------------
+# 7. urlscan keyword hunt — the three MEASURED query shapes (audit 2026-09-02), unioned, offline.
+#
+# `page.domain:*label*` (hostname carries the label), `page.url.keyword ... apexDomainAgeDays:<N>`
+# (a YOUNG apex whose URL carries the label anywhere — the MO drifting to other TLDs) and, only with
+# a display brand, `page.title:"<brand>"` (the page titles itself as the brand). Title hits are kept
+# even when the hostname never mentions the label — that is the point of that pivot. Every hit is a
+# lookalike LEAD, never estate binding; a failing query degrades, never raises.
+# ---------------------------------------------------------------------------
+import wp_recon  # noqa: E402
+_orig_search = wp_recon.urlscan_search
+_queries = []
+
+
+def _fake_search(q, timeout=30, **k):
+    _queries.append(q)
+    if q.startswith("page.title"):
+        return {"query": q, "total": 2, "domains": ["phongkham-brand.example", "brand.example"]}
+    if q.startswith("page.url.keyword"):
+        return {"query": q, "total": 1, "domains": ["jobs.tuyendungbrand-ph.example"]}
+    return {"query": q, "total": 1, "domains": ["www.brand-vn.example", "unrelated.example"]}
+
+
+wp_recon.urlscan_search = _fake_search
+try:
+    hunt = wp_impersonate.urlscan_keyword_hunt("brand", brand="Brand Hospital")
+    check("three query shapes fire when a brand is supplied", len(_queries), 3)
+    check("page.domain wildcard query", _queries[0], "page.domain:*brand*")
+    check("young-apex URL-keyword query carries the age filter",
+          _queries[1], "page.url.keyword:https\\://*brand* AND page.apexDomainAgeDays:<120")
+    check("brand title query", _queries[2], 'page.title:"Brand Hospital"')
+    check("label queries are filtered on the label, title hits are kept as-is, all apex-reduced",
+          hunt["domains"], ["brand-vn.example", "brand.example", "phongkham-brand.example", "tuyendungbrand-ph.example"])
+    check("queries that ran are reported", hunt["queries"], _queries)
+    _queries.clear()
+    hunt2 = wp_impersonate.urlscan_keyword_hunt("brand")
+    check("no brand -> no title query", len(_queries), 2)
+    check("a brand equal to the label adds no duplicate title query",
+          len(wp_impersonate.urlscan_keyword_hunt("brand", brand="brand")["queries"]), 2)
+    wp_recon.urlscan_search = lambda q, timeout=30, **k: {"query": q, "error": "429"}
+    check("every query failing degrades to an error dict, never raises",
+          "error" in wp_impersonate.urlscan_keyword_hunt("brand"), True)
+finally:
+    wp_recon.urlscan_search = _orig_search
+
+
+# ---------------------------------------------------------------------------
 if FAILURES:
     print(f"FAIL — {len(FAILURES)} impersonation check(s) failed:")
     for f in FAILURES:

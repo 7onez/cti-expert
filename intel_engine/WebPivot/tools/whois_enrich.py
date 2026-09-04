@@ -128,6 +128,12 @@ def _key():
     return None
 
 
+def whois_configured():
+    """True when a WhoisXML key is present — the spend gate every metered WHOIS caller checks
+    (`… and not free_only`) before it verifies anything."""
+    return bool(_key())
+
+
 # Privacy-proxy / registrar-role markers — these are NOT the real owner and must
 # never become a same-operator hub or trigger a reverse-WHOIS (which would return
 # thousands of unrelated domains and waste credits).
@@ -458,6 +464,17 @@ def reverse_whois(term, kind="email", search_type="current", mode="purchase", ti
     key = _key()
     if not key or not term:
         return None
+    # Bought ONCE per case (wp_casememo under $WP_CASE_DIR): every estate host carries the same
+    # registrant, and the collector runs one process per host — 3 hosts used to mean 12 identical
+    # reverse-WHOIS purchases for one e-mail + one name.
+    _memo_key = f"reverse_whois|{kind}|{search_type}|{mode}|{str(term).lower()}"
+    try:
+        import wp_casememo
+        _cached = wp_casememo.get("whoisxml", _memo_key)
+    except Exception:  # noqa: BLE001
+        wp_casememo, _cached = None, None
+    if _cached is not None:
+        return dict(_cached, memo="case cache")
     payload = {
         "apiKey": key,
         "searchType": search_type,
@@ -484,9 +501,12 @@ def reverse_whois(term, kind="email", search_type="current", mode="purchase", ti
         return {"error": str(e), "term": term}
     domains = [d.get("domainName") if isinstance(d, dict) else d
                for d in (data.get("domainsList") or [])]
-    return {"term": term, "kind": kind, "search_type": search_type,
-            "count": data.get("domainsCount", len(domains)),
-            "domains": [d for d in domains if d][:200]}
+    out = {"term": term, "kind": kind, "search_type": search_type,
+           "count": data.get("domainsCount", len(domains)),
+           "domains": [d for d in domains if d][:200]}
+    if wp_casememo is not None:
+        wp_casememo.put("whoisxml", _memo_key, out)
+    return out
 
 
 # --------------------------------------------------------------- keyless WHOIS (RDAP + port-43)
@@ -647,7 +667,8 @@ def whois_summary_keyless(domain, timeout=25, keep_raw=True):
         return None
     cur_raw = cur.pop("_raw", None)
     out = dict(cur)
-    out["history"] = {}          # history + reverse-WHOIS require the licensed WhoisXML API
+    # history + reverse-WHOIS require the licensed WhoisXML API — same shape as the keyed block
+    out["history"] = {"records": [], "mode": "off"}
     if keep_raw:
         out["raw"] = {"current": cur_raw, "history": None}
     return out
@@ -688,9 +709,16 @@ def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
     out["history"] = {k: hist.get(k) for k in
                       ("count", "registrant_emails", "registrant_names",
                        "registrant_phones", "registrant_addresses", "registrars")}
+    # The per-era record list is what case_timeline.whois_events() turns into registrant eras.
+    # whois_history() returns it only under mode="purchase" ([] for preview) — carry it through
+    # instead of dropping it, or every downstream era view stays empty.
+    out["history"]["records"] = list(hist.get("records") or [])
+    out["history"]["mode"] = history_mode
     if hist.get("error"):
         out["history"]["error"] = hist["error"]
     if keep_raw:
+        # Readers of the raw record (house_report_dossier.registrant_country) accept both this
+        # nested shape and whois_current()'s top-level `_raw` — no alias, no duplicated payload.
         out["raw"] = {"current": cur_raw, "history": hist_raw}
     return out
 

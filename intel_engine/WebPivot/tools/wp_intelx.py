@@ -370,14 +370,30 @@ def _budget_block(cost: int, action: str):
 
 
 def _memoised(kind: str, ident: str, fn):
-    """Run `fn()` once per (kind, ident) per process and hand back a private copy."""
+    """Run `fn()` once per (kind, ident) per process — AND once per CASE across the per-host collector
+    subprocesses (wp_casememo under $WP_CASE_DIR): the estate's 25 hosts share one registrant e-mail,
+    so without the on-disk half every host would buy the same search (and 5-credit phonebook) again.
+    Hands back a private copy."""
     key = (kind, ident)
     with _MEMO_LOCK:
         if key in _MEMO:
             return copy.deepcopy(_MEMO[key])
+    try:
+        import wp_casememo
+        cached = wp_casememo.get("intelx", f"{kind}|{ident}")
+    except Exception:  # noqa: BLE001
+        cached = None
+    if cached is not None:
+        with _MEMO_LOCK:
+            _MEMO[key] = cached
+        return copy.deepcopy(cached)
     val = fn()
     with _MEMO_LOCK:
         _MEMO[key] = val
+    try:
+        wp_casememo.put("intelx", f"{kind}|{ident}", val)      # errors are never memoised (put refuses)
+    except Exception:  # noqa: BLE001
+        pass
     return copy.deepcopy(val)
 
 
@@ -836,6 +852,32 @@ _ENRICH_PRIORITY = [str(s) for s in (SEARCH_PLAN.get("selector_priority") or [])
                    ["domain", "email", "url", "phone", "bitcoin", "iban", "ipv4"]
 
 
+_ROLE_LOCALS = frozenset({"abuse", "spam-reports", "spam", "postmaster", "hostmaster", "noc", "webmaster",
+                          "noreply", "no-reply", "dmarc", "dmarc-reports", "security", "privacy", "support",
+                          "info", "admin", "contact", "sales", "help", "billing", "legal", "compliance"})
+
+
+def _is_role_or_noise_email(addr: str) -> bool:
+    """A role/abuse mailbox or a registrar / privacy-proxy relay is NOT a person selector — IntelX
+    would spend a unit and return the whole internet's spam reports. Uses the KB noise filters when
+    importable (registrar domains, privacy tokens) plus a local role list."""
+    a = str(addr or "").lower().strip()
+    if "@" not in a:
+        return False
+    local, _, dom = a.partition("@")
+    if local in _ROLE_LOCALS or local.startswith(("abuse", "spam-report", "dmarc")):
+        return True
+    try:
+        import os as _os, sys as _sys
+        _kb = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), "tools", "kb")
+        if _kb not in _sys.path:
+            _sys.path.insert(0, _kb)
+        from noise_filters import is_noise_email  # noqa: WPS433
+        return bool(is_noise_email(a))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _enrich_targets(result: dict) -> list:
     """[(selector_class, value, pivot)] for every artifact in a result IntelX can search, ordered
     by `_ENRICH_PRIORITY` and de-duplicated on the normalised value."""
@@ -856,6 +898,8 @@ def _enrich_targets(result: dict) -> list:
         cls, norm = classify_selector(str(piv.get("value") or ""))
         if not cls or norm in seen:
             continue
+        if cls == "email" and _is_role_or_noise_email(norm):
+            continue          # spam-reports@ / abuse@ / privacy relays: a search unit spent on nobody
         seen.add(norm)
         rows.append((cls, norm, piv))
     # Stable — so within a selector class the seed host keeps its head start.

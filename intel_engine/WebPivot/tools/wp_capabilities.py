@@ -117,7 +117,126 @@ def key_status():
     return rows
 
 
-def capability_meta(free_only: bool = False) -> dict:
+# --- entitlement DISCOVERY ---------------------------------------------------------------------
+# A key's presence says nothing about its tier; every vendor below answers a FREE probe that does.
+# Each probe is tri-state (never raises; "unknown" on any failure) and the measured plans are
+# persisted per case (wp_plans) so N collector subprocesses probe once. Censys is deliberately NOT
+# here: nothing but its metered search can tell Free from Starter, so the search itself records
+# the verdict (wp_censys.censys_search) — gating it on a plan only it can discover would deadlock.
+# GrayHatWarfare has no quota endpoint at all -> "unknown" (presence only); we never spend to learn.
+def _probe_urlscan():
+    import wp_net
+    q = wp_net.urlscan_quotas()
+    return None if q is None else ({"tier": q.get("tier", "unknown"), "products": q.get("products"),
+                                    "search_day": q.get("search_day")} if not q.get("error")
+                                   else {"tier": "unknown", "error": q["error"]})
+
+
+def _probe_netlas():
+    import wp_netlas
+    if not wp_netlas.netlas_configured():
+        return None
+    p = wp_netlas.plan() or {}
+    tier = "free" if p.get("is_free") else (str(p.get("plan")).lower() if p.get("plan") else "unknown")
+    return {"tier": tier, "requests_limit": p.get("requests_limit"), "coins_left": p.get("coins_left")}
+
+
+def _probe_securitytrails():
+    import wp_securitytrails
+    if not wp_securitytrails.securitytrails_configured():
+        return None
+    u = wp_securitytrails.usage()
+    if not u:
+        return {"tier": "unknown"}
+    allowed = u.get("allowed")
+    return {"tier": ("free" if isinstance(allowed, int) and allowed <= 50 else "paid" if allowed else "unknown"),
+            "used": u.get("used"), "allowed": allowed}
+
+
+def _probe_dnslytics():
+    import wp_dnslytics
+    if not wp_dnslytics.dnslytics_configured():
+        return None
+    u = wp_dnslytics.usage()
+    return {"tier": "prepaid", **u} if u else {"tier": "unknown"}
+
+
+def _probe_intelx():
+    import wp_intelx
+    c = wp_intelx.capabilities()
+    if c is None:
+        return None
+    if not isinstance(c, dict) or c.get("error") or c.get("skipped"):
+        return {"tier": "unknown", "error": (c or {}).get("error") or (c or {}).get("skipped") if isinstance(c, dict) else "no data"}
+    paths = c.get("paths") if isinstance(c.get("paths"), dict) else {}
+
+    def _credit(p):
+        v = (paths.get(p) or {})
+        return v.get("Credit") if isinstance(v, dict) else None
+    search, phonebook, item = _credit("/intelligent/search"), _credit("/phonebook/search"), _credit("/file/read")
+    tier = "none" if not paths else ("api" if (phonebook or item) else "free")
+    return {"tier": tier, "search_credit": search, "phonebook_credit": phonebook, "file_read_credit": item,
+            "buckets": len(c.get("buckets") or []) if isinstance(c.get("buckets"), list) else None}
+
+
+def _probe_validin():
+    import wp_validin
+    e = wp_validin.entitlement()
+    return None if e is None else {k: e.get(k) for k in ("tier", "registration", "bulk", "usage", "error") if k in e}
+
+
+def _probe_grayhatwarfare():
+    try:
+        import wp_buckets
+        present = wp_buckets.ghw_configured()
+    except Exception:  # noqa: BLE001
+        present = bool(_secret("GRAYHATWARFARE_API_KEY", "GRAYHAT_API_KEY", "GHW_API_KEY"))
+    return {"tier": "unknown", "note": "no free quota endpoint — presence only"} if present else None
+
+
+_PROBES = (("urlscan", _probe_urlscan), ("netlas", _probe_netlas), ("securitytrails", _probe_securitytrails),
+           ("dnslytics", _probe_dnslytics), ("intelx", _probe_intelx), ("validin", _probe_validin),
+           ("grayhatwarfare", _probe_grayhatwarfare))
+
+
+def _measured(entry) -> bool:
+    """A stored entry counts as MEASURED unless it is `unknown` WITH an error — that is a failed probe
+    (timeout/5xx), not a fact, and must be re-tried next process rather than frozen for the case.
+    GrayHatWarfare's deliberate `unknown` (no error) is a fact and stays."""
+    if not isinstance(entry, dict):
+        return entry is not None
+    return not (entry.get("tier") == "unknown" and entry.get("error"))
+
+
+def discover_plans(case_dir=None, probe: bool = True, probes=_PROBES) -> dict:
+    """{vendor: {'tier': …, …}} — the case's stored plans (wp_plans) overlaid with fresh probes for
+    any vendor not yet MEASURED. `probe=False` = read the store only (offline; the eval runner and
+    keyless runs). Probes are free calls, so they run under --free-only too; they never spend. A
+    probe that fails (`unknown` + error) is returned for this run but NOT persisted, so the next
+    process re-probes instead of inheriting a transient failure for the rest of the case."""
+    import wp_plans
+    plans = dict(wp_plans.load(case_dir))
+    if not probe:
+        return plans
+    fresh, transient = {}, {}
+    for vendor, fn in probes:
+        if vendor in plans and _measured(plans[vendor]):
+            continue
+        try:
+            res = fn()
+        except Exception as e:  # noqa: BLE001
+            res = {"tier": "unknown", "error": str(e)[:120]}
+        if res is None:
+            continue
+        (fresh if _measured(res) else transient)[vendor] = res
+    if fresh:
+        wp_plans.record_many(fresh, why="capability probe", case_dir=case_dir)
+        plans.update(fresh)
+    plans.update(transient)
+    return plans
+
+
+def capability_meta(free_only: bool = False, case_dir=None, probe: bool = False) -> dict:
     """The run's capability, for `meta.capability` — a fact about the EVIDENCE, so it belongs in
     the case file next to `collected_at`, not only on the terminal.
 
@@ -127,6 +246,8 @@ def capability_meta(free_only: bool = False) -> dict:
       keyed     — every registered credential present
       free-only — keys may exist but --free-only forbade spending them (the convergence loop's
                   mode); analytically identical to keyless for the metered indexes
+    `plans` is the MEASURED entitlement per keyed vendor (discover_plans): the case store, plus
+    live free probes when `probe=True` (the collector passes it; offline callers get the store only).
     """
     rows = key_status()
     present = [r["env"] for r in rows if r["present"]]
@@ -154,6 +275,10 @@ def capability_meta(free_only: bool = False) -> dict:
                 for r in rows
                 if r.get("power_without_key")
                 and (not r["present"] or (free_only and r["metered"]))]
+    try:
+        plans = discover_plans(case_dir=case_dir, probe=probe and bool(present))
+    except Exception:  # noqa: BLE001 — capability must never take the run down
+        plans = {}
     return {
         "mode": mode,
         "keys_present": present,
@@ -161,6 +286,7 @@ def capability_meta(free_only: bool = False) -> dict:
         "metered_suppressed": unusable,
         "reduced": blind,
         "degraded_layers": degraded,
+        "plans": plans,
         "statement": statement(mode, blind, degraded),
         "keyless_baseline": list(KEYLESS_BASELINE),
     }
@@ -250,7 +376,7 @@ def print_banner(free_only: bool = False, file=sys.stderr) -> None:
         print(line, file=file)
 
 
-__all__ = ["key_status", "capability_meta", "statement", "banner_lines", "print_banner",
+__all__ = ["key_status", "capability_meta", "discover_plans", "statement", "banner_lines", "print_banner",
            "API_KEYS", "KEYLESS_BASELINE", "IMPACT_LABELS"]
 
 

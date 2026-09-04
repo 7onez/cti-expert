@@ -197,9 +197,52 @@ def _http_get(url: str, proxy: str | None, timeout: int = 30) -> bytes:
     import urllib.request
     handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
     opener = urllib.request.build_opener(*handlers)
-    req = urllib.request.Request(url, headers={"User-Agent": _ARCHIVE_UA})
+    headers = {"User-Agent": _ARCHIVE_UA}
+    from urllib.parse import urlparse
+    if (urlparse(url).hostname or "").lower() == "urlscan.io":
+        # urlscan tightened auth on /screenshots/ and /dom/ (2026-05): send the key when we hold one;
+        # keyless still works where the CDN path is exempt, and a 401 is treated as transient upstream.
+        try:
+            sys.path.insert(0, WP_TOOLS)
+            from wp_common import _secret  # noqa: E402
+            key = _secret("URLSCAN_API_KEY")
+            if key:
+                headers["API-Key"] = key
+        except Exception:  # noqa: BLE001 — never let the header lookup break a fetch
+            pass
+    req = urllib.request.Request(url, headers=headers)
     with opener.open(req, timeout=timeout) as r:
         return r.read()
+
+
+# --- near-empty live renders: hold, re-render on the NEXT build, then fall back ------------------
+# A live capture that shows one error line ("server busy", an interstitial) is the SERVER's state of
+# that minute, not the page. The audit (2026-09-02) measured exactly this: six estate hosts served an
+# error at 04:12Z and full content at 19:15Z from every vantage. Falling straight to an archive copy
+# swapped a fresh page for a June scan. So a near-empty render is recorded as PROVISIONAL here and the
+# host is re-rendered live on the next build before any archive stand-in; if the archive is also
+# near-empty the host is reported as held, never silently dropped.
+
+def _provisional_path(case_dir: str) -> str:
+    return os.path.join(case_dir, "evidence", "screenshots", "provisional.json")
+
+
+def load_provisional(case_dir: str) -> dict:
+    """{host: {"since": iso, "builds": n}} — hosts whose live render was near-empty."""
+    p = _provisional_path(case_dir)
+    if not os.path.exists(p):
+        return {}
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except ValueError:
+        return {}
+
+
+def save_provisional(case_dir: str, prov: dict) -> None:
+    p = _provisional_path(case_dir)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    json.dump(prov, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 
 def _append_manifest(case_dir: str, entry: dict) -> None:
@@ -384,18 +427,22 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
     created_of = created_of or (lambda h: None)
     todo = [h for h in hosts if h not in existing][:max_hosts]
     skipped = [(h, "capture cap reached") for h in hosts[max_hosts:] if h not in existing]
-    # live captures that are near-empty get an archive attempt (never a live re-render: same server)
+    # live captures that are near-empty are held provisional and re-rendered on a later build (see the
+    # provisional block below) REGARDLESS of the archive flag; the archive stand-in that follows a
+    # failed re-render is the only step `archives` gates.
     empties = [h for h in hosts if h in existing and (existing[h].get("source") or "live") == "live"
-               and _near_empty(existing[h]["path"])] if archives else []
+               and _near_empty(existing[h]["path"])]
     if not todo and not empties:
         return {}, skipped
+    _held = "live render near-empty (server state, not the page) — held provisional; re-render pending"
     try:
         import playwright  # noqa: F401
     except Exception:  # noqa: BLE001
-        return {}, skipped + [(h, "no browser runtime (playwright) in this interpreter") for h in todo]
+        return {}, (skipped + [(h, "no browser runtime (playwright) in this interpreter") for h in todo]
+                    + [(h, _held) for h in empties])
     pol = egress_policy()
     if pol["mode"] == "blocked":
-        return {}, skipped + [(h, pol["why"]) for h in todo]
+        return {}, skipped + [(h, pol["why"]) for h in todo] + [(h, _held) for h in empties]
     sys.path.insert(0, WP_TOOLS)
     import wp_screenshot  # noqa: E402
     case = os.path.basename(case_dir.rstrip("/"))
@@ -431,6 +478,8 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
             new[h] = _entry(h, got)
         else:
             skipped.append((h, f"page did not render ({live_why}); no public web-scan or web-archive copy either"))
+    prov = load_provisional(case_dir)
+    prov_changed = False
     for h in empties:
         held = existing[h].get("archive")                 # an archive copy already on disk from an earlier build
         if held and not _near_empty(held["path"]):
@@ -438,9 +487,45 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
             continue
         if time.monotonic() > deadline:
             break
-        got = _archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60), created_of(h))
+        if h not in prov:
+            # FIRST sighting of a near-empty render: hold it, re-render on the next build. Surfacing
+            # the hold in `skipped` is what keeps the host visible in the report instead of dropped.
+            prov[h] = {"since": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "builds": 1}
+            prov_changed = True
+            skipped.append((h, "live render near-empty (server state, not the page) — held provisional; "
+                               "re-rendered on the next build before any archive stand-in"))
+            continue
+        # a LATER build: try the live page again first
+        prov[h]["builds"] = int(prov[h].get("builds") or 1) + 1
+        prov_changed = True
+        rerendered = False
+        for attempt, proxy in enumerate(pool[:2]):
+            try:
+                e = wp_screenshot.capture_screenshot(f"https://{h}/", case=case, root=root, proxy=proxy,
+                                                     timeout=timeout, label="landing page")
+                cand = _entry(h, e)
+                if not _near_empty(cand["path"]):
+                    new[h] = cand
+                    rerendered = True
+                break
+            except Exception as ex:  # noqa: BLE001
+                if attempt == 0 and len(pool) > 1 and _PROXY_FAULT.search(str(ex)):
+                    continue
+                break
+        if rerendered:
+            prov.pop(h, None)
+            continue
+        got = (_archive_copy(h, case_dir, case, root, pool[0], max(timeout, 60), created_of(h))
+               if archives else None)
         if got and not _near_empty(got["path"]):
             new[h] = _entry(h, got)          # replaces the near-empty live capture in the report
+            prov.pop(h, None)
+        else:
+            skipped.append((h, "live render still near-empty on re-render"
+                               + (" and no usable public web-scan or web-archive copy" if archives
+                                  else " (archive stand-ins disabled)") + " — held provisional"))
+    if prov_changed:
+        save_provisional(case_dir, prov)
     return new, skipped
 
 
@@ -513,8 +598,8 @@ def landing_pages_md(entries: dict, hosts: list, seed: str, skipped: list, rep_d
         created = created_of(h)
         if predates_registration(e, created):
             where = "public web-scan service" if src == "urlscan" else "web archive"
-            cap = (f"`{h}`{who} as held by the {where} on {when} — BEFORE the current registration "
-                   f"({created[:10]}): a previous owner's page, not this operator's. The live page did not render "
+            cap = (f"`{h}`{who} as held by the {where} on {when} — BEFORE the current registrant era began "
+                   f"({created[:10]}): a previous registrant's page, not this operator's. The live page did not render "
                    f"with content at build time.")
         elif src == "urlscan":
             cap = f"Landing page of `{h}`{who} as recorded by a public web-scan service, scanned {when}; the live page did not render with content at build time."
@@ -558,7 +643,7 @@ def captures_ledger_md(entries: dict, created_of=None) -> str:
         src = e.get("source") or "live"
         what = {"urlscan": "public web-scan capture", "wayback": "web-archive snapshot, rendered"}.get(src, "rendered landing page")
         if predates_registration(e, (created_of or (lambda h: None))(h)):
-            what += " — predates current registration (previous owner)"
+            what += " — predates the current registrant era (previous registrant)"
         if e.get("actions"):
             what += ", " + "; ".join(e["actions"])
         link = e.get("source_url") or "—"

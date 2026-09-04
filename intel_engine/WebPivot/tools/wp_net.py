@@ -32,6 +32,28 @@ try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
     api_usage = None
+from wp_refs import ref_path, load_ref  # noqa — endpoint templates are reference DATA (RULE 3)
+
+# urlscan endpoint templates + hostname paging knobs — reference DATA (RULE 3). The fallback is the
+# conservative MINIMUM that still walks the index correctly (hostname + cursor paths, A/NS eras, one
+# page): a missing/bad reference file degrades to a narrower walk with a warning, never to a silently
+# different one. tests/test_references.py asserts the loaded file is strictly richer than this.
+_USCAN_FALLBACK = {
+    "endpoints": {"hostname": "/api/v1/hostname/{host}?limit={limit}",
+                  "hostname_page": "/api/v1/hostname/{host}?limit={limit}&pageState={page_state}"},
+    "hostname": {"page_limit": 1000, "max_pages": 1, "era_types": ["A", "NS"],
+                 "scan_prefix": "VIA-SCAN", "summary_seen_on": ["2100-01-01", "2200-01-01"],
+                 "first_seen_sources": {"ct": "ct_first"}},
+    "verdict": {"structural_labels": ["domain.apexdomain", "content.rootdir", "hosting.cdn"]},
+}
+_USCAN_REF = load_ref(ref_path(__file__, "urlscan_endpoints.json"), _USCAN_FALLBACK)
+URLSCAN_ENDPOINTS = _USCAN_REF["endpoints"]
+URLSCAN_HOSTNAME_CFG = _USCAN_REF["hostname"]
+# result labels that describe structure/hosting class, never a finding — a verdict row is emitted
+# only on signal (malicious / score>0 / brand / a label outside this set)
+URLSCAN_STRUCTURAL_LABELS = frozenset((_USCAN_REF.get("verdict") or _USCAN_FALLBACK["verdict"])["structural_labels"])
+URLSCAN_BASE = "https://urlscan.io"
+
 
 class _RecordingRedirectHandler(urllib.request.HTTPRedirectHandler):
     """urllib redirect handler that records each hop (from-url, status, to-url)."""
@@ -420,10 +442,48 @@ def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
     return out
 
 
+def urlscan_quotas(ua: str = DEFAULT_UA, timeout: int = 20):
+    """ENTITLEMENT probe — GET /api/v1/quotas (free, not counted against any quota). Measured live
+    2026-09-04 on a Pro team key: `limits.products` lists the licensed products (`pro`, `livescan`),
+    `limits.<scope>.day.{limit,used,remaining}` per scope (search / retrieve / private / …),
+    `limits.maxSearchResults`. Returns {'tier': 'pro'|'free', 'products', 'features', 'search_day',
+    'retrieve_day', 'max_search_results', 'scope'} | {'error'} | None (keyless). Never raises;
+    never returns the key."""
+    key = _secret("URLSCAN_API_KEY")
+    if not key:
+        return None
+    try:
+        req = urllib.request.Request(URLSCAN_BASE + URLSCAN_ENDPOINTS.get("quotas", "/api/v1/quotas/"),
+                                     headers={"User-Agent": ua, "API-Key": key})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.load(r)
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}", "tier": "unknown"}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e), "tier": "unknown"}
+    lim = d.get("limits") if isinstance(d, dict) and isinstance(d.get("limits"), dict) else {}
+    if not lim or not isinstance(lim.get("products"), list):
+        # absence of a field is not a measurement — leave the tier unknown so the Pro call itself
+        # stays the probe (a persisted `free` would switch those calls off for the whole case)
+        return {"tier": "unknown", "error": "quotas response carried no limits.products", "scope": (d or {}).get("scope")}
+    products = [str(p) for p in lim["products"] if p]
+
+    def _day(scope):
+        day = ((lim.get(scope) or {}).get("day") or {}) if isinstance(lim.get(scope), dict) else {}
+        return {k: day.get(k) for k in ("limit", "used", "remaining") if k in day}
+    return {"tier": "pro" if "pro" in products else "free", "products": products,
+            "features": [str(f) for f in (lim.get("features") or []) if f],
+            "search_day": _day("search"), "retrieve_day": _day("retrieve"),
+            "max_search_results": lim.get("maxSearchResults"), "scope": d.get("scope")}
+
+
+
 def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
     """Fetch urlscan's verdict/brand for a scan UUID from the RESULT endpoint (verdicts are NOT in
-    the search hit). Returns {'score','malicious','brands','categories','tags','result'} or None.
-    Works on a normal key; a Pro key just has richer engine/community verdicts."""
+    the search hit). Returns {'score','malicious','brands','categories','tags','engines','labels',
+    'result'} or None. Works on a normal key; a Pro key adds the engine verdicts (`verdicts.engines`
+    — e.g. urlscan-ml score/100) and result `labels` (e.g. visual.brandai), which are evidence for the
+    ledger at zero extra cost. NEVER raises."""
     headers = {"User-Agent": ua}
     key = _secret("URLSCAN_API_KEY")
     if key:
@@ -434,7 +494,8 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             if api_usage:
                 _rem, _lim = api_usage.rl_headers(r)
-            v = (json.load(r).get("verdicts") or {})
+            data = json.load(r) or {}
+            v = data.get("verdicts") or {}
     except Exception:
         if api_usage:
             api_usage.record("urlscan", "result", credits=0, query=uuid, ok=False)
@@ -447,11 +508,183 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
         return b.get("name") if isinstance(b, dict) else b
     brands = sorted({_bn(b) for b in ((ov.get("brands") or []) + ((v.get("urlscan") or {}).get("brands") or []))
                      if _bn(b)})
-    if not (ov or brands):
+    # `verdicts.engines` shape measured live 2026-09-03: {score, malicious, enginesTotal,
+    # maliciousTotal, benignTotal, maliciousVerdicts[], benignVerdicts[], hasVerdicts, tags[]};
+    # score is -99 when no engine has looked at the scan — that is "no verdict", not a score.
+    eng = v.get("engines") if isinstance(v.get("engines"), dict) else {}
+    engines = None
+    if eng and (eng.get("hasVerdicts") or (eng.get("enginesTotal") or 0) > 0):
+        raw_score = eng.get("score")
+        engines = {"score": raw_score if isinstance(raw_score, (int, float)) and raw_score >= 0 else None,
+                   "malicious": bool(eng.get("malicious")),
+                   "total": eng.get("enginesTotal"), "malicious_total": eng.get("maliciousTotal"),
+                   "benign_total": eng.get("benignTotal"),
+                   "malicious_verdicts": [str(x) for x in (eng.get("maliciousVerdicts") or []) if x][:8],
+                   "tags": [str(x) for x in (eng.get("tags") or []) if x][:8]}
+    labels = sorted({str(x) for x in (data.get("labels") or []) if x}) if isinstance(data.get("labels"), list) else []
+    if not (ov or brands or engines or labels):
         return None
     return {"score": ov.get("score"), "malicious": ov.get("malicious"), "brands": brands,
             "categories": ov.get("categories") or [], "tags": ov.get("tags") or [],
+            "engines": engines, "labels": labels,
             "result": f"https://urlscan.io/result/{uuid}/"}
+
+
+def urlscan_hostname(host: str, ua: str = DEFAULT_UA, timeout: int = 30, max_pages: int = None,
+                     free_only: bool = False):
+    """urlscan **Pro** hostname lifecycle: every A/AAAA/NS/MX/SOA record, CT / zonefile / scan
+    first-sighting and the scan history urlscan holds for `host`, folded into dated ERAS.
+
+    The index is the previous-owner record: for a drop-catch host it shows the registrar-parking
+    NS + A records years before the current registration, without rendering an archive. Returns
+
+        {"host", "first_seen", "last_seen", "ct_first", "zonefile_first", "scan_first",
+         "a_eras": [{"type","value","first_seen","last_seen","days","asn","first_seen_open"}, …],
+         "ns_eras": [...], "mx": [...], "soa": [...],
+         "scan_ips": [...], "records": <daily rows read>, "pages": n, "truncated": bool,
+         "oldest_seen_on": "YYYY-MM-DD"}
+
+    The index is PER-DAY rows (one per record per day, newest first), so rows are folded by
+    `sub_id` into eras (min first_seen / max last_seen per type+value). When the walk stops at the
+    page cap (`truncated`), every era whose first observation lies on/after the oldest day reached is
+    LEFT-CENSORED: `first_seen_open=True` means "hosted since at least this date", not "hosting
+    began here" — the timeline renders it as an open start, never as a dated beginning. Each page is
+    one retrieve credit (any size), so pages are requested at the API maximum (`page_limit`, ref data,
+    10 000 rows) to reach a drop-catch host's years-old parking era in few calls.
+
+    Or {"skipped": …} (keyless / free_only / non-Pro) or {"error": …}. NEVER raises — enrich_live
+    collects it through an executor whose result() re-raises, and one bad leg must not abort the
+    whole pivot's enrichment."""
+    if free_only:
+        return {"skipped": "--free-only (urlscan Pro not spent)"}
+    key = _secret("URLSCAN_API_KEY")
+    if not key:
+        return {"skipped": "no URLSCAN_API_KEY"}
+    cfg, eps = URLSCAN_HOSTNAME_CFG, URLSCAN_ENDPOINTS
+    pages_cap = int(max_pages if max_pages is not None else cfg.get("max_pages", 3))
+    page_limit = max(10, min(10000, int(cfg.get("page_limit", 1000))))
+    era_types = set(cfg.get("era_types") or [])
+    summary_days = set(cfg.get("summary_seen_on") or [])
+    first_map = dict(cfg.get("first_seen_sources") or {})
+    scan_prefix = cfg.get("scan_prefix") or "VIA-SCAN"
+    headers = {"User-Agent": ua, "API-Key": key}
+    out = {"host": host, "first_seen": None, "last_seen": None, "ct_first": None,
+           "zonefile_first": None, "scan_first": None, "a_eras": [], "ns_eras": [], "mx": [],
+           "soa": [], "scan_ips": [], "records": 0, "pages": 0, "truncated": False,
+           "oldest_seen_on": None}
+    eras = {}                     # (type, value) -> {first_seen, last_seen, asn}
+    scan_ips = set()
+    page_state = None
+    oldest_day = None             # the oldest daily row reached — the censoring boundary when truncated
+    try:
+        for _ in range(max(1, pages_cap)):
+            path = (eps["hostname_page"].format(host=quote(host), limit=page_limit,
+                                                page_state=quote(page_state, safe=""))
+                    if page_state else eps["hostname"].format(host=quote(host), limit=page_limit))
+            _rem = _lim = None
+            try:
+                req = urllib.request.Request(URLSCAN_BASE + path, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    if api_usage:
+                        _rem, _lim = api_usage.rl_headers(r)
+                    data = json.load(r)
+            except urllib.error.HTTPError as e:
+                if api_usage:
+                    api_usage.record("urlscan", "hostname", credits=0, query=host, ok=False)
+                if e.code in (401, 402, 403):
+                    if out["pages"]:
+                        break             # keep what earlier pages gave us
+                    return {"skipped": "urlscan hostname index needs a Pro key", "host": host}
+                if out["pages"]:
+                    break
+                return {"error": f"HTTP {e.code}", "host": host}
+            except Exception as e:  # noqa: BLE001 — transport fault: degrade, never raise
+                if api_usage:
+                    api_usage.record("urlscan", "hostname", credits=0, query=host, ok=False)
+                if out["pages"]:
+                    break
+                return {"error": str(e), "host": host}
+            rows = (data.get("results") or []) if isinstance(data, dict) else []
+            if api_usage:
+                api_usage.record("urlscan", "hostname", credits=1, query=host, results=len(rows),
+                                 remaining=_rem, limit=_lim)
+            out["pages"] += 1
+            out["records"] += len(rows)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                src = str(row.get("source") or "")
+                sub = str(row.get("sub_id") or "")
+                fs, ls = row.get("first_seen"), row.get("last_seen")
+                if str(row.get("seen_on") or "") in summary_days or not sub:
+                    # per-source rollup row: whole-index first/last for that source
+                    fld = first_map.get(src)
+                    if fld and fs and (out.get(fld) is None or fs < out[fld]):
+                        out[fld] = fs
+                    if src == "seenDates" and ls and (out["last_seen"] is None or ls > out["last_seen"]):
+                        out["last_seen"] = ls
+                    continue
+                day = str(row.get("seen_on") or "")[:10]
+                if day and (oldest_day is None or day < oldest_day):
+                    oldest_day = day
+                rtype, _, value = sub.partition("#")
+                value = value.strip().rstrip(".").lower()
+                if not value:
+                    continue
+                if rtype == scan_prefix:
+                    scan_ips.add(value)
+                    continue
+                if rtype not in era_types:
+                    continue
+                slot = eras.setdefault((rtype, value), {"type": rtype, "value": value,
+                                                       "first_seen": fs, "last_seen": ls, "asn": None})
+                if fs and (slot["first_seen"] is None or fs < slot["first_seen"]):
+                    slot["first_seen"] = fs
+                if ls and (slot["last_seen"] is None or ls > slot["last_seen"]):
+                    slot["last_seen"] = ls
+                d = row.get("data") if isinstance(row.get("data"), dict) else {}
+                asn = (d.get("asn") or {}).get("asn") if isinstance(d.get("asn"), dict) else None
+                if asn and not slot["asn"]:
+                    slot["asn"] = str(asn)
+            page_state = data.get("pageState") if isinstance(data, dict) else None
+            if not rows or not page_state:
+                page_state = None
+                break
+        out["truncated"] = bool(page_state)
+        out["oldest_seen_on"] = oldest_day
+    except Exception as e:  # noqa: BLE001 — belt and braces: the contract is never-raise
+        out["error"] = str(e)
+
+    def _days(e):
+        try:
+            a = datetime.datetime.fromisoformat(str(e["first_seen"]).replace("Z", "+00:00"))
+            b = datetime.datetime.fromisoformat(str(e["last_seen"] or e["first_seen"]).replace("Z", "+00:00"))
+            return max(0, (b - a).days)
+        except Exception:  # noqa: BLE001
+            return None
+    ordered = sorted(eras.values(), key=lambda e: (e["first_seen"] or "", e["type"], e["value"]))
+    for e in ordered:
+        e["days"] = _days(e)
+        # left-censored: rows arrive newest-first, so an era whose EARLIEST row sits on the oldest
+        # day the truncated walk reached may have older rows we never read — its start is unknown.
+        # An era whose earliest row is later than that day genuinely began there (every newer row was read).
+        e["first_seen_open"] = bool(out["truncated"] and oldest_day and e["first_seen"]
+                                    and str(e["first_seen"])[:10] <= oldest_day)
+        if e["type"] in ("A", "AAAA"):
+            out["a_eras"].append(e)
+        elif e["type"] == "NS":
+            out["ns_eras"].append(e)
+        elif e["type"] == "MX":
+            out["mx"].append(e)
+        elif e["type"] == "SOA":
+            out["soa"].append(e)
+        if e["first_seen"] and (out["first_seen"] is None or e["first_seen"] < out["first_seen"]):
+            out["first_seen"] = e["first_seen"]
+        if e["last_seen"] and (out["last_seen"] is None or e["last_seen"] > out["last_seen"]):
+            out["last_seen"] = e["last_seen"]
+    out["scan_ips"] = sorted(scan_ips)
+    return out
+
 
 def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only: bool = False):
     """Fetch the rendered DOM of the most recent urlscan scan for a host, so a dead /

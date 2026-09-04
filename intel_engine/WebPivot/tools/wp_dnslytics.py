@@ -298,6 +298,14 @@ def reverse_ip(ip, page=1, timeout=25):
     guard as the tracker lookups above."""
     if not dnslytics_configured():
         return None
+    # 5 credits per call and every estate host resolves to the same origin: bought ONCE per case
+    try:
+        import wp_casememo
+        cached = wp_casememo.get("dnslytics", f"reverseip|{ip}|{page}")
+    except Exception:  # noqa: BLE001
+        wp_casememo, cached = None, None
+    if cached is not None:
+        return dict(cached, memo="case cache")
     if not _allow(_CREDITS.get("reverseip", 5)):
         return {"skipped": "per-run call cap or credit balance reached"}
     body, err = _get(EP["reverseip"].format(q=urllib.parse.quote(ip, safe="")),
@@ -307,7 +315,10 @@ def reverse_ip(ip, page=1, timeout=25):
         return err
     domains, total = _domains_from_body(body)
     _record("reverseip", ip, total, ok=True)
-    return {"total": total, "domains": domains}
+    out = {"total": total, "domains": domains}
+    if wp_casememo is not None:
+        wp_casememo.put("dnslytics", f"reverseip|{ip}|{page}", out)
+    return out
 
 
 __all__ = ["dnslytics_key", "dnslytics_configured", "usage", "can_spend",

@@ -204,7 +204,7 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
         headers["API-Key"] = key
     if max_results is None:
         max_results = 1000 if key else limit
-    doms, seen, total, search_after, pages = [], set(), None, None, 0
+    doms, seen, total, search_after, pages, more = [], set(), None, None, 0, False
     rem = lim = None
     while len(doms) < max_results and pages < 20:
         pages += 1
@@ -233,7 +233,8 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
             if d and d not in seen:
                 seen.add(d)
                 doms.append(d)
-        if not data.get("has_more"):
+        more = bool(data.get("has_more"))
+        if not more:
             break
         sort = results[-1].get("sort")         # cursor for the next page
         if not sort:
@@ -242,8 +243,10 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
     if api_usage:
         api_usage.record("urlscan", "search", credits=pages, query=query,
                          results=len(doms), remaining=rem, limit=lim)
+    # `truncated` = the index had more pages than we read; `total` counts SCANS (not domains), so a
+    # consumer must never read it as a domain count unless truncated is True.
     return {"query": query, "total": total if total is not None else len(doms),
-            "domains": doms[:max_results], "pages": pages}
+            "domains": doms[:max_results], "pages": pages, "truncated": more}
 
 
 def urlscan_similar(host: str, timeout: int = 30, limit: int = 60, free_only: bool = False):
