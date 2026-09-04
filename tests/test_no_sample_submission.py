@@ -8,9 +8,10 @@ Run:  python3 tests/test_no_sample_submission.py     (zero deps)
 WHY THIS EXISTS
 ---------------
 ANY.RUN's API is, in the main, a SUBMISSION API: you upload a file, it detonates it, you read the
-report. This toolkit uses the small read-only corner of it — Threat Intelligence Lookup, which
-reports what OTHER people's detonations already recorded — and deliberately wires up no submit
-path at all.
+report. This toolkit uses the read-only corner of it — Threat Intelligence Lookup, which reports
+what OTHER people's detonations already recorded — freely, and carries ONE submit path
+(`bp_anyrun.submit()`, harness `anyrun_submit`) that refuses unless the analyst has confirmed THIS
+submission, defaults to private, and reads back the applied privacy afterwards.
 
 That distinction is the whole OPSEC posture of the file half of a case, and it is not a stylistic
 preference:
@@ -25,22 +26,23 @@ preference:
     from the wrong egress, there is no cleaning up afterwards.
   - It is an OUTBOUND act taken against a third party's service, and it costs a run.
 
-So: detonation is a decision the ANALYST makes explicitly, in the sandbox UI, on a private plan,
-having weighed the exposure. It is never a side effect of a pivot, never something a collector
+So: detonation is a decision the ANALYST makes explicitly, per submission, on a private plan,
+having read the risk briefing. It is never a side effect of a pivot, never something a collector
 does on its own initiative, and never something an agent arranges because it seemed helpful.
 
 WHAT THIS TEST ASSERTS
 ----------------------
 Documentation rots and comments do not fail builds. This converts the intention into an invariant:
 
-  1. No submission/upload endpoint appears in the ANY.RUN reference data. (Adding one there is the
-     cheapest way to accidentally enable submission, because the module reads its paths from data.)
-  2. The module builds no URL that is not one of the read-only endpoints.
-  3. The module contains no file-upload machinery (multipart bodies, binary file reads fed to a
-     request, `files=`).
-  4. If a submit path is EVER added, it must route through an explicit human-confirmation gate —
-     asserted by requiring the marker `REQUIRES_ANALYST_CONFIRMATION` to be present alongside it.
-     This test is what makes that non-negotiable rather than aspirational.
+  1. No unreviewed submission/upload endpoint appears in the ANY.RUN reference data. (Adding one
+     there is the cheapest way to accidentally enable submission, because the module reads its
+     paths from data.) The reviewed submission-lifecycle keys are allowed ONLY while the gate holds.
+  2. The module builds no URL that is not one of the read-only or gated endpoints.
+  3. File-upload machinery (multipart bodies, binary file reads fed to a request) is allowed ONLY
+     while the gate holds.
+  4. The gate itself: the marker `REQUIRES_ANALYST_CONFIRMATION` must sit alongside the refusal
+     `if not confirm: return submit_preflight(...)`. Either alone is not a gate. This test is what
+     makes that non-negotiable rather than aspirational.
 
 If this test fails, do not "fix" it by relaxing the assertion. Either the submission capability is
 unwanted (remove it), or it is genuinely needed and must ship behind a confirmation gate.
