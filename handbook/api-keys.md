@@ -86,12 +86,32 @@ in sync when adding a service.
 
 When keys are present, `pivot_extract.py`'s live-enrichment (`enrich_live`) automatically
 escalates from the keyless baseline (crt.sh, HackerTarget passive DNS, anonymous urlscan) to
-premium reverse-lookups — **Shodan** (favicon mmh3 → hosts), **Censys** (favicon MD5 → hosts),
-**FOFA** (icon_hash + tracker body), **Hunter.how** (favicon/body/domain → hosts, independent CN index), **Quake**/**ZoomEye** (favicon mmh3 → hosts), **DNSLytics** (GA/AdSense → sibling domains),
-**SecurityTrails** (passive DNS/subdomains), **urlscan PRO** (content search), **WhoisXML**
-(reverse WHOIS). Each hit is attached to the pivot as `live_results` and shown inline in
-`--leads`. See [`techniques/web-pivot.md`](../techniques/web-pivot.md) § Premium tier. No keys →
-keyless mode, identical to before.
+premium reverse-lookups — **Shodan** (favicon mmh3 → hosts; **cert-SHA1 / JARM search**, Membership-
+gated, degrades to a named skip), **Censys** (favicon MD5 → hosts; lookups on Free; **one case-level
+cert search** over the estate's leaf-cert SHA-256s, run unless the case already recorded the plan as
+`free` — the search is its own probe), **FOFA** (icon_hash + tracker body), **Hunter.how**
+(favicon/body/domain → hosts, independent CN index), **Quake**/**ZoomEye** (favicon mmh3 → hosts),
+**DNSLytics** (GA/AdSense → sibling domains; **reverse-IP** on the origin under its own key, routed
+through the co-tenancy filter — bulk hosting is a lead, never a seed), **SecurityTrails** (subdomains;
+**DNS history** → dated hosting eras on the timeline; **DSL reverse-WHOIS** for the CURRENT registrant
+e-mail, diffed against WhoisXML; capped per CASE at `SECURITYTRAILS_MAX_CALLS_PER_CASE`, default 20
+of the 50/month Free key), **urlscan PRO** (content search; **hostname lifecycle** — pre-registration
+NS/A eras, left-censored when the walk is truncated; verdict rows), **WhoisXML** (reverse WHOIS;
+**WHOIS history** is explicit opt-in — `--whois-history purchase`, seeds/cluster members only, ~50 DRS
+per domain; the render path never buys it), **IntelX** (auto-fires in `pipeline open`; in the loop
+only under `--full`; a selector is searched once per CASE), **GrayHatWarfare** (an exposure lead per
+apex, never a same-operator pivot).
+
+Two cross-cutting rules. **Entitlement is measured, not assumed:** free account probes (urlscan
+quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`, Validin
+`/api/paths`) fill `meta.capability.plans` once per case (`cases/<id>/capability_plans.json`); a key
+measured `free` on urlscan skips the Pro calls that would 403. **Bought once per case, not once per
+host:** the collector runs one process per host, so per-origin reverse-IP verification, IntelX
+selectors, SecurityTrails reverse-WHOIS terms and the Censys cert search are memoised on disk under
+the case (`mo_neighbours/`, `intelx/`, `securitytrails/`, `censys_search.json`). Each hit is attached
+to the pivot as `live_results` and shown inline in `--leads`. See
+[`techniques/web-pivot.md`](../techniques/web-pivot.md) § Premium tier. No keys → keyless mode,
+identical to before; `--free-only` / a `no_spend` posture keeps every metered leg off.
 
 ## Security
 
