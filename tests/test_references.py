@@ -107,7 +107,7 @@ def check():
     # runs, still produces output — it just stops filtering. Comparing against the fallback size
     # catches that, and unlike a hardcoded count it does not rot as analysts extend a list.
     import wp_pivots, wp_analyze, wp_assets, wp_recon, wp_ippivot, wp_impersonate  # noqa: E401
-    import wp_censys, wp_capabilities                                              # noqa: E401
+    import wp_censys, wp_capabilities, wp_net                                      # noqa: E401
     import whois_enrich, evidence_report                                           # noqa: E401
 
     consumers = [
@@ -176,6 +176,17 @@ def check():
          whois_enrich._WHOIS_FALLBACK["privacy_markers"]),
         ("whois_enrich._PROXY_DOMAINS", whois_enrich._PROXY_DOMAINS,
          whois_enrich._WHOIS_FALLBACK["proxy_email_domains"]),
+        # urlscan Pro hostname index (audit item 2). On the fallback the walk is one page and A/NS
+        # only, so a drop-catch host's MX/SOA eras and zonefile/scan firsts silently vanish from the
+        # timeline — narrower evidence presented as complete.
+        ("wp_net.URLSCAN_ENDPOINTS", wp_net.URLSCAN_ENDPOINTS,
+         wp_net._USCAN_FALLBACK["endpoints"]),
+        ("wp_net.URLSCAN_HOSTNAME_CFG.era_types", wp_net.URLSCAN_HOSTNAME_CFG["era_types"],
+         wp_net._USCAN_FALLBACK["hostname"]["era_types"]),
+        ("wp_net.URLSCAN_HOSTNAME_CFG.first_seen_sources", wp_net.URLSCAN_HOSTNAME_CFG["first_seen_sources"],
+         wp_net._USCAN_FALLBACK["hostname"]["first_seen_sources"]),
+        ("wp_net.URLSCAN_STRUCTURAL_LABELS", wp_net.URLSCAN_STRUCTURAL_LABELS,
+         wp_net._USCAN_FALLBACK["verdict"]["structural_labels"]),
         ("evidence_report._NOISE_EMAIL_SUBSTR", evidence_report._NOISE_EMAIL_SUBSTR,
          evidence_report._RN_FALLBACK["noise_email_substrings"]),
     ]

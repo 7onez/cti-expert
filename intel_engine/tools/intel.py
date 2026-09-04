@@ -235,6 +235,7 @@ def cmd_open(a):
     _load_env()
     case_dir = os.path.join(ROOT, "cases", a.case)
     os.makedirs(os.path.join(case_dir, "raw"), exist_ok=True)
+    _export_run_env(case_dir)
     hosts = _read_domains(a.domains)
     if not hosts:
         sys.exit("no domains to process")
@@ -266,6 +267,10 @@ def cmd_open(a):
     # explicit opt-out is passed through.
     if getattr(a, "no_pssl", False):
         extra.append("--no-pssl")
+    # IntelX auto-fire (SKILL.md declares it required; the pipeline never appended the flag). METERED,
+    # so it fires only when a key is present AND the case is not a no-spend posture. The loop is
+    # free-only by default and appends it only under --full (see cmd_loop).
+    extra += _intelx_flag(case_dir, loop=False)
     # collect_core.filter_args probes the collector's --help and drops whatever it does not accept,
     # surfacing every dropped flag (RULE 4) — so a flag the cti-expert collector lacks degrades
     # loudly instead of aborting the batch.
@@ -295,6 +300,12 @@ def cmd_open(a):
     raw_files = [os.path.join(raw_glob, f) for f in os.listdir(raw_glob) if f.endswith(".json")]
     if not raw_files:
         sys.exit("no raw JSON produced — nothing to ingest.")
+
+    # 1b) Censys cert search — ONCE per case over the estate's leaf-cert SHA-256s (bounded budget).
+    #     Run-unless-`free` (the search is the probe). NEVER under --no-collect (documented zero-egress:
+    #     the /case hand-off and case-restore flows rely on it) and never on a no-spend posture.
+    if not getattr(a, "no_collect", False) and not _case_no_spend(case_dir):
+        _censys_certs_once(case_dir, raw_files)
 
     # 2) ingest into the KB (idempotent) ------------------------------------
     print(f"== ingesting {len(raw_files)} raw file(s) into {os.path.relpath(KB, ROOT)} ==")
@@ -359,9 +370,14 @@ def cmd_open(a):
                     results.append(_json.load(open(rf, encoding="utf-8")))
                 except Exception:
                     pass
+            whois_mode, whois_for = _whois_history_policy(a, case_dir, hosts)
+            if whois_mode != "off":
+                print(f"   whois-history: {whois_mode} for {len(whois_for)} seed/cluster host(s) "
+                      f"(explicit opt-in; every other host stays current-WHOIS-only)")
             md = evidence_report.render_cluster_report(
                 results, case=a.case, analyst=a.analyst,
-                classification=a.classification, kb_dir=KB)
+                classification=a.classification, kb_dir=KB,
+                whois_history=whois_mode, whois_history_for=whois_for)
             if _is_loop_authored_md(assess_path):
                 with open(assess_path, "w", encoding="utf-8") as fh:
                     fh.write(md)
@@ -372,6 +388,10 @@ def cmd_open(a):
                       "loop view -> loop_assessment.md")
         except Exception as e:
             print(f"   note: assessment render failed ({e}); skipped.")
+
+    # 5b) MO-neighbour classification (Phase B) — AFTER step 5 so the whois sidecar exists and the
+    #     estate registrant set is real (fresh case: falls back to raw artifacts.whois).
+    _write_mo_neighbours(case_dir, a.case)
 
     # 6) completeness summary (stable output is auditable) ------------------
     print("\n== summary ==")
@@ -394,6 +414,81 @@ def _ingest_case(raw_files):
     if not raw_files:
         return
     _run([sys.executable, os.path.join(KB_TOOLS, "ingest_webpivot.py"), "--kb", KB, *raw_files])
+
+
+def _censys_certs_once(case_dir, raw_files, budget=1):
+    """Case-level Censys cert search (wp_censys.certs_search_once) over every leaf-cert SHA-256 the
+    collection recorded; persists cases/<case>/censys_search.json, which the frontier merges on
+    exact-cert match. Idempotent per case: an existing file with the same fingerprint set is reused
+    (no second spend). Never raises."""
+    try:
+        import json as _json
+        sys.path.insert(0, WP)
+        import wp_censys
+        fps = set()
+        for rf in raw_files:
+            try:
+                obj = _json.load(open(rf, encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            fp = ((obj.get("artifacts") or {}).get("tls_cert") or {}).get("fingerprint_sha256")
+            if fp:
+                fps.add(str(fp).lower())
+        path = os.path.join(case_dir, "censys_search.json")
+        if os.path.isfile(path):
+            try:
+                prev = _json.load(open(path, encoding="utf-8"))
+                # reuse only a COMPLETED search over a superset of these certs. A skipped result (no
+                # PAT then, monthly budget exhausted) must be retried; a plan-`free` skip is already
+                # zero-cost through wp_plans, so nothing is bought by freezing it here.
+                if (set(prev.get("fingerprints") or []) >= fps and not prev.get("error")
+                        and not prev.get("skipped")):
+                    return prev                          # already searched this cert set: no re-spend
+            except Exception:
+                pass
+        if not fps:
+            return None
+        os.environ.setdefault("WP_CASE_DIR", case_dir)
+        res = wp_censys.certs_search_once(sorted(fps), case_budget=budget, case_dir=case_dir)
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(res, fh, indent=2, ensure_ascii=False)
+        if res.get("skipped"):
+            print(f"   censys cert search: skipped — {res['skipped']}")
+        else:
+            print(f"   censys cert search: {len(res['queries'])} query, {res['hits']} hit(s), "
+                  f"{len(res['hostnames'])} hostname(s) -> {os.path.relpath(path, ROOT)}")
+        return res
+    except Exception as e:  # noqa: BLE001
+        print(f"   note: censys cert search failed ({e}); skipped.")
+        return None
+
+
+def _write_mo_neighbours(case_dir, case):
+    """Classify the collectors' UNCLASSIFIED mo_neighbours blocks case-wide (case_state Phase B),
+    persist cases/<case>/mo_neighbours.json and ingest it as KB FACTS (never edges). Returns the block
+    or None when the case carries no discovery block at all. Never raises."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "tools"))
+        import case_state as cs
+        import json as _json
+        if not cs._mo_blocks(case_dir):
+            return None
+        blk = cs.mo_neighbour_classification(case_dir)      # a dir path: never re-resolved under ROOT/cases
+        blk["case"] = case
+        path = os.path.join(case_dir, "mo_neighbours.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(blk, fh, indent=2, ensure_ascii=False)
+        _run([sys.executable, os.path.join(KB_TOOLS, "ingest_mo_neighbours.py"), "--kb", KB, path])
+        print(f"   mo-neighbours: {len(blk['same_registrant'])} same-registrant, "
+              f"{len(blk['related_personas'])} related persona(s) [rung 10], "
+              f"{blk['unrelated_count']} unrelated, {blk['unverifiable_count']} unverifiable, "
+              f"{len(blk['bulk_origins'])} bulk origin(s) skipped -> {os.path.relpath(path, ROOT)}")
+        return blk
+    except Exception as e:  # noqa: BLE001
+        print(f"   note: mo-neighbour classification failed ({e}); skipped.")
+        return None
 
 
 # raw/ files that are evidence bundles keyed like a host but are NOT hosts (same set as
@@ -433,6 +528,67 @@ def _write_shared(case_dir, min_shared, hosts=None):
     else:
         print("   note: cluster-seed query did not complete — kept the existing shared.txt.",
               file=sys.stderr)
+
+
+def _intelx_keyed():
+    """True when an IntelX key is present under any registered alias (wp_intelx is the authority)."""
+    try:
+        if WP not in sys.path:
+            sys.path.insert(0, WP)
+        import wp_intelx
+        return bool(wp_intelx.intelx_configured())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _intelx_flag(case_dir, loop=False, full=False):
+    """['--intelx'] when the collector should auto-fire IntelX, else []. cmd_open: key present and
+    the case is not a no-spend posture. cmd_loop: additionally ONLY under --full — the default loop
+    is free-only and must never spend an IntelX search on its own."""
+    if loop and not full:
+        return []
+    if not _intelx_keyed() or _case_no_spend(case_dir):
+        return []
+    return ["--intelx"]
+
+
+def _case_no_spend(case_dir):
+    """True when the persisted intake (cases/<case>/scope.json) carries constraints.no_spend."""
+    p = os.path.join(case_dir, "scope.json")
+    if not os.path.isfile(p):
+        return False
+    try:
+        import json as _json
+        sc = _json.load(open(p, encoding="utf-8"))
+        return bool((sc.get("constraints") or {}).get("no_spend"))
+    except Exception:
+        return False
+
+
+def _whois_history_policy(a, case_dir, seeds):
+    """(history_mode, domains) for the WHOIS sidecar on the report step.
+
+    Default "off": a routine assessment render never purchases WHOIS history (~50 DRS/domain).
+    `--whois-history preview|purchase` is the explicit opt-in and is SCOPED to the seeds plus the
+    members of every multi-domain same-operator cluster in clusters.json — never the whole estate.
+    A `no_spend` intake forces "off" regardless of the flag (posture wins over the CLI)."""
+    mode = getattr(a, "whois_history", "off") or "off"
+    if mode == "off":
+        return "off", set()
+    if _case_no_spend(case_dir):
+        print("   whois-history: scope.json constraints.no_spend → forced off (no history spend)")
+        return "off", set()
+    scoped = {_host(h).lower() for h in (seeds or []) if h}
+    cpath = os.path.join(case_dir, "clusters.json")
+    if os.path.isfile(cpath):
+        try:
+            import json as _json
+            for c in (_json.load(open(cpath, encoding="utf-8")).get("clusters") or []):
+                if not c.get("singleton"):
+                    scoped.update(d.lower() for d in (c.get("domains") or []))
+        except Exception:
+            pass
+    return mode, scoped
 
 
 def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
@@ -559,6 +715,74 @@ def _scope_premise(case):
         return ""
 
 
+def _structural_labels():
+    """urlscan result labels that describe structure/hosting class, not a finding — reference DATA
+    in WebPivot/references/urlscan_endpoints.json (wp_net.URLSCAN_STRUCTURAL_LABELS)."""
+    try:
+        if WP not in sys.path:
+            sys.path.insert(0, WP)
+        import wp_net  # noqa: E402
+        return set(wp_net.URLSCAN_STRUCTURAL_LABELS)
+    except Exception:  # noqa: BLE001 — conservative minimum, same as wp_net's fallback
+        return {"domain.apexdomain", "content.rootdir", "hosting.cdn"}
+
+
+def _urlscan_verdict_evidence(results, cap=12, start=4):
+    """Appendix-B rows for urlscan's third-party verdict on each host's latest scan — a LEAD from an
+    external scanner (Admiralty B2: usually reliable source, probably true), never our own verdict.
+    Reads `live_results.urlscan_verdict` on the domain pivot (Pro: engine score + labels) and the
+    fallback `related_urlscan.verdict`.
+
+    A row is emitted ONLY on SIGNAL: flagged malicious (overall or engines), an overall/engine score
+    above zero, a brand match, or a label outside the structural set. A benign scan (score 0, only
+    domain.*/content.rootdir/hosting.* labels) contributes nothing — otherwise every estate host
+    would fill Appendix B with non-evidence. Absence is never a row."""
+    structural = _structural_labels()
+    rows = []
+    for r in results or []:
+        host = (r.get("meta") or {}).get("host")
+        if not host:
+            continue
+        v = None
+        for piv in r.get("pivots") or []:
+            if piv.get("kind") == "domain" and isinstance(piv.get("live_results"), dict):
+                v = piv["live_results"].get("urlscan_verdict")
+                if v:
+                    break
+        v = v or (r.get("related_urlscan") or {}).get("verdict")
+        if not isinstance(v, dict):
+            continue
+        eng = v.get("engines") if isinstance(v.get("engines"), dict) else {}
+        eng_score = eng.get("score") if isinstance(eng.get("score"), (int, float)) and eng.get("score", -1) >= 0 else None
+        ov_score = v.get("score") if isinstance(v.get("score"), (int, float)) and v.get("score", -1) >= 0 else None
+        malicious = bool(v.get("malicious") or eng.get("malicious"))
+        brands = [b for b in (v.get("brands") or []) if b]
+        signal_labels = [l for l in (v.get("labels") or []) if l and l not in structural]
+        if not (malicious or (eng_score or 0) > 0 or (ov_score or 0) > 0 or brands or signal_labels):
+            continue                                   # benign scan: no row
+        parts = []
+        if eng_score is not None:
+            parts.append(f"engine score {eng_score}/100"
+                         + (f" ({eng.get('malicious_total')}/{eng.get('total')} engines malicious)"
+                            if eng.get("total") else ""))
+        elif ov_score is not None:
+            parts.append(f"overall score {ov_score}/100")
+        if malicious:
+            parts.append("flagged malicious")
+        if signal_labels:
+            parts.append("labels " + ", ".join(signal_labels[:4]))
+        if brands:
+            parts.append("brand " + ", ".join(brands[:3]))
+        # 'E<n> [B2] <claim> — <source>' is the shape house_report.evidence_ledger parses (grade from
+        # the bracket, source after the em dash); `start` follows the loop's three fixed rows. No URL
+        # here: the Rule-12 vendor scrub would mangle it; the frozen result link lives in the captures ledger.
+        rows.append(f"E{start + len(rows)} [B2] urlscan verdict for {host}: {'; '.join(parts)} — public web-scan "
+                    f"verdict on the host's latest scan; a lead, not proof")
+        if len(rows) >= cap:
+            break
+    return rows
+
+
 def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None):
     """Write the human ICD-203 assessment.md, and a machine-readable assessment.json that conforms to
     the SAME schema the SDK/IntelAnalysis path uses (bluf, cluster, attribution_level, confidence,
@@ -664,7 +888,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
                      f"{len(cluster)} shared cluster seed(s) recorded in shared.txt "
                      f"(scoped to this case's hosts)",
                      f"{len(clusters)} same-operator component(s) in clusters.json "
-                     f"({len(multi)} multi-domain)"],
+                     f"({len(multi)} multi-domain)"] + _urlscan_verdict_evidence(results),
         "gaps": gaps,
         "next_pivots": next_pivots,
         "_generator": "intel-loop",
@@ -699,6 +923,16 @@ def _iso_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
+def _export_run_env(case_dir):
+    """Tell every collector subprocess which case it serves and which RUN it belongs to (inherited
+    env). wp_mo_neighbours keys its on-disk per-origin memo on the case dir and its per-run WhoisXML
+    cap on the run token — without these, eight concurrent pivot_extract processes would each
+    re-verify a shared origin and the cap would be a case-lifetime ceiling."""
+    import uuid
+    os.environ["WP_CASE_DIR"] = case_dir
+    os.environ["WP_RUN_ID"] = f"{_iso_now()}-{uuid.uuid4().hex[:8]}"
+
+
 def cmd_loop(a):
     """Resumable convergence feedback loop: collect (free-only WebPivot) -> ingest -> snapshot ->
     assess (md+json) -> chase the discovered free frontier -> repeat until CONVERGED, cold (no free
@@ -709,6 +943,7 @@ def cmd_loop(a):
     case = a.case
     case_dir = os.path.join(ROOT, "cases", case)
     os.makedirs(os.path.join(case_dir, "raw"), exist_ok=True)
+    _export_run_env(case_dir)
 
     st = cs.load_state(case)
     st["depth_limit"] = a.max_rounds
@@ -763,6 +998,9 @@ def cmd_loop(a):
         loop_extra = [] if getattr(a, "full", False) else ["--free-only"]
         if a.render_extract:
             loop_extra.append("--render")
+        # IntelX is the loop's METERED tier: only under --full (never in the default free-only loop),
+        # only with a key, never on a no-spend posture.
+        loop_extra += _intelx_flag(case_dir, loop=True, full=getattr(a, "full", False))
         # DEEP ARCHIVE (passive, keyless — safe under the free-only guard). Default: only the
         # primary seeds (round 1) get the exhaustive Wayback+urlscan+CommonCrawl+archive.today
         # pass; --deep-archive extends it to every frontier seed; --no-deep-primary turns it off.
@@ -805,6 +1043,11 @@ def cmd_loop(a):
         st["collected"] = sorted(cs.collected_hosts(case_dir))
         st["metered_leads"] = fr["metered_leads"]
         analyst_leads = _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters)
+        # 5b) MO-neighbour Phase B after the sidecar exists; a fresh join-key-verified
+        #     same_registrant enters THIS round's frontier (pure re-read of raw/ + the new file).
+        mo = _write_mo_neighbours(case_dir, case)
+        if mo and mo.get("same_registrant"):
+            fr = cs.frontier(case, max_new=a.max_new)
         st["history"].append({"round": st["round"], "collected": len(st["collected"]),
                               "new_hosts": verdict.get("new_hosts_recent"),
                               "verdict": verdict["verdict"], "ts": _iso_now()})
@@ -902,6 +1145,11 @@ def main():
                         "(zero egress — for a handoff from a collector that already fetched, e.g. /case)")
     o.add_argument("--jobs", type=int, default=4)
     o.add_argument("--whois-reverse", action="store_true")
+    o.add_argument("--whois-history", choices=("off", "preview", "purchase"), default="off",
+                   help="WHOIS-history for the Domain Summary sidecar, SCOPED to seeds + multi-domain "
+                        "cluster members: off (default — a rebuild spends no history credits), "
+                        "preview (era count, 1 DRS), purchase (per-era records for the registrant-era "
+                        "timeline, ~50 DRS/domain). A no_spend intake forces off.")
     o.add_argument("--fofa-full", action="store_true",
                    help="FOFA reverses over ALL historical data (full=true), not just ~1yr")
     o.add_argument("--render-extract", action="store_true",

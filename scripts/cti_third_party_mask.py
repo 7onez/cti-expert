@@ -26,6 +26,9 @@ import re
 _EMAIL_RE = re.compile(r"\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
 _PHONE_RE = re.compile(r"(?<![\w.])(\+?84[.\s-]?\d{9,10}|0\d{9,10}|\+\d{1,3}[.\s-]?\d{7,12})(?![\w])")
 _CASE_ID_RE = re.compile(r"\bCASE-[A-Za-z0-9][A-Za-z0-9-]{2,}\b")
+# Registrar / host ROLE mailboxes (the abuse-referral targets a report exists to name) are not
+# third-party PII — left in clear on purpose, consistently across every section.
+_ROLE_LOCALS_IN_CLEAR = frozenset({"abuse", "hostmaster", "noc", "registrar-abuse", "postmaster"})
 
 
 def nsn(v):
@@ -63,7 +66,7 @@ def mask_third_parties(text, keep=(), hosts=(), extra=(), current_case=""):
     def email(m):
         local, dom = m.group(1), m.group(2)
         full = "%s@%s" % (local, dom)
-        if full.lower() in keep_l or dom.lower() in hosts_l:
+        if full.lower() in keep_l or dom.lower() in hosts_l or local.lower() in _ROLE_LOCALS_IN_CLEAR:
             return full
         return "%s***@%s" % (local[:1], dom)
 

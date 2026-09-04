@@ -25,8 +25,8 @@
         "companion": [],
         "metered": true,
         "impact": "critical",
-        "unlocks": "authenticated content/resource/hash search (far higher rate limits + search_after pagination), --submit scanning, and on a Pro key the structure-similarity pivot (clusters re-skinned kits), verdict/brand capture, and URLSCAN_VISIBILITY=private so hostile-infra scans never hit the public feed",
-        "without_it": "reverse-by-favicon-sha256 and reverse-by-resource-filename run anonymously at a much lower rate limit and no pagination, so a busy artifact returns a truncated sibling list; no re-skin clustering; any scan you do submit is PUBLIC, which tips off the operator",
+        "unlocks": "authenticated content/resource/hash search (far higher rate limits + search_after pagination), --submit scanning, authenticated screenshot/DOM retrieval, and on a Pro key: the HOSTNAME lifecycle index (every A/NS/MX record with dates, CT + zonefile first-sightings — the previous-owner record for a drop-catch host, feeding the timeline without a Wayback render), the structure-similarity pivot (clusters re-skinned kits), engine verdicts + labels for the evidence ledger, the brand/title impersonation hunts, and URLSCAN_VISIBILITY=private so hostile-infra scans never hit the public feed",
+        "without_it": "reverse-by-favicon-sha256 and reverse-by-resource-filename run anonymously at a much lower rate limit and no pagination, so a busy artifact returns a truncated sibling list; no hostname lifecycle (registrant eras before the current registration must come from paid WHOIS history or an archive render); no re-skin clustering; no engine verdict rows; any scan you do submit is PUBLIC, which tips off the operator",
         "free_fallback": "anonymous urlscan search (rate-limited, first page only) and the stored-DOM fallback for dead targets",
         "signup": "https://urlscan.io/user/signup"
       },

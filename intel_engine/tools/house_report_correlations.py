@@ -165,3 +165,156 @@ def temporal_correlations_md(ledger_md: str, escape, events: dict | None = None)
     return "\n".join(L).strip()
 
 
+# --------------------------------------------------------------------------- registrant eras
+# case_timeline.whois_events() emits one `registrant_era` event per distinct registrant identity
+# in the WHOIS history (start = first record of that identity, end = the next identity's first
+# record, else expiry). A host with ONE era is the normal case and says nothing; two or more eras
+# is the drop-catch / reactivation signal the house report has to call out, because an archive
+# capture dated inside an EARLIER era shows the previous owner's page, not the operator's.
+
+def registrant_eras_from_events(events: dict) -> dict:
+    """{host: [{start, end, identity, registrar}, …] sorted by start} for hosts with >1 era.
+
+    WhoisXML returns several records per real era (registrant contact, registry contact, privacy
+    relay — all dated the same day), so a raw fold on identity string produces zero-length "eras"
+    and same-day flaps. Fold: (1) rows sharing a start day collapse to ONE, preferring a NAMED
+    identity over a privacy/placeholder one; (2) consecutive rows with the same identity+registrar
+    merge; (3) a zero-length row that has a neighbour on the same day is dropped."""
+    by_host: dict = {}
+    for ev in (events or {}).get("events") or []:
+        if ev.get("kind") != "registrant_era":
+            continue
+        v = ev.get("value") or {}
+        by_host.setdefault(str(ev.get("host") or ""), []).append({
+            "start": str(ev.get("start") or "")[:10],
+            "end": str(ev.get("end") or "")[:10],
+            "identity": str(v.get("identity") or ev.get("label") or "").replace("registrant: ", ""),
+            "registrar": str(v.get("registrar") or ""),
+        })
+    out = {}
+    for h, eras in by_host.items():
+        eras.sort(key=lambda e: (e["start"], e["end"]))
+        # (1) one row per start day: keep the named identity when a same-day sibling is a placeholder
+        by_day: dict = {}
+        for e in eras:
+            cur = by_day.get(e["start"])
+            if cur is None:
+                by_day[e["start"]] = dict(e)
+                continue
+            cur["end"] = max(cur["end"], e["end"])
+            if _identity_rank(e["identity"], e["registrar"]) > _identity_rank(cur["identity"], cur["registrar"]):
+                cur["identity"], cur["registrar"] = e["identity"], e["registrar"]
+        folded = [by_day[k] for k in sorted(by_day)]
+        # (2) merge consecutive identical identity+registrar
+        merged = []
+        for e in folded:
+            if merged and (merged[-1]["identity"].lower(), merged[-1]["registrar"].lower()) == (e["identity"].lower(), e["registrar"].lower()):
+                merged[-1]["end"] = max(merged[-1]["end"], e["end"])
+            else:
+                merged.append(e)
+        # (3) each era ends where the next begins
+        for a, b in zip(merged, merged[1:]):
+            if b["start"] and (not a["end"] or a["end"] > b["start"] or a["end"] == a["start"]):
+                a["end"] = b["start"]
+        merged = [e for e in merged if not (e["start"] and e["end"] == e["start"])] or merged[:1]
+        if len(merged) > 1:
+            out[h] = merged
+    return out
+
+
+def _identity_rank(identity: str, registrar: str) -> int:
+    """Higher = more informative: named person/mailbox > registrar placeholder > privacy > empty."""
+    if not identity:
+        return 0
+    if _is_registrar_placeholder(identity, registrar):
+        return 1
+    return 2
+
+
+def _is_registrar_placeholder(identity: str, registrar: str) -> bool:
+    """The registrar's own name standing in the registrant field (`NameCheap, Inc.` on a Namecheap
+    record) is a redaction placeholder, not an identity."""
+    i = re.sub(r"[^a-z0-9]", "", str(identity or "").lower())
+    r = re.sub(r"[^a-z0-9]", "", str(registrar or "").lower())
+    if not i or not r:
+        return False
+    core_i = re.sub(r"(inc|llc|ltd|limited|corp|corporation|co|gmbh|sa|sarl)$", "", i)
+    core_r = re.sub(r"(inc|llc|ltd|limited|corp|corporation|co|gmbh|sa|sarl)$", "", r)
+    return bool(core_i) and (core_i == core_r or core_i in core_r or core_r in core_i)
+
+
+def era_start_of(events: dict, host: str, fallback=None):
+    """Start date (YYYY-MM-DD) of the LATEST registrant era for `host` when the host has changed
+    registrant at least once; otherwise `fallback` (the WHOIS `created` date).
+
+    This is the cutoff `predates_registration` compares an archive capture against: a capture
+    between the WHOIS `created` date and the current era's start belongs to a previous registrant,
+    not to the operator under investigation. A single-era host deliberately keeps `created` — its
+    one history record is dated by its `updated` field, which can post-date registration and would
+    otherwise mis-caption a legitimate early capture as pre-registration."""
+    eras = registrant_eras_from_events(events).get(host)
+    if not eras:
+        return fallback
+    latest = eras[-1]["start"] or ""
+    # The current registration can never start before its own WHOIS `created` date. When the history
+    # records stop at the PREVIOUS owner's era (no record for the current registrant yet), `eras[-1]`
+    # is that previous era and would caption the previous owner's parking page as this operator's —
+    # the exact mis-attribution this cutoff exists to prevent. Take the later of the two.
+    fb = str(fallback or "")[:10]
+    if fb and (not latest or fb > latest):
+        return fb
+    return latest or fallback
+
+
+def _era_class(identity: str, is_privacy, registrar: str = "") -> str:
+    if not identity:
+        return "unknown"
+    if _is_registrar_placeholder(identity, registrar):
+        return "placeholder"
+    try:
+        if is_privacy and is_privacy(identity):
+            return "privacy"
+    except Exception:
+        pass
+    return "named"
+
+
+def registrant_eras_md(events: dict, escape, is_privacy=None, whois: dict = None) -> str:
+    """'Registrant eras' table for hosts with more than one registrant era, or ''.
+
+    Columns: host · era start · era end · registrant identity · registrar · class. Class is
+    `privacy` (proxy), `placeholder` (the registrar's own name in the registrant field), `named`.
+    When `whois` ({host: current whois row}) is given, the CURRENT registration is appended as the
+    last row (start = its `created`, end = current) and tagged `current · reactivation` — the
+    operator's own era, which the history records alone usually do not spell out."""
+    eras = registrant_eras_from_events(events)
+    if not eras:
+        return ""
+    L = [f"{len(eras)} host(s) changed registrant identity at least once in the WHOIS history. An "
+         "archive capture dated inside an earlier era shows the PREVIOUS registrant's page and is "
+         "captioned as such; the current era's start, not the WHOIS creation date, is the cutoff.", "",
+         "| Host | Era start | Era end | Registrant | Registrar | Class |",
+         "|:-----|:--:|:--:|:------|:------|:--:|"]
+    for host in sorted(eras):
+        rows = list(eras[host])
+        cur = (whois or {}).get(host) or (whois or {}).get(host.lower()) or {}
+        cur_id = str(cur.get("registrant_email") or cur.get("registrant_name") or cur.get("registrant_org") or "").strip()
+        cur_start = str(cur.get("created") or "")[:10]
+        cur_reg = str(cur.get("registrar") or "")
+        appended = False
+        if cur_start and cur_start >= rows[-1]["start"] and not (rows[-1]["start"] == cur_start and rows[-1]["identity"].lower() == cur_id.lower()):
+            if rows[-1]["start"] == cur_start:
+                rows[-1] = {"start": cur_start, "end": "", "identity": cur_id or rows[-1]["identity"], "registrar": cur_reg or rows[-1]["registrar"]}
+            else:
+                rows[-1]["end"] = rows[-1]["end"] or cur_start
+                rows.append({"start": cur_start, "end": "", "identity": cur_id, "registrar": cur_reg})
+            appended = True
+        for i, e in enumerate(rows):
+            cls = _era_class(e["identity"], is_privacy, e["registrar"])
+            if i == len(rows) - 1:
+                cls = f"{cls} · {'current · ' if appended else ''}reactivation"
+            L.append(f"| `{host}` | {e['start'] or '—'} | {e['end'] or 'current'} | "
+                     f"{escape(e['identity']) or '—'} | {escape(e['registrar']) or '—'} | {cls} |")
+    L.append("")
+    return "\n".join(L).strip()
+

@@ -27,6 +27,11 @@ Run standalone (`python3 tools/eval/test_censys.py`) or via run_eval.py.
 """
 import os
 import sys
+import tempfile
+
+# Vendor clients ledger every (mocked) call via api_usage; a test must never write phantom credits
+# into the real MEMORY/api_usage.jsonl (the Censys/urlscan monthly budgets are derived from it).
+os.environ.setdefault("API_USAGE_LOG", os.path.join(tempfile.gettempdir(), "cti-tests-api_usage.jsonl"))
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "WebPivot", "tools"))
@@ -209,6 +214,84 @@ def check():
     ok(cen.summarise_certificate({"fingerprint_sha256": FAKE_SHA256,
                                   "names": ["a.example", "b.example", "a.example"]})["names"]
        == ["a.example", "b.example"], "certificate names deduped (the cross-brand apex list)")
+
+    # --- 8. entitlement: THE SEARCH IS THE PROBE (red-team H0 / M4) ----------------------------
+    #     never plan-gated on a fresh case; a 403 records `free` to the per-case store; a SECOND
+    #     process (module state wiped) reads the store and skips without calling; a 200 records paid.
+    import json
+    import tempfile
+    import wp_plans
+    saved_call, saved_run, saved_month, saved_enabled = cen._call, cen._RUN_SPENT, cen._MONTH_SPENT, cen.ENABLED
+    saved_record = cen._record
+    cen._record = lambda *a, **k: None          # the ledger must never see test traffic
+    saved_token, saved_case = os.environ.pop("CENSYS_PAT", None), os.environ.pop(wp_plans.CASE_DIR_ENV, None)
+    calls = []
+    try:
+        os.environ["CENSYS_PAT"] = "test-token-not-used"
+        cen.ENABLED = True
+        cen._RUN_SPENT = cen._MONTH_SPENT = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            case = os.path.join(tmp, "CASE-0001")
+            os.makedirs(case)
+            os.environ[wp_plans.CASE_DIR_ENV] = case
+            cen._call = lambda path, **kw: (calls.append(path) or (None, {"skipped": "HTTP 403 — plan", "http": 403}))
+            cen._MEMO.clear()
+            res = cen.censys_search('web.hostname="site-a.example"')
+            ok(len(calls) == 1 and res.get("skipped") and res.get("plan") == "free",
+               "fresh case: the search RUNS (not plan-gated); the 403 is the probe")
+            ok(wp_plans.get("censys", case_dir=case) == "free", "…and records plans['censys']='free' on disk")
+            # second process: wipe module state; the store must stop the call before any HTTP
+            cen._MEMO.clear()
+            cen._RUN_SPENT = cen._MONTH_SPENT = 0
+            res2 = cen.censys_search('web.hostname="site-b.example"')
+            ok(len(calls) == 1 and res2.get("skipped") and res2.get("plan") == "free" and res2.get("ui_url"),
+               "second process: store says free -> skipped with the UI link, ZERO HTTP calls")
+            # a paid key: 200 records 'paid' once
+            json.dump({"plans": {}}, open(os.path.join(case, wp_plans.FILE), "w"))
+            cen._call = lambda path, **kw: (calls.append(path) or ({"result": {"total_hits": 1, "hits": [{"host": {"ip": "192.0.2.1"}}]}}, None))
+            cen._MEMO.clear()
+            cen._RUN_SPENT = cen._MONTH_SPENT = 0
+            res3 = cen.censys_search('web.hostname="site-c.example"')
+            ok(len(calls) == 2 and "skipped" not in res3 and wp_plans.get("censys", case_dir=case) == "paid",
+               "a 200 records plans['censys']='paid' (Starter+) — measured, not assumed")
+            # --- 8b. case-level cert search: ONE query per case, run-unless-free, 403 -> free -------
+            calls.clear()
+            cen._MEMO.clear()
+            cen._RUN_SPENT = cen._MONTH_SPENT = 0
+            json.dump({"plans": {}}, open(os.path.join(case, wp_plans.FILE), "w"))
+            cen._call = lambda path, **kw: (calls.append(path) or ({"result": {"total_hits": 2, "hits": [
+                {"host": {"ip": "192.0.2.1"}, "web": {"hostname": "twin.example"}}, {"web": {"hostname": "www.twin.example"}}]}}, None))
+            fps = ["a" * 64, "b" * 64, "c" * 64, "bad", ""]
+            r = cen.certs_search_once(fps, case_budget=1, case_dir=case)
+            ok(len(calls) == 1 and len(r["queries"]) == 1 and " or " in r["queries"][0]["query"]
+               and r["queries"][0]["query"].count("cert.fingerprint_sha256=") == 3,
+               "certs_search_once ORs the deduped valid fingerprints into ONE query (case_budget=1)")
+            ok(r["fingerprints"] == ["a" * 64, "b" * 64, "c" * 64] and "hits" in r, "invalid/empty fingerprints dropped; hits counted")
+            ok(wp_plans.get("censys", case_dir=case) == "paid", "…and the 200 recorded plan 'paid'")
+            cen._MEMO.clear()
+            cen._RUN_SPENT = cen._MONTH_SPENT = 0
+            json.dump({"plans": {}}, open(os.path.join(case, wp_plans.FILE), "w"))
+            cen._call = lambda path, **kw: (calls.append(path) or (None, {"skipped": "HTTP 403 — plan", "http": 403}))
+            r = cen.certs_search_once(["d" * 64], case_budget=2, case_dir=case)
+            ok(r.get("skipped") and r.get("plan") == "free" and wp_plans.get("censys", case_dir=case) == "free",
+               "a 403 on the case search records free and stops")
+            n = len(calls)
+            cen._MEMO.clear()
+            r2 = cen.certs_search_once(["e" * 64], case_budget=1, case_dir=case)
+            ok(len(calls) == n and r2.get("skipped") and r2.get("plan") == "free" and r2.get("ui_urls"),
+               "second process: recorded free -> no call, UI links offered")
+            ok(cen.certs_search_once([], case_dir=case).get("skipped"), "no fingerprints -> skipped, no call")
+    finally:
+        cen._call, cen._RUN_SPENT, cen._MONTH_SPENT, cen.ENABLED = saved_call, saved_run, saved_month, saved_enabled
+        cen._record = saved_record
+        os.environ.pop("CENSYS_PAT", None)
+        os.environ.pop(wp_plans.CASE_DIR_ENV, None)
+        if saved_token is not None:
+            os.environ["CENSYS_PAT"] = saved_token
+        if saved_case is not None:
+            os.environ[wp_plans.CASE_DIR_ENV] = saved_case
+        cen._MEMO.clear()
+
 
     return passed, failed, out
 

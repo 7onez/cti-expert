@@ -49,6 +49,23 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 PIVOT = os.path.join(REPO, "WebPivot", "tools", "pivot_extract.py")
 CASES_DIR = os.path.join(HERE, "cases")
 
+# LEDGER REDIRECT — set BEFORE any unit module or collector subprocess is loaded/spawned. Vendor
+# clients ledger every call (mocked or real) via api_usage.record(); a gate run must never write
+# phantom credits into the real MEMORY/api_usage.jsonl (the Censys/urlscan monthly budgets are derived
+# from it). Unit modules `setdefault` the same variable, so this one value governs the whole process
+# and the subprocesses that inherit the env. The spend guard below watches THIS file (via
+# api_usage._log_path()), never a hard-coded path — otherwise a redirect would blind it.
+os.environ.setdefault("API_USAGE_LOG", os.path.join(tempfile.gettempdir(), f"run_eval-api_usage-{os.getpid()}.jsonl"))
+
+
+def _active_ledger():
+    try:
+        sys.path.insert(0, os.path.join(REPO, "WebPivot", "tools"))
+        import api_usage  # noqa: WPS433
+        return api_usage._log_path()
+    except Exception:  # noqa: BLE001
+        return os.environ["API_USAGE_LOG"]
+
 
 # ---------------------------------------------------------------- running the tool
 def run_pivot(input_html: str) -> dict:
@@ -181,7 +198,10 @@ def main():
     # casework — with nothing in the output to say so. Every metered call is recorded in
     # MEMORY/api_usage.jsonl by api_usage.record(), so the ledger's own length is the check: if it
     # grows across a gate run, something reached a paid API and the run is reported FAILED.
-    _ledger = os.path.join(REPO, "MEMORY", "api_usage.jsonl")
+    # NOTE: the guard counts ANY record() — a urlopen-mocked client still ledgers — so growth means
+    # "a metered client path was exercised", not necessarily real spend. Inspect the file before
+    # treating a FAIL as billed traffic.
+    _ledger = _active_ledger()
 
     def _ledger_len():
         try:
@@ -214,6 +234,11 @@ def main():
         if not entry["passed"]:
             failed_cases += 1
         report.append(entry)
+    # Fixture phase done: pivot_extract ran `--no-enrich --no-whois`, so ANY ledger growth here is a
+    # genuinely suspicious metered path. The unit phase below is judged separately (mocked clients
+    # still record()).
+    _fixture_spent = _ledger_len() - _spend_before
+    _unit_before = _ledger_len()
 
     if args.json:
         print(json.dumps({"failed_cases": failed_cases, "total": len(cases),
@@ -248,6 +273,8 @@ def main():
         ("test_reverse_phone", "reverse-WHOIS phone + preview-first / confirm-if-large gate"),
         ("test_whois_parallel", "whois_summary parallelizes current+history (speed)"),
         ("test_frontier_guards", "frontier co-tenancy guards — multi-tenant cert / shared IP / bulk registrant"),
+        ("test_mo_neighbours_classify", "MO-neighbour pivot — bulk-origin guard / per-origin memo / classified-only "
+                                        "frontier seeding / privacy + unverifiable buckets / facts-only KB ingest"),
         ("test_assets_layer", "asset layer — JS bundle select / sourcemap dev-identity / API+build-env / well-known"),
         ("test_censys", "Censys layer — CenQL not Legacy Search / = vs : / MD5 favicon / "
                         "free-plan degradation / monthly credit guard"),
@@ -342,29 +369,37 @@ def main():
             unit_failed += 1
             print(f"\n\033[31m✗\033[0m [UNIT] {desc} — harness error: {e}")
 
-    # ---- METERED-SPEND GUARD: report and fail if the gate touched a paid API ----------------
-    _spent = _ledger_len() - _spend_before
-    unit_total += 1
-    if _spent > 0:
-        unit_failed += 1
-        detail = ""
+    # ---- METERED-SPEND GUARD: any ledger growth across the WHOLE run fails the gate ----------------
+    # Both phases count. The fixture phase runs the collector --no-enrich --no-whois; the unit phase
+    # has historically been where real spend hid (test_ippivot → Censys, then Validin; test_intelx_anyrun
+    # → IntelX via an unpopped key alias). Mocked suites must therefore not ledger at all: a suite that
+    # mocks at the urlopen seam also stubs the client's `_record`/`api_usage`, or pops every key alias so
+    # the client degrades to keyless. With that discipline, growth here IS spend (or an unstubbed seam),
+    # and the per-phase attribution below says where to look.
+    def _breakdown(n):
         try:
             with open(_ledger, encoding="utf-8") as fh:
-                rows = [json.loads(x) for x in fh if x.strip()][-_spent:]
+                rows = [json.loads(x) for x in fh if x.strip()][-n:]
             by = {}
             for r in rows:
                 k = f"{r.get('provider')}:{r.get('action')}"
                 by[k] = by.get(k, 0) + int(r.get("credits") or 1)
-            detail = "  ".join(f"{k}={v}" for k, v in sorted(by.items()))
+            return "  ".join(f"{k}={v}" for k, v in sorted(by.items()))
         except Exception:                                        # noqa: BLE001 — reporting only
-            pass
-        print(f"\n\033[31m✗\033[0m [UNIT] metered-spend guard — the gate spent {_spent} "
-              f"metered call(s) on a PAID API: {detail}")
-        print("      A regression gate must be free to run. Stub the new provider in the unit "
-              "module that reached it (see test_ippivot's `saved`/mock block for the pattern).")
+            return ""
+    _unit_spent = _ledger_len() - _unit_before
+    _spent = _fixture_spent + _unit_spent
+    unit_total += 1
+    if _spent > 0:
+        unit_failed += 1
+        where = " + ".join(s for s in ((f"fixture phase {_fixture_spent}" if _fixture_spent else ""),
+                                       (f"unit phase {_unit_spent}" if _unit_spent else "")) if s)
+        print(f"\n\033[31m✗\033[0m [UNIT] metered-spend guard — the gate ledgered {_spent} metered call(s) "
+              f"({where}): {_breakdown(_spent)}")
+        print(f"      A regression gate must be free to run. Inspect {_ledger}; stub the seam in the module "
+              "that reached it (pattern: test_ippivot's `saved` block / test_intelx_anyrun's `_pop_ix_keys`).")
     else:
-        print("\n\033[32m✔\033[0m [UNIT] metered-spend guard — the gate reached no paid API "
-              "(MEMORY/api_usage.jsonl unchanged)")
+        print(f"\n\033[32m✔\033[0m [UNIT] metered-spend guard — the gate reached no metered API ({_ledger} unchanged)")
 
     npass = len(cases) - failed_cases
     total_failed = failed_cases + unit_failed

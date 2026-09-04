@@ -1,0 +1,19 @@
+{
+  "_comment": "Classification POLICY for the MO-neighbour pivot (case_state.mo_neighbour_classification, wp_mo_neighbours.discover). A co-tenant of the estate's origin IP is `same_mo` (a rung-10 related persona, never estate membership) only when its registrar is one of the estate's, its creation date falls inside the estate's created window widened by window_days, AND it either shares a naming token with the estate's own labels or its mailbox has the throwaway-handle shape. Loosening any of these names more third parties; tightening hides the deliverable. The fallback in case_state is deliberately the CONSERVATIVE minimum.",
+  "classification": {
+    "_comment": "window_days widens the estate's [min created, max created] window on both sides; persona_handle_regex is the throwaway-mailbox local-part shape; min_token_len / stop_tokens govern which alphabetic tokens of an apex's first label count as the estate's naming vocabulary (generic commerce words never do). Registrar match and a non-privacy e-mail/phone selector are hard requirements and not tunable here.",
+    "window_days": 90,
+    "persona_handle_regex": "^[a-z]+\\d{4,}$",
+    "min_token_len": 4,
+    "stop_tokens": ["www", "mail", "shop", "store", "online", "site", "web", "app", "info", "news",
+                    "home", "page", "group", "global", "official", "company", "service", "services",
+                    "vietnam", "saigon", "hanoi"]
+  },
+  "discovery": {
+    "_comment": "max_candidates = co-tenant apexes ONE origin may WHOIS-verify per run (1 DRS each); whois_run_cap = WhoisXML current-WHOIS lookups the pivot may make per RUN across all origins and collector subprocesses (stamped by run token in cases/<id>/mo_neighbours/whois_ledger.jsonl); sibling_wait_s = how long a collector subprocess waits for a sibling that is already verifying the same origin.",
+    "max_candidates": 40,
+    "whois_run_cap": 160,
+    "whois_workers": 4,
+    "sibling_wait_s": 90
+  }
+}

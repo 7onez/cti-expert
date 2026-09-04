@@ -116,8 +116,12 @@ def _emit_result(result, args, src):
     # Which indexes this run could actually query is a property of the EVIDENCE, not of the
     # terminal session — it has to travel with the file, or a keyless run's empty cluster reads
     # months later as "the operator had no siblings". One place, all three modes.
+    # Entitlement is MEASURED once per case (wp_plans store; free probes) — not when enrichment is
+    # off (the offline eval runner) and never in a way that spends: probes are free endpoints only.
     result.setdefault("meta", {})["capability"] = wp_capabilities.capability_meta(
-        free_only=bool(getattr(args, "free_only", False)))
+        free_only=bool(getattr(args, "free_only", False)),
+        case_dir=os.environ.get("WP_CASE_DIR") or None,
+        probe=not getattr(args, "no_enrich", False))
     if args.report is not None or args.master is not None or args.misp is not None:
         import evidence_report
 
@@ -427,6 +431,9 @@ def main():
                     help="with --hunt-impersonation: also run the urlscan keyword sweep (metered)")
     ap.add_argument("--hunt-max", type=int, default=600, metavar="N",
                     help="with --hunt-impersonation: cap on generated candidates (default 600)")
+    ap.add_argument("--hunt-brand", default=None, metavar="NAME",
+                    help="with --hunt-impersonation --hunt-urlscan: the impersonated brand's display "
+                         "name, adding the urlscan page.title:\"<brand>\" hunt (metered)")
     ap.add_argument("--no-docmeta", action="store_true",
                     help="skip the DOCUMENT/IMAGE metadata layer (hosted PDFs + images are "
                          "downloaded and read for /Info, XMP and EXIF — author, XMP DocumentID, "
@@ -579,7 +586,7 @@ def main():
               file=sys.stderr)
         result = wp_impersonate.build_impersonation_result(
             hunt_seed, max_variants=args.hunt_max, fofa=args.hunt_fofa,
-            urlscan=args.hunt_urlscan, case=args.case)
+            urlscan=args.hunt_urlscan, case=args.case, brand=getattr(args, "hunt_brand", None))
         _emit_result(result, args, hunt_seed)
         return
 
@@ -935,6 +942,19 @@ def main():
         sort_pivots(result["pivots"])  # re-rank after folding in crawled pages
 
     if not args.no_enrich:
+        # The MO-neighbour leg reuses rows already WHOIS-verified in earlier rounds of the SAME case
+        # (cases/<id>/mo_neighbours.json). The case dir is implied by -o cases/<id>/raw/<host>.json.
+        _outdir = os.path.dirname(os.path.abspath(args.out)) if args.out else ""
+        if _outdir and os.path.basename(_outdir) == "raw" and not os.environ.get("WP_CASE_DIR"):
+            os.environ["WP_CASE_DIR"] = os.path.dirname(_outdir)
+        # Measure entitlement BEFORE enriching, so even the first process to reach a vendor gates its
+        # Pro calls on the measured tier (free probes only). Only when a case store can hold the
+        # result — an ad-hoc run without a case probes once, in _emit_result.
+        if os.environ.get("WP_CASE_DIR"):
+            try:
+                wp_capabilities.discover_plans(case_dir=os.environ["WP_CASE_DIR"], probe=True)
+            except Exception:  # noqa: BLE001 — never let a probe take the collection down
+                pass
         enrich_live(result, fofa_full=args.fofa_full, free_only=args.free_only)
     if not args.no_whois:
         whois_enrich_result(result, do_reverse=(not args.no_whois_reverse) and not args.free_only,

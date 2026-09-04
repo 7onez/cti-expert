@@ -97,6 +97,16 @@ def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
     only populated on token plans — parsed when present, absent-safe otherwise."""
     if ip in _IPINFO_CACHE:
         return _IPINFO_CACHE[ip]
+    # per-CASE memo (wp_casememo under $WP_CASE_DIR): the same Cloudflare edge pair recurs on every
+    # host and every report rebuild re-probed all of them (28 token lookups per render, measured)
+    try:
+        import wp_casememo
+        _cached = wp_casememo.get("ipinfo", ip)
+    except Exception:  # noqa: BLE001
+        wp_casememo, _cached = None, None
+    if isinstance(_cached, dict) and _cached.get("ip"):
+        _IPINFO_CACHE[ip] = _cached
+        return _cached
     token = _secret("IPINFO_TOKEN", "IPINFO_API_KEY")
     url = f"https://ipinfo.io/{ip}/json"
     if token:
@@ -141,6 +151,8 @@ def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
         out["privacy_flags"] = sorted(k for k in ("hosting", "proxy", "vpn", "tor", "relay")
                                       if priv.get(k))
     _IPINFO_CACHE[ip] = out
+    if wp_casememo is not None and not out.get("error"):
+        wp_casememo.put("ipinfo", ip, out)
     return out
 
 
@@ -299,6 +311,61 @@ def shodan_host(ip: str, timeout: int = 20) -> dict:
     return {"ports": sorted(map(str, data.get("ports", []))), "services": services,
             "hostnames": data.get("hostnames", []), "org": data.get("org"),
             "asn": data.get("asn")}
+
+def shodan_configured() -> bool:
+    return bool(_secret("SHODAN_KEY", "SHODAN_API_KEY"))
+
+
+def shodan_search(query: str, limit: int = 100, timeout: int = 25):
+    """Shodan SEARCH (`/shodan/host/search`) — the cert/JARM reverse: every host Shodan saw serving
+    `ssl.cert.fingerprint:<sha1>` or answering `ssl.jarm:<hash>`. Metered (1 query credit per page;
+    search filters need a Membership/paid key — a free key answers 401/402 'membership' or 'upgrade').
+    -> {"total","hosts":[{ip,port,hostnames[],org,asn,domains[]}],"domains":[...]} | {"skipped"|"error"}
+    | None (keyless). NEVER raises; a membership refusal is a named skip, not a failure."""
+    key = _secret("SHODAN_KEY", "SHODAN_API_KEY")
+    if not key:
+        return None
+    q = str(query or "").strip()
+    if not q:
+        return {"error": "empty query"}
+    url = "https://api.shodan.io/shodan/host/search?" + urlencode({"key": key, "query": q, "minify": "true"})
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")[:300]
+        except Exception:  # noqa: BLE001
+            pass
+        low = body.lower()
+        if api_usage:
+            api_usage.record("shodan", "search", credits=0, query=q, ok=False)
+        if e.code in (401, 402, 403) or "membership" in low or "upgrade" in low or "credits" in low:
+            return {"skipped": f"Shodan search needs a Membership/paid key or query credits (HTTP {e.code})",
+                    "query": q, "http": e.code}
+        return {"error": f"HTTP {e.code}", "query": q}
+    except Exception as e:  # noqa: BLE001
+        if api_usage:
+            api_usage.record("shodan", "search", credits=0, query=q, ok=False)
+        return {"error": str(e), "query": q}
+    if api_usage:
+        api_usage.record("shodan", "search", credits=1, query=q)
+    hosts, domains = [], []
+    for m in (data.get("matches") or [])[:max(1, limit)]:
+        if not isinstance(m, dict):
+            continue
+        names = [str(h).lower() for h in (m.get("hostnames") or []) if h]
+        hosts.append({"host": names[0] if names else m.get("ip_str"),      # what a discovered-host reader keys on
+                      "ip": m.get("ip_str"), "port": m.get("port"), "hostnames": names,
+                      "org": m.get("org"), "asn": m.get("asn"),
+                      "domains": [str(d).lower() for d in (m.get("domains") or []) if d]})
+        domains += names + [str(d).lower() for d in (m.get("domains") or []) if d]
+    total = data.get("total")
+    return {"query": q, "total": total if isinstance(total, int) else len(hosts), "hosts": hosts,
+            "domains": uniq(domains)}
+
 
 
 # --------------------------------------------------------------------------- ASN registry (refs)
@@ -564,5 +631,5 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
 
 
 __all__ = ["ip_mode_target", "ipinfo_lookup", "dns_records", "reverse_dns", "mail_intel",
-           "fofa_ip", "shodan_host", "asn_registry_load", "asn_registry_upsert",
+           "fofa_ip", "shodan_host", "shodan_search", "shodan_configured", "asn_registry_load", "asn_registry_upsert",
            "is_noise_provider", "build_ip_result"]

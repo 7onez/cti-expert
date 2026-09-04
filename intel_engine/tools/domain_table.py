@@ -44,11 +44,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # reuse the WebPivot WHOIS client (WhoisXML) without duplicating it
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 try:
-    from whois_enrich import whois_current, is_privacy  # type: ignore
+    from whois_enrich import (whois_current, whois_summary, whois_summary_keyless,  # type: ignore
+                              is_privacy)
 except Exception:                                        # pragma: no cover - degrade gracefully
     whois_current = None
+    whois_summary = None
+    whois_summary_keyless = None
     def is_privacy(v):  # noqa
         return False
+
+# WHOIS-history purchase policy for the SIDECAR. "off" = current WHOIS only (today's behaviour and
+# the report-path default: a plain rebuild never spends history credits); "preview" = one cheap
+# history call that returns only the era COUNT (records stay empty, never treated as a purchased
+# cache hit); "purchase" = the full per-era record list (~50 DRS/domain) — explicit opt-in only.
+HISTORY_MODES = ("off", "preview", "purchase")
 
 # Liveness is decided by wp_liveness (reads the PAGE, not just the status code) so a parking
 # page / server default page / soft-404 stops being reported as "live", and a 404 or 403 stops
@@ -247,18 +256,44 @@ def _load_registry(kb):
     return recs
 
 
-def _whois_cached(domain, case_dir):
-    """WHOIS via WhoisXML, cached to cases/<case>/whois/<domain>.json."""
+def _has_purchased_history(w):
+    """True when a cached sidecar holds a COMPLETED history purchase — `history.mode == "purchase"`
+    stamped by whois_summary() and no `history.error`. Keyed on the mode, not on a non-empty
+    `records` list: a young domain's purchase legitimately returns zero era records, and treating
+    that as "not purchased" would re-buy it (~50 DRS) on every purchase-mode rebuild. Sidecars
+    written before the mode stamp existed, preview-mode ones, and errored purchases all read as
+    unpurchased and are refetched exactly once when a purchase is requested."""
+    h = (w or {}).get("history") or {}
+    return h.get("mode") == "purchase" and not h.get("error")
+
+
+def _whois_cached(domain, case_dir, history_mode="off", free_only=False):
+    """WHOIS cached to cases/<case>/whois/<domain>.json.
+
+    `history_mode` is one of HISTORY_MODES. A cached file is reused unless a `purchase` is
+    requested and the cache lacks the purchased `history.records` — a preview-mode or history-less
+    sidecar must not masquerade as a purchased one forever. `free_only` forces the keyless path
+    (RDAP/port-43, empty history, no credit spend) regardless of `history_mode`."""
+    if history_mode not in HISTORY_MODES:
+        raise ValueError(f"history_mode must be one of {HISTORY_MODES}, got {history_mode!r}")
     cache = os.path.join(case_dir, "whois", domain + ".json") if case_dir else ""
     if cache and os.path.exists(cache):
         try:
-            return json.load(open(cache, encoding="utf-8"))
+            cached = json.load(open(cache, encoding="utf-8"))
         except Exception:
-            pass
-    if whois_current is None:
-        return {}
+            cached = None
+        if cached is not None:
+            if history_mode != "purchase" or free_only or _has_purchased_history(cached):
+                return cached
+            # purchase requested but the cache is history-less/preview → fall through and refetch
+    w = {}
     try:
-        w = whois_current(domain) or {}
+        if free_only:
+            w = (whois_summary_keyless(domain) if whois_summary_keyless else {}) or {}
+        elif history_mode == "off":
+            w = (whois_current(domain) if whois_current else {}) or {}
+        else:
+            w = (whois_summary(domain, history_mode=history_mode) if whois_summary else {}) or {}
     except Exception:
         w = {}
     if cache and w:
@@ -353,18 +388,26 @@ def _ns_short(w):
 
 
 # ---------------------------------------------------------------- rendering
-def gather_rows(domains_results, case_dir, kb, notes):
-    """domains_results: list of (domain, result_dict_or_None). Returns row dicts."""
+def gather_rows(domains_results, case_dir, kb, notes, history_mode="off", history_for=None,
+                free_only=False):
+    """domains_results: list of (domain, result_dict_or_None). Returns row dicts.
+
+    `history_mode`/`free_only` are passed to the WHOIS sidecar (see _whois_cached). When
+    `history_for` is a set of domains, only those get `history_mode`; every other domain is
+    fetched with history "off" — this is how the pipeline restricts a purchase to seed + cluster
+    members instead of the whole estate. None means every domain."""
     registry = _load_registry(kb)
     asn_cache = {}
     rows = []
+    hist_set = {d.lower().strip() for d in history_for} if history_for is not None else None
     for domain, result in domains_results:
         domain = domain.lower().strip()
         if result is not None:
             status, ip = _status_from_result(result)
         else:
             status, ip = _status_from_live(domain)
-        w = _whois_cached(domain, case_dir)
+        mode = history_mode if (hist_set is None or domain in hist_set) else "off"
+        w = _whois_cached(domain, case_dir, history_mode=mode, free_only=free_only)
         rows.append({
             "domain": domain,
             "status": status,
@@ -508,11 +551,13 @@ def rows_to_markdown(rows, title="Domain Summary", layout="wide"):
 
 
 def render_domain_table(results, case=None, kb="knowledge", notes=None, title="Domain Summary",
-                        layout="wide"):
+                        layout="wide", history_mode="off", history_for=None, free_only=False):
     """Convenience entry point for report renderers.
 
     `results` is a list of pivot_extract raw-JSON dicts (each with meta.host).
     Returns a ready-to-embed markdown string (or '' if nothing usable).
+    `history_mode`/`history_for`/`free_only` control WHOIS-history spend on the sidecar (see
+    gather_rows); the defaults reproduce the historical render-path behaviour — current WHOIS only.
     """
     case_dir = os.path.join(ROOT, "cases", case) if case else None
     if notes is None and case_dir:
@@ -527,7 +572,9 @@ def render_domain_table(results, case=None, kb="knowledge", notes=None, title="D
         host = (res.get("meta", {}) or {}).get("host")
         if host:
             pairs.append((host, res))
-    rows = gather_rows(pairs, case_dir, os.path.join(ROOT, kb) if kb and not os.path.isabs(kb) else kb, notes or {})
+    rows = gather_rows(pairs, case_dir, os.path.join(ROOT, kb) if kb and not os.path.isabs(kb) else kb,
+                       notes or {}, history_mode=history_mode, history_for=history_for,
+                       free_only=free_only)
     return rows_to_markdown(rows, title=title, layout=layout)
 
 
@@ -545,6 +592,15 @@ def main():
                          "compact: drop Analyst context from the grid and emit it as prose "
                          "below — USE THIS for PDF/DOCX, where a multi-sentence note in a "
                          "10-column portrait table wraps to one word per line")
+    ap.add_argument("--whois-history", choices=HISTORY_MODES, default="off",
+                    help="WHOIS-history purchase for the sidecar: off (default; current WHOIS "
+                         "only, spends no history credits), preview (era count only, 1 DRS), "
+                         "purchase (full per-era records, ~50 DRS/domain — explicit opt-in)")
+    ap.add_argument("--history-for", default=None,
+                    help="comma-separated domains that get --whois-history; every other domain "
+                         "stays 'off' (default: all)")
+    ap.add_argument("--free-only", action="store_true",
+                    help="keyless RDAP/port-43 WHOIS only; no WhoisXML spend at all")
     a = ap.parse_args()
 
     pairs = []
@@ -570,7 +626,9 @@ def main():
         notes = json.load(open(os.path.join(case_dir, "notes.json"), encoding="utf-8"))
 
     kb = a.kb if os.path.isabs(a.kb) else os.path.join(ROOT, a.kb)
-    rows = gather_rows(pairs, case_dir, kb, notes)
+    hist_for = {d.strip() for d in a.history_for.split(",") if d.strip()} if a.history_for else None
+    rows = gather_rows(pairs, case_dir, kb, notes, history_mode=a.whois_history,
+                       history_for=hist_for, free_only=a.free_only)
     md = rows_to_markdown(rows, layout=a.layout)
     if a.out:
         open(a.out, "w", encoding="utf-8").write(md + "\n")

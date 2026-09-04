@@ -73,6 +73,7 @@ import urllib.request
 
 from wp_common import *  # noqa — DEFAULT_UA, _secret, uniq
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
+import wp_plans as _plans               # per-case on-disk entitlement store (the search is the probe)
 
 try:
     import api_usage                      # licensed-API credit ledger
@@ -192,8 +193,8 @@ def _call(path: str, *, method: str = "GET", body: dict = None, timeout: int = 3
         # 404 is a fact about the target, not a failure of ours; the rest are conditions the
         # caller degrades around. Only a 5xx/unknown code is an actual error.
         if e.code in _STATUS_REASON:
-            return None, {"skipped": msg}
-        return None, {"error": msg}
+            return None, {"skipped": msg, "http": e.code}
+        return None, {"error": msg, "http": e.code}
     except Exception as e:                              # network/timeout/parse
         return None, {"error": str(e)}
 
@@ -582,6 +583,14 @@ def censys_search(query: str, page_size: int = 100, pages: int = 1, timeout: int
     q = (query or "").strip()
     if not q:
         return {"error": "empty query"}
+    # THE SEARCH IS THE PROBE (red-team H0). It is never gated on a plan only it can discover; the
+    # one thing that stops it is a `free` verdict ALREADY RECORDED for this case by an earlier
+    # process's 403 (wp_plans: cases/<id>/capability_plans.json) — the per-process memo cannot
+    # carry that across cmd_open / loop rounds / per-host collector subprocesses.
+    if _plans.get("censys") == "free":
+        return {"skipped": "Censys search skipped — this case already recorded the plan as FREE "
+                           "(search needs Starter+); run the CenQL in the web UI",
+                "query": q, "ui_url": censys_ui_url(q), "plan": "free"}
     cost = CREDIT_COSTS.get("advanced_query", 8) if "=~" in q else CREDIT_COSTS.get("standard_query", 5)
     # A search is 5x a lookup and each extra page costs the same again — the single easiest way to
     # burn a month. Budget the WHOLE requested paging run up front.
@@ -598,9 +607,14 @@ def censys_search(query: str, page_size: int = 100, pages: int = 1, timeout: int
                           method="POST", body=body, timeout=timeout)
         if err:
             _record("search", spent, q, results=len(hits), ok=bool(hits))
+            if err.get("http") == 403 and not hits:
+                _plans.record("censys", "free", why="search/query answered 403 (Free plan: lookups only)")
+                err = dict(err, plan="free")
             if hits:
                 break                                   # keep the pages already paid for
             return dict(err, query=q, ui_url=censys_ui_url(q))
+        if spent == 0 and _plans.get("censys") != "paid":
+            _plans.record("censys", "paid", why="search/query answered 200 (Starter or above)")
         spent += cost
         res = (data or {}).get("result") or {}
         total = res.get("total_hits", total)
@@ -700,9 +714,71 @@ def attach_censys_queries(pivots: list, forms: int = 1) -> list:
     return pivots
 
 
+def certs_search_once(sha256_list, case_budget: int = 1, case_dir=None, timeout: int = 45):
+    """ONE case-level Censys search over the estate's deduped leaf-certificate SHA-256s — `cert.
+    fingerprint_sha256=<a> or cert.fingerprint_sha256=<b> …` — bounded to `case_budget` query
+    call(s) per case (5 credits each), so an estate of 30 hosts costs one search, not thirty.
+
+    THE SEARCH IS THE PROBE: it runs unless this case already recorded Censys as `free` (wp_plans);
+    censys_search itself records `free` on the first 403 / `paid` on a 200. Returns
+    {queries:[…], hostnames:[…], ips:[…], hits:n, skipped?:reason, plan?:…} — never raises; every
+    outcome is a dict the caller can persist (cases/<id>/censys_search.json) and the frontier can
+    merge on exact-cert match (an owner link — the same standard as censys_cert names)."""
+    fps = sorted({str(f or "").strip().lower() for f in (sha256_list or []) if f and len(str(f).strip()) == 64})
+    out = {"fingerprints": fps, "queries": [], "hostnames": [], "ips": [], "hits": 0}
+    if not fps:
+        out["skipped"] = "no leaf-certificate fingerprints collected"
+        return out
+    if not censys_configured():
+        out["skipped"] = "no CENSYS_PAT"
+        return out
+    if _plans.get("censys", case_dir=case_dir) == "free":
+        out["skipped"] = "this case recorded the Censys plan as FREE (lookups only) — search not attempted"
+        out["plan"] = "free"
+        out["ui_urls"] = [censys_ui_url(f"cert.fingerprint_sha256={f}") for f in fps[:6]]
+        return out
+    tpl = (CENQL_TEMPLATES.get("tls_fingerprint_sha256") or ["cert.fingerprint_sha256={value}"])[0]
+    # OR the fingerprints into as few queries as the budget allows (Censys accepts long disjunctions)
+    per_query = max(1, -(-len(fps) // max(1, case_budget)))
+    hostnames, ips = [], []
+    for i in range(0, len(fps), per_query):
+        if len(out["queries"]) >= max(1, case_budget):
+            out["truncated"] = True
+            break
+        q = " or ".join(tpl.replace("{value}", f) for f in fps[i:i + per_query])
+        res = censys_search(q, page_size=100, pages=1, timeout=timeout)
+        qrow = {"query": q, "fingerprints": fps[i:i + per_query],
+                "result": {k: v for k, v in (res or {}).items() if k not in ("hits", "hostnames", "ips")}}
+        out["queries"].append(qrow)
+        if not isinstance(res, dict):
+            continue
+        if res.get("error"):
+            # TRANSPORT failure: distinct from `skipped` so the caller's idempotence check retries it
+            # next run instead of freezing the case on one timeout.
+            out["error"] = res["error"]
+            break
+        if res.get("skipped"):
+            out["skipped"] = res["skipped"]
+            if res.get("plan"):
+                out["plan"] = res["plan"]
+            out["ui_url"] = res.get("ui_url")
+            break
+        # per-QUERY hostnames stay attributable to their fingerprint chunk, so a shared CDN cert in one
+        # chunk cannot poison a genuine one in another (the frontier guards fan-out per query)
+        qrow["hostnames"] = uniq(list(res.get("hostnames") or []))
+        qrow["ips"] = uniq(list(res.get("ips") or []))
+        qrow["total"] = int(res.get("total") or 0)
+        hostnames += qrow["hostnames"]
+        ips += qrow["ips"]
+        out["hits"] += qrow["total"]
+    out["hostnames"] = uniq(hostnames)
+    out["ips"] = uniq(ips)
+    return out
+
+
 __all__ = ["censys_configured", "censys_token", "censys_host", "censys_webproperty",
            "censys_certificate", "censys_hosts", "censys_certificates", "censys_webproperties",
-           "censys_search", "censys_queries", "attach_censys_queries", "cenql_for", "template_for",
+           "censys_search", "certs_search_once", "censys_queries", "attach_censys_queries", "cenql_for", "template_for",
            "censys_ui_url", "budget_status", "month_spent",
            "webproperty_id", "summarise_host", "summarise_webproperty", "summarise_certificate",
            "CENQL_TEMPLATES", "PIVOT_KIND_MAP", "CREDIT_COSTS", "CREDIT_BUDGET",

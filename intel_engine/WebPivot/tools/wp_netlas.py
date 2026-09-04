@@ -170,6 +170,9 @@ def reverse_ip(ip, max_results=400):
     hosts = sorted({it.get("domain", "").lower() for it in r["items"] if it.get("domain")})
     r["hosts"] = hosts
     r["apexes"] = sorted({_apex(h) for h in hosts})
+    # `total` counts DOCUMENTS (one per record type), hosts are deduped — judge truncation against
+    # the rows actually returned, never against the deduped host list.
+    r["truncated"] = isinstance(r.get("total"), int) and r["total"] > len(r["items"])
     return r
 
 

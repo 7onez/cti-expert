@@ -122,9 +122,16 @@ def can_spend(n=1) -> bool:
     return (u["allowed"] - u["used"]) >= max(n, _MIN_REMAINING)
 
 
-def _allow():
-    """Per-run ceiling + live monthly-quota gate, BEFORE any HTTP call. Increments the run
-    counter when it allows."""
+# The Free key is 50 calls a MONTH. `_MAX_PER_RUN` is per PROCESS — and collect_core runs one process
+# per host — so a 25-host estate with subdomains + dns_history per host would burn the month in one
+# cmd_open. The per-CASE cap (wp_casememo ledger under $WP_CASE_DIR, per run) is the bound that
+# actually holds; the per-process one stays as the standalone fallback.
+_MAX_PER_CASE = int(os.environ.get("SECURITYTRAILS_MAX_CALLS_PER_CASE", 20))
+
+
+def _allow(note=""):
+    """Per-run ceiling (this process) + per-CASE ceiling (all collector subprocesses, via the case
+    ledger) + live monthly-quota gate, BEFORE any HTTP call. Increments the counters when it allows."""
     global _RUN_CALLS
     if _USAGE is None:
         usage()                              # prime the quota cache ONCE per run
@@ -133,6 +140,12 @@ def _allow():
             return False
         if not can_spend(1):
             return False
+        try:
+            import wp_casememo
+            if not wp_casememo.charge("securitytrails", _MAX_PER_CASE, note):
+                return False
+        except Exception:  # noqa: BLE001 — no case dir / helper missing: process cap alone applies
+            pass
         _RUN_CALLS += 1
         return True
 
@@ -197,7 +210,8 @@ def subdomains(domain, timeout=25):
 
 
 def dns_history(domain, record_type="a", timeout=25):
-    """Historical DNS records for one host -> {"total","ips":[...]} for a/aaaa record types, or
+    """Historical DNS records for one host -> {"total","ips":[...],"eras":[{ip,first_seen,last_seen}]}
+    for a/aaaa record types (the eras are what the case timeline turns into dated hosting spans), or
     {"total","records":[...]} (raw) for mx/ns/soa/txt -> tri-state | None (keyless)."""
     if not securitytrails_configured():
         return None
@@ -211,16 +225,109 @@ def dns_history(domain, record_type="a", timeout=25):
         return err
     records = (data or {}).get("records") or []
     if rt in ("a", "aaaa"):
-        ips = _uniq([v.get("ip") for rec in records for v in (rec.get("values") or [])
-                     if v.get("ip")])
+        ips, eras = [], []
+        for rec in records:
+            for v in (rec.get("values") or []):
+                ip = v.get("ip")
+                if not ip:
+                    continue
+                ips.append(ip)
+                eras.append({"ip": ip, "first_seen": rec.get("first_seen"), "last_seen": rec.get("last_seen"),
+                             "org": (rec.get("organizations") or [None])[0]})
+        ips = _uniq(ips)
         _record("dns_history:" + domain, len(ips))
-        return {"total": len(ips), "ips": ips}
+        return {"total": len(ips), "ips": ips, "eras": eras}
     _record("dns_history:" + domain, len(records))
     return {"total": len(records), "records": records}
 
 
+def _post_raw(path, body, *, timeout=25):
+    """POST transport sibling of _get_raw: same headers, same tri-state error mapping, JSON body.
+    Never raises; builds no custom opener (wp_common's process-wide proxy install applies)."""
+    try:
+        req = urllib.request.Request(BASE + path, data=json.dumps(body).encode("utf-8"),
+                                     headers=dict(_headers(), **{"Content-Type": "application/json"}), method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r), None
+    except urllib.error.HTTPError as e:
+        reason = _STATUS_REASON.get(e.code)
+        msg = "HTTP %d%s" % (e.code, (" — %s" % reason) if reason else "")
+        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
+    except Exception as e:                    # noqa: BLE001
+        return None, {"error": str(e)}
+
+
+def _post(path, body, *, timeout=25):
+    """Typed POST call: the same per-run + per-case cap and live quota gate as _get, then _post_raw."""
+    if not securitytrails_configured():
+        return None, {"skipped": "no SECURITYTRAILS_API_KEY configured"}
+    if not _allow(path):
+        return None, {"skipped": "SecurityTrails per-run/per-case cap or monthly quota exhausted"}
+    return _post_raw(path, body, timeout=timeout)
+
+
+def reverse_whois_email(email, timeout=25):
+    """Domains whose CURRENT WHOIS registrant e-mail is `email` — SecurityTrails' DSL
+    (POST /domains/list {"query": "whois_email = '…'"}), an INDEPENDENT index diffed against
+    WhoisXML's reverse-WHOIS. -> {"term","count","domains":[...]} | tri-state | None (keyless).
+    The shape matches whois_enrich.reverse_whois so case_state._whois_candidates applies the same
+    privacy + MAX_WHOIS_SIBLINGS guards. First page only (100 rows): a term with more than that is a
+    reseller/privacy term by the frontier's own rule and would be held back anyway."""
+    if not securitytrails_configured():
+        return None
+    em = str(email or "").strip().lower()
+    if not em or "'" in em:
+        return {"error": "unusable e-mail term"}
+    # bought ONCE per case: every estate host carries the same registrant e-mail (wp_casememo)
+    try:
+        import wp_casememo
+        cached = wp_casememo.get("securitytrails", "reverse_whois|" + em)
+    except Exception:  # noqa: BLE001
+        wp_casememo, cached = None, None
+    if cached is not None:
+        return dict(cached, memo="case cache")
+    data, err = _post("/domains/list", {"query": "whois_email = '%s'" % em}, timeout=timeout)
+    if err:
+        _record("reverse_whois:" + em, 0, ok=False)
+        out = dict(err, term=em)
+        if wp_casememo is not None:
+            wp_casememo.put("securitytrails", "reverse_whois|" + em, out)   # an ENTITLEMENT 403 is a case fact;
+        return out                                                          # cap/quota skips are refused by put()
+    rows = (data or {}).get("records") or []
+    domains = _uniq([str(r.get("hostname") or "").lower().strip(".") for r in rows if r.get("hostname")])
+    count = (data or {}).get("record_count")
+    _record("reverse_whois:" + em, len(domains))
+    n = int(count) if isinstance(count, int) else len(domains)
+    # `count` = the WhoisXML reverse-WHOIS shape (_whois_candidates reads it); `total` = the shape the
+    # report's hit/saturation readers use — carry both so the block renders AND seeds.
+    out = {"term": em, "count": n, "total": n, "domains": domains, "source": "securitytrails"}
+    if wp_casememo is not None:
+        wp_casememo.put("securitytrails", "reverse_whois|" + em, out)
+    return out
+
+
+def reverse_whois_diff(st_block, wx_blocks):
+    """Three-bucket diff of SecurityTrails' reverse-WHOIS set against WhoisXML's (current + historic):
+    {both, securitytrails_only, whoisxml_only, note}. Tri-state inputs are tolerated (a skipped side
+    yields an empty set and a note saying so — never a false 'only' bucket)."""
+    def _doms(b):
+        return {str(d).lower().strip(".") for d in ((b or {}).get("domains") or []) if d} if isinstance(b, dict) else set()
+    st = _doms(st_block)
+    wx = set()
+    for b in (wx_blocks or []):
+        wx |= _doms(b)
+    notes = []
+    if not isinstance(st_block, dict) or st_block.get("skipped") or st_block.get("error"):
+        notes.append("SecurityTrails side unavailable — 'whoisxml_only' is not a disagreement")
+    if not any(isinstance(b, dict) and not (b.get("skipped") or b.get("error")) for b in (wx_blocks or [])):
+        notes.append("WhoisXML side unavailable — 'securitytrails_only' is not a disagreement")
+    return {"both": sorted(st & wx), "securitytrails_only": sorted(st - wx), "whoisxml_only": sorted(wx - st),
+            "note": "; ".join(notes)}
+
+
 __all__ = ["securitytrails_key", "securitytrails_configured", "usage", "can_spend",
-           "subdomains", "dns_history", "DNS_RECORD_TYPES", "ENABLED", "BASE"]
+           "subdomains", "dns_history", "reverse_whois_email", "reverse_whois_diff",
+           "DNS_RECORD_TYPES", "ENABLED", "BASE"]
 
 
 def main(argv):

@@ -23,6 +23,11 @@ Run standalone (`python3 tools/eval/test_capabilities.py`) or via run_eval.py.
 """
 import os
 import sys
+import tempfile
+
+# Vendor clients ledger every (mocked) call via api_usage; a test must never write phantom credits
+# into the real MEMORY/api_usage.jsonl (the Censys/urlscan monthly budgets are derived from it).
+os.environ.setdefault("API_USAGE_LOG", os.path.join(tempfile.gettempdir(), "cti-tests-api_usage.jsonl"))
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))), "WebPivot", "tools"))
@@ -124,6 +129,97 @@ def check():
         ok(fo["reduced"], "…and still warns which evidence classes went unqueried")
         ok("--free-only" in fo["statement"] or "free-only" in fo["statement"],
            "…with a statement that explains WHY they were unqueried")
+
+        # --- entitlement DISCOVERY: measured plans, offline by default, per-case store -------------
+        import json
+        import tempfile
+        import wp_plans
+        _saved_case = os.environ.pop(wp_plans.CASE_DIR_ENV, None)   # a collector's env must not leak in
+        ok(cap.capability_meta()["plans"] == {} and fo["plans"] == {},
+           "default capability_meta() is OFFLINE: no probe, plans = the (empty) store")
+        probes = (
+            ("urlscan", lambda: {"tier": "pro", "products": ["pro"], "search_day": {"remaining": 5}}),
+            ("netlas", lambda: {"tier": "free"}),
+            ("securitytrails", lambda: {"tier": "free", "used": 3, "allowed": 50}),
+            ("dnslytics", lambda: None),                       # not configured -> absent, not 'unknown'
+            ("intelx", lambda: (_ for _ in ()).throw(RuntimeError("boom"))),   # a raising probe degrades
+            ("validin", lambda: {"tier": "community", "registration": False}),
+            ("grayhatwarfare", cap._probe_grayhatwarfare),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            case = os.path.join(tmp, "CASE-0001")
+            os.makedirs(case)
+            plans = cap.discover_plans(case_dir=case, probe=True, probes=probes)
+            ok(plans["urlscan"]["tier"] == "pro" and plans["netlas"]["tier"] == "free"
+               and plans["validin"]["registration"] is False, "plans carry the measured tier per vendor")
+            ok("dnslytics" not in plans, "an unconfigured vendor is absent (presence decides, not a placeholder)")
+            ok(plans["intelx"]["tier"] == "unknown" and "boom" in plans["intelx"]["error"],
+               "a raising probe degrades to tier 'unknown' — discovery never raises")
+            ok(plans["grayhatwarfare"]["tier"] == "unknown", "GrayHatWarfare has no quota endpoint -> 'unknown'")
+            stored = json.load(open(os.path.join(case, wp_plans.FILE)))
+            ok(stored["plans"]["urlscan"]["tier"] == "pro" and any(h["vendor"] == "urlscan" for h in stored["history"]),
+               "measured plans persisted to cases/<id>/capability_plans.json with history")
+            calls = []
+            again = cap.discover_plans(case_dir=case, probe=True,
+                                       probes=(("urlscan", lambda: calls.append(1) or {"tier": "free"}),))
+            ok(not calls and again["urlscan"]["tier"] == "pro", "a SECOND process reads the store and does not re-probe")
+            ok(cap.discover_plans(case_dir=case, probe=False)["netlas"]["tier"] == "free",
+               "probe=False returns the store only")
+            meta = cap.capability_meta(case_dir=case, probe=False)
+            ok(meta["plans"].get("urlscan", {}).get("tier") == "pro", "capability_meta surfaces the stored plans")
+            # Censys is NEVER probed here — its search is its own probe (red-team H0)
+            ok("censys" not in dict(cap._PROBES), "no capability probe for Censys (the search is the probe)")
+            wp_plans.record("censys", "free", why="test", case_dir=case)
+            ok(wp_plans.get("censys", case_dir=case) == "free", "wp_plans.record/get round-trip")
+            ok(wp_plans.record("censys", "free", case_dir=case) and
+               sum(1 for h in json.load(open(os.path.join(case, wp_plans.FILE)))["history"] if h["vendor"] == "censys") == 1,
+               "re-recording the same plan is idempotent (no history noise)")
+            # a FAILED probe (unknown + error) is returned for this run but never frozen in the store
+            json.dump({"plans": {}}, open(os.path.join(case, wp_plans.FILE), "w"))
+            flaky = {"n": 0}
+
+            def _flaky():
+                flaky["n"] += 1
+                return {"tier": "unknown", "error": "timeout"} if flaky["n"] == 1 else {"tier": "free"}
+            p1 = cap.discover_plans(case_dir=case, probe=True, probes=(("netlas", _flaky),))
+            ok(p1["netlas"]["tier"] == "unknown" and "netlas" not in wp_plans.load(case_dir=case),
+               "a failed probe is reported this run but NOT persisted")
+            p2 = cap.discover_plans(case_dir=case, probe=True, probes=(("netlas", _flaky),))
+            ok(p2["netlas"]["tier"] == "free" and wp_plans.load(case_dir=case)["netlas"]["tier"] == "free",
+               "…so the next process re-probes and records the real tier")
+            # the enrichment-side predicate: gate ONLY on a positive `free`
+            import wp_analyze
+            ok(wp_analyze.measured_tier("urlscan", {"urlscan": {"tier": "free"}}) == "free"
+               and wp_analyze.measured_tier("urlscan", {"urlscan": {"tier": "pro"}}) == "pro"
+               and wp_analyze.measured_tier("urlscan", {}) == "unknown"
+               and wp_analyze.measured_tier("censys", {"censys": "paid"}) == "paid",
+               "measured_tier: dict or string entries, absent -> unknown")
+            ok(wp_analyze.measured_tier("urlscan", {"urlscan": {"tier": "unknown", "error": "x"}}) == "unknown",
+               "measured_tier: a failed probe reads as unknown (Pro call stays the probe)")
+        # urlscan quotas -> tier: decided by the PRESENT products list; an absent field is 'unknown',
+        # never 'free' (a persisted 'free' would switch the Pro calls off for the whole case)
+        import io
+        import urllib.request
+        import wp_net
+        saved_urlopen, saved_key = urllib.request.urlopen, os.environ.get("URLSCAN_API_KEY")
+        try:
+            os.environ["URLSCAN_API_KEY"] = "x"
+            for body, want in (({"scope": "team", "limits": {"products": ["pro", "livescan"], "search": {"day": {"limit": 5, "used": 1, "remaining": 4}}}}, "pro"),
+                               ({"scope": "user", "limits": {"products": [], "search": {"day": {}}}}, "free"),
+                               ({"scope": "user", "limits": {"search": {"day": {}}}}, "unknown"),
+                               ({"scope": "user"}, "unknown")):
+                urllib.request.urlopen = lambda req, timeout=20, _b=body: io.BytesIO(json.dumps(_b).encode())
+                q = wp_net.urlscan_quotas()
+                ok(q["tier"] == want, f"urlscan quotas {body.get('limits', {}).get('products', 'absent')!s} -> tier {want}")
+            ok(q.get("error") and "products" in q["error"], "…and the unknown case says why")
+        finally:
+            urllib.request.urlopen = saved_urlopen
+            os.environ.pop("URLSCAN_API_KEY", None)
+            if saved_key is not None:
+                os.environ["URLSCAN_API_KEY"] = saved_key
+        ok(wp_plans.load(case_dir=None) == {}, "no case dir -> store is a no-op, never an error")
+        if _saved_case is not None:
+            os.environ[wp_plans.CASE_DIR_ENV] = _saved_case
     finally:
         for e in _ENVS:
             os.environ.pop(e, None)

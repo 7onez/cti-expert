@@ -100,6 +100,11 @@ import house_report_captures as hrc  # noqa: E402
 import house_report_correlations as hrx  # noqa: E402
 import house_report_dossier as hrd  # noqa: E402
 import house_report_charts as hrg  # noqa: E402
+try:  # registrar/privacy-proxy classifier for the Registrant-eras table (best-effort)
+    sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+    from whois_enrich import is_privacy as _is_privacy  # noqa: E402
+except Exception:  # pragma: no cover — the table still renders, class falls back to "named"
+    _is_privacy = None
 
 _KEEP: set = set()
 _HOSTS: set = set()
@@ -133,13 +138,15 @@ def case_seed(c: dict) -> str:
     return resolve_seed(c["dir"], c.get("hosts") or [], c.get("raw") or [])
 
 
-def load_case(case_dir: str) -> dict:
+def load_case(case_dir: str, mask_personas: bool = False) -> dict:
     c = {"dir": case_dir, "case": os.path.basename(case_dir.rstrip("/"))}
     c["assessment"] = _load_json(os.path.join(case_dir, "assessment.json"), {}) or {}
     md_path = os.path.join(case_dir, "assessment.md")
     c["analyst_md"] = open(md_path, encoding="utf-8").read() if os.path.exists(md_path) else ""
     c["scope"] = _load_json(os.path.join(case_dir, "scope.json"), {}) or {}
     c["clusters"] = _load_json(os.path.join(case_dir, "clusters.json"), {}) or {}
+    c["mo_neighbours"] = _load_json(os.path.join(case_dir, "mo_neighbours.json"), {}) or {}
+    c["mask_personas"] = bool(mask_personas)
     c["graph"] = os.path.join(case_dir, "case_graph.json")
     c["whois"] = {}
     for p in glob.glob(os.path.join(case_dir, "whois", "*.json")):
@@ -163,6 +170,14 @@ def load_case(case_dir: str) -> dict:
             if v and "privacy" not in v and not v.startswith("abuse@"):
                 counts[v] = counts.get(v, 0) + 1
     _KEEP = {v for v, n in counts.items() if n >= 2}
+    # Related personas (MO-neighbour, rung 10) render IN CLEAR by default — an analyst decision
+    # (Validation Session 1) — so exactly those verified identities are folded into _KEEP. Scoped:
+    # every other third-party value in the case stays masked. --mask-personas skips the fold-in.
+    if not mask_personas:
+        for p in c["mo_neighbours"].get("related_personas") or []:
+            v = str(p.get("persona") or "").strip().lower()
+            if v:
+                _KEEP.add(v)
     _MASK_EXTRA = load_case_mask(case_dir)
     return c
 
@@ -578,9 +593,12 @@ def fig_timeline(c: dict, rep_dir: str, observed: str) -> tuple:
     """case_timeline.py -> temporal figure + its dated evidence ledger markdown."""
     if not c["raw"]:
         return None, ""
-    # case_timeline reads artifacts.whois from each pivot JSON; siblings collected with the WHOIS
-    # layer off keep their record in whois/<host>.json, so merge the sidecar into a temp copy or the
-    # registration spans (and the registration-cohort finding) are silently empty.
+    # case_timeline reads artifacts.whois from each pivot JSON. The SIDECAR (whois/<host>.json) is the
+    # case's authoritative WHOIS: siblings collected with the WHOIS layer off have their record only
+    # there, and a purchased history (`--whois-history purchase`) lives only there — a raw file
+    # collected in preview/off mode carries `history.records == []` and would erase the eras from the
+    # timeline. Merge into a temp copy: missing whois -> sidecar; empty records + sidecar has them ->
+    # sidecar's history.
     import tempfile
     tmpdir = tempfile.mkdtemp(prefix="house_tl_")
     merged = []
@@ -588,9 +606,16 @@ def fig_timeline(c: dict, rep_dir: str, observed: str) -> tuple:
         host = os.path.basename(rp)[:-5].lower()
         d = _load_json(rp, {}) or {}
         arts = d.setdefault("artifacts", {}) if isinstance(d.get("artifacts"), dict) else {}
-        if not arts.get("whois") and c["whois"].get(host):
-            arts["whois"] = c["whois"][host]
+        side = c["whois"].get(host) or {}
+        if not arts.get("whois") and side:
+            arts["whois"] = side
             d["artifacts"] = arts
+        elif isinstance(arts.get("whois"), dict) and side:
+            raw_recs = ((arts["whois"].get("history") or {}).get("records")) or []
+            side_recs = ((side.get("history") or {}).get("records")) or []
+            if side_recs and not raw_recs:
+                arts["whois"] = dict(arts["whois"], history=side["history"])
+                d["artifacts"] = arts
         out = os.path.join(tmpdir, os.path.basename(rp))
         json.dump(d, open(out, "w", encoding="utf-8"), ensure_ascii=False)
         merged.append(out)
@@ -678,6 +703,22 @@ def cluster_enumeration(c: dict) -> str:
     return "\n".join(out) or "_No cluster partition recorded._"
 
 
+def era_start_of(c: dict, figs: dict, h: str):
+    """The registration cutoff an archive capture is judged against for host `h`: the start of the
+    LATEST registrant era from the timeline events (WHOIS history), falling back to the WHOIS
+    `created` date when the host has a single era or no era data. A capture dated before this cutoff
+    shows a previous registrant's page — a drop-catch/reactivation, not the operator's landing page.
+
+    Deliberately the LATER of the two candidate dates. Era starts are dated by the first WHOIS
+    history record of the new identity, which can lag a re-registration; using the (earlier) reset
+    `created` date instead would recover a few operator captures but would also risk captioning a
+    previous owner's page as the operator's — the attribution error the output rule forbids. The
+    conservative cutoff mis-labels at most an early operator capture as prior-owner, never the
+    reverse."""
+    created = (c.get("whois", {}).get(h, {}) or {}).get("created")
+    return hrx.era_start_of(figs.get("timeline_events") or {}, h, fallback=created)
+
+
 def registration_waves(c: dict) -> str:
     by_month = {}
     for h in c["hosts"]:
@@ -725,6 +766,54 @@ _HANDLING_RE = re.compile(r"[^.]*\b(internal-only|must be masked|shareable expor
 def _strip_handling_notes(text: str) -> str:
     """Analyst handling instructions belong to the case file, not to the printed decision statement."""
     return _HANDLING_RE.sub("", text or "").strip()
+
+
+def related_personas_md(mo: dict, masked: bool = False) -> str:
+    """'Related personas on the same infrastructure' — the MO-neighbour deliverable, placed under
+    Alternative analysis because that is what it is: the syndicate-vs-campaign question, unresolved.
+
+    In clear by default (analyst decision): the persona identities are in _KEEP, so mask_third_parties
+    leaves them; every other third-party value on the page is still masked. `masked=True`
+    (--mask-personas) renders the aggregated form — one row per persona, identity replaced by an
+    ordinal, domains and dates kept. Either way the rung-10 caveat is on the table, not in a footnote:
+    the only link is a shared provider + the same registration play. Never estate membership."""
+    L = ["## Related personas on the same infrastructure", ""]
+    personas = mo.get("related_personas") or []
+    est = mo.get("estate") or {}
+    n_orig = len(mo.get("origins") or [])
+    L += [f"**Candidate, single-indicator (rung 10).** {len(personas)} other registrant persona(s) run "
+          f"domains from the estate's origin address(es) ({n_orig} origin(s) reversed) with the same "
+          f"registration play — same registrar, created inside the estate's window"
+          + (f" ({est['created_window'][0]} → {est['created_window'][1]})" if (est.get("created_window") or [None])[0] else "")
+          + ", and either the estate's own naming tokens or a throwaway-handle mailbox. The only hard link is "
+          "a shared provider: these are co-tenants who work the same way, NOT members of the estate. "
+          "They never seeded collection, never joined a cluster, and carry no operator label in the "
+          "knowledge base. Whether this is one syndicate or several look-alike campaigns is an open "
+          "question the evidence here does not settle.", ""]
+    if personas:
+        L += ["| # | Persona | Domains | Registrar | Created span | Shared origin | Signals |",
+              "|--:|:--------|:--------|:----------|:-------------|:--------------|:--------|"]
+        for i, p in enumerate(personas, 1):
+            ident = f"persona {i}" if masked else _md_escape(scrub(str(p.get("persona") or "?")))
+            doms = ", ".join(_md_escape(d) for d in (p.get("domains") or [])[:6])
+            if len(p.get("domains") or []) > 6:
+                doms += f" (+{len(p['domains']) - 6})"
+            span = p.get("created_span") or []
+            span_s = (span[0] if span else "?") + (f" → {span[1]}" if len(span) == 2 and span[1] != span[0] else "")
+            L.append(f"| {i} | {ident} | {doms} | {_md_escape(scrub(str(p.get('registrar') or '?')))} | {span_s} | "
+                     f"{', '.join(p.get('origin_ips') or [])} | {_md_escape('; '.join(p.get('signals') or []))} |")
+        L.append("")
+    counts = (f"Also on those origins: {mo.get('unrelated_count', 0)} co-tenant(s) with an unrelated registration "
+              f"profile (not enumerated) and {mo.get('unverifiable_count', 0)} whose registration could not be read"
+              + (f"; {mo['unverified_count']} further co-tenant(s) were seen but not yet verified (verification cap)"
+                 if mo.get("unverified_count") else "") + ".")
+    L += [counts, ""]
+    for b in mo.get("bulk_origins") or []:
+        L.append(f"- Origin {b.get('origin_ip')} answers with ~{b.get('fan_out')} apexes — bulk hosting; its "
+                 "co-tenants were not classified (a shared-hosting customer base is not a neighbourhood).")
+    if mo.get("bulk_origins"):
+        L.append("")
+    return "\n".join(L).rstrip()
 
 
 def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
@@ -816,11 +905,17 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     waves = registration_waves(c)
     if waves:
         L += ["## Registration waves", "", waves, ""]
+    eras = hrx.registrant_eras_md(figs.get("timeline_events") or {}, _md_escape,
+                                  is_privacy=_is_privacy, whois=c.get("whois") or {})
+    if eras:
+        # Previous registrants are third parties under the output rule; the operator's own join-key
+        # identities survive the mask via _KEEP (>= 2-host registrant fields), prior owners do not.
+        L += ["## Registrant eras", "", mask_third_parties(eras), ""]
     if figs.get("captures") or figs.get("captures_skipped"):
         L += [hrc.landing_pages_md(figs.get("captures") or {}, figs.get("capture_hosts") or c["hosts"], seed,
                                    figs.get("captures_skipped") or [], figs.get("rep_dir") or c["dir"],
                                    _sector, _md_escape,
-                                   created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created")), ""]
+                                   created_of=lambda h: era_start_of(c, figs, h)), ""]
 
     # VI — Infrastructure lifecycle
     L += ["# Infrastructure and lifecycle", ""]
@@ -867,6 +962,9 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L.append("")
     else:
         L += ["_No alternative hypotheses recorded._", ""]
+    mo = c.get("mo_neighbours") or {}
+    if mo.get("related_personas") or mo.get("bulk_origins"):
+        L += [related_personas_md(mo, masked=bool(c.get("mask_personas"))), ""]
 
     # IX — Gaps
     L += ["# Gaps and limitations", ""]
@@ -894,7 +992,7 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     if dated_ledger:
         L += ["## Dated observations", "", dated_ledger, ""]
     caps = hrc.captures_ledger_md(figs.get("captures") or {},
-                                  created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created"))
+                                  created_of=lambda h: era_start_of(c, figs, h))
     if caps:
         L += ["## Captured pages", "", caps, ""]
     L += [
@@ -916,11 +1014,13 @@ def cluster_hosts(c: dict) -> list:
 
 def build(case_arg: str, stem: str | None, classification: str, audience: str,
           no_figures: bool, md_only: bool, screenshots: bool = True,
-          max_screenshots: int = 40, screenshot_timeout: int = 30, archives: bool = True) -> dict:
+          max_screenshots: int = 40, screenshot_timeout: int = 30, archives: bool = True,
+          mask_personas: bool = False) -> dict:
     case_dir = _case_dir(case_arg)
     if not os.path.isdir(case_dir):
         sys.exit(f"case dir not found: {case_dir}")
-    c = load_case(case_dir)
+    os.environ.setdefault("WP_CASE_DIR", case_dir)      # per-case memos (ipinfo etc.) span rebuilds
+    c = load_case(case_dir, mask_personas=mask_personas)
     classification = classification or case_classification(case_dir) or "TLP:AMBER"
     rep_dir = os.path.join(case_dir, "report")
     os.makedirs(rep_dir, exist_ok=True)
@@ -971,7 +1071,7 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
     if screenshots and not no_figures:
         new, skipped = hrc.capture_missing(case_dir, hosts, existing, max_hosts=max_screenshots,
                                            timeout=screenshot_timeout, archives=archives,
-                                           created_of=lambda h: (c["whois"].get(h, {}) or {}).get("created"))
+                                           created_of=lambda h: era_start_of(c, figs, h))
         existing.update(new)
         for h, why in skipped:
             sys.stderr.write(f"landing page not captured: {h} — {why}\n")
@@ -1027,10 +1127,14 @@ def main():
     ap.add_argument("--screenshot-timeout", type=int, default=30, help="per-page navigation timeout, seconds")
     ap.add_argument("--no-archive-fallback", action="store_true",
                     help="when a live page will not render, do NOT fall back to a public web-scan / web-archive copy")
+    ap.add_argument("--mask-personas", action="store_true",
+                    help="render the MO-neighbour 'Related personas' table in aggregated/masked form "
+                         "(default: verified persona identities in clear with the rung-10 caveat)")
     a = ap.parse_args()
     out = build(a.case, a.stem, a.classification, a.audience, a.no_figures, a.md_only,
                 screenshots=not a.no_screenshots, max_screenshots=a.max_screenshots,
-                screenshot_timeout=a.screenshot_timeout, archives=not a.no_archive_fallback)
+                screenshot_timeout=a.screenshot_timeout, archives=not a.no_archive_fallback,
+                mask_personas=a.mask_personas)
     for k, v in out.items():
         print(f"  {k:14s} {v if k != 'render_error' else chr(10) + v}")
     sys.exit(1 if "render_error" in out else 0)

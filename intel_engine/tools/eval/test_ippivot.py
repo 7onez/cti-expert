@@ -109,7 +109,13 @@ def check():
     saved = {n: getattr(ip, n) for n in ("ipinfo_lookup", "classify_ip", "asn_registry_load",
              "asn_registry_upsert", "fofa_ip", "shodan_host", "reverse_dns", "mail_intel",
              "censys_configured", "censys_host")}
+    # Validin was folded into IPPivot (reverse-IP on the origin) AFTER this list was written, so
+    # each gate run made two REAL ip_dns_history calls against the documentation IPs. Stub the
+    # module-level gate + call the same way the Censys pair is stubbed.
+    saved_validin = (ip.wp_validin.validin_configured, ip.wp_validin.ip_lookup)
     try:
+        ip.wp_validin.validin_configured = lambda: False      # metered/quota'd: never reached from the gate
+        ip.wp_validin.ip_lookup = lambda x, **k: {"skipped": "stubbed in test"}
         ip.ipinfo_lookup = lambda x, **k: {"ip": x, "asn": "AS4242", "org_name": "AcmeHost",
             "hostname": "mail.op.example", "abuse": {"email": "abuse@acme.example"}, "is_hosting": False}
         ip.asn_registry_load = lambda p=None: {"asns": {}}
@@ -142,6 +148,7 @@ def check():
     finally:
         for n, fn in saved.items():
             setattr(ip, n, fn)
+        ip.wp_validin.validin_configured, ip.wp_validin.ip_lookup = saved_validin
 
     # --- IPinfo reaches the DOMAIN path, is memoised, and keeps the flags apart -------------
     # IPinfo used to be reachable ONLY when a bare IP was the input, so analysing a domain never

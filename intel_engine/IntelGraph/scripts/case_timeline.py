@@ -76,11 +76,12 @@ GRADING = _EV["source_grading"]
 STALENESS = _EV["staleness"]
 
 # figure track order (top to bottom inside one host lane) + house colours
-TRACKS = ["registration", "registrant_era", "hosting", "cert", "archive_span", "artifact_window"]
+TRACKS = ["registration", "registrant_era", "hosting", "ns_era", "cert", "archive_span", "artifact_window"]
 TRACK_LABEL = {
     "registration": "registration (created → expires)",
     "registrant_era": "registrant era (WHOIS history)",
     "hosting": "hosting window (passive DNS)",
+    "ns_era": "nameserver era (web-scan pDNS)",
     "cert": "certificate validity (CT)",
     "archive_span": "archive visibility (Wayback)",
     "artifact_window": "artifact present (Wayback)",
@@ -89,6 +90,7 @@ TRACK_LABEL_VI = {
     "registration": "đăng ký tên miền (tạo → hết hạn)",
     "registrant_era": "giai đoạn chủ thể đăng ký (lịch sử WHOIS)",
     "hosting": "khoảng thời gian lưu trữ (passive DNS)",
+    "ns_era": "giai đoạn máy chủ tên (pDNS dịch vụ quét web)",
     "cert": "hiệu lực chứng chỉ số (CT)",
     "archive_span": "phạm vi lưu trữ (Wayback)",
     "artifact_window": "dấu vết hiện diện trên trang (Wayback)",
@@ -344,6 +346,72 @@ def hosting_events(host, analysis, out):
                                   f" {iso(first, day=True)} → {iso(last, day=True) if last else 'open'}",
                            source="passive_dns", url=permalink("bgp_he_ip", ip=ip),
                            value={"ip": ip, "rrtype": str(rec.get("rrtype")).upper()}))
+    # SecurityTrails historical A records (`live_results.securitytrails_dns_history`, wp_securitytrails
+    # .dns_history): an INDEPENDENT dated-hosting index on the SAME `hosting` track, so the
+    # IP-tenancy correlation reads it alongside passive DNS and urlscan. IP-valued — never a host
+    # seed. Source class: commercial DNS-history provider (B2).
+    for _, lr in _domain_pivot_results(analysis):
+        blk = lr.get("securitytrails_dns_history") or {}
+        if not isinstance(blk, dict) or blk.get("skipped") or blk.get("error"):
+            continue
+        for era in blk.get("eras") or []:
+            ip = str((era or {}).get("ip") or "").strip()
+            first, last = parse_dt(era.get("first_seen")), parse_dt(era.get("last_seen"))
+            if not (_looks_ip(ip) and first):
+                continue
+            out.append(_ev(host, "hosting", first, last,
+                           label=f"hosted at {ip}",
+                           detail=f"DNS history: A record {iso(first, day=True)} → "
+                                  f"{iso(last, day=True) if last else 'open'}"
+                                  + (f" ({era.get('org')})" if era.get("org") else ""),
+                           source="securitytrails", url=permalink("bgp_he_ip", ip=ip),
+                           value={"ip": ip, "rrtype": "A"}))
+
+
+def urlscan_hostname_events(host, analysis, out):
+    """Dated A/AAAA and NS eras from urlscan's Pro hostname index (`live_results.urlscan_hostname`,
+    wp_net.urlscan_hostname). A/AAAA eras land on the SAME `hosting` track as passive DNS — they are
+    hosting windows from an independent public web-scan index, so the IP-tenancy correlation reads
+    them for free; NS eras get their own track. Source class: public web-scan data (urlscan, B2).
+    For a drop-catch host this is the previous-owner record: registrar-parking NS + A rows dated
+    years before the current registration, with no archive render needed."""
+    for _, lr in _domain_pivot_results(analysis):
+        blk = lr.get("urlscan_hostname") or {}
+        if not isinstance(blk, dict) or blk.get("skipped") or not (blk.get("a_eras") or blk.get("ns_eras")):
+            continue
+        def _since(e, first):
+            # left-censored (walk truncated before the era's real start): "since ≤ date", never a
+            # dated beginning — a hosting start that is a pagination artefact must not be asserted.
+            return (f"since ≤ {iso(first, day=True)} (index walk truncated — earlier history not read)"
+                    if e.get("first_seen_open") else iso(first, day=True))
+        for e in blk.get("a_eras") or []:
+            first, last = parse_dt(e.get("first_seen")), parse_dt(e.get("last_seen"))
+            ip = str(e.get("value") or "")
+            if not (first and ip):
+                continue
+            out.append(_ev(host, "hosting", first, last,
+                           label=f"hosted at {ip}" + (" (start ≤)" if e.get("first_seen_open") else ""),
+                           detail=f"public web-scan pDNS: {e.get('type')} record seen "
+                                  f"{_since(e, first)} → {iso(last, day=True) if last else 'open'}"
+                                  + (f" (AS{e['asn']})" if e.get("asn") else ""),
+                           source="urlscan", url=permalink("bgp_he_ip", ip=ip),
+                           value={"ip": ip, "rrtype": str(e.get("type") or "A").upper(),
+                                  "asn": e.get("asn"), "index": "urlscan_hostname",
+                                  "left_censored": bool(e.get("first_seen_open"))}))
+        for e in blk.get("ns_eras") or []:
+            first, last = parse_dt(e.get("first_seen")), parse_dt(e.get("last_seen"))
+            ns = str(e.get("value") or "")
+            if not (first and ns):
+                continue
+            out.append(_ev(host, "ns_era", first, last,
+                           label=f"NS {ns}" + (" (start ≤)" if e.get("first_seen_open") else ""),
+                           detail=f"public web-scan pDNS: nameserver delegated "
+                                  f"{_since(e, first)} → {iso(last, day=True) if last else 'open'}"
+                                  " — a registrar-parking NS before the current registration is the "
+                                  "previous owner's era, not this operator's",
+                           source="urlscan", url=permalink("rdap_domain", host=host),
+                           value={"ns": ns, "index": "urlscan_hostname",
+                                  "left_censored": bool(e.get("first_seen_open"))}))
 
 
 def _looks_ip(v):
@@ -635,7 +703,7 @@ def render(events, stem, title, subtitle=None, lang="en", source="", grading="",
     apply_theme(lang=lang)
 
     colors = {"registration": PALETTE["sand"], "registrant_era": PALETTE["ochre"],
-              "hosting": PALETTE["primary"], "cert": PALETTE["olive"],
+              "hosting": PALETTE["primary"], "ns_era": PALETTE["muted"], "cert": PALETTE["olive"],
               "archive_span": PALETTE["grid"], "artifact_window": PALETTE["slate"]}
     first_seen = {}
     for e in events:
@@ -745,6 +813,7 @@ def main():
         whois_events(host, (a.get("artifacts") or {}).get("whois"), events)
         dropped_certs += cert_events(host, a, events, max_certs=args.max_certs)
         hosting_events(host, a, events)
+        urlscan_hostname_events(host, a, events)
         observation_events(host, a, events, observed, hosts)
     for p in args.history:
         try:

@@ -436,6 +436,247 @@ def test_capture_failure_reasons_are_a_closed_vocabulary():
     assert leak == "browser error" and "/root" not in leak                            # Rule 12: no raw tool text
 
 
+def test_near_empty_live_capture_is_held_provisional_then_rerendered_next_build():
+    """Audit item 2 / red-team H4: a near-empty live render (server state, not the page) is NOT
+    archived on sight — it is recorded provisional and re-rendered on the NEXT build; only then does
+    the archive stand-in apply, and a host is never silently dropped."""
+    import types
+    import house_report_captures as hre
+    with tempfile.TemporaryDirectory() as tmp:
+        case = os.path.join(tmp, "cases", "CASE-0001")
+        shots = os.path.join(case, "evidence", "screenshots")
+        os.makedirs(shots)
+        empty_png = os.path.join(shots, "a_live.png")
+        open(empty_png, "wb").write(b"\x89PNG-empty")
+        existing = {"a.example.com": {"host": "a.example.com", "path": empty_png, "source": "live"}}
+        renders = []
+        fake_ws = types.SimpleNamespace(capture_screenshot=lambda url, **k: (renders.append(url), {
+            "url": url, "path": os.path.join(shots, "a_fresh.png"), "host": "a.example.com",
+            "captured_at": "2026-09-03T00:00:00Z", "sha256": "f" * 64})[1])
+        saved = (sys.modules.get("wp_screenshot"), sys.modules.get("playwright"), hre.egress_policy,
+                 hre._near_empty, hre._archive_copy, hre._entry)
+        archive_calls = []
+        try:
+            sys.modules["wp_screenshot"] = fake_ws
+            sys.modules.setdefault("playwright", types.ModuleType("playwright"))
+            hre.egress_policy = lambda: {"mode": "direct", "pool": [None], "why": ""}
+            hre._near_empty = lambda p: p.endswith("a_live.png")          # only the old render is empty
+            hre._archive_copy = lambda *a, **k: (archive_calls.append(a[0]), None)[1]
+            hre._entry = lambda h, e: dict(e, host=h)
+            # build 1: first sighting -> held provisional, NO archive, NO drop
+            new, skipped = hre.capture_missing(case, ["a.example.com"], existing, archives=True)
+            assert new == {} and renders == [] and archive_calls == []
+            assert any(h == "a.example.com" and "held provisional" in why for h, why in skipped), skipped
+            prov = hre.load_provisional(case)
+            assert prov["a.example.com"]["builds"] == 1
+            # build 2: re-render live FIRST; a full render replaces the empty one and clears the hold
+            new, skipped = hre.capture_missing(case, ["a.example.com"], existing, archives=True)
+            assert renders == ["https://a.example.com/"] and archive_calls == []
+            assert new["a.example.com"]["path"].endswith("a_fresh.png")
+            assert "a.example.com" not in hre.load_provisional(case)
+            # build 2 variant: re-render still empty -> archive fallback; archive empty too -> HELD, not dropped
+            hre.save_provisional(case, {"a.example.com": {"since": "2026-09-02T00:00:00Z", "builds": 1}})
+            hre._near_empty = lambda p: True
+            renders.clear()
+            new, skipped = hre.capture_missing(case, ["a.example.com"], existing, archives=True)
+            assert renders == ["https://a.example.com/"] and archive_calls == ["a.example.com"]
+            assert new == {}
+            assert any(h == "a.example.com" and "held provisional" in why for h, why in skipped), skipped
+            assert hre.load_provisional(case)["a.example.com"]["builds"] == 2
+            # --no-archive-fallback: the hold + re-render still run (they are not archive steps); only
+            # the stand-in is skipped, and the host is still surfaced as held, never dropped
+            renders.clear(); archive_calls.clear()
+            new, skipped = hre.capture_missing(case, ["a.example.com"], existing, archives=False)
+            assert renders == ["https://a.example.com/"] and archive_calls == []
+            assert any(h == "a.example.com" and "archive stand-ins disabled" in why for h, why in skipped), skipped
+            assert hre.load_provisional(case)["a.example.com"]["builds"] == 3
+        finally:
+            (ws, pw, hre.egress_policy, hre._near_empty, hre._archive_copy, hre._entry) = saved
+            if ws is not None:
+                sys.modules["wp_screenshot"] = ws
+            else:
+                sys.modules.pop("wp_screenshot", None)
+            if pw is None:
+                sys.modules.pop("playwright", None)
+
+
+def test_urlscan_screenshot_fetch_sends_the_key_when_present():
+    import house_report_captures as hre
+    import urllib.request
+    seen = {}
+
+    class _R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"png"
+    orig_build = urllib.request.build_opener
+
+    class _Opener:
+        def open(self, req, timeout=None):
+            seen.update({k.lower(): v for k, v in req.headers.items()})
+            return _R()
+    urllib.request.build_opener = lambda *h: _Opener()
+    sys.path.insert(0, os.path.join(ROOT, "intel_engine", "WebPivot", "tools"))
+    import wp_common
+    orig_secret = wp_common._secret
+    try:
+        wp_common._secret = lambda name, *a: "deadbeef-test-key" if name == "URLSCAN_API_KEY" else None
+        hre._http_get("https://urlscan.io/screenshots/0000.png", None)
+        assert seen.get("api-key") == "deadbeef-test-key"
+        seen.clear()
+        hre._http_get("https://web.archive.org/web/2/x", None)
+        assert "api-key" not in seen                                        # never leak the key elsewhere
+    finally:
+        urllib.request.build_opener = orig_build
+        wp_common._secret = orig_secret
+
+
+def test_urlscan_verdict_rows_parse_as_b2_evidence_in_the_ledger():
+    """The pipeline's urlscan verdict rows (intel._urlscan_verdict_evidence) must carry the shape the
+    house report's evidence ledger parses: numbered `E<n>`, a [B2] grade, ' — ' before the source."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "intel_pipeline_canon", os.path.join(ROOT, "intel_engine", "tools", "intel.py"))
+    ip = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ip)
+    results = [
+        {"meta": {"host": "sibling-a.example.com"}, "pivots": [{"kind": "domain", "value": "sibling-a.example.com",
+         "live_results": {"urlscan_verdict": {"score": 98, "malicious": True, "brands": ["Example Brand"],
+                                              "engines": {"score": 98, "malicious": True, "total": 3, "malicious_total": 2},
+                                              "labels": ["visual.brandai", "hosting.cdn"], "result": "https://urlscan.io/result/0000/"}}}]},
+        # a BENIGN scan (the measured example.com shape: score 0, structural labels only) -> NO row
+        {"meta": {"host": "sibling-b.example.com"}, "related_urlscan": {"verdict": {
+            "score": 0, "malicious": False, "brands": [], "engines": None,
+            "labels": ["domain.apexdomain", "content.rootdir", "hosting.cdn"]}}},
+        # engine sentinel (score -99, 0 engines) but a real overall score -> row without engine text
+        {"meta": {"host": "sibling-d.example.com"}, "related_urlscan": {"verdict": {
+            "score": 40, "malicious": False, "brands": [],
+            "engines": {"score": -99, "malicious": False, "total": 0, "malicious_total": 0}, "labels": []}}},
+        {"meta": {"host": "sibling-c.example.com"}, "pivots": []},                    # no verdict -> no row
+    ]
+    rows = ip._urlscan_verdict_evidence(results, start=4)
+    assert len(rows) == 2 and rows[0].startswith("E4 [B2] ") and rows[1].startswith("E5 [B2] ")
+    assert "engine score 98/100 (2/3 engines malicious)" in rows[0] and "labels visual.brandai" in rows[0]
+    assert "hosting.cdn" not in rows[0]                                    # structural label never quoted as evidence
+    assert "a lead, not proof" in rows[0]
+    assert not any("sibling-b" in r for r in rows)                        # benign scan: no row at all
+    assert "sibling-d" in rows[1] and "overall score 40/100" in rows[1] and "-99" not in rows[1] and "engine" not in rows[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        a = json.load(open(os.path.join(case, "assessment.json")))
+        a["evidence"] = a["evidence"] + rows
+        json.dump(a, open(os.path.join(case, "assessment.json"), "w"))
+        _, md = _compose(case)
+    ledger = md.split("# Evidence ledger")[1].split("\n# ")[0]
+    # Rule 12 scrubs the vendor name to its public class ("web-scan index") — the row must survive that
+    line = next(l for l in ledger.splitlines() if "verdict for sibling-a.example.com" in l)
+    assert "| B2 |" in line, line                                          # grade extracted from the bracket
+    assert "E4 [B2]" not in line and "urlscan" not in line.lower()         # prefix stripped, vendor scrubbed
+
+
+_ERA_EVENTS = {"events": [
+    # sibling-a changed hands: previous registrant (privacy) 2021-11 → operator 2026-05-21
+    {"host": "sibling-a.example.com", "kind": "registrant_era", "start": "2021-11-02T00:00:00Z",
+     "end": "2026-05-21T00:00:00Z", "label": "registrant: privacy@proxy.invalid",
+     "value": {"identity": "privacy@proxy.invalid", "registrar": "Mid Registrar"}, "url": "https://rdap.org/domain/x"},
+    {"host": "sibling-a.example.com", "kind": "registrant_era", "start": "2026-05-21T00:00:00Z",
+     "end": "2027-05-21T00:00:00Z", "label": "registrant: persona@example.com",
+     "value": {"identity": "persona@example.com", "registrar": "Example Registrar LLC"}, "url": "https://rdap.org/domain/x"},
+    # the seed has ONE era — must be omitted from the table and keep its WHOIS `created` cutoff
+    {"host": "seed-brand.example.com", "kind": "registrant_era", "start": "2025-02-09T00:00:00Z",
+     "end": "2026-01-05T00:00:00Z", "label": "registrant: persona@example.com",
+     "value": {"identity": "persona@example.com", "registrar": "Example Registrar LLC"}, "url": "https://rdap.org/domain/x"},
+]}
+
+
+def test_registrant_eras_table_lists_only_hosts_that_changed_hands():
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        hr.KB = os.path.join(tmp, "kb-empty")
+        os.makedirs(hr.KB, exist_ok=True)
+        c = hr.load_case(case)
+        md = hr.compose(c, {"timeline_events": _ERA_EVENTS}, "TLP:AMBER", "2026-01-01")
+    assert "## Registrant eras" in md
+    sec = md.split("## Registrant eras")[1].split("\n# ")[0]
+    assert "| `sibling-a.example.com` | 2021-11-02 | 2026-05-21 |" in sec
+    assert "| `sibling-a.example.com` | 2026-05-21 | 2027-05-21 |" in sec
+    assert "reactivation" in sec                                     # the current era took over a used name
+    assert "seed-brand.example.com" not in sec                      # single-era host is not a signal
+    # the PREVIOUS registrant is a third party → masked; the operator's join key (>= 2 hosts) stays
+    assert "privacy@proxy.invalid" not in sec and "p***@proxy.invalid" in sec
+    assert "persona@example.com" in sec
+    # no era data at all → the section is simply absent (Rule 19 handled by the timeline block)
+    with tempfile.TemporaryDirectory() as tmp:
+        _, md2 = _compose(_synthetic_case(tmp))
+    assert "## Registrant eras" not in md2
+
+
+def test_capture_cutoff_is_the_current_era_start_only_for_multi_era_hosts():
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        hr.KB = os.path.join(tmp, "kb-empty")
+        os.makedirs(hr.KB, exist_ok=True)
+        c = hr.load_case(case)
+        figs = {"timeline_events": _ERA_EVENTS}
+        # multi-era host: cutoff moves from WHOIS `created` (2025-01-05) to the current era start
+        assert hr.era_start_of(c, figs, "sibling-a.example.com") == "2026-05-21"
+        # single-era host: keeps WHOIS `created`, NOT its history record's later `updated` date
+        assert hr.era_start_of(c, figs, "seed-brand.example.com").startswith("2025-01-05")
+        # no events at all: plain `created`
+        assert hr.era_start_of(c, {}, "sibling-b.example.com").startswith("2025-01-05")
+        # a `created` inside the previous era (a transfer, OR a drop-catch whose reset date sits
+        # before the new identity's first WHOIS record) does NOT move the cutoff earlier — the later
+        # era start is the conservative choice: never caption a previous owner's page as the operator's
+        c["whois"]["sibling-a.example.com"] = dict(c["whois"]["sibling-a.example.com"], created="2026-05-10 00:00:00 UTC")
+        assert hr.era_start_of(c, figs, "sibling-a.example.com") == "2026-05-21"
+    import house_report_captures as hre
+    # an archive copy of sibling-a taken in 2025-12 is AFTER `created` but BEFORE the current era →
+    # it is a previous registrant's page under the era-aware cutoff
+    e = {"source": "wayback", "archived_at": "2025-12-30T10:00:29Z", "captured_at": "2025-12-30T10:00:29Z"}
+    assert hre.predates_registration(e, "2026-05-21")
+    assert not hre.predates_registration(e, "2025-01-05 00:00:00 UTC")
+
+
+def test_registrant_eras_fold_same_day_flaps_and_placeholders_and_current_era():
+    """Real-data artefacts from the first live rebuild: WhoisXML returns several records per era
+    (registrant / registry / privacy relay, same day) -> zero-length 'eras' and same-day flaps; the
+    registrar's own name in the registrant field was classed `named`; the operator's current era was
+    absent. The fold must yield one row per real era, class placeholders, and append the current era."""
+    import house_report_correlations as hrx
+    ev = {"events": [
+        {"host": "drop.example.com", "kind": "registrant_era", "start": "2015-07-04T00:00:00Z", "end": "2015-07-04T00:00:00Z",
+         "value": {"identity": "r@enom-role.example", "registrar": "ENOM, INC."}},
+        {"host": "drop.example.com", "kind": "registrant_era", "start": "2015-07-04T00:00:00Z", "end": "2021-11-23T00:00:00Z",
+         "value": {"identity": "d@whoisguard.example", "registrar": "ENOM, INC."}},
+        {"host": "drop.example.com", "kind": "registrant_era", "start": "2021-11-23T00:00:00Z", "end": "2021-11-23T00:00:00Z",
+         "value": {"identity": "8@withheldforprivacy.example", "registrar": "NAMECHEAP INC"}},
+        {"host": "drop.example.com", "kind": "registrant_era", "start": "2021-11-23T00:00:00Z", "end": "2026-05-21T00:00:00Z",
+         "value": {"identity": "NameCheap, Inc.", "registrar": "NameCheap, Inc."}},
+    ]}
+    eras = hrx.registrant_eras_from_events(ev)["drop.example.com"]
+    assert [(e["start"], e["end"]) for e in eras] == [("2015-07-04", "2021-11-23"), ("2021-11-23", "2026-05-21")], eras
+    assert not any(e["start"] == e["end"] for e in eras)                      # no zero-length rows
+    assert hrx._era_class("NameCheap, Inc.", None, "NameCheap, Inc.") == "placeholder"
+    assert hrx._era_class("owner@example.com", None, "NameCheap, Inc.") == "named"
+    md = hrx.registrant_eras_md(ev, lambda x: x, is_privacy=lambda v: "privacy" in v or "whoisguard" in v,
+                                whois={"drop.example.com": {"registrant_email": "persona@example.com",
+                                                            "created": "2026-05-21 03:27:49 UTC", "registrar": "Global Registrar LLC"}})
+    rows = [l for l in md.splitlines() if l.startswith("| `drop")]
+    assert len(rows) == 3, md
+    assert "| 2026-05-21 | current | persona@example.com | Global Registrar LLC | named · current · reactivation |" in rows[-1], rows[-1]
+    assert "| privacy |" in rows[1] and "NameCheap, Inc. | NameCheap, Inc." not in md   # placeholder folded away, class honest
+    # the capture CUTOFF: when history stops at the previous owner's era, the current registration's
+    # `created` is later and must win — otherwise the previous owner's parking page is captioned as ours
+    assert hrx.era_start_of(ev, "drop.example.com", fallback="2026-05-21 03:27:49 UTC") == "2026-05-21"
+    assert hrx.era_start_of(ev, "drop.example.com", fallback="2020-01-01") == "2021-11-23"   # created earlier than the last era: era wins
+    assert hrx.era_start_of(ev, "single.example.com", fallback="2025-01-05") == "2025-01-05"
+
+
 _TESTS = [
     test_structure_is_the_house_order_with_appendix_marker,
     test_seed_comes_from_scope_claim_not_alphabetical_order,
@@ -458,6 +699,12 @@ _TESTS = [
     test_urlscan_fallback_takes_the_host_itself_and_prefers_post_registration_scans,
     test_cooccurrence_matrix_drops_excluded_indicators_and_keeps_join_keys,
     test_archive_negative_is_cached_only_when_both_sources_answered,
+    test_registrant_eras_table_lists_only_hosts_that_changed_hands,
+    test_registrant_eras_fold_same_day_flaps_and_placeholders_and_current_era,
+    test_capture_cutoff_is_the_current_era_start_only_for_multi_era_hosts,
+    test_near_empty_live_capture_is_held_provisional_then_rerendered_next_build,
+    test_urlscan_screenshot_fetch_sends_the_key_when_present,
+    test_urlscan_verdict_rows_parse_as_b2_evidence_in_the_ledger,
 ]
 
 
