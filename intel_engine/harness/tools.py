@@ -1834,13 +1834,30 @@ async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
     "nothing. TRY FIRST and say what you tried: static analyze_artifact, then an EXISTING detonation "
     "of the hash (anyrun_lookup / VirusTotal / MalwareBazaar / Triage / Koodous). Prefer submitting "
     "the downloaded FILE over the live URL. Privacy defaults to owner (only you); public is refused "
-    "unless the analyst separately authorizes it. NEVER put a case ID or an analyst/client name in "
-    "`tags` or the filename. kind='file' (a local path) or 'url'.",
-    {"target": str},  # kind:'file'|'url', confirm:bool, privacy:str, allow_public:bool, tags:str
+    "unless the analyst separately authorizes it. PLAN GATE: the engine reads the key's own account "
+    "record (/user private quota, else a prior private task in history) and FAILS CLOSED without "
+    "proof (`refused` + `plan_evidence`); a ZERO private quota is denied outright. Only if the "
+    "analyst explicitly attests to a paid plan pass allow_unverified_plan=true — never set it on "
+    "your own. READ-BACK: after the POST the engine waits (bounded) for the task to finish and reads "
+    "the privacy ANY.RUN applied; a forbidden mode is withdrawn and flagged `exposed`. If the result "
+    "says privacy_verified=null with a `verify_command`, the task was still running — call again "
+    "with verify_task=true and target=<task uuid> to finish the check (nothing is submitted). NEVER "
+    "put a case ID or an analyst/client name in `tags` or the filename. kind='file' (a local path) "
+    "or 'url'.",
+    {"target": str},  # kind, confirm, privacy, allow_public, allow_unverified_plan, tags, verify_task:bool, wait:int
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
+    if args.get("verify_task"):
+        # Follow-up read-back for a task that was still running at submit time: `target` is the
+        # task uuid. Nothing is submitted; a task that landed in a forbidden mode is withdrawn.
+        wait = max(0, min(int(args.get("wait", 0) or 0), 240))   # 240 + one 30 s poll < the 290 s _run budget
+        cmd = [PY, script, "verify-privacy", str(args["target"]), "--wait", str(wait)]
+        if args.get("privacy"):
+            cmd += ["--requested", str(args["privacy"])]
+        r = _run(cmd, timeout=290)
+        return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
     kind = str(args.get("kind") or ("url" if str(args["target"]).startswith(("http://", "https://"))
                                     else "file")).lower()
     cmd = [PY, script, "submit", str(args["target"])]
@@ -1853,6 +1870,8 @@ async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--privacy", str(args["privacy"])]
     if args.get("allow_public"):
         cmd.append("--allow-public")
+    if args.get("allow_unverified_plan"):
+        cmd.append("--i-have-a-paid-plan")
     if args.get("tags"):
         cmd += ["--tags", str(args["tags"])]
     r = _run(cmd, timeout=300)

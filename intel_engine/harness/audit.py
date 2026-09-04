@@ -37,7 +37,9 @@ hook fires on the SDK's own task — a module-global or a ContextVar would cross
 WHAT IT DENIES (everything else is allowed, and still logged)
 -------------------------------------------------------------
   * hostile posture + an OUTBOUND tool with no passive/proxy argument
-  * an APPROVAL-REQUIRED tool (sandbox submission) without its env var set
+  * an APPROVAL-REQUIRED tool (sandbox submission) without its env var set — EXCEPT its offline
+    briefing branch (see references/tool_policy.json → approval_briefing), so the risk briefing
+    the two-step gate depends on stays reachable to show the analyst before a confirmed submit
   * a METERED call once the run's credit-spend budget is exhausted
 The lists, the budget and the env-var map are DATA — see references/tool_policy.json — so an
 analyst re-classifies a tool without editing this file. A denial is returned to the MODEL as
@@ -80,6 +82,9 @@ _POLICY_FALLBACK = {
     "metered_arg_triggers": ["whois_reverse", "fofa_full"],
     "approval_required_tools": {"anyrun_submit": "HARNESS_ALLOW_SUBMIT",
                                 "misp_publish": "INTEL_MISP_PUBLISH"},
+    # Conservative minimum: NO briefing exemption when the data file is unreadable, so an
+    # approval-required tool stays fully gated rather than opening a branch the fallback cannot see.
+    "approval_briefing": {},
     "mutating_tools": ["kb_ingest", "reference_add", "misp_push", "misp_publish"],
     "redact_args": ["key", "api_key", "token", "password", "secret"],
     "budget": {"max_metered_calls_per_run": 60, "max_arg_chars": 200},
@@ -93,6 +98,7 @@ METERED_TOOLS = set(_P["metered_tools"])
 FREE_ONLY_ARGS = set(_P["free_only_args"])
 METERED_ARG_TRIGGERS = set(_P["metered_arg_triggers"])
 APPROVAL_REQUIRED = dict(_P["approval_required_tools"])
+APPROVAL_BRIEFING = {k: set(v) for k, v in dict(_P.get("approval_briefing") or {}).items()}
 MUTATING_TOOLS = set(_P["mutating_tools"])
 REDACT_ARGS = set(_P["redact_args"])
 BUDGET = dict(_P["budget"])
@@ -178,12 +184,19 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None) -> tuple[
 
     env = APPROVAL_REQUIRED.get(t)
     if env and os.environ.get(env, "").strip().lower() not in ("1", "true", "yes", "on"):
-        return (False,
-                f"{t} is attributable and IRREVERSIBLE — once it has happened nothing can recall "
-                f"it (a sandbox detonation tells the operator they are being analysed; a "
-                f"published MISP event syncs to every peer server). It requires an explicit "
-                f"human approval this run does not have. Ask the analyst; if they agree, the run "
-                f"must be re-launched with {env}=1. Do not retry.", classes)
+        # The read-only briefing branch stays reachable without approval: with every exempt arg
+        # falsy the call composes the briefing offline and does nothing outbound or irreversible,
+        # so the analyst can actually SEE it before saying yes. Any exempt arg set → the real
+        # gated action, denied. `_truthy` is the same falsy interpretation the flag gates use.
+        exempt = APPROVAL_BRIEFING.get(t)
+        is_briefing = exempt is not None and not _truthy(args, exempt)
+        if not is_briefing:
+            return (False,
+                    f"{t} is attributable and IRREVERSIBLE — once it has happened nothing can recall "
+                    f"it (a sandbox detonation tells the operator they are being analysed; a "
+                    f"published MISP event syncs to every peer server). It requires an explicit "
+                    f"human approval this run does not have. Ask the analyst; if they agree, the run "
+                    f"must be re-launched with {env}=1. Do not retry.", classes)
 
     if hostile and "outbound" in classes:
         return (False,
