@@ -104,7 +104,7 @@
 | [**Validin**](https://validin.com) | DNS + 证书 + favicon + 响应体哈希汇于一张图谱——被动 DNS、子域枚举、反向 IP 与主机响应哈希枢轴（免费 Community 密钥） | 目前为 `/webpivot` 枢轴提供即用查询串；原生 API 集成进行中 |
 
 > [!IMPORTANT]
-> **ANY.RUN 仅以只读方式使用。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。本技能**从不提交样本**——公开沙箱任务全网可读且不可撤回。该边界由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
+> **ANY.RUN 查询为只读；引爆受到严格门控。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。`anyrun_submit` 可以引爆文件或 URL，但必须通过以下门控：每次提交都需分析员确认（先返回风险简报，再以 `confirm=true` 重新调用）、默认私有且拒绝 `public`、失败即关闭的套餐检查（读取账户自身 `/user` 的私有配额——为 0 时直接拒绝，分析员声明也无法覆盖；否则需有先前的私有任务，或分析员明确声明使用付费套餐）、提交后回读实际隐私设置并在任务仍被公开时立即撤回并标记，以及 harness 在未设置 `HARNESS_ALLOW_SUBMIT=1` 时直接拒绝。公开沙箱任务全网可读且不可撤回；该门控由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
 
 <sub>此处列出仅表示对本项目的支持，<b>不</b>意味着上述机构与本工具存在任何隶属、背书或认证关系。上表标注的集成均为可选且需要 API 密钥——<b>所有核心技术在零密钥情况下依然可用</b>。请始终遵守各提供方的服务条款。本技能所依赖的开源项目与免费公益服务的完整清单见<a href="#-致谢与鸣谢">致谢与鸣谢</a>。</sub>
 

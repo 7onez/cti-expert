@@ -342,7 +342,7 @@
       "category": "breach",
       "tier": "freemium",
       "url": "https://app.any.run/profile",
-      "unlocks": "/anyrun + /binary: ANY.RUN TI Lookup over prior detonations (contacted domains/IPs/URLs, family label) — the only way to recover a PACKED sample's runtime endpoints. NOTE: a sandbox key is a SEPARATE licence from TI Lookup; settle it with `bp_anyrun.py keycheck --probe` (the plain license check false-greens a sandbox key). This key never submits a sample",
+      "unlocks": "/anyrun + /binary: ANY.RUN TI Lookup over prior detonations (contacted domains/IPs/URLs, family label) — the only way to recover a PACKED sample's runtime endpoints — plus your own task history/reports. NOTE: a sandbox key is a SEPARATE licence from TI Lookup; settle it with `bp_anyrun.py keycheck --probe` (the plain license check false-greens a sandbox key). Detonating a file/URL (`anyrun_submit`) is possible with this key but stays behind a per-submission analyst confirmation, private-by-default privacy, a fail-closed plan check (/user private quota — zero is denied outright — else a prior private task on record, else explicit analyst attestation), and a post-submit privacy read-back that withdraws a task that still landed public",
       "test": {
         "url": "https://api.any.run/v1/user",
         "header": {

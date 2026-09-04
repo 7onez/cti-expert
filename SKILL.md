@@ -201,24 +201,60 @@ Six traps, all of which have produced real false clusters:
 
 ### Never submit the case's own sample to a public sandbox (CRITICAL)
 
-`/anyrun` is **lookup-only**. It reads detonations that already happened; it has no submit path,
-and the submission endpoint is deliberately absent from `BinaryPivot/references/anyrun.json`.
-`tests/test_no_sample_submission.py` enforces that as a gate, so it cannot regress quietly.
+`/anyrun` is **lookup-only**: it reads detonations that already happened (`anyrun_lookup`). The
+engine *does* carry a detonation path — `anyrun_submit` (T1) / `bp_anyrun.py submit` — but it is
+**gated four ways**, and every gate is code, not convention:
 
-**Do not work around it.** Uploading the case's own APK / installer / archive to ANY.RUN —
+1. **Per-submission analyst confirmation.** `anyrun_submit` without `confirm=true` returns the
+   risk briefing and sends nothing; `bp_anyrun.submit()` refuses unless `confirm=True` is passed
+   (a function parameter — `references/anyrun.json` can only make the policy *stricter*). Show the
+   briefing, ask, and only on an explicit *yes to this submission* call again with `confirm=true`.
+   Consent to "analyze this sample" is **not** consent to detonate it.
+2. **Private by default, public refused.** Privacy defaults to `owner`; `public` is refused even
+   with `confirm` unless `allow_public` is separately authorised — per call, or as the analyst's
+   standing `ANYRUN_ALLOW_PUBLIC=1` in the gitignored `.env`. With that set, a plan that *cannot*
+   go private (gate 3 `denied`) is downgraded to a public task **explicitly** — the result carries
+   `public_task`, `downgraded_from`, `public_authorized_by` — never silently, and never when the
+   plan can go private. Auto-delete defaults to a week.
+3. **Free plan fails closed.** Pre-flight, before any POST, the engine checks the key's own
+   account record: `/user` → `limits.private` (observed live; `0` in any window = **denied**,
+   and the analyst attestation below cannot override that positive evidence; `-1`/positive =
+   entitled), else a prior non-public task in the account's history. Neither → `refused` +
+   `plan_evidence`, unless the analyst explicitly attests to a paid plan
+   (`allow_unverified_plan=true` / `--i-have-a-paid-plan`) — never set it on your own.
+4. **Post-submit read-back.** The task record carries no privacy while the sandbox is running
+   (observed live: a `status: "in progress"` stub for ~2 min), so after the POST the engine polls
+   the report — bounded to `sandbox timeout + 60 s`, max 240 s — and, once finished, reads the
+   privacy ANY.RUN actually applied. A forbidden mode is withdrawn (task deleted) and the result
+   says `exposed: true`. If the task outlives the wait, the result says `privacy_verified: null`
+   with a `verify_command`; **run it** — `bp_anyrun.py verify-privacy <uuid>` / `anyrun_submit`
+   with `verify_task=true, target=<uuid>` — to finish the check and the withdrawal. Either way
+   this is *detected*, not *prevented*: deletion does not un-publish what the feed already
+   showed, so treat the infrastructure as tipped.
+
+The harness adds a fifth: `audit.gate()` denies `anyrun_submit` outright unless the run was
+launched with `HARNESS_ALLOW_SUBMIT=1`. `tests/test_no_sample_submission.py` asserts the gate is
+both marked and enforced and that no upload machinery exists outside it;
+`intel_engine/tools/eval/test_intelx_anyrun.py` §7b–7c exercises every refusal, the plan proof,
+the attestation path and the read-back.
+
+**Do not work around any of it.** Uploading the case's own APK / installer / archive to ANY.RUN —
 or VirusTotal, or any public sandbox — is an **outbound, irreversible** act:
 
 - A public task is **world-readable**: the file, its hash, screenshots and full network log.
 - **Operators watch for their own samples.** The standard response is to rotate the backend,
   revoke the signing key and re-skin the front — destroying the infrastructure the case is built
   on, often days before a takedown or referral can land.
-- **It cannot be recalled.** Unlike a query from the wrong egress, there is no cleanup.
+- **It cannot be recalled.** Deleting a task does not un-publish what was already seen.
+- A URL detonation **fetches the live target** from published sandbox egress: the operator learns
+  it was sandboxed, and a "clean" verdict may be the decoy served to datacenter IPs.
 
-If detonation is genuinely necessary, **stop and put it to the analyst in plain terms** — what
-becomes public, and that it is permanent — and let them do it themselves in the sandbox UI on a
-**private** plan. Never as a side effect of a pivot, and never on standing permission inferred
-from an earlier approval. The same reasoning governs `--submit` (urlscan/Wayback): a public
-urlscan scan of a live scam funnel is visible to the operator too.
+Try first, and say what you tried: static `analyze_artifact`, then an **existing** detonation of the
+hash (`anyrun_lookup`, VirusTotal, MalwareBazaar, Triage, Koodous). Prefer the downloaded FILE over
+the live URL. Never put a case ID or an analyst/client name in tags or the filename. Never on
+standing permission inferred from an earlier approval, never as a side effect of a pivot. The same
+reasoning governs `--submit` (urlscan/Wayback): a public urlscan scan of a live scam funnel is
+visible to the operator too.
 
 ### A permuted email is a hypothesis, never a finding (CRITICAL)
 
