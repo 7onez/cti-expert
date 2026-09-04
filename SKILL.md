@@ -48,7 +48,18 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > **`/case` and web-infra pivoting.** For a **domain or URL** target, `/case` includes
 > web-infrastructure pivoting (`/webpivot`) in the Acquire phase. It runs **keyless by default**
 > (crt.sh + passive DNS + anonymous urlscan) and **upgrades automatically when premium keys are
-> set** via `/apikeys` (Shodan/Censys/FOFA/Hunter.how/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML). Because
+> set** via `/apikeys` (Shodan/Censys/FOFA/Hunter.how/DNSLytics/SecurityTrails/urlscan-PRO/WhoisXML). With keys
+> the pipeline also: reads the **urlscan Pro hostname lifecycle** (pre-registration NS/A eras on the
+> timeline, verdict rows in Appendix B), runs the **MO-neighbour pivot** on the estate's non-CDN origin
+> (co-tenants WHOIS-verified; only a registrant join-key ever seeds, same-MO personas render as a
+> rung-10 *Related personas* table — `--mask-personas` to aggregate), **measures entitlement**
+> (`meta.capability.plans`, per-case `capability_plans.json`; Censys' search is its own probe), and
+> fires SecurityTrails DNS-history + DSL reverse-WHOIS, DNSLytics reverse-IP (co-tenancy-filtered),
+> a once-per-case Censys cert search, Shodan cert/JARM search and IntelX (loop: `--full` only). Every
+> metered leg is `--free-only`/`no_spend`-gated; IntelX selectors, WhoisXML/SecurityTrails reverse-WHOIS terms,
+> MO-neighbour origins, DNSLytics reverse-IP and the Censys cert search are bought once per CASE (on-disk memo),
+> while per-host legs (urlscan lifecycle, SecurityTrails subdomains/history, Shodan search) stay per host under
+> per-case caps. Because
 > `/webpivot` can fetch the target directly, for hostile infrastructure it prefers passive capture
 > (urlscan/Wayback) — see [`techniques/web-pivot.md`](techniques/web-pivot.md). It is **not** run for
 > username/phone/person targets.
@@ -1493,6 +1504,7 @@ email, `/email-deep` and `/breach-deep` trigger on it automatically.
 - **Every discovered phone / wallet / IBAN** → `/intelx <selector>` (strong selectors only; a name is refused locally and still costs a unit).
 - **A local infostealer-log folder** → `/stealer-log` for family attribution, victim-vs-operator profiling and IOC extraction.
 - These are the leak/breach legs the deterministic infra pipeline does **not** run; they are **required** for a full `/cti`, gated only by `--quick` (skips) and `--passive` (keyless corpora only — IntelX/Wayback never touch the target). Results (new emails, machines, credentials, siblings) re-enter the recursive pivot loop as seeds. State credits spent.
+- **Pipeline auto-fire (deterministic path):** `intel.py pipeline open` now appends `--intelx` to the collector whenever an IntelX key is present and the case is not a `no_spend` posture; `pipeline loop` appends it **only under `--full`** — the default loop stays free-only and never spends an IntelX search on its own.
 
 **GitHub OSINT auto-fire in `/case`:**
 - Domain/Org target → run `/github-osint` on the org name, primary domain, discovered GitHub orgs/repos, and developer-platform hits from `/query` or `/dork-sweep`.
@@ -1511,6 +1523,7 @@ email, `/email-deep` and `/breach-deep` trigger on it automatically.
 - Username → `/dork-sweep --telegram --docs` + `/docleak` (author-angle)
 - Email → `/dork-sweep --telegram --docs` on email + `@domain`
 - IP → `/dork-sweep` on rDNS-resolved hostname (skipped if no rDNS)
+- Domain/Org → **GrayHatWarfare open-bucket check** (`/secrets <label>` — the GrayHatWarfare layer; keyless dork fallback) — emitted by the pipeline as a per-apex **exposure** lead and rendered in the assessment's *Exposure (leak surface — not attribution)* section. A bucket carrying the brand label is a thing to READ, never a same-operator pivot and never a frontier seed.
 
 Adaptive fan-out: discovered emails → Telegram dork; discovered personnel → `/docleak`; discovered subdomains → filetype dork; discovered usernames → Telegram + doc sweep; discovered IPs → rDNS → dork-sweep.
 <!-- dork-integration:phase-05 end -->

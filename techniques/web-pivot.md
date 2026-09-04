@@ -333,16 +333,22 @@ reverse-lookups, attaching each hit to the pivot as `live_results` (shown in `--
 
 | Key | Auto-fires on | Live result |
 |---|---|---|
-| `SHODAN_API_KEY` | favicon hash | `http.favicon.hash:<mmh3>` → hosts |
-| `CENSYS_API_KEY` (+`CENSYS_ORG_ID`) | favicon hash | favicon **MD5** → hosts |
+| `SHODAN_API_KEY` | favicon hash; cert SHA1 / JARM pivots | `http.favicon.hash:<mmh3>` → hosts; `ssl.cert.fingerprint:` / `ssl.jarm:` search (Membership-gated → named skip). Search hits are shown, never seeded (a JARM is a shared stack) |
+| `CENSYS_PAT` (+`CENSYS_ORG_ID`) | favicon hash; cert pivot; **once per case** | favicon MD5 / cert lookups (Free); `cert.fingerprint_sha256=` search over the estate's certs, ≤ `case_budget` queries, **run unless the case recorded `free`** (its first 403 records it). Exact-cert hits seed; a shared cert (> `MAX_CERT_APEXES`) becomes a lead |
 | `FOFA_KEY` (+`FOFA_EMAIL`) | favicon / tracker / live IP | `icon_hash` / `body` / `ip` reverse |
-| `DNSLYTICS_API_KEY` | GA `UA-` / AdSense `ca-pub-` | sibling domains sharing the account |
-| `SECURITYTRAILS_API_KEY` | domain | passive-DNS subdomains |
-| `URLSCAN_API_KEY` | tracker / verification | authenticated DOM content search |
-| `WHOISXML_API_KEY` | `--whois-reverse` | current + historic + reverse WHOIS |
+| `DNSLYTICS_API_KEY` | GA `UA-` / AdSense `ca-pub-`; **origin IP** | sibling domains sharing the account; `reverseip` under `dnslytics_reverseip` → co-tenancy filter (bulk hosting = lead, never seed) |
+| `SECURITYTRAILS_API_KEY` | domain; current registrant e-mail | subdomains; **DNS history** → dated hosting eras (timeline); **DSL reverse-WHOIS** diffed vs WhoisXML. Capped per CASE (`SECURITYTRAILS_MAX_CALLS_PER_CASE`, default 20/50-month) |
+| `URLSCAN_API_KEY` (Pro) | domain; tracker / verification | **hostname lifecycle** (pre-registration NS/A eras, left-censored when truncated), structure-similar scans, verdict rows (`E<n> [B2]`), authenticated DOM content search. A key measured `free` skips the Pro calls |
+| `WHOISXML_API_KEY` | domain; `--whois-reverse`; origin co-tenants | current WHOIS; reverse WHOIS; **history only on `--whois-history purchase`** (seeds/cluster, ~50 DRS/domain); **MO-neighbour** verification of an origin's co-tenants (bulk-guarded, once per origin per case) |
+| `INTELX_KEY` | pipeline `open` (key); loop `--full` | selector search / phonebook, once per selector per CASE |
+| `NETLAS_API_KEY` / `VALIDIN_API_KEY` | origin IP | reverse-IP candidates for the MO-neighbour pivot (Validin also runs keyless-free elsewhere) |
+| `GRAYHATWARFARE_API_KEY` | estate label | exposure lead (`/secrets`), rendered under *Exposure* — never a same-operator pivot |
 
-Each premium enricher is **key-gated** (no key → skipped) and **exception-guarded** (a bad
-endpoint/quota → an error line, never a crash). **No keys → keyless mode, byte-for-byte
+Entitlement is **measured** once per case into `meta.capability.plans` (`cases/<id>/capability_plans.json`)
+from free account probes; nothing is assumed from a key's presence. Each premium enricher is
+**key-gated** (no key → skipped), **posture-gated** (`--free-only` / `no_spend` → skipped), **bought
+once per case** (on-disk memo under the case dir, not per host subprocess) and **exception-guarded**
+(a bad endpoint/quota → a tri-state note, never a crash). **No keys → keyless mode, byte-for-byte
 unchanged.** Never commit the `.env`.
 
 ## Notes on artifact reliability (2025–2026)

@@ -111,6 +111,12 @@ storage (S3, Azure Blob, GCS, DO Spaces) and the files inside it via GrayHatWarf
 (`wp_buckets.py`). With `GRAYHATWARFARE_API_KEY` set the search is filterable and paginated; with
 no key it degrades to the keyless `site:buckets.grayhatwarfare.com` dork (never an error).
 
+**Pipeline lead (auto-fired):** the deterministic case pipeline emits a `grayhatwarfare:<apex>`
+enrichment lead for every estate apex (closable via `enrichment-done`) and the cluster assessment
+carries an *Exposure (leak surface — not attribution)* section for any bucket rows a collection
+recorded. Bucket hits are graded EXPOSURE: a bucket carrying the brand label may be the brand's own,
+a squatter's, or an unrelated tenant's — it is never a same-operator pivot and never seeds the frontier.
+
 ```bash
 # buckets whose NAME matches the org/domain keyword (→ /secrets asset discovery)
 uv run intel.py buckets buckets <org-or-domain> --limit 20
