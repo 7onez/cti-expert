@@ -84,22 +84,51 @@ def check():
     ok(allows("kb_cluster", {"domain": "x.example"}, hostile=True),
        "hostile posture does not block read-only KB analysis")
 
-    # --- 2. sandbox submission needs a human, not a prompt ------------------------------------
+    # --- 2. sandbox submission needs a human, not a prompt — but the BRIEFING stays reachable ---
     env = audit.APPROVAL_REQUIRED.get("anyrun_submit")
     ok(bool(env), "anyrun_submit is registered as approval-required")
+    ok("anyrun_submit" in audit.APPROVAL_BRIEFING,
+       "anyrun_submit has a briefing exemption so the two-step gate's first step is possible")
+    # RULE 3 parity: the exemption is DATA (tool_policy.json) and the embedded fallback is OFF —
+    # a module silently on its fallback keeps the tool fully gated rather than opening a branch.
+    ok(bool(audit.APPROVAL_BRIEFING) and not audit._POLICY_FALLBACK["approval_briefing"],
+       "briefing exemption came from JSON; the fallback is OFF (fail-closed)")
     prior = os.environ.get(env or "X")
     try:
         os.environ.pop(env, None)
-        ok(not allows("anyrun_submit", {"url": "http://x.example"}),
-           "anyrun_submit is DENIED without explicit approval (outbound + irreversible)")
+        # the offline briefing branch (no confirm, no verify_task) is ALLOWED without approval —
+        # otherwise the model can never show the analyst the risks before asking
+        ok(allows("anyrun_submit", {"target": "http://x.example"}),
+           "the briefing call (confirm/verify_task falsy) is allowed without approval")
+        # the confirmed POST is the real, irreversible action — DENIED without approval
+        ok(not allows("anyrun_submit", {"target": "http://x.example", "confirm": True}),
+           "a CONFIRMED submit is DENIED without explicit approval (outbound + irreversible)")
+        # the follow-up read-back can DELETE a task — also gated
+        ok(not allows("anyrun_submit", {"target": "uuid", "verify_task": True}),
+           "a verify_task read-back (delete-capable) is DENIED without approval")
         os.environ[env] = "1"
-        ok(allows("anyrun_submit", {"url": "http://x.example"}),
-           f"anyrun_submit is allowed once {env}=1")
+        ok(allows("anyrun_submit", {"target": "http://x.example", "confirm": True}),
+           f"a confirmed submit is allowed once {env}=1")
         os.environ[env] = "0"
-        ok(not allows("anyrun_submit", {"url": "http://x.example"}),
+        ok(not allows("anyrun_submit", {"target": "http://x.example", "confirm": True}),
            f"{env}=0 does not count as approval")
+        # the exemption is EXACT: a truthy string on an exempt arg is still the gated action
+        ok(not allows("anyrun_submit", {"target": "x", "confirm": "yes"}),
+           "confirm='yes' (truthy) is the gated action, not the briefing")
     finally:
         os.environ.pop(env, None)
+        if prior is not None:
+            os.environ[env] = prior
+
+    # --- 2b. the exemption fails CLOSED: with no exemption data an approval tool stays fully gated
+    _saved_brief = audit.APPROVAL_BRIEFING
+    try:
+        audit.APPROVAL_BRIEFING = {}                     # the conservative-minimum fallback shape
+        os.environ.pop(env, None)
+        ok(not allows("anyrun_submit", {"target": "http://x.example"}),
+           "with no briefing exemption (unreadable data file) even the briefing is denied — safe-closed")
+    finally:
+        audit.APPROVAL_BRIEFING = _saved_brief
         if prior is not None:
             os.environ[env] = prior
 

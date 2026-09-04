@@ -58,6 +58,13 @@
     }
   },
 
+  "approval_briefing": {
+    "_comment": "The read-only BRIEFING branch of an approval-required tool, which must stay reachable WITHOUT the approval env var — otherwise the two-step 'show the analyst the risk briefing, ask, then confirm' gate is impossible in the MCP/harness path, because the briefing call itself would be denied. Maps a tool to the argument names that must ALL be falsy for the exemption to apply: when every one is absent/false the call does nothing outbound or irreversible (it composes the briefing offline), so it is allowed; set any of them and the call is the real, gated action again. anyrun_submit: `confirm` (the POST that detonates) and `verify_task` (reads a task and can DELETE it) — with neither, submit() only returns submit_preflight(). Leave a tool out to keep it fully gated. This exemption never applies under hostile posture (an outbound tool is still egress-blocked there).",
+    "entries": {
+      "anyrun_submit": ["confirm", "verify_task"]
+    }
+  },
+
   "mutating_tools": {
     "_comment": "Tools that write to shared, cross-case state (the knowledge base, the benign/signal reference, the operator registry, a MISP instance). Never blocked, but flagged in the ledger: when a later case turns out to have clustered on a bad fingerprint — or when someone asks which indicators we put on the sharing platform and when — this is how you find the run and the round that did it.",
     "values": ["kb_ingest", "reference_add", "case_reopen", "case_loop", "misp_push",

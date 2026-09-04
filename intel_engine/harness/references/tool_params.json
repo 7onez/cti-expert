@@ -317,6 +317,18 @@
         "allow_public": {
           "type": "boolean",
           "description": "Permit a submission whose result would be PUBLIC. Refused by policy in almost every case; a free plan makes the task public to everyone."
+        },
+        "allow_unverified_plan": {
+          "type": "boolean",
+          "description": "Analyst attestation that this key is on a PAID sandbox plan. Only relevant when the engine cannot settle it from the account record (/user limits.private, then a prior private task in history); a zero private quota is DENIED regardless of this flag. Set ONLY when the analyst has explicitly said so — never on your own, never to get past a refusal. The applied privacy is still read back after the POST."
+        },
+        "verify_task": {
+          "type": "boolean",
+          "description": "Follow-up mode: `target` is a task UUID from an earlier submission whose result said privacy_verified=null. Reads the privacy ANY.RUN actually applied once the task has finished and withdraws a task that landed in a forbidden mode. Nothing is submitted."
+        },
+        "wait": {
+          "type": "integer",
+          "description": "With verify_task: seconds to keep polling for the task to finish before giving up (default 0 = a single read)."
         }
       },
       "case_clusters": {
