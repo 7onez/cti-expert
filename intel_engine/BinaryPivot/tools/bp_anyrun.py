@@ -102,6 +102,7 @@ import json
 import os
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -256,6 +257,15 @@ def anyrun_key():
 
 def anyrun_configured() -> bool:
     return ENABLED and bool(anyrun_key())
+
+
+def public_standing_authorized() -> bool:
+    """True when the analyst has recorded a STANDING authorization for PUBLIC sandbox tasks —
+    `ANYRUN_ALLOW_PUBLIC=1` in the environment or the gitignored .env. It is the analyst's own
+    durable word (same shape as HARNESS_ALLOW_SUBMIT), meant for accounts whose plan can only
+    create public tasks; it never relaxes the per-submission confirmation gate."""
+    v = _secret("ANYRUN_ALLOW_PUBLIC")
+    return bool(v) and v.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _headers():
@@ -755,6 +765,10 @@ def submit_preflight(target: str, kind: str = "file") -> dict:
             "privacy_means": (PRIVACY_TYPES or {}).get(privacy, "unknown"),
             "auto_delete_after": policy.get("default_auto_delete_after") or "(account default)",
             "network": "enabled — a URL submission WILL fetch the live target",
+            **({"standing_public_authorization": (
+                "ANYRUN_ALLOW_PUBLIC=1 is set: if this plan cannot create a private task the "
+                "submission WILL be made PUBLIC (world-readable) instead of refused")}
+               if public_standing_authorized() else {}),
         },
         "never_send": list(policy.get("never_send") or []),
         "to_proceed": ("ask the analyst explicitly, then call submit(..., confirm=True) — or "
@@ -764,7 +778,7 @@ def submit_preflight(target: str, kind: str = "file") -> dict:
 
 def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: str = None,
            timeout_s: int = None, auto_delete: str = None, allow_public: bool = False,
-           tags: str = None, timeout: int = 120):
+           allow_unverified_plan: bool = False, tags: str = None, timeout: int = 120):
     """Detonate a file or URL in the ANY.RUN sandbox. **Refuses unless `confirm=True`.**
 
     `confirm` is a function parameter rather than a config value on purpose: `submission_policy` in
@@ -775,8 +789,21 @@ def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: s
     Two more refusals that are not overridable by accident:
       - `privacy='public'` (and anything in `forbidden_privacy`) needs `allow_public=True` on top
         of `confirm`, because a public task is the failure mode that actually burns cases;
-      - a plan with no private-submission entitlement is refused rather than silently downgraded —
-        'it worked' must never mean 'it went to the public feed instead'.
+      - `refuse_on_free_plan`: a plan with no private-submission entitlement must never turn
+        'it worked' into 'it went to the public feed instead'. `_plan_proves_private()` decides
+        pre-flight, in this order: (1) `/user` → `limits.private` — observed live, 0 in any
+        window ⇒ DENIED (positive evidence; `allow_unverified_plan` cannot override it), -1 or
+        positive everywhere ⇒ entitled; (2) block absent ⇒ the account's own record — a prior
+        non-public task proves it; (3) otherwise UNKNOWN, which FAILS CLOSED — the preflight comes
+        back with `plan_evidence` — unless the analyst attests to a paid plan with
+        `allow_unverified_plan=True` (CLI `--i-have-a-paid-plan`).
+        Defence-in-depth after the POST: `_verify_privacy()` polls the report (bounded) until the
+        task leaves "in progress", then reads the privacy ANY.RUN actually applied; a forbidden
+        mode is withdrawn and the result says `exposed: True`. If the task outlives the wait the
+        result carries `privacy_verified: None` + `verify_command`, and `verify_privacy()` /
+        `bp_anyrun.py verify-privacy <uuid>` finishes the check later — including the withdrawal.
+        Always "detected and withdrawn", never "prevented": deleting does not un-publish what the
+        feed already showed.
 
     REQUIRES_ANALYST_CONFIRMATION — this marker is the token cti-expert's OPSEC gate
     (tests/test_no_sample_submission.py) looks for. It is placed here, on the one function that can
@@ -791,12 +818,51 @@ def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: s
                 "capability": capability()}
     privacy = (privacy or policy.get("default_privacy") or "owner").lower()
     forbidden = [str(p).lower() for p in (policy.get("forbidden_privacy") or ["public"])]
+    # Standing analyst authorization for PUBLIC tasks — an explicit, durable, analyst-owned setting
+    # in the gitignored .env (same pattern as HARNESS_ALLOW_SUBMIT), for accounts whose plan can
+    # only create public tasks. It is the analyst's own word, so it counts exactly like passing
+    # allow_public=True on every call; it never touches the per-submission confirmation gate.
+    public_authorized_by = ("allow_public on this call" if allow_public
+                            else "ANYRUN_ALLOW_PUBLIC (standing .env authorization)"
+                            if public_standing_authorized() else None)
+    allow_public = public_authorized_by is not None
+    downgraded_from = None
     if privacy in forbidden and not allow_public:
         return {"refused": (f"privacy='{privacy}' is forbidden by submission_policy — that task "
                             f"would be world-readable and searchable, and operators watch the "
                             f"public feed. Pass allow_public=True ONLY if the analyst has said so "
-                            f"knowing that."),
+                            f"knowing that (or set ANYRUN_ALLOW_PUBLIC=1 in .env as a standing "
+                            f"authorization)."),
                 "target": target, "preflight": submit_preflight(target, kind)}
+    # A knowingly-PUBLIC submission (allow_public) has nothing to prove about private entitlement.
+    if privacy not in forbidden and policy.get("refuse_on_free_plan", True):
+        proof = _plan_proves_private(forbidden, timeout=min(timeout, 45))
+        verdict = proof.get("verdict")
+        if verdict == "denied":
+            if allow_public:
+                # The plan cannot go private and the analyst has authorized public: downgrade
+                # EXPLICITLY, and say so in the result — never silently.
+                downgraded_from, privacy = privacy, "public"
+            else:
+                # Positive evidence the plan CANNOT go private. An attestation cannot override a fact.
+                return {"refused": ("this key's plan has NO private-submission quota — ANY.RUN's own "
+                                    f"account record says so — so '{privacy}' would be public or "
+                                    "rejected and the operator can read the feed. Refused regardless "
+                                    "of allow_unverified_plan: that flag covers an UNPROVABLE plan, "
+                                    "not a proven free one. If a PUBLIC task is acceptable, the "
+                                    "analyst can say so with allow_public=True (or a standing "
+                                    "ANYRUN_ALLOW_PUBLIC=1 in .env)."),
+                        "plan_evidence": proof, "target": target,
+                        "preflight": submit_preflight(target, kind)}
+        elif verdict != "entitled" and not allow_unverified_plan:
+            return {"refused": ("no proof this key's plan can create a PRIVATE task — on a free plan "
+                                f"'{privacy}' becomes public and the operator can read the feed. "
+                                "submission_policy.refuse_on_free_plan fails closed. If the analyst "
+                                "attests to a paid sandbox plan, re-call with "
+                                "allow_unverified_plan=True (CLI --i-have-a-paid-plan); the applied "
+                                "privacy is still read back after the POST."),
+                    "plan_evidence": proof, "target": target,
+                    "preflight": submit_preflight(target, kind)}
 
     body = {"obj_type": "url" if kind == "url" else "file",
             "opt_privacy_type": privacy,
@@ -820,11 +886,190 @@ def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: s
         return dict(err, target=target, kind=kind)
     uuid = ((data or {}).get("data") or {}).get("taskid") or (data or {}).get("taskid")
     _record("submit", int(REQUEST_BUDGET.get("submit_costs", 1)), f"{kind}:{target}", results=1)
-    return {"submitted": True, "task_uuid": uuid, "task_url": task_url(uuid or ""),
-            "privacy": privacy,
-            "note": ("Submitted. The target now knows it was fetched by a sandbox if this was a "
-                     "URL; treat any 'clean' verdict as possibly a decoy served to a datacenter IP."),
-            "raw": data if not uuid else None}
+    out = {"submitted": True, "task_uuid": uuid, "task_url": task_url(uuid or ""),
+           "privacy": privacy,
+           "note": ("Submitted. The target now knows it was fetched by a sandbox if this was a "
+                    "URL; treat any 'clean' verdict as possibly a decoy served to a datacenter IP."),
+           "raw": data if not uuid else None}
+    if privacy in forbidden:
+        out["public_task"] = True
+        out["public_authorized_by"] = public_authorized_by
+        out["public_note"] = ("This task is WORLD-READABLE and searchable: the file, its hash, "
+                              "screenshots and network log. Assume the operator can see it; do not "
+                              "submit anything carrying victim PII or a case identifier.")
+    if downgraded_from:
+        out["downgraded_from"] = downgraded_from
+        out["downgrade_reason"] = ("this key's plan has zero private quota (/user limits.private), "
+                                   "so the analyst's public authorization was applied instead of "
+                                   f"'{downgraded_from}'")
+    if uuid and policy.get("refuse_on_free_plan", True):
+        # Bounded to fit inside the harness's 300 s tool budget with the upload already spent.
+        wait_s = min(int(timeout_s or 120) + 60, 240)
+        out.update(_verify_privacy(uuid, privacy, forbidden, wait_s=wait_s, timeout=timeout))
+    return out
+
+
+def _task_privacy(task_uuid: str, timeout: int = 30):
+    """(privacy, error) for one own task, read off its report — `analysis.options.privacy` is the
+    one field the public connector schemas document for this; nothing else is assumed."""
+    base = ENDPOINTS.get("api_base", "https://api.any.run/v1")
+    url = base + ENDPOINTS.get("analysis_report", "/analysis/{id}").replace("{id}", str(task_uuid))
+    data, err = _call(url, timeout=timeout)
+    if err:
+        return None, err
+    rep = (data or {}).get("data") or data or {}
+    applied = (((rep.get("analysis") or {}).get("options") or {}).get("privacy")
+               or (rep.get("options") or {}).get("privacy"))
+    return (str(applied).lower() if applied else None), None
+
+
+def _plan_proves_private(forbidden: list, *, sample: int = 3, timeout: int = 30) -> dict:
+    """PRE-FLIGHT verdict on whether this key's plan can create a non-public task. Read-only,
+    unmetered, never raises. Returns `verdict` ∈ {"entitled", "denied", "unknown"} plus evidence:
+
+      1. `/user` → `data.limits.private.{minute,hour,day,month}` — OBSERVED on a live response
+         (2026-09; not in any public connector schema, so it is used only when present). ANY.RUN's
+         quota convention: -1 unlimited, 0 none, N remaining. Any window at 0 ⇒ "denied" (positive
+         evidence: `submit()` refuses even against an attestation). All windows -1/positive ⇒
+         "entitled".
+      2. Block absent → the account's own record: the `sample` most recent tasks' reports, accepting
+         only a positively recognised privacy value outside `forbidden` ⇒ "entitled".
+      3. Anything else — empty history, unreadable reports, only public tasks, transport error —
+         ⇒ "unknown", on which `submit()` fails closed unless the analyst attests."""
+    lim = user_limits(timeout=timeout)
+    priv_q = (lim or {}).get("limits", {}).get("private") if isinstance(lim, dict) else None
+    if isinstance(priv_q, dict) and priv_q:
+        windows = {k: v for k, v in priv_q.items() if isinstance(v, (int, float))}
+        if windows and any(v == 0 for v in windows.values()):
+            return {"verdict": "denied", "evidence": "/user limits.private has a zero window",
+                    "private_quota": windows}
+        if windows and all(v == -1 or v > 0 for v in windows.values()):
+            return {"verdict": "entitled", "evidence": "/user limits.private is non-zero in every window",
+                    "private_quota": windows}
+    hist = analysis_history(limit=max(1, sample), timeout=timeout) or {}
+    if "skipped" in hist or "error" in hist:
+        return {"verdict": "unknown", "reason": "history unreadable",
+                "detail": hist.get("skipped") or hist.get("error")}
+    tasks = [t.get("uuid") for t in (hist.get("tasks") or []) if t.get("uuid")]
+    if not tasks:
+        return {"verdict": "unknown", "reason": "no own tasks on record — a plan cannot be proven "
+                                                "from an empty history (a fresh paid account needs "
+                                                "the analyst's attestation once)"}
+    seen = {}
+    for uuid in tasks[:sample]:
+        priv, err = _task_privacy(uuid, timeout=timeout)
+        seen[uuid] = priv or (err or {}).get("skipped") or (err or {}).get("error") or "unreadable"
+        if priv and priv not in forbidden:
+            return {"verdict": "entitled", "evidence": f"own task {uuid} has privacy='{priv}'",
+                    "sampled": seen}
+    return {"verdict": "unknown", "reason": "no non-public task among the most recent own tasks",
+            "sampled": seen}
+
+
+def _task_record(task_uuid: str, timeout: int = 30):
+    """(status, privacy, error) for one own task off its report. `status` is the report's top-level
+    field — observed live as "in progress" while the sandbox runs (the record is then a stub with
+    no `analysis.options`) and "done" afterwards; `privacy` is `analysis.options.privacy`, the one
+    field the connector schemas document and the one validated on a real finished record."""
+    base = ENDPOINTS.get("api_base", "https://api.any.run/v1")
+    url = base + ENDPOINTS.get("analysis_report", "/analysis/{id}").replace("{id}", str(task_uuid))
+    data, err = _call(url, timeout=timeout)
+    if err:
+        return None, None, err
+    rep = (data or {}).get("data") or data or {}
+    applied = (((rep.get("analysis") or {}).get("options") or {}).get("privacy")
+               or (rep.get("options") or {}).get("privacy"))
+    status = str(rep.get("status") or "").lower() or None
+    return status, (str(applied).lower() if applied else None), None
+
+
+def _task_privacy(task_uuid: str, timeout: int = 30):
+    """(privacy, error) for one own task — see `_task_record`."""
+    _, priv, err = _task_record(task_uuid, timeout=timeout)
+    return priv, err
+
+
+def _verify_privacy(task_uuid: str, requested: str, forbidden: list, *, wait_s: int = 180,
+                    poll_s: float = 10.0, timeout: int = 30) -> dict:
+    """Read back the privacy ANY.RUN actually applied to a task, and withdraw the task if it is a
+    forbidden one.
+
+    Defence-in-depth behind `_plan_proves_private()` — and the only check left when the analyst
+    attested with `allow_unverified_plan`. The record carries no `analysis.options` while the task
+    is "in progress" (observed live), so this polls the report every `poll_s` until the status
+    leaves "in progress" or `wait_s` is spent. At submit time that wait is bounded; if it runs out
+    the result is `privacy_verified: None` plus `verify_command` — the analyst (or the model) runs
+    `bp_anyrun.py verify-privacy <uuid>` / `anyrun_submit(target=<uuid>, verify_task=true)` to
+    finish the job, including the withdrawal. Returns the keys merged into `submit()`'s result:
+      privacy_verified  True (matches) | False (mismatch) | None (record not readable in time)
+      privacy_applied   the value ANY.RUN reported, when readable
+      exposed, deleted, refused   only on a forbidden mismatch
+    Never raises; a verification failure is reported, not swallowed into a green result."""
+    base = ENDPOINTS.get("api_base", "https://api.any.run/v1")
+    tries = max(1, int(wait_s // max(poll_s, 1)))
+    status, applied, last_err = None, None, None
+    for attempt in range(tries):
+        # Per-poll transport timeout is capped so the wall-clock bound really is wait_s + one poll.
+        status, applied, err = _task_record(task_uuid, timeout=min(timeout, 30))
+        if err:
+            last_err = err
+        elif applied or status not in (None, "in progress"):
+            break
+        if attempt + 1 < tries:
+            time.sleep(poll_s)
+    if not applied:
+        return {"privacy_verified": None,
+                "privacy_note": ("could not read the applied privacy off the task record"
+                                 + (f" ({last_err})" if last_err else
+                                    f" — status is '{status}'; the record carries no options until "
+                                    "the task finishes")
+                                 + " — VERIFY before treating this task as private; on a free plan "
+                                 "it is public regardless of what was requested"),
+                "verify_command": f"bp_anyrun.py verify-privacy {task_uuid}",
+                "verify_tool_call": {"tool": "anyrun_submit",
+                                     "args": {"target": task_uuid, "verify_task": True, "wait": 0}}}
+    applied = str(applied).lower()
+    if applied == str(requested).lower() or applied not in forbidden:
+        return {"privacy_verified": applied == str(requested).lower(), "privacy_applied": applied}
+    # Forbidden mode applied: withdraw immediately. Deletion does not un-publish what was already
+    # visible, so the result says so instead of pretending the refusal was pre-emptive.
+    del_url = base + ENDPOINTS.get("delete_task", "/analysis/delete/{id}").replace("{id}", str(task_uuid))
+    _, del_err = _call(del_url, method="DELETE", timeout=timeout)
+    _record("submit-withdrawn", 0, f"task:{task_uuid}", ok=False)
+    return {"privacy_verified": False, "privacy_applied": applied, "exposed": True,
+            "deleted": del_err is None,
+            "refused": (f"ANY.RUN applied privacy='{applied}' although '{requested}' was requested — "
+                        f"this key's plan has no private-submission entitlement "
+                        f"(submission_policy.refuse_on_free_plan). The task was "
+                        + ("deleted" if del_err is None else f"NOT deleted ({del_err}) — delete it in the UI now")
+                        + ". It was world-readable for the interval before deletion; assume the "
+                        "operator may have seen the sample and treat the infrastructure as tipped.")}
+
+
+def verify_privacy(task_uuid: str, requested: str = None, *, wait_s: int = 0, timeout: int = 30) -> dict:
+    """Finish a submission's privacy read-back later — the follow-up `submit()` names in
+    `verify_command` when the task was still running at submit time. Reads the applied privacy and,
+    if it is a forbidden mode the analyst did not authorize (`requested` defaults to the policy
+    default, `owner`; pass 'public' for a knowingly public task), deletes the task and reports the
+    exposure — the same code path as the in-submit check. Nothing is submitted here."""
+    if not anyrun_configured():
+        return {"skipped": "no ANYRUN_API_KEY configured"}
+    policy = SUBMISSION_POLICY
+    requested = (requested or policy.get("default_privacy") or "owner").lower()
+    forbidden = [str(p).lower() for p in (policy.get("forbidden_privacy") or ["public"])]
+    public_ok = requested in forbidden or public_standing_authorized()
+    if public_ok:
+        forbidden = []          # the analyst authorized public: nothing to withdraw, only to report
+    out = {"task_uuid": task_uuid, "task_url": task_url(task_uuid), "requested": requested}
+    out.update(_verify_privacy(task_uuid, requested, forbidden, wait_s=wait_s, timeout=timeout))
+    if public_ok and out.get("privacy_applied") and out.get("privacy_verified") is False:
+        out["public_task"] = True
+        out["public_authorized_by"] = ("requested='public'" if requested in
+                                       [str(p).lower() for p in (policy.get("forbidden_privacy") or ["public"])]
+                                       else "ANYRUN_ALLOW_PUBLIC (standing .env authorization)")
+        out["note"] = (f"task is '{out['privacy_applied']}' rather than the requested '{requested}', "
+                       "which the analyst's public authorization permits — nothing withdrawn")
+    return out
 
 
 def _post_multipart(url: str, fields: dict, filepath: str, timeout: int = 120):
@@ -1009,6 +1254,7 @@ __all__ = ["anyrun_key", "anyrun_configured", "field_for_kind", "build_query", "
            "attach_anyrun_queries", "task_url", "grade_field", "summarise_lookup", "ti_lookup",
            "lookup_artifact", "enrich_result", "keycheck", "user_limits", "capability",
            "banner_lines", "analysis_history", "analysis_report", "submit", "submit_preflight",
+           "verify_privacy", "public_standing_authorized",
            "budget_status", "month_spent", "ENDPOINTS", "QUERY_FIELDS", "PIVOT_FIELD_MAP",
            "PLAN_CAPABILITIES", "REQUEST_BUDGET", "RESULT_LIMITS", "UI_TEMPLATES",
            "CLUSTERING_POLICY", "SUBMISSION_POLICY", "PRIVACY_TYPES"]
@@ -1046,9 +1292,22 @@ def main():
     p.add_argument("--allow-public", action="store_true",
                    help="permit a PUBLIC task. Operators watch the public feed; this is the option "
                         "that burns cases, so it is separate from --confirm-submission")
+    p.add_argument("--i-have-a-paid-plan", dest="allow_unverified_plan", action="store_true",
+                   help="analyst attestation that this key is on a paid sandbox plan (private tasks "
+                        "allowed). Needed only when the account's own history cannot prove it — e.g. "
+                        "a fresh account. The applied privacy is still read back after the POST.")
     p.add_argument("--sandbox-timeout", type=int, default=None, metavar="SECONDS")
     p.add_argument("--tags", default=None,
                    help="ANY.RUN user tags — NEVER put a case ID or an analyst/client name here")
+    vp = sub.add_parser("verify-privacy",
+                        help="finish a submission's privacy read-back once the task has run: reads "
+                             "the applied privacy and withdraws a task that landed in a forbidden "
+                             "mode (nothing is submitted)")
+    vp.add_argument("task_uuid")
+    vp.add_argument("--requested", default=None, choices=sorted(PRIVACY_TYPES.keys()) or None,
+                    help="the privacy that was requested at submit time (default: policy default)")
+    vp.add_argument("--wait", type=int, default=0, metavar="SECONDS",
+                    help="poll this long for the task to finish before giving up (default 0: one read)")
     kc = sub.add_parser("keycheck",
                         help="TI-Lookup licence check (advisory; add --probe to settle it "
                              "authoritatively — free unless entitled)")
@@ -1101,10 +1360,13 @@ def main():
         out = analysis_history(limit=args.limit)
     elif args.cmd == "report":
         out = analysis_report(args.task_uuid, iocs=args.iocs)
+    elif args.cmd == "verify-privacy":
+        out = verify_privacy(args.task_uuid, args.requested, wait_s=args.wait)
     elif args.cmd == "submit":
         out = submit(args.target, "url" if args.url else "file", confirm=True,
                      privacy=args.privacy, timeout_s=args.sandbox_timeout,
-                     allow_public=args.allow_public, tags=args.tags)
+                     allow_public=args.allow_public, allow_unverified_plan=args.allow_unverified_plan,
+                     tags=args.tags)
     else:
         if args.query:
             out = ti_lookup(args.query, days=args.days)

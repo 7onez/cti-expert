@@ -219,6 +219,9 @@ def check():
     # unreadable and even when a caller passes confirm-adjacent arguments by accident.
     was_ar = os.environ.pop("ANYRUN_API_KEY", None)
     os.environ["ANYRUN_API_KEY"] = "test-key-not-a-real-credential"
+    ar.anyrun_key()                                  # prime the .env loader so the pop below sticks
+    was_pub = os.environ.pop("ANYRUN_ALLOW_PUBLIC", None)   # the analyst's standing setting must not leak in
+    os.environ["ANYRUN_ALLOW_PUBLIC"] = "0"                  # process env wins over .env in the loader
     try:
         pf = ar.submit("./sample.bin", "file")                       # no confirm at all
         ok(pf.get("action", "").startswith("CONFIRMATION REQUIRED"),
@@ -242,6 +245,9 @@ def check():
         os.environ.pop("ANYRUN_API_KEY", None)
         if was_ar is not None:
             os.environ["ANYRUN_API_KEY"] = was_ar
+        os.environ.pop("ANYRUN_ALLOW_PUBLIC", None)
+        if was_pub is not None:
+            os.environ["ANYRUN_ALLOW_PUBLIC"] = was_pub
     # With no key nothing can be submitted regardless of what the caller passes.
     was_ar2 = os.environ.pop("ANYRUN_API_KEY", None)
     try:
@@ -265,6 +271,247 @@ def check():
         os.environ.pop("ANYRUN_API_KEY", None)
         if was_ar is not None:
             os.environ["ANYRUN_API_KEY"] = was_ar
+
+    # --- 7c. refuse_on_free_plan — PRE-FLIGHT proof, attestation, and the POST-SUBMIT read-back --
+    # Pre-flight reads the account record — `/user` limits.private (0 ⇒ denied even against an
+    # attestation; -1/positive ⇒ entitled), else a prior non-public own task — and FAILS CLOSED
+    # without proof. Deleting a public task un-publishes nothing, so the
+    # read-back after the POST is defence-in-depth, not the gate. Fully stubbed at the transport
+    # seam: nothing here reaches the network or the spend ledger.
+    was_ar = os.environ.pop("ANYRUN_API_KEY", None)
+    os.environ["ANYRUN_API_KEY"] = "test-key-not-a-real-credential"
+    was_pub = os.environ.pop("ANYRUN_ALLOW_PUBLIC", None)
+    os.environ["ANYRUN_ALLOW_PUBLIC"] = "0"
+    _saved = (ar._call, ar._post_multipart, ar._record, ar.time.sleep)
+    calls = []
+    NEW = "00000000-0000-4000-8000-00000000new0"
+
+    def _fake_transport(history, applied_privacy, report_ok=True, private_quota=None, running_for=0):
+        """`history`: {uuid: privacy | None(unreadable)} for prior own tasks; `applied_privacy` is
+        what ANY.RUN reports for the task this submission creates; `private_quota` is the
+        `/user` → limits.private block (None = block absent, as older connector schemas show);
+        `running_for`: how many report reads of the NEW task return the live-observed "in progress"
+        stub (status only, no analysis.options) before the finished record appears."""
+        state = {"new_reads": 0}
+
+        def _post(url, fields, filepath, timeout=120):
+            calls.append(("POST", url, fields.get("opt_privacy_type")))
+            return {"data": {"taskid": NEW}}, None
+
+        def _call(url, *, method="GET", body=None, timeout=30):
+            calls.append((method, url, None))
+            if url.endswith("/user"):
+                limits = {"api": {"month": 250}}
+                if private_quota is not None:
+                    limits["private"] = private_quota
+                return {"data": {"limits": limits}}, None
+            if "/analysis/delete/" in url:
+                return {"error": False}, None
+            if "/analysis?" in url:
+                return {"data": {"tasks": [{"uuid": u, "verdict": "x", "date": "d"} for u in history]}}, None
+            uuid = url.rsplit("/", 1)[-1]
+            if uuid == NEW:
+                state["new_reads"] += 1
+                if not report_ok:
+                    return None, {"skipped": "HTTP 404 — not in the ANY.RUN dataset"}
+                if state["new_reads"] <= running_for:
+                    return {"data": {"status": "in progress", "analysis": {}}}, None
+                priv = applied_privacy
+            else:
+                priv = history.get(uuid)
+            if priv is None:
+                return None, {"skipped": "HTTP 404 — not in the ANY.RUN dataset"}
+            return {"data": {"status": "done", "analysis": {"options": {"privacy": priv}}}}, None
+        return _post, _call
+
+    def _reset(history, applied, **kw):
+        calls.clear()
+        with ar._MEMO_LOCK:
+            ar._MEMO.clear()
+        ar._post_multipart, ar._call = _fake_transport(history, applied, **kw)
+
+    ZERO_Q = {"minute": 0, "hour": 0, "day": 0, "month": 0}
+    UNLIM_Q = {"minute": -1, "hour": -1, "day": -1, "month": -1}
+
+    try:
+        ar._record = lambda *a, **k: None
+        ar.time.sleep = lambda s: None
+        # (a) history proves a private task exists → allowed; the new task is verified `owner`
+        _reset({"t1": "public", "t2": "owner"}, "owner")
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("submitted") is True and r.get("privacy_verified") is True
+           and r.get("privacy_applied") == "owner" and "exposed" not in r,
+           "a prior own 'owner' task proves the plan; the new private task is verified, not withdrawn")
+        ok(not any(m == "DELETE" for m, _, _ in calls), "no delete is issued when privacy matches")
+        # (b) FAIL CLOSED: only public tasks on record → refused BEFORE any POST
+        _reset({"t1": "public", "t2": "public"}, "public")
+        r = ar.submit(__file__, "file", confirm=True)
+        ok("refused" in r and r.get("plan_evidence", {}).get("verdict") == "unknown"
+           and "preflight" in r and not any(m == "POST" for m, _, _ in calls),
+           "a history of only PUBLIC tasks refuses pre-flight — nothing is POSTed")
+        # (c) FAIL CLOSED: empty history (fresh account) → refused, reason names the attestation
+        _reset({}, "owner")
+        r = ar.submit(__file__, "file", confirm=True)
+        ok("refused" in r and "attestation" in r["plan_evidence"].get("reason", "")
+           and not any(m == "POST" for m, _, _ in calls),
+           "an empty history cannot prove a plan — refused pre-flight, attestation route named")
+        # (d) FAIL CLOSED: history unreadable → refused, never assumed paid
+        _reset({"t1": None}, "owner")
+        r = ar.submit(__file__, "file", confirm=True)
+        ok("refused" in r and not any(m == "POST" for m, _, _ in calls),
+           "unreadable task reports do not count as proof")
+        # (d2) /user limits.private all ZERO (observed live on a free-tier key) → DENIED, and the
+        #      attestation cannot override positive evidence; no history probe, no POST
+        _reset({"t1": "owner"}, "owner", private_quota=ZERO_Q)
+        r = ar.submit(__file__, "file", confirm=True, allow_unverified_plan=True)
+        ok("refused" in r and r["plan_evidence"].get("verdict") == "denied"
+           and "regardless of allow_unverified_plan" in r["refused"]
+           and not any(m == "POST" or "/analysis?" in u for m, u, _ in calls),
+           "a zero private quota on /user is DENIED even with the attestation — no probe, no POST")
+        # (d2b) same zero quota, but the analyst holds a STANDING public authorization in .env:
+        #       the submission is downgraded to public EXPLICITLY — the result names the downgrade,
+        #       the authorization source and the exposure — and the read-back verifies `public`
+        os.environ["ANYRUN_ALLOW_PUBLIC"] = "1"
+        try:
+            _reset({}, "public", private_quota=ZERO_Q)
+            pf = ar.submit(__file__, "file")
+            ok("standing_public_authorization" in pf.get("would_use", {}),
+               "the briefing warns that a standing public authorization will make the task public")
+            r = ar.submit(__file__, "file", confirm=True)
+            ok(r.get("submitted") is True and r.get("privacy") == "public"
+               and r.get("downgraded_from") == "owner" and r.get("public_task") is True
+               and "ANYRUN_ALLOW_PUBLIC" in r.get("public_authorized_by", "")
+               and r.get("privacy_verified") is True
+               and any(m == "POST" and p == "public" for m, _, p in calls),
+               "zero quota + standing ANYRUN_ALLOW_PUBLIC → explicit, labelled downgrade to a public task")
+            # the standing setting never touches the confirmation gate
+            ok(ar.submit(__file__, "file").get("action", "").startswith("CONFIRMATION REQUIRED"),
+               "ANYRUN_ALLOW_PUBLIC does not bypass per-submission confirmation")
+            # ...and an entitled plan under the same setting still goes PRIVATE — public is a
+            # fallback for plans that cannot go private, not a new default
+            _reset({}, "owner", private_quota=UNLIM_Q)
+            r = ar.submit(__file__, "file", confirm=True)
+            ok(r.get("privacy") == "owner" and "downgraded_from" not in r and "public_task" not in r,
+               "with a private-capable plan the standing public authorization changes nothing")
+        finally:
+            os.environ.pop("ANYRUN_ALLOW_PUBLIC", None)
+        # (d2c) per-call allow_public on a zero-quota plan → same explicit downgrade, attributed to the call
+        _reset({}, "public", private_quota=ZERO_Q)
+        r = ar.submit(__file__, "file", confirm=True, allow_public=True)
+        ok(r.get("submitted") is True and r.get("downgraded_from") == "owner"
+           and r.get("public_authorized_by") == "allow_public on this call",
+           "zero quota + allow_public on the call → downgrade attributed to the call")
+        # (d3) /user limits.private unlimited → ENTITLED from the account record alone: no history
+        #      probe needed, the POST goes through and is verified
+        _reset({}, "owner", private_quota=UNLIM_Q)
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("submitted") is True and r.get("privacy_verified") is True
+           and not any("/analysis?" in u for _, u, _ in calls),
+           "a non-zero private quota on /user proves entitlement without probing history")
+        # (d4) a finite positive quota (paid plan with N private runs left) is entitled too — only
+        #      0 denies; mixed -1/positive windows are the normal paid shape
+        _reset({}, "owner", private_quota={"minute": -1, "hour": -1, "day": 20, "month": 5})
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("submitted") is True and r.get("plan_evidence") is None
+           and not any("/analysis?" in u for _, u, _ in calls),
+           "a finite positive private quota counts as entitled")
+        # (e) analyst attestation bypasses the pre-flight proof; the read-back still runs and,
+        #     on a silent downgrade to public, withdraws the task and flags EXPOSED — never green
+        _reset({}, "public")
+        r = ar.submit(__file__, "file", confirm=True, allow_unverified_plan=True)
+        ok(any(m == "POST" for m, _, _ in calls), "allow_unverified_plan lets the POST through")
+        ok(r.get("exposed") is True and r.get("privacy_verified") is False
+           and r.get("deleted") is True and "refused" in r,
+           "a task ANY.RUN made PUBLIC despite 'owner' is withdrawn and flagged exposed")
+        ok(any(m == "DELETE" and "/analysis/delete/" in u for m, u, _ in calls),
+           "the withdrawal hits the delete endpoint")
+        ok("world-readable" in r["refused"] and "tipped" in r["refused"],
+           "the refusal admits the exposure interval instead of claiming prevention")
+        # (f) attested, record unreadable: verification is None with a loud note, never a silent True
+        _reset({}, "owner", report_ok=False)
+        r = ar.submit(__file__, "file", confirm=True, allow_unverified_plan=True)
+        ok(r.get("privacy_verified") is None and NEW in r.get("verify_command", "")
+           and "privacy_note" in r,
+           "an unreadable task record yields privacy_verified=None plus a verify_command naming the task")
+        # (f2) LIVE-OBSERVED SHAPE: the record is an "in progress" stub (no options) while the
+        #      sandbox runs. The read-back must keep polling past it and read the finished record.
+        _reset({}, "owner", private_quota=UNLIM_Q, running_for=5)
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("privacy_verified") is True and r.get("privacy_applied") == "owner"
+           and sum(1 for m, u, _ in calls if m == "GET" and u.endswith(NEW)) == 6,
+           "the read-back polls through the in-progress stub and reads the finished record")
+        # (f3) same, but the task lands PUBLIC after running: the withdrawal still fires
+        _reset({}, "public", private_quota=UNLIM_Q, running_for=3)
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("exposed") is True and r.get("deleted") is True
+           and any(m == "DELETE" for m, _, _ in calls),
+           "a downgrade discovered after the task finished is still withdrawn")
+        # (f4) task outlives the bounded wait → None + verify_command; the FOLLOW-UP verify_privacy()
+        #      later completes the same check, including the withdrawal
+        _reset({}, "public", private_quota=UNLIM_Q, running_for=10**6)
+        r = ar.submit(__file__, "file", confirm=True)
+        ok(r.get("privacy_verified") is None and "verify-privacy" in r.get("verify_command", "")
+           and not any(m == "DELETE" for m, _, _ in calls),
+           "a task still running at the end of the bounded wait yields None + verify_command, no delete")
+        _reset({}, "public", private_quota=UNLIM_Q, running_for=0)
+        r = ar.verify_privacy(NEW)                     # requested defaults to the policy default (owner)
+        ok(r.get("exposed") is True and r.get("deleted") is True and r.get("task_uuid") == NEW
+           and not any(m == "POST" for m, _, _ in calls),
+           "verify_privacy() later reads the finished record and withdraws the public task — no POST")
+        _reset({}, "public", private_quota=UNLIM_Q, running_for=0)
+        r = ar.verify_privacy(NEW, "public")           # the analyst knowingly went public
+        ok(r.get("privacy_verified") is True and not any(m == "DELETE" for m, _, _ in calls),
+           "verify_privacy() on a knowingly public task confirms and withdraws nothing")
+        # (f5) HAZARD CASE: the analyst deliberately went public via the STANDING .env authorization,
+        #      then runs the bare follow-up with no `requested`. Defaulting to 'owner' must NOT delete
+        #      their own authorized task — it is confirmed and labelled instead (mirrors the live run
+        #      on a real public task).
+        os.environ["ANYRUN_ALLOW_PUBLIC"] = "1"
+        try:
+            _reset({}, "public", private_quota=ZERO_Q, running_for=0)
+            r = ar.verify_privacy(NEW)
+            ok(r.get("privacy_applied") == "public" and r.get("public_task") is True
+               and "ANYRUN_ALLOW_PUBLIC" in r.get("public_authorized_by", "")
+               and "exposed" not in r and not any(m == "DELETE" for m, _, _ in calls),
+               "verify_privacy() under a standing public authorization never deletes the analyst's own public task")
+        finally:
+            os.environ["ANYRUN_ALLOW_PUBLIC"] = "0"
+        # (f6) the still-running result carries the exact MCP call shape, not just a CLI hint
+        _reset({}, "public", private_quota=UNLIM_Q, running_for=10**6)
+        r = ar.submit(__file__, "file", confirm=True)
+        tc = r.get("verify_tool_call") or {}
+        ok(tc.get("tool") == "anyrun_submit" and tc.get("args", {}).get("target") == NEW
+           and tc.get("args", {}).get("verify_task") is True,
+           "a still-running result names the anyrun_submit(target=<uuid>, verify_task=true) follow-up")
+        # (h) a knowingly-PUBLIC submission (confirm + allow_public) has no private entitlement to
+        #     prove: no history probe, the POST goes through, and the read-back verifies `public`
+        _reset({}, "public")
+        r = ar.submit(__file__, "file", confirm=True, privacy="public", allow_public=True)
+        ok(r.get("submitted") is True and r.get("privacy_verified") is True
+           and not any("/analysis?" in u for _, u, _ in calls),
+           "allow_public skips the plan proof — a public task needs no private entitlement")
+        # (g) policy switch off → neither proof nor read-back (the analyst opted out, visibly)
+        saved_policy = dict(ar.SUBMISSION_POLICY)
+        ar.SUBMISSION_POLICY["refuse_on_free_plan"] = False
+        try:
+            _reset({}, "public")
+            r = ar.submit(__file__, "file", confirm=True)
+            ok(r.get("submitted") is True and "privacy_verified" not in r
+               and [m for m, _, _ in calls] == ["POST"],
+               "refuse_on_free_plan=false skips proof and read-back and issues only the POST")
+        finally:
+            ar.SUBMISSION_POLICY.clear()
+            ar.SUBMISSION_POLICY.update(saved_policy)
+    finally:
+        with ar._MEMO_LOCK:
+            ar._MEMO.clear()
+        ar._call, ar._post_multipart, ar._record, ar.time.sleep = _saved
+        os.environ.pop("ANYRUN_API_KEY", None)
+        if was_ar is not None:
+            os.environ["ANYRUN_API_KEY"] = was_ar
+        os.environ.pop("ANYRUN_ALLOW_PUBLIC", None)
+        if was_pub is not None:
+            os.environ["ANYRUN_ALLOW_PUBLIC"] = was_pub
 
     # --- 8. ANY.RUN clustering policy fails closed ---------------------------------------------
     ok(ar.grade_field("domainName") == "cluster", "a contacted domain may support an operator edge")
