@@ -1,0 +1,4 @@
+{
+  "_comment": "Per-call timeout CEILING (seconds) for every data-fetching / API / collector / subprocess call in the engine. wp_common loads this and installs a process-wide urllib.request.urlopen floor at this value; the env var CTI_CALL_TIMEOUT overrides it at runtime. 1800 = 30 min: each call runs up to this long, then times out and the run moves on to the next. Raise it for very slow links, lower it to fail faster. NOT applied to raw DNS/TLS/JARM resolution probes (those keep their short fail-fast bounds by design).",
+  "call_timeout": 1800
+}

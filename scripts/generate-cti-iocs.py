@@ -101,6 +101,12 @@ COMMON_FP = set("""github.com linkedin.com twitter.com x.com facebook.com instag
 youtube.com youtu.be haveibeenpwned.com shodan.io crt.sh google.com docs.google.com medium.com
 reddit.com archive.org web.archive.org ssllabs.com grayhatwarfare.com securitytrails.com
 virustotal.com""".split())
+# final labels that are file / framework extensions, never a TLD — the domain regex otherwise reads
+# "next.js", "styles.min.css" or "index.php" in a tech fingerprint as a host. Deliberately NOT here:
+# md / py / zip / sh / app / io … are real TLDs (`.zip` is actively abused in lures) and must survive.
+NOT_TLDS = set("""js ts css php html htm json xml txt png jpg jpeg gif svg ico webp woff woff2
+ttf min pkg rar exe apk dmg msi jar dll tsx jsx vue scss less yml yaml csv pdf docx
+xlsx pptx""".split())
 
 SUBJECT_MAP = {
     "domain": ("network", "domain"), "url": ("network", "url"),
@@ -257,8 +263,13 @@ def extract(data):
         dl = RX["email"].sub(" ", RX["url"].sub(" ", text))
         for v in RX["domain"].findall(dl):
             v = v.lower().rstrip(".")
-            if v not in COMMON_FP and "." in v:
-                add("network", "domain", v, role, conf, None, source, sid)
+            if v in COMMON_FP or "." not in v:
+                continue
+            if v.rsplit(".", 1)[-1] in NOT_TLDS:       # "next.js", "styles.css" — a file, not a host
+                continue
+            if any(v in x for x in exclude):           # "godaddy.com" inside "GoDaddy.com, LLC"
+                continue
+            add("network", "domain", v, role, conf, None, source, sid)
 
     # 1) subjects
     for s in subjects:

@@ -52,7 +52,7 @@ _EXHAUST_FALLBACK = {
                   "detect": {"fetched": True}, "evidence": "the page the operator served",
                   "without_it": "no page was retrieved", "how": "pivot_extract <url>"},
         "whois": {"label": "WHOIS / RDAP", "cost": "free", "applies_to": "domain",
-                  "detect": {"enriched_with": "whoisxml"}, "evidence": "registration timeline",
+                  "detect": {"artifact": "whois"}, "evidence": "registration timeline",
                   "without_it": "no registration timeline", "how": "automatic"},
         "capture": {"label": "raw evidence capture", "cost": "free", "applies_to": "any",
                     "detect": {"meta": "capture"}, "evidence": "the bytes served",
@@ -119,8 +119,13 @@ def layer_ran(spec: dict, result: dict) -> bool:
     if "enriched_with" in det:
         want = str(det["enriched_with"]).lower()
         srcs = [str(s).lower() for s in (meta.get("enriched_with") or [])]
-        if any(s == want or s.startswith(want + "-") for s in srcs):
+        # a source may be a '+'-joined provenance token (whoisxml+rdap, whoisxml+chongluadao); match a
+        # component so a compound source still satisfies the layer it belongs to
+        parts = {p for s in srcs for p in s.split("+")}
+        if want in parts or any(s == want or s.startswith(want + "-") for s in srcs):
             return True
+    if "artifact" in det and (result.get("artifacts") or {}).get(det["artifact"]) not in (None, "", [], {}):
+        return True
     if "meta" in det and meta.get(det["meta"]) not in (None, "", [], {}):
         return True
     if "meta_any" in det and any(meta.get(k) not in (None, "", [], {}) for k in det["meta_any"]):

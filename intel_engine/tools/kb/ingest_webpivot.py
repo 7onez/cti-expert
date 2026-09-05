@@ -31,7 +31,7 @@ from knowledge_base import KB  # noqa: E402
 from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  # noqa: E402
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
                            is_noise_social_handle, is_bulk_registrant, is_noise_phone,
-                           is_boilerplate_comment, DOM_SKELETON_MIN_TAGS)
+                           is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS)
 
 # reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
 try:
@@ -41,6 +41,20 @@ try:
 except Exception:
     def _valid_wallet(label, value):   # fail-open if collector not importable
         return True
+# the collectors' registrable-apex reducer: a subdomain and its apex are ONE registration, and the
+# `apex:<registrable>` indicator they share is the rung-1 join that clusters them (see ingest_file)
+try:
+    from wp_common import _registrable  # noqa: E402
+except Exception:
+    def _registrable(host):
+        parts = (host or "").lower().strip(".").split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else (host or "")
+# CLD verdict parser — reuse the collector's one implementation (RULE 4); fail-open to a no-op
+try:
+    from wp_cld import verdict_of as _cld_verdict_of  # noqa: E402
+except Exception:
+    def _cld_verdict_of(_block):
+        return None
 
 # The document/image metadata base-rate filter, reused from the collector so BOTH paths agree on
 # what is a tool and what is an operator. It must be re-applied here and not merely trusted from
@@ -518,6 +532,68 @@ def _ingest_impersonation(kb, d, meta, host, observed, day):
     return n
 
 
+def _ingest_github(kb, d, meta, observed, day):
+    """Ingest a wp_github harvest (meta.kind=='github'). The GitHub account is the subject
+    (`indicator` node `social:github:<login>`); every committer identity harvested from the
+    account's OWN repositories becomes an `email` entity it `commits_as`, so a commit address
+    that later shows up as a WHOIS registrant or an on-page contact joins on the same node.
+
+    Rails: fork-only identities (upstream authors) and bot accounts never enter; a no-reply
+    address is an `indicator` (`github_noreply:<id>+<login>`), not a mailbox; a former login
+    recovered from the no-reply form is an alias edge, graded high — GitHub itself wrote it."""
+    prof = d.get("profile") or {}
+    login = (prof.get("login") or d.get("owner") or "").strip()
+    if not login:
+        return 0
+    ev = kb.save_evidence("webpivot", f"github.com/{login}", d, day)
+    subj = f"social:github:{login}"
+    kb.touch("indicator", subj, observed)
+    kb.add_fact("indicator", subj, "kind", "github_org" if d.get("is_org") else "github_user",
+                "webpivot", COLLECTOR, observed, "high", ev)
+    n = 1
+    for k in ("id", "name", "company", "location", "blog", "created_at", "bio"):
+        if prof.get(k):
+            kb.add_fact("indicator", subj, f"github_{k}", str(prof[k]), "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+    for e in prof.get("emails") or []:
+        em = e.strip().lower()
+        if em and not _is_privacy(em):
+            kb.add_edge("indicator", subj, "shows_email", "email", em, "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+    for s_url in prof.get("socials") or []:
+        kb.add_fact("indicator", subj, "profile_link", s_url, "webpivot", COLLECTOR, observed, "medium", ev)
+        n += 1
+    for m in d.get("public_members") or []:
+        kb.add_edge("indicator", subj, "has_member", "indicator", f"social:github:{m}",
+                    "webpivot", COLLECTOR, observed, "high", ev)
+        n += 1
+    for ident in d.get("identities") or []:
+        if ident.get("kind") == "bot" or not ident.get("own_repo"):
+            continue
+        em = (ident.get("email") or "").strip().lower()
+        if not em:
+            continue
+        conf = "high" if ident.get("logins") else "medium"
+        if ident.get("kind") == "noreply":
+            ind = f"github_noreply:{em.split('@', 1)[0]}"
+            kb.add_edge("indicator", subj, "commits_as", "indicator", ind, "webpivot", COLLECTOR, observed, conf, ev)
+            kb.add_fact("indicator", ind, "kind", "github_noreply", "webpivot", COLLECTOR, observed, conf, ev)
+        else:
+            kb.add_edge("indicator", subj, "commits_as", "email", em, "webpivot", COLLECTOR, observed, conf, ev)
+        n += 1
+        for nm in ident.get("names") or []:
+            kb.add_fact("email" if ident.get("kind") != "noreply" else "indicator",
+                        em if ident.get("kind") != "noreply" else f"github_noreply:{em.split('@', 1)[0]}",
+                        "commit_author_name", nm, "webpivot", COLLECTOR, observed, "medium", ev)
+            n += 1
+    for p in d.get("pivots") or []:
+        if p.get("kind") == "username" and p.get("value"):
+            kb.add_edge("indicator", subj, "alias_of", "indicator", f"social:github:{p['value']}",
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+    return n
+
+
 def ingest_file(kb, path):
     d = json.load(open(path, encoding="utf-8"))
     meta = d.get("meta") or {}
@@ -527,6 +603,9 @@ def ingest_file(kb, path):
     # observed_at: file mtime as ISO (collections don't carry their own timestamp)
     observed = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat()
     day = _day(observed)
+    # GitHub committer harvest → account-shaped ingest (identities join on the email node)
+    if meta.get("kind") == "github":
+        return _ingest_github(kb, d, meta, observed, day)
     # IPPivot result → IP-shaped ingest (co-hosted domains cluster on the ip: indicator)
     if meta.get("kind") == "ip" or _is_ip_host(host):
         return _ingest_ip(kb, d, meta, host, observed, day)
@@ -535,6 +614,20 @@ def ingest_file(kb, path):
     n = 0
 
     kb.touch("domain", host, observed)
+    # Same REGISTRATION: a subdomain and its apex share one registrant by construction, so both carry
+    # the `apex:<registrable>` indicator and cluster together (rung 1). Recorded for every host — on
+    # the apex itself too — so the join exists as soon as either side is collected. A hoster/SaaS
+    # platform apex is skipped by the same shared-infra rule the frontier uses (a tenant of pages.dev
+    # must not fuse with every other tenant).
+    apex = _registrable(host)
+    if apex and "." in apex and apex != host and not is_shared_infra_apex(apex):
+        ind = f"apex:{apex}"
+        kb.add_edge("domain", host, "subdomain_of", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
+        kb.add_fact("indicator", ind, "kind", "registrable_apex", "webpivot", COLLECTOR, observed, "high", ev)
+        n += 1
+    elif apex and apex == host:
+        kb.add_edge("domain", host, "is_apex", "indicator", f"apex:{apex}", "webpivot", COLLECTOR, observed, "high", ev)
+        n += 1
     # URL-path kit FIRST: on a path-routed estate this is the only edge that survives the host
     # rotation, so it must land even if the rest of the page yielded nothing clusterable.
     n += _ingest_paths(kb, d, meta, host, observed, ev)
@@ -548,6 +641,39 @@ def ingest_file(kb, path):
     for tf in art.get("tech_fingerprint") or []:
         kb.add_fact("domain", host, "tech", tf, "webpivot", COLLECTOR, observed, "medium", ev)
         n += 1
+
+    # --- ChongLuaDao reputation (facts only — a verdict clusters nothing) ---
+    # The CLD block rides on the domain pivot's live_results; read it back and record the verdict
+    # with its evidence-consistency flag. A denylist listing is evidence; a bare label on empty
+    # evidence is recorded AS inconsistent so the analyst never adopts it as a finding.
+    for piv in d.get("pivots") or []:
+        if piv.get("kind") != "domain" or piv.get("value") != host:
+            continue
+        cld = (piv.get("live_results") or {}).get("cld")
+        if not isinstance(cld, dict):
+            continue
+        try:
+            v = _cld_verdict_of(cld)
+        except Exception:
+            v = None
+        if v and v.get("verdict"):
+            kb.add_fact("domain", host, "cld_verdict", str(v["verdict"]),
+                        "chongluadao", COLLECTOR, observed, "high" if v.get("has_evidence") else "low", ev)
+            n += 1
+            if v.get("denylisted"):
+                kb.add_fact("domain", host, "cld_denylisted", v.get("checkurl_details") or "listed",
+                            "chongluadao", COLLECTOR, observed, "high", ev)
+                n += 1
+            if v.get("score") is not None:
+                kb.add_fact("domain", host, "cld_reputation_score", str(v["score"]),
+                            "chongluadao", COLLECTOR, observed, "medium", ev)
+                n += 1
+            if not v.get("has_evidence"):
+                kb.add_fact("domain", host, "cld_verdict_note",
+                            "label on empty evidence — not adopted as a finding",
+                            "chongluadao", COLLECTOR, observed, "low", ev)
+                n += 1
+        break
 
     # --- trackers -> indicators ---
     for label, vals in (art.get("trackers") or {}).items():
@@ -961,6 +1087,29 @@ def ingest_file(kb, path):
         # reversed here writes a `registered_by` edge per hit — hundreds of unrelated domains on
         # a shared abuse address. Re-check here, and apply the same base-rate cap as above.
         if kind == "whois:registrant_email" and not is_noise_email(piv.get("value") or ""):
+            # CLD ioc/email returns leak EXPOSURE (data.breaches / data.pastes), never a verdict —
+            # record the exposure as a fact (never an edge); a verified breach is high confidence.
+            _ce = lr.get("cld_email") or {}
+            if isinstance(_ce, dict) and not _ce.get("error"):
+                _cd = _ce.get("data") or {}
+                _breaches = _cd.get("breaches") or []
+                _pastes = _cd.get("pastes") or []
+                _tb = _cd.get("total_breaches") if _cd.get("total_breaches") is not None else len(_breaches)
+                _tp = _cd.get("total_pastes") if _cd.get("total_pastes") is not None else len(_pastes)
+                _ekey = (piv.get("value") or "").lower()
+                if _breaches or _pastes:
+                    _names = ", ".join(str(b.get("name") or b.get("domain") or "breach")
+                                       for b in _breaches[:6] if isinstance(b, dict))
+                    _val = (f"{_names} ({_tb} breach(es), {_tp} paste(s))" if _names
+                            else f"{_tb} breach(es), {_tp} paste(s)")
+                    _conf = "high" if any(isinstance(b, dict) and b.get("is_verified") for b in _breaches) else "medium"
+                else:
+                    # CLD asked and found no exposure — a low-confidence fact keeps "asked, clean"
+                    # distinct from "never asked" (the distinction wp_exhaust defends)
+                    _val, _conf = "none (0 breach(es), 0 paste(s))", "low"
+                kb.add_fact("email", _ekey, "cld_email_exposure", _val,
+                            "chongluadao", COLLECTOR, observed, _conf, ev)
+                n += 1
             for stk in ("reverse_whois_current", "reverse_whois_historic"):
                 blk = lr.get(stk) or {}
                 # A registrant CONTACT gets the tighter bulk-registrant bound, not the artifact

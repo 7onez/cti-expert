@@ -65,7 +65,9 @@ def fofa_search(query: str, size: int = 100,
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.load(r)
     except Exception as e:
-        return {"query": query, "error": str(e)}
+        # the key/email ride in the query string; never let them survive into a persisted error field
+        msg = re.sub(r"([?&](key|email)=)[^&\s]+", r"\1***", str(e))
+        return {"query": query, "error": msg}
     if data.get("error"):
         if api_usage:
             api_usage.record("fofa", "search", credits=0, query=query, ok=False)

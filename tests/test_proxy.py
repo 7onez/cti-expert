@@ -161,6 +161,8 @@ class _FakeSubOpener:
             raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
         if outcome == "http407":
             raise urllib.error.HTTPError(url, 407, "Proxy Auth Required", {}, None)
+        if outcome == "tunnel":       # exit is up but refuses the CONNECT to this destination
+            raise urllib.error.URLError("Tunnel connection failed: 500 Internal Server Error")
         raise urllib.error.URLError("connection refused")
 
 
@@ -201,6 +203,35 @@ def test_failover():
     fo3 = _opener(pool, 0, False, [], {"http://a:1": "http407"})
     _, used3 = fo3.open("http://target.example/")
     check("407 proxy-auth rotates to the next proxy", used3 == "http://b:1")
+
+
+
+def test_vendor_direct_fallback():
+    print("\n[4c] per-destination tunnel refusal → direct for a vendor host only")
+    pool = ["http://a:1", "http://b:1"]
+    # every exit refuses the CONNECT to a VENDOR API host → go direct (None), no quarantine
+    cp._write_health({})
+    fo = _opener(pool, 0, False, [], {"http://a:1": "tunnel", "http://b:1": "tunnel"})
+    _, used = fo.open("https://fofa.info/api/v1/search/all?x=1")
+    check("vendor host falls back to a direct request", used is None)
+    check("a tunnel-refused exit is NOT quarantined (destination block, not a dead exit)",
+          cp._proxy_key("http://a:1") not in cp._read_health()
+          and cp._proxy_key("http://b:1") not in cp._read_health())
+    # the SAME refusal against a non-vendor TARGET must never go direct (no-leak default holds)
+    cp._write_health({})
+    fo2 = _opener(pool, 0, False, [], {"http://a:1": "tunnel", "http://b:1": "tunnel"})
+    leaked = False
+    try:
+        fo2.open("https://target.example/")
+    except urllib.error.URLError:
+        leaked = False
+    else:
+        leaked = True
+    check("a target is never given the vendor direct fallback", not leaked)
+    check("is_vendor_host matches a subdomain of a vendor apex",
+          cp.is_vendor_host("whois-history.whoisxmlapi.com") and not cp.is_vendor_host("target.example"))
+    cp._write_health({})
+    _clear_env()
 
 
 # ── 4b. proxy health persists across opener instances (fresh-process case) ───
@@ -409,7 +440,7 @@ def test_live_proxy_roundtrip():
 def main():
     print("cti_proxy — normalization, precedence, rotation, failover, no-leak, live")
     for fn in (test_normalize, test_precedence, test_rotation, test_failover,
-               test_health_persistence, test_no_leak_and_bypass, test_disabled_inert,
+               test_vendor_direct_fallback, test_health_persistence, test_no_leak_and_bypass, test_disabled_inert,
                test_socks_failclosed, test_live_proxy_roundtrip):
         fn()
     try:

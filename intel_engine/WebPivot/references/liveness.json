@@ -1,6 +1,5 @@
 {
   "_comment": "LIVENESS CLASSIFICATION — what it means for a host to be 'live', decided by READING THE PAGE, never by the HTTP status code alone. The status code answers 'did the server reply', which is a different question from 'is this domain serving the operator's content'. Four failure modes motivate every list below, and each one silently corrupts a case: (1) a parking page, a server default page and a hosting 'account suspended' notice all return HTTP 200, so a status-only check calls them LIVE and the analyst collects pivots off a template shared by millions of unrelated domains; (2) a 404 or 403 returns non-200, so a status-only check calls the DOMAIN dead when only that PATH is gone — the host is registered, resolving and can be re-pointed tomorrow; (3) a Cloudflare interstitial is a bot wall, not a verdict about the target at all, and must classify as UNKNOWN, never dead; (4) an operator parks a domain between campaigns, so 'parked' is the single most REUSABLE state there is and belongs on a watchlist rather than in the discard pile. Every state whose `reuse_watch` is true means: this name is still under the operator's control and can be flipped to live content later — keep collecting it. ADD a marker when you see a template misclassified; the risky direction is REMOVING one, because that turns a boilerplate page back into a 'live' site and manufactures pivots off shared infrastructure.",
-
   "parking_markers": {
     "_comment": "Lowercased substrings found in the BODY or TITLE of a domain-parking / for-sale / registrar-holding page. These pages return HTTP 200 with a full HTML document, which is exactly why a status-code check cannot see them. A parked domain is REGISTERED, RESOLVING and under someone's control — it is a lead, not a dead end, so this state sets reuse_watch. Matched case-insensitively as a plain substring against the first `marker_scan_chars` of the decoded body.",
     "values": [
@@ -38,7 +37,6 @@
       "website coming soon"
     ]
   },
-
   "parking_nameservers": {
     "_comment": "Nameserver hostname SUFFIXES that belong to domain-parking / monetisation / for-sale platforms. Independent corroboration of the body markers: an operator who parks a name usually delegates it to one of these, and the NS survives even when the parking HTML fails to fetch. Matched as a case-insensitive suffix against each nameserver, trailing dot stripped. NOTE these are PARKING nameservers, not managed-DNS providers — a shared Cloudflare/Route53 NS is ordinary hosting and is handled by the registrant/DNS noise filters, not here.",
     "values": [
@@ -65,7 +63,6 @@
       "registrar-servers.com"
     ]
   },
-
   "soft_404_markers": {
     "_comment": "Lowercased substrings of a NOT-FOUND page that the server returns with HTTP 200 — the 'soft 404'. This is the mirror image of the parking problem: the status says success, the content says the resource is gone. It matters for the URL-PATH layer especially, where a campaign kit directory is removed but the host keeps answering 200 for every path. A soft 404 means the HOST is alive and the PATH is dead, so reuse_watch is set: the operator can restore the kit at the same URL.",
     "values": [
@@ -86,7 +83,6 @@
       "we can't find the page"
     ]
   },
-
   "suspended_markers": {
     "_comment": "Lowercased substrings of a HOSTING-SIDE takedown or expiry notice. Distinct from parked (the registrar/owner is monetising) and from not-found (the path is gone): here the provider has switched the account off, usually after an abuse report or non-payment. Highly relevant to fraud casework — it dates a takedown, and the operator commonly rebuilds on a new provider within days while KEEPING the domain, so reuse_watch is set.",
     "values": [
@@ -112,7 +108,6 @@
       "domain seizure"
     ]
   },
-
   "default_page_markers": {
     "_comment": "Lowercased substrings of a WEB-SERVER DEFAULT page — the stock document a freshly-provisioned nginx/Apache/IIS/Node host serves before any content is deployed. Returns HTTP 200, so a status-only check calls it live. For fraud infrastructure this is one of the most valuable states in the whole vocabulary: it means a server EXISTS and is reachable but the kit has not been uploaded yet, i.e. you are looking at infrastructure ahead of the campaign. reuse_watch is set and should be read as 'check this again soon'.",
     "values": [
@@ -137,7 +132,6 @@
       "this is a placeholder"
     ]
   },
-
   "blocked_markers": {
     "_comment": "Lowercased substrings of a BOT WALL or WAF interstitial. CRITICAL SEMANTICS: a hit here is NOT a verdict about the target — it means the collection FAILED and the page behind it was never seen. It must classify as `blocked` with live=null (unknown), never as dead and never as live. This is the same discipline as the keyless-capability disclosure: a search we were not allowed to run is absence of RECORD, not evidence of absence. Re-collect with --solve-cf, a rendered browser or a residential proxy before drawing any conclusion.",
     "values": [
@@ -160,50 +154,104 @@
       "ray id"
     ]
   },
-
   "thresholds": {
-    "_comment": "Numeric knobs for the content read. `body_read_bytes` bounds how much of the response is downloaded (a liveness check must never pull a whole video). `marker_scan_chars` bounds how far into the decoded body the substring lists are scanned — markers live near the top of a template. `thin_body_chars` is the raw HTML size at or below which a 200 response is treated as content-free rather than live. `min_text_chars` is the visible-text length (tags/script/style stripped) at or below which a 200 response classifies as `empty`: a redirector or a JS-only stub has plenty of HTML but says nothing, and collecting pivots from it produces framework noise. `http_timeout` is the per-request timeout in seconds.",
+    "_comment": "Numeric knobs for the content read. `body_read_bytes` bounds how much of the response is downloaded (a liveness check must never pull a whole video). `marker_scan_chars` bounds how far into the decoded body the substring lists are scanned — markers live near the top of a template. `thin_body_chars` is the raw HTML size at or below which a 200 response is treated as content-free rather than live. `min_text_chars` is the visible-text length (tags/script/style stripped) at or below which a 200 response classifies as `empty`: a redirector or a JS-only stub has plenty of HTML but says nothing, and collecting pivots from it produces framework noise. `http_timeout` is the per-request timeout in seconds. `widget_page_text_chars` is the visible-text length ABOVE which a bot-wall marker is read as a widget on a real page (a reCAPTCHA badge on a login form, a Ray-ID in a footer) rather than an interstitial: a WAF wall carries a sentence or two, never thousands of characters of product copy.",
     "body_read_bytes": 200000,
     "marker_scan_chars": 60000,
     "thin_body_chars": 512,
     "min_text_chars": 64,
-    "http_timeout": 15
+    "http_timeout": 15,
+    "widget_page_text_chars": 1500
   },
-
   "states": {
     "_comment": "THE VERDICT VOCABULARY. One entry per state the classifier can return. `live` is the tri-state answer to 'is this serving the operator's content': true / false / null where null means WE DO NOT KNOW and must say so. `reuse_watch` true means the name is still under someone's control and can be re-pointed to live content later — those hosts belong on a re-check list, not in the discard pile, which is the whole reason a parked domain is worth recording. `dead` true is reserved for states that genuinely evidence the name is gone; note that NO state derived from an HTTP status code alone sets it — only DNS non-resolution does. `note` is what an analyst should do about it.",
     "entries": {
-      "live": {"live": true, "reuse_watch": false, "dead": false,
-               "note": "Serves real content. Collect pivots normally."},
-      "parked": {"live": false, "reuse_watch": true, "dead": false,
-                 "note": "Registrar/monetisation holding page. REGISTERED AND CONTROLLED — re-check later; do NOT cluster on the parking template's favicon, analytics or DOM, which are shared by millions of unrelated domains."},
-      "default_page": {"live": false, "reuse_watch": true, "dead": false,
-                       "note": "Web-server stock page: the host exists, the kit is not deployed yet. Infrastructure ahead of the campaign — re-check soon and pivot on the IP/ASN/TLS rather than the page."},
-      "suspended": {"live": false, "reuse_watch": true, "dead": false,
-                    "note": "Provider-side suspension or expiry notice. Dates a takedown; the operator usually keeps the domain and rebuilds elsewhere — re-check and pivot on the registrant."},
-      "soft_404": {"live": false, "reuse_watch": true, "dead": false,
-                   "note": "HTTP 200 but the body says not-found. The HOST is alive and the PATH is gone; the kit can be restored at the same URL."},
-      "not_found": {"live": false, "reuse_watch": true, "dead": false,
-                    "note": "Hard 404/410 for this path. NOT a dead domain — the server answered. Try the bare root and the Wayback/urlscan path history."},
-      "forbidden": {"live": null, "reuse_watch": true, "dead": false,
-                    "note": "401/403. The server is up and refusing US; content unknown. Often an operator's allowlist, a geo-fence or a cloaking rule — try the click-keyed view (--cloak-probe) and a different egress before concluding anything."},
-      "blocked": {"live": null, "reuse_watch": true, "dead": false,
-                  "note": "Bot wall / WAF interstitial. THE PAGE WAS NEVER SEEN. Absence of record, not evidence of absence — re-collect with --solve-cf, --render or a residential proxy."},
-      "empty": {"live": null, "reuse_watch": true, "dead": false,
-                "note": "200 with no meaningful text (JS-only stub, redirector, blank). May be a client-side-rendered kit — re-collect with --render before judging."},
-      "redirected_offsite": {"live": false, "reuse_watch": true, "dead": false,
-                             "note": "Redirects to a DIFFERENT registrable domain. The destination is the lead; this name is a doorway the operator still controls."},
-      "server_error": {"live": null, "reuse_watch": true, "dead": false,
-                       "note": "5xx. The host answered, the application is broken. Transient — re-check before recording anything."},
-      "no_http": {"live": null, "reuse_watch": true, "dead": false,
-                  "note": "DNS resolves but no HTTP/HTTPS response (connection refused / timeout / TLS failure). The name is registered and pointed somewhere — this is NOT a dead domain."},
-      "unresolved": {"live": false, "reuse_watch": false, "dead": true,
-                     "note": "NXDOMAIN — no DNS. The only state that evidences the name is genuinely gone. Even here, check WHOIS: an unexpired domain with no DNS is dormant, not dead, and can be re-pointed."},
-      "unknown": {"live": null, "reuse_watch": true, "dead": false,
-                  "note": "The check could not reach a conclusion. Report it as unknown; never round it to dead."}
+      "live": {
+        "live": true,
+        "reuse_watch": false,
+        "dead": false,
+        "note": "Serves real content. Collect pivots normally."
+      },
+      "parked": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Registrar/monetisation holding page. REGISTERED AND CONTROLLED — re-check later; do NOT cluster on the parking template's favicon, analytics or DOM, which are shared by millions of unrelated domains."
+      },
+      "default_page": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Web-server stock page: the host exists, the kit is not deployed yet. Infrastructure ahead of the campaign — re-check soon and pivot on the IP/ASN/TLS rather than the page."
+      },
+      "suspended": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Provider-side suspension or expiry notice. Dates a takedown; the operator usually keeps the domain and rebuilds elsewhere — re-check and pivot on the registrant."
+      },
+      "soft_404": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "HTTP 200 but the body says not-found. The HOST is alive and the PATH is gone; the kit can be restored at the same URL."
+      },
+      "not_found": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Hard 404/410 for this path. NOT a dead domain — the server answered. Try the bare root and the Wayback/urlscan path history."
+      },
+      "forbidden": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "401/403. The server is up and refusing US; content unknown. Often an operator's allowlist, a geo-fence or a cloaking rule — try the click-keyed view (--cloak-probe) and a different egress before concluding anything."
+      },
+      "blocked": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Bot wall / WAF interstitial. THE PAGE WAS NEVER SEEN. Absence of record, not evidence of absence — re-collect with --solve-cf, --render or a residential proxy."
+      },
+      "empty": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "200 with no meaningful text (JS-only stub, redirector, blank). May be a client-side-rendered kit — re-collect with --render before judging."
+      },
+      "redirected_offsite": {
+        "live": false,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "Redirects to a DIFFERENT registrable domain. The destination is the lead; this name is a doorway the operator still controls."
+      },
+      "server_error": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "5xx. The host answered, the application is broken. Transient — re-check before recording anything."
+      },
+      "no_http": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "DNS resolves but no HTTP/HTTPS response (connection refused / timeout / TLS failure). The name is registered and pointed somewhere — this is NOT a dead domain."
+      },
+      "unresolved": {
+        "live": false,
+        "reuse_watch": false,
+        "dead": true,
+        "note": "NXDOMAIN — no DNS. The only state that evidences the name is genuinely gone. Even here, check WHOIS: an unexpired domain with no DNS is dormant, not dead, and can be re-pointed."
+      },
+      "unknown": {
+        "live": null,
+        "reuse_watch": true,
+        "dead": false,
+        "note": "The check could not reach a conclusion. Report it as unknown; never round it to dead."
+      }
     }
   },
-
   "policy": {
     "_comment": "The guardrail proper — the rules the classifier enforces so a verdict cannot be produced from thin evidence. `require_content_for_live`: a `live` verdict requires that a response BODY was actually read and passed the marker/thin-content tests; a 200 with no body read can never be reported as live. `never_dead_from_status`: no HTTP status code, on its own, may produce a dead verdict — only DNS non-resolution does, which is what stops a 404 or a 403 from deleting a live domain from a case. `never_dead_when_blocked`: a bot-wall hit forces live=null. `confident` is false whenever the verdict rests on fewer than `min_signals` independent signals (status, content markers, visible-text volume, DNS, nameservers), so a downstream report can hedge instead of asserting.",
     "require_content_for_live": true,

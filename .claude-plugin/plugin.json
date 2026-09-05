@@ -1,7 +1,7 @@
 {
   "name": "cti-expert",
   "description": "Cyber threat intelligence and OSINT toolkit — structured investigations with sourced, trust-scored findings. Bundles the skill, the /cti command set, the typed intel MCP surface, and the RULE 1 / outbound-action safety hooks as one installable unit.",
-  "version": "2.11.0",
+  "version": "2.12.0",
   "author": {
     "name": "Hieu Ngo",
     "url": "https://github.com/7onez/cti-expert"

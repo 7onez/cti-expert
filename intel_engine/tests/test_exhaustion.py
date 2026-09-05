@@ -99,6 +99,17 @@ def check():
         _result(pivots=[{"kind": "doc_software", "value": "Generic Tool"}]))["ran"],
        "the document-metadata layer is detected from the pivot kinds it emits")
 
+    # --- 3b. WHOIS detect is source-agnostic; the ChongLuaDao layer + compound tokens ---------
+    ok("whois" in X.assess(_result(artifacts={"whois": {"registrar": "iNET", "source": "chongluadao"}}))["ran"],
+       "WHOIS counts as run whenever the whois artifact is present, regardless of source "
+       "(whoisxml / rdap / chongluadao) — the rule can't drift as new WHOIS sources are added")
+    ok("whois" not in X.assess(_result())["ran"],
+       "a domain with no whois artifact is not counted as a WHOIS run")
+    ok("cld" in X.assess(_result(sources=["whoisxml+chongluadao"]))["ran"],
+       "the ChongLuaDao layer is detected inside a '+'-joined provenance token")
+    ok("cld" not in X.assess(_result(sources=["whoisxml"]))["ran"],
+       "a case with no ChongLuaDao source does not count the CLD layer as run")
+
     # --- 4. scope: never invent a gap that cannot apply --------------------------------------
     ip_gaps = {g["layer"] for g in X.assess(_result(host="198.51.100.7"))["gaps"]}
     ok("docmeta" not in ip_gaps and "advertising" not in ip_gaps,
@@ -121,7 +132,8 @@ def check():
     full = _result(sources=["crtsh", "whoisxml", "urlscan", "fofa", "pdns", "pssl",
                             "censys", "intelx"],
                    meta={"archived_via_wayback": True, "url_path": "/x/",
-                         "capture": {"capture_sha256": "abc"}})
+                         "capture": {"capture_sha256": "abc"}},
+                   artifacts={"whois": {"registrar": "Example Registrar"}})
     fa = X.assess(full)
     ok(fa["verdict"] == "exhausted" and not fa["missing_required"],
        "with every required layer run, the seed is reported as exhausted")

@@ -183,6 +183,8 @@ DISPATCH = {
     # ── authentication surface (Engage) ─────────────────────────────────
     # Detection is passive and free. en_engage/en_harvest create and drive a SYNTHETIC-persona
     # account: that is OUTBOUND, attributable and irreversible, and gated in the tool itself.
+    "github":        ("WebPivot/tools/wp_github.py",  []),   # committer identities: user/org/repo/commit
+    "subenum":       ("WebPivot/tools/wp_subenum.py", []),   # subdomains via subfinder/amass/assetfinder/findomain
     "login-detect":  ("Engage/tools/en_forms.py",     []),   # find the login/registration form
     "persona":       ("Engage/tools/en_persona.py",   []),   # mint a synthetic research persona
     "engage":        ("Engage/tools/en_engage.py",    []),   # GATED — register / log in
@@ -265,6 +267,8 @@ BLURB = {
     "misp-export": "build a MISP event from the case (local only, no network)",
     "misp": "MISP: keycheck/budget/search/push (stage) /publish (IRREVERSIBLE)",
     "binary": "BinaryPivot: static IOC extraction from APK/exe/zip",
+    "subenum":      "subdomain enumeration for an apex via installed subfinder/amass/assetfinder/findomain (subfinder auto-keyed from .env; --sync-only to just sync keys) → cases/<id>/subenum/<apex>.json; the frontier collects the live ones next round",
+    "github":       "GitHub committer-identity harvest — user/org/repo/commit URL → .patch From: e-mails, profile + top-contributor selectors (free; GITHUB_TOKEN raises the rate limit)",
     "login-detect": "find the login / registration form (passive, free)",
     "persona": "mint a SYNTHETIC research persona (never a real identity)",
     "engage": "GATED: register / log in on a synthetic persona (outbound)",

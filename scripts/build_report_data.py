@@ -188,6 +188,32 @@ def _recommendations(case_dir):
     return [r for r in out if r]
 
 
+_PRIVACY_FALLBACK = re.compile(
+    r"^(abuse|hostmaster|postmaster|noc|support|whois|privacy|proxy|redacted|registration"
+    r"[\s_-]*private|redacted\s+for\s+privacy|not\s+disclosed|data\s+protected|n/?a)\b"
+    r"|privatewhois|whoisguard|domainsbyproxy|withheldforprivacy|contactprivacy|privacyprotect",
+    re.I,
+)
+
+
+def _privacy_checker(case_dir):
+    """The engine's registrant privacy/role detector (whois_enrich.is_privacy) — the same test the
+    ingest and frontier apply, so the report cannot promote a registrar abuse address or a
+    privacy-proxy placeholder to the operator's identity when those layers already discard it.
+    Falls back to a conservative pattern when the case dir is not inside an engine tree."""
+    engine = os.path.normpath(os.path.join(os.path.abspath(case_dir), "..", ".."))
+    wp_tools = os.path.join(engine, "WebPivot", "tools")
+    if os.path.isfile(os.path.join(wp_tools, "whois_enrich.py")):
+        if wp_tools not in sys.path:
+            sys.path.insert(0, wp_tools)
+        try:
+            from whois_enrich import is_privacy  # noqa: E402
+            return is_privacy
+        except Exception:
+            pass
+    return lambda v: (not v) or bool(_PRIVACY_FALLBACK.search(str(v).strip()))
+
+
 def build(case_dir, kb_dir, classification=None):
     case_id = os.path.basename(os.path.abspath(case_dir).rstrip("/"))
     raws = dict(_iter_raw(case_dir))
@@ -199,8 +225,13 @@ def build(case_dir, kb_dir, classification=None):
     estate = sorted({d.lower() for d in (op_rec or {}).get("domains") or []} | set(hosts))
     op_name, op_email = _parse_operator((op_rec or {}).get("operator", ""))
 
-    # registrant triple — sidecar whois of the seed wins
+    # registrant triple — sidecar whois of the seed wins, but a privacy-proxy / registrar-role
+    # value (abuse@<registrar>, "REDACTED FOR PRIVACY", …) is not an identity: drop it so the
+    # operator ledger or "Unattributed operator" takes over instead of a false rung-1 claim.
+    is_privacy = _privacy_checker(case_dir)
     reg = _whois_of(case_dir, seed, raws.get(seed, {})) if seed in raws else {}
+    reg = {k: (None if is_privacy(v) else v) for k, v in reg.items()
+           if k in ("registrant_name", "registrant_email", "registrant_phone")}
     reg_name = reg.get("registrant_name") or op_name or None
     reg_email = reg.get("registrant_email") or op_email or None
     reg_phone = reg.get("registrant_phone") or None
@@ -275,8 +306,13 @@ def build(case_dir, kb_dir, classification=None):
                       + (f"; registrar {registrar}" if registrar else "") + "."),
         })
         if operator_exists:
+            # a host the confirmed-operator ledger lists is a confirmed member; a collected host the
+            # ledger does not (yet) hold is a candidate — the STIX/graph edge must say which.
+            ledger_domains = {d.lower() for d in (op_rec or {}).get("domains") or []}
+            in_ledger = (not op_rec) or h.lower() in ledger_domains or h == seed
             connections.append({"id": f"CON-{len(connections)+1:03d}", "from_id": "SUB-001",
-                                "to_id": sid, "relationship": "operates", "strength": "confirmed"})
+                                "to_id": sid, "relationship": "operates",
+                                "strength": "confirmed" if in_ledger else "probable"})
         if created:
             timeline.append({"date": created, "event": f"{h} registered"
                              + (f" through {registrar}" if registrar else "")})
@@ -299,12 +335,22 @@ def build(case_dir, kb_dir, classification=None):
                          "collected_at": (op_rec or {}).get("added") or _today(),
                          "confidence": int(conf), "tags": tags})
 
-    if reg_email:
+    if reg_email and reg.get("registrant_email"):
+        # the seed's CURRENT WHOIS carries the identity — the registrant-triple claim is earned
         add_finding("FND-001", "SUB-001", "identity", "HIGH",
                     (f"The registrant identity ({', '.join(x for x in [reg_name, reg_email, reg_phone] if x)}) "
                      f"recurs across {len(estate)} current domain(s). The analyst assesses this "
                      "owner-controlled triple as decisive same-operator evidence."),
                     None, 95, ["attribution", "whois", "registrant-triple", "rung-1"])
+    elif reg_email:
+        # identity comes from the confirmed-operator ledger, not from a current registrant record —
+        # say so; the current WHOIS may be privacy-masked and the e-mail a contact, not a registrant
+        add_finding("FND-001", "SUB-001", "identity", "HIGH",
+                    (f"Operator identity {reg_name or reg_email} ({reg_email}) per the confirmed-operator "
+                     f"ledger, covering {len(estate)} domain(s). The current registrant record of the seed "
+                     "does not itself carry this identity (privacy-masked or name-only); the basis is the "
+                     "ledger entry's cited artifacts."),
+                    None, 90, ["attribution", "ledger", "identity"])
     if seed in raws:
         add_finding("FND-002", sub_by_host.get(seed, "SUB-002"), "infrastructure", "HIGH",
                     (f"{seed} was collected live" + (
@@ -323,12 +369,18 @@ def build(case_dir, kb_dir, classification=None):
 
     # ---- §2.5 false-positive control finding + ioc_exclude -------------------
     exclude |= registrars | nameservers
+    # On a benign_check intake the operator is a legitimate party under review: their e-mail/phone/
+    # handle are identity EVIDENCE for the narrative, not detection indicators — a STIX/CSV consumer
+    # would block a real business's contact address. Keep them in the subjects, out of the IOC feed.
+    scope = _load_json(os.path.join(case_dir, "scope.json")) or {}
+    if (scope.get("target_class") or "") == "benign_check":
+        exclude |= {v for v in (reg_email, reg_phone, op_username, reg_name, op_name) if v}
     fp_bits = []
     if registrars:
         fp_bits.append("registrar " + "/".join(sorted(registrars)))
     if nameservers:
         fp_bits.append(f"{len(nameservers)} shared nameserver(s)")
-    ip_excl = sorted(x for x in exclude if re.match(r"^\d", x))
+    ip_excl = sorted(x for x in exclude if re.match(r"^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]+:[0-9a-f:]*$", x))
     if ip_excl:
         fp_bits.append("shared/CDN origins " + ", ".join(ip_excl))
     if fp_bits:

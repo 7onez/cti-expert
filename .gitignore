@@ -63,3 +63,7 @@ scripts/proxy/.proxy-health
 # guard: KB/case stores must live under intel_engine/, never the repo root (RULE 2)
 /knowledge/
 /cases/
+.subfinder-provider-config.yaml
+
+# Runtime report drops (real case PDFs/DOCX) — private, never tracked (RULE 2 / synthetic-only).
+.orca/

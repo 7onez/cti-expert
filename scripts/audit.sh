@@ -49,7 +49,7 @@ for o, s in miss:
 sys.exit(1 if miss else 0)
 PY
 
-echo "== 3. each of the 5 collectors is ONE canonical + ONE shim (RULE 4) =="
+echo "== 3. each of the 7 collectors is ONE canonical + ONE shim (RULE 4) =="
 # Checked as a PAIR, not as a fixed list of which-side-is-the-shim: whichever layer holds the
 # canonical is an implementation detail that legitimately changes (pivot_extract's facade has to
 # sit beside the wp_* siblings it imports by bare name, so its shim is the scripts/ copy, while
@@ -57,7 +57,7 @@ echo "== 3. each of the 5 collectors is ONE canonical + ONE shim (RULE 4) =="
 # real implementation and one re-export. Two copies is the drift RULE 4 exists to stop; two shims
 # means the import chain has no implementation at all. Pinning the direction instead of the
 # invariant makes this check fail on a correct refactor and stay silent on a real regression.
-for name in pivot_extract cdn_ranges graph_build wayback_ga whois_enrich; do
+for name in pivot_extract cdn_ranges graph_build wayback_ga whois_enrich wp_github wp_subenum; do
   a="intel_engine/WebPivot/tools/$name.py"; b="scripts/webpivot/$name.py"
   if [ ! -f "$a" ] || [ ! -f "$b" ]; then bad "$name: expected a copy in BOTH layers"; continue; fi
   n_shim=0; canon=""
@@ -103,6 +103,10 @@ echo "== 6. zero-dep test runners =="
 # Tests stub vendor HTTP but the clients still ledger the (mocked) call; that must never land in the
 # real MEMORY/api_usage.jsonl — it inflates the Censys/urlscan monthly budgets with phantom credits.
 export API_USAGE_LOG="$(mktemp)"   # bare mktemp: portable (BSD/macOS reject a non-X suffix)
+# Pin the per-call ceiling LOW for the offline gate: a §6 test that accidentally makes a real
+# (sandbox-unreachable) call must fail fast, never wait the 30-min production default. Tests that
+# assert the default read it from references/timeouts.json with the env cleared in their own scope.
+export CTI_CALL_TIMEOUT=10
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py \
          tests/test_email_permute.py tests/test_hooks.py \
@@ -115,7 +119,11 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_pipeline_step_timeout.py tests/test_key_alias_registry.py \
          tests/test_house_report_compose.py tests/test_docx_timeline_chart.py \
          tests/test_deep_archive.py tests/test_house_report_mo_neighbours.py \
-         tests/test_intelx_autofire.py tests/test_shodan_search.py; do
+         tests/test_intelx_autofire.py tests/test_shodan_search.py \
+         tests/test_build_report_data_privacy.py tests/test_archive_recovery_hygiene.py \
+         tests/test_ioc_exclusion_gate.py tests/test_subdomain_frontier.py \
+         tests/test_proxy.py tests/test_github_harvest.py tests/test_cld_reputation.py \
+         tests/test_call_timeout.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
   # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
   # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.

@@ -81,7 +81,8 @@
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_Investigation_Platform-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 <p>
-  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS_Certs_%26_Favicon_Graph-1F7A5A?style=for-the-badge" alt="Validin"></a>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS_Certs_%26_Favicon_Graph-1F7A5A?style=for-the-badge" alt="Validin"></a>&nbsp;
+  <a href="https://netlas.io"><img src="https://img.shields.io/badge/Netlas-DNS_Scan_%26_WHOIS_Index-1D4ED8?style=for-the-badge" alt="Netlas"></a>
 </p>
 
 </div>
@@ -101,7 +102,8 @@
 | [**SerpApi**](https://serpapi.com) | Search-engine + Google Ads Transparency results API — who *paid* to send traffic, plus multi-engine dork results | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Open cloud-bucket &amp; exposed-file search (S3/Azure/GCS/Spaces) — graded **exposure**, not a same-operator pivot | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | OSINT investigation platform — 1000+ methods across social media, blockchain and the dark web (SL Professional / Crimewall, Maltego transforms) | OSINT methodology &amp; data |
-| [**Validin**](https://validin.com) | DNS + certificates + favicon + response-body hashes in one graph — passive DNS, subdomain enumeration, reverse-IP and host-response hash pivots on a free community key | Ready-to-run query strings across `/webpivot` pivots today; native API wiring in progress |
+| [**Validin**](https://validin.com) | DNS + certificates + favicon + response-body hashes in one graph — passive DNS, subdomain enumeration, reverse-IP and host-response hash pivots on a free community key | Native in `/webpivot` (domain lookup, reputation, cert &amp; favicon hosts) · MO-neighbour source · `/cti-pivot` |
+| [**Netlas**](https://netlas.io) | Independent internet-asset index — DNS, scan responses, WHOIS and certificate collections behind one key; `domains a:<origin-ip>` reverses a non-CDN origin to every apex with dates | `/webpivot` MO-neighbour source · `intel.py netlas` · entitlement probe |
 
 > [!IMPORTANT]
 > **ANY.RUN lookups are read-only; detonation is gated.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. `anyrun_submit` can detonate a file or URL, but only behind a per-submission analyst confirmation (a briefing-then-`confirm=true` two-step), private-by-default privacy with `public` refused, a fail-closed plan check (the account's own `/user` private quota — zero is denied outright — else a prior private task, else an explicit analyst attestation to a paid plan), a post-submit privacy read-back that withdraws and flags a task that still landed public, and a harness deny unless `HARNESS_ALLOW_SUBMIT=1`. A public sandbox task is world-readable and irreversible; the gate is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.
@@ -182,6 +184,20 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 ---
 
 <br>
+
+## What's New in v2.12
+
+> **The release where the premium keys start pulling their weight — and the report writes itself.** v2.11 shipped detectors. v2.12 turns an eight-finding audit of the paid vendors into behaviour (every metered leg gated, bought **once per case** instead of once per host), adds **Netlas** as an independent index, makes the editorial PDF/DOCX a **deterministic composition** from the case directory, and closes the last honesty gap in the ANY.RUN docs: detonation exists, and it is gated five ways.
+
+| Category | What's New | Details |
+|----------|-----------|---------|
+| **MO-neighbour pivot** | Reverse a non-CDN origin to its co-tenants — and only ever seed on a registrant join key | `wp_mo_neighbours.discover` reverses the estate's non-CDN origin IP (also the MX origin) through **Netlas · Validin · urlscan**, WHOIS-verifies each candidate apex, and classifies it `same_registrant` (current registrant e-mail/phone join key only — a proxied record contributes **no** phone) / `same_mo` (reference-data policy) / `unrelated` / `unverifiable`. **Only `same_registrant` seeds the frontier**; same-MO personas render as a rung-10 *Related personas* table in the report (`--mask-personas` to aggregate). A bulk-hosting guard fires *before* any spend; per-origin lock + disk cache + a per-run WhoisXML ledger hold across collector subprocesses, so an origin is bought once per case. RULE 5 rails intact: facts-only KB ingest, never an edge, never an `operator_lead` |
+| **WHOIS eras · urlscan Pro lifecycle** | The timeline now knows who held the name *before* this operator | WHOIS history is an explicit `--whois-history purchase` scoped to seeds and cluster members (the render path never buys it); the house report renders a **Registrant eras** table (same-day flaps folded, registrar placeholders classed) and uses the current era's start as the archive-capture cutoff. urlscan **Pro** supplies the hostname lifecycle index — A/NS eras, CT and zonefile firsts, left-censored on a truncated walk — feeding the temporal view; verdict rows appear only on signal, and the API key is sent to urlscan.io only |
+| **Entitlement measured, not assumed** | A key measured *free* skips the calls that would 403 | `wp_capabilities.discover_plans` probes each vendor's **free account endpoint** (urlscan quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`, Validin `/api/paths`) once per case into `cases/<id>/capability_plans.json`; `enrich_live` reads the store and gates **only on a positive `free`** verdict — unknown keeps the productive call as the probe. Censys search records its own verdict. A failed probe is reported this run and never frozen, so the next process re-measures |
+| **Netlas + the rest of the vendor wiring** | Every registered key now has a pivot behind it | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py) — Bearer client over the `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` collections (search, count, facet, reverse-IP, plan), keyless query builder + web-UI links, ledgered, Cloudflare-safe UA; `intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`. Live-measured: `domains a:<origin>` returned **32 apexes** on a 32-domain estate (15 members + same-MO siblings under other personas). Alongside: **SecurityTrails** DNS-history eras + DSL reverse-WHOIS (diffed against WhoisXML), **DNSLytics** reverse-IP under its own co-tenancy-routed key, **GrayHatWarfare** exposure lead + report section, **Shodan** cert/JARM search, once-per-case **Censys** cert search with a shared-cert fan-out guard, **IntelX** auto-fire in `pipeline open` (loop: `--full` only; role mailboxes excluded), and **Validin** wired natively (domain lookup, reputation, cert and favicon hosts). Frontier ranks owner-link candidates above lookalikes |
+| **The house report, composed deterministically** | The editorial PDF/DOCX no longer needs a model to write it | `intel.py house-report <CASE-ID>` composes the IntelReport document from the case dir: sections I–XI, both confidence scales + the **ICD-203 × Admiralty scatter**, relationship graph + **entity-relationship map**, attribution inference chain, temporal view + **registration heatmap** + **domain × shared-indicator matrix** (which honours the §2.5 false-positive control and carries the WHOIS join keys), a **landing-page capture** per estate host (proxy-gated egress; a page that will not render falls back to the newest public **web-scan**, then a **web-archive** snapshot — captioned, dated by the archive, and labelled a *previous owner's page* when it predates the current registration), per-domain **dossiers**, a glossary, Appendices **A–E**. Rule 12 scrub of tool/vendor/path names; third parties masked through one gate ([`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)). One figure source ([`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)) feeds both the dashboard DOCX and the house PDF, so the two deliverables cannot disagree. `--no-screenshots` is fully offline; `--no-archive-fallback` forbids the stand-ins |
+| **ANY.RUN: the gate is real, and the docs now say so** | Detonation exists — behind five gates, each of them code | SKILL.md, the README callouts, `.env.example` and the key registry claimed "no submit path". False since the gated layer landed. `anyrun_submit` is gated by: per-submission confirmation (a `confirm=false` **briefing** first — a data-driven `approval_briefing` exemption in `tool_policy.json` now lets that step through the MCP approval gate, fail-closed to fully gated if the file is unreadable); **private by default**, `public` refused unless `ANYRUN_ALLOW_PUBLIC=1` grants a *standing* authorization, and then only as an explicit, recorded downgrade; a **fail-closed plan check** (`/user` private quota — zero is denied and no attestation overrides it — else a prior private task, else `--i-have-a-paid-plan`); a **polled post-submit privacy read-back** that withdraws and flags a task that still landed public (`verify-privacy <uuid>` finishes the check if the task outlives the wait); and the harness deny unless `HARNESS_ALLOW_SUBMIT=1`. 103 stubbed checks in `test_intelx_anyrun` §7b–7c; `test_tool_gate` §2 pins briefing-allowed / confirm-denied / fail-closed |
+| **Repo hygiene** | The tree checks itself for pasted keys | `audit.sh` §5b greps every tracked file for vendor key shapes and `KEY=value` lines — proven to fire on a planted value and clean on the tree, so a key can only live in `.env`. [AGENTS.md](AGENTS.md) rewritten as the cross-agent *Repository Guidelines*. Key-alias registries reconciled with every tool's `_secret()` lookup and locked ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter registered so the capability banner stops going silent on keys it uses. The three workflow diagrams re-rendered from current sources — 52 `@tool`s, 9 commands, Netlas, gated ANY.RUN |
 
 ## What's New in v2.11
 
@@ -693,7 +709,7 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /cti-recall example.com               # always first — have we seen this seed before?
 /cti-case CASE-0001 example.com       # full pipeline on one or more seeds
 /cti-cluster CASE-0001                # expand: peers, shared indicators, TLS overlap
-/cti-report CASE-0001 --pdf           # deliver: relationship graph + PDF/DOCX
+/cti-report CASE-0001                 # deliver: relationship graph + house report (PDF/DOCX)
 ```
 
 ### 3 &mdash; Guided Flows
@@ -751,6 +767,8 @@ Before your first real case, run these once in Claude Code so you're not silentl
 # A — full DETERMINISTIC pipeline (no LLM key, reproducible, persisted to cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
 /pipeline open CASE-0001 seeds.txt    # collect → ingest → recall → risk → cluster → ICD-203 assessment
+                                      #   + MO-neighbour origin pivot · measured entitlement · IntelX auto-fire
+                                      #   --free-only: no metered credits · --whois-history purchase: registrant eras
 /clusters CASE-0001                   # judge by same-operator cluster, with KB-wide prevalence
 /frontier CASE-0001                   # unresolved gaps: free next seeds + deferred metered leads
 
@@ -760,7 +778,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /harness status CASE-0001             # status needs no key
 /loop CASE-0001                       # or: collect↔assess repeatedly until it converges
 
-/cti-report CASE-0001 --pdf           # deliver: relationship graph + polished PDF/DOCX
+/cti-report CASE-0001                 # deliver: relationship graph + house report (editorial PDF/DOCX from the case dir)
 ```
 
 > **Pipeline vs harness:** `/pipeline` is the deterministic bread-and-butter chain — no LLM key, byte-reproducible. `/harness` is the **agent-driven** whole-case orchestration that reasons across cases to convergence (the deepest mode), and **auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription (no separate LLM key); `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. Both persist under `cases/<ID>/`; the registered cold-prompt alias `/cti-case <ID> <seeds>` runs the deterministic pipeline.
@@ -1265,9 +1283,9 @@ The same case, in formats other tools can read.
 | `/report json` · `/report csv` | JSON · CSV export | Pipelines, spreadsheets, SIEM |
 | `/report ioc` | IOC / selector bundle (STIX 2.1 · flat · CSV) | SIEM / TIP ingest, threat-intel sharing |
 | `/report docx` · `/report pdf` · choice **a**/**b**/**d** | Word / PDF document *(charts, cover, TOC)* | Formal sharing |
-| `/cti-report <ID> --pdf` | IntelReport pandoc PDF/DOCX | Polished, publication-grade case deliverable |
+| `/cti-report <ID>` | **House report** — editorial PDF/DOCX composed from the case dir *(charts, landing-page captures, dossiers, Appendices A–E)* | Polished, publication-grade case deliverable |
 
-<sub>Generated by <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOCs) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX) · <code>intel_engine/IntelReport</code> (pandoc PDF/DOCX)</sub>
+<sub>Generated by <code>scripts/build_report_data.py</code> (report JSON) · <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOCs) · <code>scripts/generate-cti-docx-hybrid.py</code> (dashboard DOCX) · <code>intel_engine/tools/house_report.py</code> + <code>intel_engine/IntelReport</code> (house PDF/DOCX)</sub>
 
 <br>
 
@@ -1300,14 +1318,15 @@ cti-expert/
 ├── scripts/                    Collectors, backend dispatcher, report generators
 │   ├── backend/                backend.py (tier resolver) · intel.py (T2 CLI dispatch)
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── build_report_data.py    Case dir → REPORT.json (deterministic report bridge)
 │   ├── generate-cti-html.py    Interactive, offline, self-contained HTML report
-│   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV)
-│   ├── generate-cti-docx-hybrid.py   DOCX report (charts, diagrams, cover page)
+│   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
+│   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF (charts, diagrams, cover page)
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
 │   ├── install.sh · install.ps1      All-in-one cross-platform installer
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
-├── techniques/                 49 collection techniques (the OSINT tradecraft)
+├── techniques/                 57 collection techniques (the OSINT tradecraft)
 ├── handbook/                   Pivot artifacts, API keys, operator queries, analytic standards
 ├── engine/                     Case data-model design docs (schema, findings, pivot logic)
 ├── analysis/ · validation/     Pattern & exposure engines · QA + coverage matrices
@@ -1318,13 +1337,15 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (24 @tool)
-    ├── tools/                  intel.py (deterministic pipeline) · kb/ (KB + correlation) · cert_overlap
-    ├── WebPivot/               Engine collector helpers + de-dup re-export shims
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (52 @tool)
+    ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
+    ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
-    ├── IntelReport/            Pandoc render of an assessment → polished PDF/DOCX
+    ├── IntelReport/            Pandoc render of the composed house report → PDF/DOCX
     ├── IntelAnalysis/          Correlation, attribution, confidence calibration
-    ├── BinaryPivot/            Static IOC extraction from a scam APK / exe
+    ├── IntelShare/             MISP export · stage · publish (two separate decisions)
+    ├── Engage/                 Login detection · synthetic persona · gated members-area harvest
+    ├── BinaryPivot/            Static IOC extraction from a scam APK / exe · ANY.RUN lookup + gated submit
     └── knowledge/ · cases/     Local runtime data — gitignored, never committed
 ```
 

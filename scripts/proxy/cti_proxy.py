@@ -41,6 +41,7 @@ FOR AUTHORIZED INVESTIGATIONS ONLY.
 # dependencies = []
 # ///
 import base64
+import functools
 import json
 import os
 import random
@@ -63,6 +64,36 @@ SKILL_ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 ENV_PATH = os.environ.get("CTI_API_KEYS_ENV") or os.path.join(SKILL_ROOT, ".env")
 STORE_PATH = os.environ.get("CTI_PROXY_STORE") or os.path.join(HERE, "proxies.json")
 STATE_PATH = os.path.join(HERE, ".rotation-state")
+# Vendor / index API hosts (reference DATA — scripts/proxy/vendor_hosts.json). When EVERY exit
+# refuses the CONNECT tunnel to one of these, the block is at the provider, per destination: the
+# request goes DIRECT for that host only (a vendor sees a licensed key, not the analyst-vs-target
+# relationship the pool protects). The fallback list is the conservative minimum.
+_VENDOR_FALLBACK = ["fofa.info", "en.fofa.info", "api.shodan.io", "search.censys.io", "crt.sh"]
+
+
+@functools.lru_cache(maxsize=1)
+def vendor_hosts():
+    """The vendor/index API host set — read once per process (this runs inside the failover loop)."""
+    try:
+        with open(os.path.join(HERE, "vendor_hosts.json"), encoding="utf-8") as f:
+            hs = json.load(f).get("direct_fallback_hosts") or []
+        return {str(h).strip().lower() for h in hs if str(h).strip()} or set(_VENDOR_FALLBACK)
+    except Exception:
+        return set(_VENDOR_FALLBACK)
+
+
+def is_vendor_host(host):
+    h = (host or "").lower()
+    return any(h == v or h.endswith("." + v) for v in vendor_hosts())
+
+
+def is_tunnel_refusal(exc):
+    """A proxy answered the CONNECT with a non-200 (5xx/4xx) — the exit is up but this DESTINATION
+    is refused. Not a dead exit: must not quarantine it, and for a vendor host may go direct."""
+    s = str(exc)
+    return "Tunnel connection failed" in s or "proxy CONNECT refused" in s
+
+
 HEALTH_PATH = os.environ.get("CTI_PROXY_HEALTH") or os.path.join(HERE, ".proxy-health")
 
 VALID_SCHEMES = ("http", "https", "socks4", "socks5", "socks5h")
@@ -411,6 +442,31 @@ def _host_bypassed(host, no_proxy):
     return False
 
 
+def _fresh_request(fullurl):
+    """urllib's ProxyHandler MUTATES a Request (set_proxy rewrites host/type/_tunnel_host), so a
+    Request that failed through exit A would still tunnel through A when retried through B or
+    direct. Every attempt gets a clean copy; a bare URL string is returned unchanged."""
+    if not isinstance(fullurl, urllib.request.Request):
+        return fullurl
+    r = urllib.request.Request(fullurl.full_url, data=fullurl.data,
+                               headers=dict(fullurl.header_items()),
+                               origin_req_host=fullurl.origin_req_host,
+                               unverifiable=fullurl.unverifiable, method=fullurl.get_method())
+    return r
+
+
+_VENDOR_DIRECT_NOTED = set()
+
+
+def _note_vendor_direct(host, exc):
+    if host in _VENDOR_DIRECT_NOTED:
+        return
+    _VENDOR_DIRECT_NOTED.add(host)
+    print(f"[cti_proxy] every exit refuses the tunnel to vendor API {host} ({str(exc)[:80]}); "
+          f"querying it DIRECT (vendor endpoint, not the target — see proxy/vendor_hosts.json)",
+          file=sys.stderr)
+
+
 class FailoverOpener:
     """Duck-typed opener installed via urllib.request.install_opener(). Bare
     `urlopen(url, data, timeout)` dispatches here. Tries proxies in rotation
@@ -462,10 +518,13 @@ class FailoverOpener:
         if timeout is socket._GLOBAL_DEFAULT_TIMEOUT and self._timeout:
             timeout = self._timeout
         last = None
-        for proxy in self._order(_host_of(fullurl)):
+        host = _host_of(fullurl)
+        order = self._order(host)
+        refusals = 0                     # exits that answered the CONNECT with a refusal for THIS host
+        for proxy in order:
             try:
-                resp = self._opener_for(proxy).open(fullurl, data, timeout)
-                if self._cooldown:
+                resp = self._opener_for(proxy).open(_fresh_request(fullurl), data, timeout)
+                if self._cooldown and proxy is not None:
                     _clear_bad(proxy)            # recovered: clear persisted quarantine
                 return resp
             except urllib.error.HTTPError as e:
@@ -479,9 +538,23 @@ class FailoverOpener:
                     continue
                 raise
             except Exception as e:  # URLError, socket timeout, proxy CONNECT fail
-                _mark_bad(proxy, self._cooldown)
+                if proxy is not None and is_tunnel_refusal(e):
+                    # the exit is alive (it answered) — it refuses this DESTINATION. Not the exit's
+                    # health, so no quarantine: a per-destination block must not push the whole
+                    # pool into cooldown for every other host.
+                    refusals += 1
+                else:
+                    _mark_bad(proxy, self._cooldown)
                 last = e
                 continue
+        proxies_tried = [p for p in order if p is not None]
+        if (proxies_tried and refusals == len(proxies_tried) and None not in order
+                and is_vendor_host(host)):
+            # every exit refuses the tunnel to a VENDOR API host: the block is at the provider, per
+            # destination. The pool protects the analyst from the TARGET; a vendor sees a licensed
+            # key either way — go direct for this host only. Targets never take this path.
+            _note_vendor_direct(host, last)
+            return self._opener_for(None).open(_fresh_request(fullurl), data, timeout)
         raise last if last else urllib.error.URLError("no proxy could be reached")
 
 

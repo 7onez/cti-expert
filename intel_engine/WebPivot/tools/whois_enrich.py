@@ -654,10 +654,50 @@ def whois_port43(domain, timeout=25):
     return res
 
 
+
+def _cld_vn_whois(domain, timeout=25):
+    """ChongLuaDao WHOIS for a `.vn` host, mapped into the whois_summary() field shape, or None.
+
+    WhoisXML and most RDAP servers have no `.vn` coverage, so for `.vn` CLD is the PRIMARY source
+    (callers fall back to RDAP/port-43 when this returns None). Reuses wp_cld → cld_api (RULE 4);
+    metered, so it is skipped when no CLD key is set. Never raises."""
+    if not (domain or "").lower().endswith(".vn"):
+        return None
+    try:
+        import wp_cld
+        if not wp_cld.cld_configured():
+            return None
+        w = wp_cld.cld_whois(domain, timeout=timeout)
+        if not isinstance(w, dict) or w.get("error") or not (w.get("registrar") or w.get("registration_date")):
+            return None
+    except Exception:
+        return None
+
+    def _iso(d):
+        d = str(d or "").strip()
+        m = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", d)   # CLD returns DD-MM-YYYY
+        if m:
+            return f"{m.group(3)}-{m.group(2)}-{m.group(1)} 00:00:00 UTC"
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", d):          # bare ISO date -> WhoisXML datetime shape
+            return f"{d} 00:00:00 UTC"
+        return d or None
+    st = w.get("status")
+    return {"domain": domain, "registrar": w.get("registrar") or None,
+            "registrant_name": w.get("owner") or None,
+            "created": _iso(w.get("registration_date")), "expires": _iso(w.get("expiration_date")),
+            "updated": _iso(w.get("updated_date")),
+            "name_servers": list(w.get("nameservers") or []),
+            "status": (", ".join(st) if isinstance(st, list) else st) or None,
+            "source": "chongluadao"}
+
+
 def whois_summary_keyless(domain, timeout=25, keep_raw=True):
-    """Keyless combined block in the whois_summary() shape: RDAP first, port-43 fallback, empty
-    history (reverse/history need the licensed WhoisXML API). None only if both keyless paths fail."""
-    cur = rdap_lookup(domain, timeout=timeout, keep_raw=keep_raw)
+    """Keyless combined block in the whois_summary() shape: for a `.vn` host CLD WHOIS is tried
+    FIRST (WhoisXML/RDAP have no .vn coverage), then RDAP, then port-43 fallback; empty history
+    (reverse/history need the licensed WhoisXML API). None only if every path fails."""
+    cur = _cld_vn_whois(domain, timeout=min(timeout, 30))
+    if not cur:
+        cur = rdap_lookup(domain, timeout=timeout, keep_raw=keep_raw)
     if not cur or cur.get("error") or not any(
             cur.get(k) for k in ("registrar", "created", "expires", "name_servers", "registrant_name")):
         w43 = whois_port43(domain, timeout=timeout)
@@ -693,10 +733,23 @@ def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
         hist = _f_hist.result() or {}
     cur_raw = cur.pop("_raw", None)
     hist_raw = hist.pop("_raw", None)
-    # WhoisXML sometimes returns "no WhoisRecord" for new/obscure TLDs that RDAP serves fine —
-    # backfill the empty core fields (registrar/dates/NS/status) from keyless RDAP rather than
-    # leaving the Domain Summary blank. Only fills what WhoisXML left empty; never overwrites.
+    # WhoisXML sometimes returns "no WhoisRecord" for new/obscure TLDs. For `.vn` it has NO coverage
+    # at all, so CLD WHOIS is the primary backfill there; then keyless RDAP for everything else.
+    # Only fills what WhoisXML left empty; never overwrites.
     if cur.get("error") or not any(cur.get(k) for k in ("registrar", "created", "expires", "name_servers")):
+        cld = _cld_vn_whois(domain, timeout=min(timeout, 30))
+        if cld:
+            filled = False
+            for k, v in cld.items():
+                if k == "source":
+                    continue                 # provenance set once, below — never doubled
+                if v and not cur.get(k):
+                    cur[k] = v
+                    filled = True
+            if filled:
+                cur.pop("error", None)   # WhoisXML has no .vn record; CLD supplied it → not a failed row
+                base = cur.get("source")
+                cur["source"] = "chongluadao" if base in (None, "", "whoisxml") else f"{base}+chongluadao"
         rd = rdap_lookup(domain, timeout=min(timeout, 30), keep_raw=False)
         if rd and not rd.get("error"):
             for k, v in rd.items():

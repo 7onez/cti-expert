@@ -39,6 +39,15 @@ import urllib.request
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Per-call ceiling (mirrors wp_common.CALL_TIMEOUT; env CTI_CALL_TIMEOUT is the single runtime source,
+# default 1800s / 30 min). This module is self-contained (no wp_common), so it floors its own calls.
+try:
+    CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT", "") or 1800)
+    if CALL_TIMEOUT <= 0:
+        CALL_TIMEOUT = 1800
+except (TypeError, ValueError):
+    CALL_TIMEOUT = 1800
+
 
 def _host(s: str) -> str:
     s = s.strip()
@@ -47,9 +56,10 @@ def _host(s: str) -> str:
     return s.split("/")[0].lower()
 
 
-def _get(url: str, timeout: int = 25) -> str:
+def _get(url: str, timeout: int = None) -> str:
+    eff = CALL_TIMEOUT if not isinstance(timeout, (int, float)) else max(int(timeout), CALL_TIMEOUT)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=eff) as r:
         return r.read().decode("utf-8", "ignore")
 
 
@@ -228,7 +238,7 @@ def kb_lookup(domain: str, kb_dir: str) -> dict:
     """Is this already in our own store? A hit = prior verdict, don't re-investigate."""
     def run(cmd):
         try:
-            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=60)
+            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=CALL_TIMEOUT)
             return (r.stdout or "").strip()
         except Exception as e:
             return f"(error: {e})"

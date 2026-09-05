@@ -34,6 +34,11 @@ except Exception:
     api_usage = None
 from wp_refs import ref_path, load_ref  # noqa — endpoint templates are reference DATA (RULE 3)
 
+def _floor_to(t):
+    """Raise a per-call timeout to CALL_TIMEOUT (the ceiling). Used on the requests/Playwright paths
+    that bypass the process-wide urllib.request.urlopen floor installed in wp_common."""
+    return CALL_TIMEOUT if not isinstance(t, (int, float)) else max(int(t), CALL_TIMEOUT)
+
 # urlscan endpoint templates + hostname paging knobs — reference DATA (RULE 3). The fallback is the
 # conservative MINIMUM that still walks the index correctly (hostname + cursor paths, A/NS eras, one
 # page): a missing/bad reference file degrades to a narrower walk with a warning, never to a silently
@@ -65,7 +70,7 @@ class _RecordingRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 def fetch(url: str, timeout: int = 20, ua: str = DEFAULT_UA, proxy: str = None,
-          redirects_out: list = None, origin: str = None):
+          redirects_out: list = None, origin: str = None, extra_headers: dict = None):
     """Return (final_url, status, headers_dict, body_bytes). Follows redirects.
 
     When `proxy` is given (e.g. 'http://10.0.0.5:8080'), the request is routed through it
@@ -75,10 +80,15 @@ def fetch(url: str, timeout: int = 20, ua: str = DEFAULT_UA, proxy: str = None,
     {from,status,to}; callers that don't need the chain simply omit it (unchanged behavior).
     When `origin` is given, an `Origin:` request header is added — used to observe the
     server's CORS response (which origins/backends it trusts); None → omit it (unchanged).
+    `extra_headers` override/extend the profile — an API `Accept:` or `Authorization:` for a
+    vendor endpoint (never for the target).
     """
+    timeout = _floor_to(timeout)   # requests path bypasses the urllib.request.urlopen floor
     reqh = _browser_headers(ua)
     if origin:
         reqh["Origin"] = origin
+    if extra_headers:
+        reqh.update(extra_headers)
     if HAVE_REQUESTS:
         proxies = {"http": proxy, "https": proxy} if proxy else None
         r = requests.get(url, headers=reqh, timeout=timeout,
@@ -266,6 +276,7 @@ def flaresolverr_get(url: str, endpoint: str, timeout: int = 60, proxy: str = No
     proper way to collect a CF-walled page for authorized OSINT — it executes the challenge JS
     the same way a browser would; we never forge a Cloudflare clearance token ourselves.
     """
+    timeout = _floor_to(timeout)   # lift the FlareSolverr maxTimeout budget (ms) to the ceiling too
     api = endpoint.rstrip("/")
     if not api.endswith("/v1"):
         api += "/v1"
@@ -289,37 +300,90 @@ def flaresolverr_get(url: str, endpoint: str, timeout: int = 60, proxy: str = No
     cookies = [{"name": c.get("name"), "value": c.get("value")} for c in sol.get("cookies", [])]
     return sol.get("url") or url, html, cookies
 
+def _playwright_proxy(proxy: str = None):
+    """Chromium proxy config for Playwright, or None for a direct launch.
+
+    Chromium honours HTTP(S)_PROXY/ALL_PROXY from the environment but ignores inline
+    `user:pass@` credentials (the form the CTI proxy layer exports), answering every
+    navigation with a 407 and an empty document. Resolve the same proxy the urllib path
+    uses and hand the credentials over as Playwright's `username`/`password` fields.
+    """
+    raw = proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") \
+        or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") \
+        or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+    if not raw:
+        return None
+    u = urlparse(raw if "://" in raw else "http://" + raw)
+    if not u.hostname:
+        return None
+    # Chromium knows http:// and socks5:// (it resolves through SOCKS anyway, so socks5h == socks5);
+    # an https:// proxy URL in the pool means "HTTP proxy reached over TLS", which Chromium spells https://
+    scheme = {"socks5h": "socks5", "socks4a": "socks4", "": "http"}.get(u.scheme.lower(), u.scheme.lower())
+    cfg = {"server": f"{scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")}
+    if u.username:
+        cfg["username"] = unquote(u.username)
+        cfg["password"] = unquote(u.password or "")
+    bypass = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    if bypass:
+        cfg["bypass"] = bypass
+    return cfg
+
+
 def render_dom(url: str, timeout: int = 30, ua: str = DEFAULT_UA, proxy: str = None,
                screenshot_path: str = None):
     """Return post-JS rendered HTML using Playwright (chromium). Requires playwright.
 
-    `proxy` (if given) is passed to chromium so the rendered fetch egresses through it.
-    `screenshot_path` (if given) saves a full-page PNG of the rendered page — an
-    evidentiary capture of what the target actually served (phishing-kit evidence).
+    `proxy` (if given, else the process's HTTP(S)_PROXY) is passed to chromium so the
+    rendered fetch egresses through it — credentials included. `screenshot_path` (if given)
+    saves a full-page PNG of the rendered page — an evidentiary capture of what the target
+    actually served (phishing-kit evidence). Raises on a proxy/HTTP failure or an empty
+    document so the caller records a real `live_error` instead of a silent passive fallback.
     """
+    timeout = _floor_to(timeout)   # Playwright ms path bypasses the urllib floor
     from playwright.sync_api import sync_playwright  # optional
     with sync_playwright() as p:
         launch_kwargs = {"headless": True}
-        if proxy:
-            launch_kwargs["proxy"] = {"server": proxy}
+        pcfg = _playwright_proxy(proxy)
+        if pcfg:
+            launch_kwargs["proxy"] = pcfg
         browser = p.chromium.launch(**launch_kwargs)
-        ctx = browser.new_context(user_agent=ua)
-        page = ctx.new_page()
-        page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
-        html = page.content()
-        final_url = page.url
-        cookies = ctx.cookies()
-        if screenshot_path:
-            try:
-                os.makedirs(os.path.dirname(screenshot_path) or ".", exist_ok=True)
-                page.screenshot(path=screenshot_path, full_page=True)
-            except Exception as e:
-                print(f"[!] screenshot failed: {e}", file=sys.stderr)
-        browser.close()
+        try:
+            ctx = browser.new_context(user_agent=ua)
+            page = ctx.new_page()
+            resp = page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
+            status = resp.status if resp else None
+            html = page.content()
+            final_url = page.url
+            cookies = ctx.cookies()
+            if status == 407:
+                raise RuntimeError(f"render: proxy rejected credentials (407) via "
+                                   f"{pcfg['server'] if pcfg else 'env proxy'}")
+            if not html or len(html) < 200:
+                raise RuntimeError(f"render: HTTP {status}, {len(html or '')} bytes")
+            if screenshot_path:
+                try:
+                    os.makedirs(os.path.dirname(screenshot_path) or ".", exist_ok=True)
+                    page.screenshot(path=screenshot_path, full_page=True)
+                except Exception as e:
+                    print(f"[!] screenshot failed: {e}", file=sys.stderr)
+        finally:
+            browser.close()
     return final_url, html, cookies
 
 
 # ---------------------------------------------------------- passive fallback
+
+_WB_SNAP = re.compile(r"^(https?://web\.archive\.org/web/)(\d{4,14})([a-z]{2}_)?/(.+)$", re.I)
+
+
+def wayback_raw_url(snap_url: str) -> str:
+    """The `id_` form of a Wayback snapshot URL — the ORIGINAL response bytes, without the
+    archive toolbar, rewritten links or archive.org headers. Non-Wayback input returns unchanged."""
+    m = _WB_SNAP.match(snap_url or "")
+    if not m:
+        return snap_url
+    return f"https://web.archive.org/web/{m.group(2)}id_/{m.group(4)}"
+
 
 def wayback_closest(url: str, ua: str = DEFAULT_UA):
     """Nearest available Wayback snapshot for a URL, or (None, None).
@@ -776,6 +840,7 @@ def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
     """Submit a URL to the Wayback Machine's Save Page Now. Returns a dict with the
     archived snapshot URL (or an error). Passive-safe: it makes web.archive.org fetch the
     page, so the archive box (not you) touches the target from then on."""
+    timeout = _floor_to(timeout)   # requests path bypasses the urllib floor
     save_url = "https://web.archive.org/save/" + url
     # A REAL capture URL is /web/<14-digit-timestamp>/<original>. The bare /save/ endpoint URL
     # is NOT a snapshot — SPN returns it when it could not crawl the target (e.g. a CF wall).
@@ -816,6 +881,7 @@ def urlscan_submit(url: str, timeout: int = 30, visibility: str = None):
     key set `URLSCAN_VISIBILITY=private` — a private scan of hostile infra is team-only and never
     appears in the public feed, so the operator can't discover that you scanned them. (On the free
     tier 'private' is rejected; 'unlisted' is the safe default.)"""
+    timeout = _floor_to(timeout)   # requests path bypasses the urllib floor
     key = _secret("URLSCAN_API_KEY")
     if not key:
         return {"skipped": "no URLSCAN_API_KEY"}

@@ -91,3 +91,36 @@ def test_report_level_exclude_drops_value_embedded_in_legit_notes():
     assert "candidate-domain.example" in _domains(recs)          # the real IOC stays
     assert "privacy-proxy@example.com" not in _emails(recs)      # masked value dropped
     assert "registrar-mask.example" not in _domains(recs)        # masked value dropped
+
+
+def test_text_harvest_skips_file_extensions_and_registrar_names_but_keeps_real_tlds():
+    """A tech fingerprint ("Next.js") or a registrar name ("GoDaddy.com, LLC") mentioned in prose is
+    not a host; `.zip` / `.md` / `.py` ARE real TLDs and must survive the extension denylist."""
+    data = {
+        "ioc_exclude": ["GoDaddy.com, LLC"],
+        "subjects": [
+            {"id": "s1", "label": "operator-estate.example", "type": "domain",
+             "role": "infrastructure", "confidence": 90,
+             "notes": "Collected host; Next.js build served by Vercel; registrar GoDaddy.com, LLC. "
+                      "Lure archive at evil-lure.zip and notes.example.md, styles.min.css loaded."},
+        ],
+    }
+    doms = _domains(gen.extract(data))
+    assert "operator-estate.example" in doms
+    assert "next.js" not in doms and "styles.min.css" not in doms
+    assert "godaddy.com" not in doms
+    assert "evil-lure.zip" in doms and "notes.example.md" in doms
+
+
+if __name__ == "__main__":
+    import sys
+    failed = 0
+    for _n, _f in sorted(globals().items()):
+        if _n.startswith("test_") and callable(_f):
+            try:
+                _f()
+                print("ok  " + _n)
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                print(f"FAIL  {_n}: {exc}")
+    sys.exit(bool(failed))
