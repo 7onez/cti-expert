@@ -10,9 +10,14 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-from docx import Document
-import cti_docx_charts  # re-export path used by cti_docx_postprocess
-import cti_docx_timeline_chart as charts
+try:
+    from docx import Document
+    import cti_docx_charts  # re-export path used by cti_docx_postprocess
+    import cti_docx_timeline_chart as charts
+    _TOOLCHAIN_MISSING = ""
+except ImportError as _exc:  # zero-dep runner: python-docx / matplotlib are report-generator deps
+    Document = cti_docx_charts = charts = None
+    _TOOLCHAIN_MISSING = str(_exc)
 
 _BOILER = " registered through Example Registrar LLC"
 
@@ -118,6 +123,15 @@ _TESTS = [
 def check():
     passed = failed = 0
     lines = []
+    if _TOOLCHAIN_MISSING:
+        # audit.sh §6 is the zero-dep runner; the DOCX figure path needs python-docx + matplotlib,
+        # which the report generators install via their PEP 723 headers, not the repo baseline.
+        # A skip is reported, never silent (same contract as test_house_report_compose's PIL/
+        # matplotlib branches): the smoke workflow with the report deps installed runs it for real.
+        lines.append(("skip", f"DOCX timeline chart: toolchain not importable ({_TOOLCHAIN_MISSING}) "
+                              f"— {len(_TESTS)} checks skipped; run with the report deps "
+                              f"(uv run --with python-docx --with matplotlib)"))
+        return passed, failed, lines
     for test in _TESTS:
         label = test.__name__.removeprefix("test_").replace("_", " ")
         try:
@@ -134,5 +148,5 @@ def check():
 if __name__ == "__main__":
     _passed, _failed, _lines = check()
     for _status, _label in _lines:
-        print(("ok" if _status == "ok" else "FAIL") + "  " + _label)
+        print({"ok": "ok  ", "skip": "SKIPPED  "}.get(_status, "FAIL  ") + _label)
     raise SystemExit(bool(_failed))
