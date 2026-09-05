@@ -59,32 +59,27 @@ ARCHIFY_BIN = os.path.join(
 def build_archify_html(data):
     """Render the case entity graph as an inline Archify architecture diagram.
 
-    Returns the self-contained Archify HTML string, or None (build skipped) when:
-      - the case has no subjects to draw,
-      - CTI_ARCHIFY=0 disables it,
-      - Node.js or the vendored renderer is unavailable,
-      - the render fails for any reason.
-    In every skip case the report is still produced without the Blueprint view.
+    CTI_ARCHIFY selects the mode (see cti_archify.select_ir):
+      1 (default)  full graph when it fits BLUEPRINT_LIMITS; otherwise the estate is
+                   folded to apex level and rendered if that fits; otherwise skipped.
+      force        bypass BLUEPRINT_LIMITS — the full graph up to FORCE_MAX_NODES, else
+                   the apex fold at the widest grid Archify holds. Archify's own
+                   validator still decides; a rejection is reported, never hidden.
+      0            never embed.
+    Returns (html, note) — html is None when skipped (no subjects, disabled, no
+    Node.js/renderer, render failure). The report is always produced.
     """
-    if os.environ.get("CTI_ARCHIFY", "1") == "0":
+    mode = os.environ.get("CTI_ARCHIFY", "1").strip().lower()
+    if mode in ("0", "off", "no", "false"):
         return None, "disabled (CTI_ARCHIFY=0)"
+    force = mode == "force"
     try:
-        from cti_archify import build_architecture_ir
+        from cti_archify import select_ir
     except Exception as e:  # pragma: no cover - import guard
         return None, "converter unavailable: %s" % e
-    ir = build_architecture_ir(data)
+    ir, detail = select_ir(data, "force" if force else "auto")
     if ir is None:
-        return None, "no subjects to map"
-    # Archify's architecture type targets small, sparse, single-flow maps (~12 nodes);
-    # dense hub-and-spoke CTI graphs fail its clean-flow routing. Skip cleanly and let
-    # the Editorial figure + force-directed Network Graph carry dense cases.
-    comps, rels = len(ir["components"]), len(ir["connections"])
-    deg = {}
-    for c in ir["connections"]:
-        deg[c["from"]] = deg.get(c["from"], 0) + 1
-        deg[c["to"]] = deg.get(c["to"], 0) + 1
-    if comps > 12 or rels > 18 or (deg and max(deg.values()) > 8):
-        return None, "graph too dense for Blueprint (%d entities · %d relationships) — see Editorial & Network Graph" % (comps, rels)
+        return None, detail
     node = shutil.which("node")
     if not node:
         return None, "Node.js not found (install Node to embed the Blueprint diagram)"
@@ -100,12 +95,15 @@ def build_archify_html(data):
             [node, ARCHIFY_BIN, "render", "architecture", ir_path, out_path],
             capture_output=True, text=True, timeout=CALL_TIMEOUT)
         if proc.returncode != 0 or not os.path.isfile(out_path):
+            # Archify prints a stack trace, then "Error: <summary>" followed by the
+            # diagnostic lines ("- [gate] ..." or an indented schema path).
             lines = [l for l in (proc.stderr or proc.stdout or "").strip().splitlines()
-                     if l and "file://" not in l and ".mjs:" not in l]
-            return None, "render failed: %s" % (lines[0] if lines else "unknown error")
+                     if l.strip() and "file://" not in l and ".mjs:" not in l]
+            at = next((i for i, l in enumerate(lines) if l.startswith("Error:")), None)
+            diag = " ".join(l.strip() for l in lines[at:at + 2]) if at is not None else (lines[0] if lines else "unknown error")
+            return None, "render failed%s: %s" % (" (forced)" if force else "", diag)
         with open(out_path, encoding="utf-8") as f:
-            return f.read(), "%d entities · %d relationships" % (
-                len(ir["components"]), len(ir["connections"]))
+            return f.read(), detail
     except subprocess.TimeoutExpired:
         return None, "render timed out"
     except Exception as e:

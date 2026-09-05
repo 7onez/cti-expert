@@ -810,7 +810,7 @@ per domain; for a large sweep show the top 20 by risk and note how many rows wer
 
 ### Mandatory File Export (CRITICAL)
 
-**Every `/report`, `/brief`, and `/case` command runs three steps at the end of delivery — an import prompt, then the always-saved base bundle, then the presentation prompt:**
+**Every `/report`, `/brief`, and `/case` command runs four steps at the end of delivery — an import prompt, then the always-saved base bundle, then the presentation prompt, then an export confirmation whenever HTML is among the outputs:**
 
 **Step 0 — ASK whether to import more manually-collected evidence** (before building ANYTHING, so it enriches every artifact). Ask the user — via `AskUserQuestion` — **"Import more evidence data collected by manual investigation? (extra findings, subjects, indicators, selectors, timeline events, sources, screenshots, notes)"**. If **yes**, fold it into the report JSON (see Step 1) BEFORE Step A:
 - **Findings / subjects / indicators / selectors / timeline / sources** — append them to the corresponding arrays of the report JSON (same schema as Step 1); each still needs a `source_url`/source note and a confidence.
@@ -834,6 +834,8 @@ Re-run the Step 1 build / dash-normalizer after merging, then continue. Only onc
 | **b** | **DOCX** — the editable twin of (a), emitted by the same `house-report` run; dashboard-style alternative (charts + confidence matrix + heatmaps) via `generate-cti-docx-hybrid.py` | `intel.py house-report` · alt `generate-cti-docx-hybrid.py` |
 | **c** | **HTML** — interactive, self-contained, OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search); the primary human-facing deliverable | `generate-cti-html.py` |
 | **d** | **All** — build PDF **and** DOCX **and** HTML | all of the above |
+
+**Step C — CONFIRM before exporting HTML** (choice **c** or **d**, and the explicit `/report html`). Before running `generate-cti-html.py`, get the Blueprint plan — `python3 "$SKILL_DIR/scripts/cti_archify.py" REPORT.json --plan` prints, offline and without rendering, what **auto** and **force** would embed (e.g. `auto  embed — apex level: 10 of 45 apexes shown for 105 hosts …` / `force embed — … 23 of 45 apexes …`) — state it with the output path, then ask, via `AskUserQuestion`, **"Export the HTML report now? Blueprint: (1) Auto — full graph if it fits, else the compact apex-level fold (recommended) · (2) Force — the widest map Archify's grid holds (`CTI_ARCHIFY=force`: up to 25 nodes, smaller labels, may need the frame's zoom) · (3) No Blueprint (`CTI_ARCHIFY=0`) · (4) Skip the HTML export"**. Run the generator with the matching env var and quote its `Blueprint (Archify):` line back so the analyst sees what was embedded (or the renderer's exact rejection). `--yolo`/guided-auto skip this prompt and build with Auto.
 
 > **Why two PDF/DOCX builders.** `house-report` composes the *document* — the analyst assessment folded
 > into the house structure with figures rendered from the case data (IntelGraph Mermaid graph with a
@@ -874,9 +876,9 @@ Infrastructure (URL/domain/IP) stays visible even then — in a CTI report the a
 infrastructure is the analysis, not incidental PII; add `--all-types` to cover it too.
 **Never ship the `.map.json`** — it reverses the redaction.
 
-- **Interactive mode (DEFAULT) — two prompts, in order:** (1) first ask **"Import more evidence data collected by manual investigation?"** (Step 0) and merge any supplied data into the report JSON; (2) then, after saving the base data bundle, ask — via `AskUserQuestion` — **"Which report format(s) do you want? (a) PDF · (b) DOCX · (c) HTML · (d) All"** (multi-select allowed) and build exactly the chosen presentation format(s). Every choice ships alongside the base bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl).
-- **`--yolo` / guided-auto / non-interactive:** skip **both** prompts — no evidence-import question, and default to **HTML** (lightest, zero external toolchain) on top of the base bundle. `/report legal` defaults to **All** (evidentiary — a fixed Word/PDF artifact is expected).
-- **Explicit subcommands bypass the prompt** and emit that format directly on top of the base bundle: `/report html`, `/report docx`, `/report pdf`, plus the machine-only `/report json`, `/report csv`, `/report ioc`.
+- **Interactive mode (DEFAULT) — three prompts, in order:** (1) first ask **"Import more evidence data collected by manual investigation?"** (Step 0) and merge any supplied data into the report JSON; (2) then, after saving the base data bundle, ask — via `AskUserQuestion` — **"Which report format(s) do you want? (a) PDF · (b) DOCX · (c) HTML · (d) All"** (multi-select allowed); (3) when HTML is among them, confirm the export and its Blueprint mode (Step C: Auto · `CTI_ARCHIFY=force` · `CTI_ARCHIFY=0` · skip) before running `generate-cti-html.py`, then build exactly the chosen presentation format(s). Every choice ships alongside the base bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl).
+- **`--yolo` / guided-auto / non-interactive:** skip **all three** prompts — no evidence-import question, no export confirmation (Blueprint runs in Auto), and default to **HTML** (lightest, zero external toolchain) on top of the base bundle. `/report legal` defaults to **All** (evidentiary — a fixed Word/PDF artifact is expected).
+- **Explicit subcommands bypass the format prompt** and emit that format directly on top of the base bundle: `/report html`, `/report docx`, `/report pdf`, plus the machine-only `/report json`, `/report csv`, `/report ioc`. `/report html` still runs the Step C export confirmation (it is the prompt that lets the analyst pick the Blueprint mode).
 - **DOCX/PDF caveat:** two builders, two toolchains. **Case dir → `intel.py house-report`** (IntelReport: pandoc + xelatex; the editorial document with sections I–XI, both confidence scales, relationship graph, entity map, inference chain, temporal view, heatmaps, confidence scatter, landing-page captures with web-scan / web-archive stand-ins, domain dossiers, Appendices A–E; PDF and DOCX are one composition rendered twice; the landing-page step is the only egress — proxy-gated, `--no-screenshots` to skip, `--no-archive-fallback` to forbid the stand-ins). **No case dir → `generate-cti-docx-hybrid.py`** (python-docx + LibreOffice; the dashboard DOCX with the two-axis ICD-203 × Admiralty confidence matrix and the campaign heatmaps, and `--pdf` renders that same DOCX to PDF via `scripts/cti_docx_pdf.py`). Both are the heaviest, most failure-prone step: check `pandoc`, `xelatex`, `dot`, `mmdc` (house) or LibreOffice (dashboard) before promising a PDF, and fall back to HTML — which needs nothing — when a toolchain is missing. `house-report` scrubs internal tool/vendor/path names and masks third-party e-mails/phones/case ids (keeping the operator's own join key); the dashboard path relies on the analyst masking the Markdown first.
 - **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
   ```bash
@@ -1009,6 +1011,21 @@ Archify copy is vendored at `scripts/vendor/archify/`). It is best-effort: if
 Node.js is unavailable, the case has no subjects, or `CTI_ARCHIFY=0` is set, the
 report is still produced and the Blueprint tab is simply omitted — every other
 view (including the always-present 2D entity graph) is unaffected.
+
+Archify's architecture type draws small maps (≤ 12 nodes · 18 edges,
+`cti_archify.BLUEPRINT_LIMITS`), so a dense estate is **folded to apex level**
+automatically: every host under its registrable domain (PSL-aware, `Estate · N
+hosts`), the long tail of apexes into one `+N more apexes` node, apexes carrying a
+finding ranked first, the operator hub placed mid-row with its spokes above and
+below. The full host list stays in the Network Graph and Editorial views. The
+`CTI_ARCHIFY` env var selects the mode and the generator prints the outcome on its
+`Blueprint (Archify):` line — quote that line back to the analyst:
+
+| `CTI_ARCHIFY` | Blueprint |
+|---|---|
+| `1` (default) | full graph when it fits, else the apex-level fold, else skipped with the reason |
+| `force` | past the density gate: the full graph when it has ≤ 25 nodes, else the apex fold at the widest grid Archify holds (12 spokes above and below the hub, `cti_archify.FORCE_MAX_NODES`) — more apexes, smaller labels; Archify's own validator still has the last word and any rejection is printed verbatim |
+| `0` | never embedded |
 
 It also renders two print-ready figures shared across HTML, **PDF** and **DOCX**:
 an **Editorial** view — the entity map and infrastructure topology drawn as
@@ -1205,7 +1222,7 @@ Append `--yolo` to any command or activate at session start.
 - No clarifying questions — analyst infers context and proceeds
 - No confirmation prompts — scope expands automatically on new discoveries
 - Guided flows skip Q&A — reasonable defaults applied
-- Both `/report` and `/brief` generated without asking — the presentation-format prompt is skipped and defaults to **HTML** on top of the always-saved base data bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl)
+- Both `/report` and `/brief` generated without asking — the presentation-format prompt and the HTML export confirmation are skipped; defaults to **HTML** (Blueprint in Auto mode) on top of the always-saved base data bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl)
 
 **What stays the same:**
 - Ethics and legal boundaries — always enforced
@@ -1335,8 +1352,8 @@ cti-expert/
 │   ├── cld/cld_api.py               ChongLuaDao premium API client — IoC / denylist / breach + full data-leak module (async jobs) / AI URL analysis / STIX-MISP feeds (PEP 723 / `uv run`, zero-dep, X-API-Key)
 │   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
 │   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
-│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template + builds the embedded Archify Blueprint (PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
-│   ├── cti_archify.py               CTI case → Archify `architecture` IR converter (drives the report's inline Blueprint diagram; stdlib-only)
+│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template + builds the embedded Archify Blueprint (`CTI_ARCHIFY=1|force|0`; PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
+│   ├── cti_archify.py               CTI case → Archify `architecture` IR converter (drives the report's inline Blueprint diagram; folds dense estates to apex level + hub-and-spoke placement; stdlib-only, reuses the engine's PSL reducer when present)
 │   ├── vendor/archify/              Vendored zero-dep Archify render subset (v2.16.0, MIT) — renders the Blueprint diagram; needs Node.js (see vendor/archify/VENDOR.md)
 │   ├── cti_diagram_design.py        CTI case → Diagram Design editorial SVG (entity + topology); cairosvg rasterizer for DOCX (stdlib SVG)
 │   ├── cti_cloud_arch.py            CTI case → Diagram AI Generator cloud figure (diagrams+graphviz, cloud-gated, opt-in; isolated uv subprocess)

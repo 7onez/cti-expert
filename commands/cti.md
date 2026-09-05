@@ -188,7 +188,11 @@ uv run "$SKILL_DIR/scripts/build_report_data.py" "$INTEL_HOME/cases/<CASE-ID>" -
 This emits the exact flat schema the generators consume — operator/registrant subjects with
 selectors, the full domain estate as network indicators, findings/timeline/connections, and the
 §2.5 exclusion set in `ioc_exclude` (so no excluded CDN/shared IP, registrar, or nameserver leaves
-as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering.
+as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering. **Before the HTML
+export, confirm it (SKILL.md §8 Step C):** run `python3 "$SKILL_DIR/scripts/cti_archify.py" <REPORT.json>
+--plan`, state the path plus what Auto (compact apex-level fold) and Force (`CTI_ARCHIFY=force`, the widest
+25-node grid) would embed, and let the analyst pick Auto / Force / `CTI_ARCHIFY=0` / skip; then quote the
+generator's `Blueprint (Archify):` line back. `--yolo` skips the prompt (Auto).
 
 **Deliver — the editorial PDF/DOCX is deterministic too.** The polished house report (cover, sections
 I–XI, Methodology with both confidence scales and the ICD-203 × Admiralty confidence scatter, relationship
