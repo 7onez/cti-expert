@@ -254,11 +254,13 @@ def classify(*, url: str = "", final_url: str = "", status=None, headers: dict =
     code = int(status)
 
     # -- 1. bot wall FIRST: it invalidates every content test below ------------------------
-    # …unless the "wall" sits on a page with thousands of characters of real copy: then the
-    # marker is a widget (reCAPTCHA badge on a login form, a Ray-ID in a footer) and the page
-    # WAS seen. An interstitial never carries that much visible text.
+    # …unless the "wall" sits on a SERVED page (2xx/3xx) with thousands of characters of real
+    # copy: then the marker is a widget (reCAPTCHA badge on a login form, a Ray-ID in a footer)
+    # and the page WAS seen. The exemption never applies to a 4xx: a verbose block page
+    # (Cloudflare 1020 with its "Why have I been blocked?" copy) can exceed the threshold, and a
+    # refused request with a wall marker is a wall regardless of how much it says.
     hits = _hits(scan, BLOCKED_MARKERS)
-    if hits and len(text) <= int(THRESHOLDS.get("widget_page_text_chars", 1500)):
+    if hits and (code >= 400 or len(text) <= int(THRESHOLDS.get("widget_page_text_chars", 1500))):
         return _finalize("blocked", f"HTTP {code} carrying a bot-wall/WAF interstitial — the "
                                     f"real page was never seen; this is absence of record, "
                                     f"not evidence about the target", hits, signals, **common)

@@ -2694,18 +2694,6 @@ async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
-# ---------------------------------------------------------------- servers + names
-# Every @tool MUST appear in exactly one server below AND in that server's *_TOOLS allowlist.
-# The stdio front-end (mcp_server.py) auto-discovers @tools, so a tool missing here is visible in
-# Claude Code and INVISIBLE to the SDK — the two front-ends silently diverge and a phase prompt
-# that references the tool just fails. The reverse is worse: an allowlist entry with no served
-# tool tells the model it may call something that does not exist. `tests/test_tool_registry.py`
-# asserts the three lists agree, so this can only drift again on purpose.
-# NOTE: `subdomain_enum` is the case-persisting wp_subenum tool defined above (subfinder/amass/
-# assetfinder/findomain → cases/<id>/subenum/<apex>.json, queued by the frontier). The keyless
-# certspotter+hackertarget+crt.sh enumerator stays a T2 CLI (`intel.py subdomain`), not a second
-# @tool under the same name.
-
 @tool(
     "github_osint",
     "GitHub reconnaissance for a `target` (user, org, owner/repo, or a github.com URL) — profile, "
@@ -2927,6 +2915,18 @@ for _t in list(globals().values()):
             _t.optional_schema = dict(OPTIONAL_PARAMS.get(_t.name) or {})
         except Exception:  # noqa: BLE001 — an immutable tool object still works, just without them
             pass
+
+# ---------------------------------------------------------------- servers + names
+# Every @tool MUST appear in exactly one server below AND in that server's *_TOOLS allowlist.
+# The stdio front-end (mcp_server.py) auto-discovers @tools, so a tool missing here is visible in
+# Claude Code and INVISIBLE to the SDK — the two front-ends silently diverge and a phase prompt
+# that references the tool just fails. The reverse is worse: an allowlist entry with no served
+# tool tells the model it may call something that does not exist. `tests/test_tool_registry.py`
+# asserts the three lists agree, so this can only drift again on purpose.
+# NOTE: `subdomain_enum` is the case-persisting wp_subenum tool defined above (subfinder/amass/
+# assetfinder/findomain → cases/<id>/subenum/<apex>.json, queued by the frontier). The keyless
+# certspotter+hackertarget+crt.sh enumerator stays a T2 CLI (`intel.py subdomain`), not a second
+# @tool under the same name.
 
 COLLECT_SERVER = create_sdk_mcp_server(
     "collect", tools=[pivot_extract, doc_metadata, analyze_artifact, fallback_probe,
