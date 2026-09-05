@@ -44,7 +44,7 @@
 
 <sub>作者 <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><b>Hieu Ngo</b></a> &bull; <a href="mailto:hieu.ngo@chongluadao.vn">hieu.ngo@chongluadao.vn</a> &bull; <a href="https://chongluadao.vn">chongluadao.vn</a></sub>
 <br>
-<sub>核心贡献者 &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a></sub>
+<sub>核心贡献者 &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a> &bull; <a href="mailto:khuong.nguyen@chongluadao.vn">khuong.nguyen@chongluadao.vn</a></sub>
 
 </div>
 
@@ -203,6 +203,9 @@
 | **可注册 apex · 房东 IP · 套件绑定器** | 前沿与知识库就何为 apex、哪类 IP 是房东达成一致 | 内置的 **Public Suffix List**（`public_suffix_list.json`，`wp_psl_update.py`）驱动单一 `_registrable()` 归约器，因此 `shop.id.vn` 与 `panel.co.uk` 在各处——前沿、入库、报告、Blueprint——都折叠到正确的 apex。`shared_hosting_max_cohosts`（12）是标记 IP 为共享/批量托管的**唯一**数字：其 `hosted_on` 边变为事实，聚类分区忽略它们，同址租户仅作为线索保留。扩展深度被锚定：与*上一跳*所有者链接的主机是 `related_hosts`，绝不成成员。抓取到的社交链接解析到**账号**——按网络的保留路径、第二段路由器以及库/厂商署名账号属于参考数据，裸平台 apex（`t.me`，`facebook.com`）绝不是 handle |
 | **Blueprint 折叠到 apex 级** | 上百主机的资产群不再悄无声息地丢掉 HTML 报告的架构页 | Archify 的架构类型最多画 ≤ 12 个节点 · 18 条边，因此 [`cti_archify.py`](scripts/cti_archify.py) 现在**把主机折叠到其可注册 apex 之下**（`Estate · N hosts`），把长尾折进 `+N more apexes`，优先排列带发现的 apex，并把运营者枢纽放在中行、辐条上下分布。`CTI_ARCHIFY=1`（自动：能放下就全图，否则折叠）· `force`（最宽的 25 节点网格）· `0`；`--plan` 离线打印两种结果，每次 HTML 导出现在先确认 Blueprint 模式（步骤 C——`--yolo` 保持 Auto）。由 [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) 锁定 |
 
+<details>
+<summary><b>v2.11 新功能</b></summary>
+
 ## v2.11 新功能
 
 > **eCrime 2026 后续批次 —— 先规划，再实现。** v2.10 研究批次中推迟的四个阶段现已作为无密钥、离线、带测试的模块交付（在 `plans/260826-1935-ecrime-2026-followup-analyzers/` 中规划，通过 `/ak:cook` 实现）。契约不变：`audit.sh` 中的零依赖测试、归因安全（RULE 5）。完整映射见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6。
@@ -216,6 +219,11 @@
 | **AAM 行为体建模叠加层** | 预判下一步，而不仅归因过去 | [`handbook/aam-actor-modeling.md`](handbook/aam-actor-modeling.md) 为 `/threat-model` 增加一个可选叠加层（OODA 面 + Mirror/Twin/Opposite/Lever），与 ACH 并列。源自 ISECOM 的 *"Modeling Adversaries Through Chaos"* 培训。仅文档 |
 | **已测试并纳入关卡** | `audit.sh` 中再添四套零依赖测试 | `test_apk_permission_scope`（组合 vs 单项 + 良性对照 + AXML 零权限降级）、`test_kit_template_fingerprint`（商品化陷阱 RULE 5 守卫 + 绝不自动合并）、`test_render_confirm`（提升 + 接缝加性 + 无渲染器降级）、`test_phishtrace_features`（cloaked 非 benign） |
 
+</details>
+
+<details>
+<summary><b>v2.10 新功能</b></summary>
+
 ## v2.10 新功能
 
 > **这是把 APWG eCrime 2026 研究转化为可用、带测试检测器的版本。** 三个无密钥、离线、确定性测试的分析器落在 Enrich→Assess 边界，各自对应一篇具名的 eCrime 2026 论文 —— 堵上两个经审计的缺口：页面内容威胁分类，以及明确的"恶意注册 vs 被入侵"判定。完整映射与仓库审计见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md)。
@@ -226,6 +234,11 @@
 | **ClickFix / PasteJacking 检测** | 剪贴板劫持诱饵 + `-EncodedCommand` 解码 → C2 IOC | [`scripts/clickfix_detect.py`](scripts/clickfix_detect.py) 对三个共现族（剪贴板写入 · 社工诱饵 · 操作系统命令载荷）评分，因此优惠码"复制"按钮或正文里的 *powershell* 一词绝不会读作 HIGH；它解码 PowerShell `-enc` 的 UTF-16LE base64 以暴露隐藏的 C2 URL，并映射到 ATT&CK T1204.004/T1059。源自 *"PasteJacked"*（Nabeel、Melicher、Starov —— Palo Alto，eCrime 2026）。参见 [`techniques/clickfix-clipboard-hijack.md`](techniques/clickfix-clipboard-hijack.md) |
 | **可见性感知的 HTML 分析** | 揭出隐藏的凭据表单 / 跨源链接 / 屏外品牌文本 | [`scripts/html_visibility_analysis.py`](scripts/html_visibility_analysis.py) 捕获朴素解析器漏掉的内联+类隐藏，按隐藏意图+来源分级（隐藏的跨源凭据表单为 HIGH；良性的 `type=hidden` CSRF 字段**不**标记）。为静态近似，并把渲染器级路径（agent-browser/Playwright）标注为升级方向。源自 *"Visibility-Aware HTML Analysis through Renderer-Level Extraction"*（Betts 等，奥克兰大学，eCrime 2026）。参见 [`techniques/visibility-aware-html.md`](techniques/visibility-aware-html.md) |
 | **已测试并纳入关卡** | 三套零依赖测试纳入 `audit.sh` | [`tests/test_phish_domain_survival.py`](tests/test_phish_domain_survival.py)、[`tests/test_clickfix_detect.py`](tests/test_clickfix_detect.py)、[`tests/test_html_visibility_analysis.py`](tests/test_html_visibility_analysis.py) —— 带显式误报守卫（优惠码复制、正文提及、CSRF 字段）与 RULE 5 被入侵/恶意划分 —— 在 [`scripts/audit.sh`](scripts/audit.sh) §6 运行 |
+
+</details>
+
+<details>
+<summary><b>v2.9 新功能</b></summary>
 
 ## v2.9 新功能
 
@@ -238,6 +251,8 @@
 | **自动枢轴：最后几个死胡同被堵上了** | 一个被识别却从不触发枢轴的标识符，就是蛛网地图上一个悄无声息的洞 | [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py) 中的四处修复：(1) **山寨币钱包** —— TRON/LTC/XMR 已被 `pivot_extract` 抓取、也能被 `crypto_balance.py` 追踪链上流水，但此前只有 BTC/ETH 被识别归类；现在三者都会分类、重新进入前沿并跑链上流水。(2) **泄露密码不再错误播种** —— 一个被找回的密码此前会落进用户名正则，被拿去在 3000+ 平台上枚举；现在它会从泄露产出中被剔除。(3) **`/email-deep`** 的基础设施（域名/IP）与 (4) **`/gdoc`** 的分享链接现在都带上了边矩阵条目，于是二者都会把发现回灌进循环，而不是止步于一个叶子节点。公司名现在有一条写明的 `type:"org"` 标记规则 —— `classify()` 分不清一个组织和一个人 |
 | **46 → 52 个 MCP 工具** | 类型化的情报接口面又长大了；这次 changelog 里记下来了 | `intel_engine/harness/tools.py` 现在注册了 **52** 个 `@tool`（24 个采集 + 28 个研判）—— 比 v2.8 的数字多六个，是随引擎同步一起加进来的，但当时没有记入 changelog。无需任何新增安装步骤；它们通过同一个 `intel` MCP server 暴露出来 |
 | **命令数量已更正** | 徽章此前低估了这套工具箱 | §3 现在收录 **120+** 条命令（实测：145 行，约 123 条唯一的基础命令）—— "75+" 那块徽章已经落后了三个发布版本的新增内容 |
+
+</details>
 
 <details>
 <summary><b>v2.8 新功能</b></summary>
