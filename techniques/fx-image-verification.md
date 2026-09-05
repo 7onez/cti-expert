@@ -49,8 +49,9 @@ Determine whether an image is authentic, original, or manipulated by running rev
 | 2 | Google Images | images.google.com | Widest coverage |
 | 3 | Yandex Images | yandex.com/images | Strong face recognition |
 | 4 | exiftool | `apt install libimage-exiftool-perl` | EXIF extraction |
-| 5 | suncalc.org | Browser | Solar position at claimed time/place |
-| 6 | FotoForensics | fotoforensics.com | ELA (Error Level Analysis) for compression artifacts |
+| 5 | [Metadata Remover Viewer](https://metadataremover.ai/metadata-viewer) | Browser | Browser-local EXIF, GPS, XMP, and IPTC inspection; files remain in the browser |
+| 6 | suncalc.org | Browser | Solar position at claimed time/place |
+| 7 | FotoForensics | fotoforensics.com | ELA (Error Level Analysis) for compression artifacts |
 
 ## Output Format
 ```

@@ -9,6 +9,8 @@ services that recently changed — verify before relying.
 | **Shodan** | `http.favicon.hash:<int>` | **mmh3** | Paid (favicon filter needs membership) | REST + py lib, key |
 | **FOFA** | `icon_hash="<int>"` | **mmh3** | Freemium (heavy paid gating) | REST, key |
 | **ZoomEye** (zoomeye.ai) | `iconhash:"<mmh3>"` | **mmh3** | Freemium credits | REST, key |
+| **Quake** (360, quake.360.net) | `favicon:"<mmh3>"` | **mmh3** | Freemium credits | REST, key — independent CN index |
+| **Hunter.how** (hunter.how) | `favicon_hash="<mmh3>"` | **mmh3** | Freemium quota | REST, key — independent CN index |
 | **Censys** (Platform API) | `web.endpoints.http.favicons.hash_md5=<md5>` | **MD5** | Free plan = **no search API** (UI only, 5 credits/query); Starter+ for the API | REST, PAT ⚠️ **CenQL, not Legacy Search** — the old `services.http.response.favicons.md5_hash` no longer runs |
 | **Netlas** | `http.favicon.hash_sha256` | **SHA-256** | Freemium + 14-day trial | REST, key |
 | **Validin** | favicon in host-response graph | body hashes | Free community + free API | REST, free key |
@@ -37,6 +39,7 @@ Helper tools that build cross-engine queries: `favihunter`, `favihash`, osint.sh
 | **PublicWWW** — literal HTML/JS/CSS string | the string | Freemium | REST, key |
 | **NerdyData** — source + company data | the string | Paid (trial) | REST, key |
 | **Intelligence X** (intelx.io) — code/tracker selectors, bundles AnalyzeID GA/AdSense tabs | the string | Freemium | REST, key |
+| **Hunter.how** — live-asset source | `web.body="<string>"` / `header.*` | Freemium | REST, key |
 
 **FOFA `body=` is the HTML-search pivot** — when IntelAnalysis flags a high-value keyword/phrase
 (a slogan, brand string, distinctive class/template literal), reverse it with `body="<phrase>"`
@@ -60,6 +63,8 @@ hostname). `pivot_extract` emits this as a `subdomain` pivot automatically.
 | **Certspotter** (SSLMate) | domain | Free tier + paid | REST, free key (low quota) |
 | **Censys** ⭐ | `cert.fingerprint_sha256=<sha256>` (search, Starter+) — **or the certificate LOOKUP, which works on the FREE plan and returns the cert's own `names` list** | Free (1 credit/lookup, 100/month) | Platform API, PAT · `wp_censys.py cert <sha256>` |
 | **Cloudflare Merkle Town / Azul** | dashboard | Free | limited |
+| **crt.name** (aggregated index) | `apex=<eTLD+1>` | Free | `/v1/search`, no token, 100/IP/day — **text one-per-line by default; add `&format=json`**; **fallback below crt.sh only** |
+| **agniops** (aggregated index) | `domain=<apex>` | Free | `/v1/search`, no token — **text one-per-line**; same posture as crt.name — **fallback below crt.sh only** |
 
 **Shodan CTL (keyless, no Shodan account needed)** — a second CT index that reads the same
 crt.sh database from a steadier host, so it covers crt.sh's frequent outages. Two endpoints:
@@ -74,6 +79,37 @@ now queries crt.sh **and** Shodan CTL concurrently and unions them (`ct_search`)
 either source being down and gets fuller subdomain coverage; `tools/fallback_probe.py` does the same
 on cold seeds.
 
+> **crt.name / agniops are fallbacks, not peers of crt.sh.** Both are **aggregated** subdomain
+> indexes (crt.name = CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi;
+> agniops = feeds of undisclosed provenance), so a name they return is **not CT-log-attributable evidence** the way a
+> crt.sh row is. Rank them *below* crt.sh, tag results `source:crt.name(aggregated)` /
+> `source:agniops(aggregated)`, and validate before any such name enters a report.
+> **OPSEC:** querying either discloses the target apex to an unknown third-party operator — crt.sh and
+> CertSpotter are established CT operators; these are not.
+> **Auto-wiring:** `wp_recon.ct_search()` calls both — but **only as a fallback** when crt.sh *and*
+> Shodan CTL return no subdomains, and their names land in a **separate** `aggregated_subdomains` /
+> `aggregated_sources` channel, never merged into the CT-attributable `subdomains`. crt.name's remote
+> `/mcp` endpoint stays deliberately **not** wired in — an unvetted remote MCP server is exactly the
+> supply-chain / prompt-injection surface `../../../techniques/prompt-injection-audit.md` warns against.
+
+### 4b. Cert-fingerprint pivots — find OTHER hosts serving the SAME cert
+
+CT enumeration (above) lists a domain's own certs. **Cert-fingerprint pivoting** goes the
+other direction: take one leaf cert's fingerprint and find every host that presents it — a
+strong same-operator signal — and mine the cert's **SAN list** for sibling domains.
+Automated by [`cert_pivot.py`](../../../scripts/webpivot/cert_pivot.py) (`intel.py cert-pivot`).
+
+| Engine | Query field | Hash algo | Notes |
+|---|---|---|---|
+| **Shodan** | `ssl.cert.fingerprint:<hash>` | **SHA-256** (SHA-1 alt) | key → live hosts; web link keyless |
+| **Censys** | `services.tls.certificates.leaf_data.fingerprint_sha256="<hex>"` | **SHA-256** | `CENSYS_API_ID`+`_API_SECRET` |
+| **FOFA** | `cert="<sha256>"` | **SHA-256** | base64-wrapped web query |
+| **crt.sh** | `?id=<n>` / `?serial=<hex>` / `?q=<sha256>` | — | keyless; SANs = sibling domains |
+
+The leaf-cert fingerprint is computed **keyless** from a live TLS handshake (stdlib `ssl`);
+no key is needed to obtain it or to build the clickable pivot links — keys only run the
+searches server-side.
+
 ## 5. Passive DNS / shared IP / shared infra
 | Service | Cost | API |
 |---|---|---|
@@ -87,6 +123,7 @@ on cold seeds.
 | **Netlas** — DNS + host responses | Freemium | REST, key |
 | **Silent Push** — infra pivots, live scans, attack clustering | Mostly paid + community | REST, key |
 | **HackerTarget** — reverse IP / DNS | Free (limited) + paid | REST |
+| **Hunter.how** — domain/ip/cert/favicon/body asset search, CN-dense | Freemium | REST, key |
 
 **IPPivot noise control** — WebPivot's `wp_ippivot.py` classifies each IP as an *origin candidate*
 (reverse-IP co-tenants = same-operator leads) or *noise* (shared CDN/cloud edge / bulk hosting,
@@ -115,11 +152,39 @@ enrichment and takedown routing. A bare IP into `pivot_extract.py` runs this pas
 | **Chainalysis / TRM / Elliptic** — pro clustering, sanctions | Enterprise | gated |
 | **OFAC SDN crypto list** — sanctioned-address match | Free | data download |
 
+## 8. China: ICP filings, PRC registries, CN cyberspace indexes
+
+Full tradecraft in [`techniques/china-recon.md`](../../../techniques/china-recon.md). Reverse-pivot
+the **licence serial** (not the province prefix) to find sibling sites under one filing.
+
+| Service | Input → output | Cost | API |
+|---|---|---|---|
+| **beian.miit.gov.cn** | domain → filing entity, licence, approval date | Free | none — CAPTCHA, Chinese-only ⚠️ authoritative |
+| **ICP_Query** / beian mirrors (chinaz, aizhan) | domain → cached filing | Free | scriptable; mirrors go stale → trust 2 until MIIT-confirmed |
+| **PublicWWW / NerdyData** | `"ICP备<serial>号"` → sibling domains | Freemium | REST, key |
+| **FOFA / Quake / ZoomEye** | `body="ICP备<serial>"` → hosts | Freemium | REST, key |
+| **ENScan_GO** | company 中文全名 → ICP filings, domains, apps, mini-programs | Free tool | CLI; needs aggregator cookies |
+| **GSXT** (gsxt.gov.cn) | USCC / 中文全名 → registration, legal rep, capital, status | Free | none — slider CAPTCHA ⚠️ ground truth |
+| **信用中国** (creditchina.gov.cn) | company → penalties, 失信 blacklist | Free | limited |
+| **TianYanCha / QCC / Aiqicha** | company → shareholders, officers, branches, related firms | Freemium | ⚠️ **IP-blocked outside mainland**; needs CN egress + +86 account |
+| **Cninfo** (cninfo.com.cn) | listed company → official filings | Free | listed companies only |
+| **Sayari / Datenna** | company → cross-border UBO, sanctions | Enterprise | REST, key |
+
 ## Scriptable-API cheat sheet
-- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web).
-- **Free-tier key:** Shodan, FOFA, ZoomEye, **Censys** (⚠️ free = **lookup endpoints only**, 100 credits/month; search is Starter+ — see `Setup.md`), Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **No key:** crt.sh, Wayback CDX, Cloudflare Merkle Town, ViewDNS (web), Cninfo, 信用中国.
+- **Free-tier key:** Shodan, FOFA, **Quake**, ZoomEye, **Hunter.how**, **Censys** (⚠️ free = **lookup endpoints only**, 100 credits/month; search is Starter+ — see `Setup.md`), Netlas, **Validin**, SecurityTrails, DNSlytics, VirusTotal, urlscan.io, Certspotter, PublicWWW, Intelx, Chainabuse, block explorers, abuse.ch.
+- **Free but not scriptable (CAPTCHA / manual):** beian.miit.gov.cn, GSXT.
+- **Geo-gated:** TianYanCha, QCC, Aiqicha — CN egress required; log a collection gap otherwise.
 - **Paid/enterprise:** BuiltWith, NerdyData, hunt.io, Silent Push, Chainalysis/TRM/Elliptic.
 - **No official API (scrape/manual):** AnalyzeID, osint.sh, SpyOnWeb.
 
 Store your keys in a `chmod 600` `.env` at the repo root, or export them (never commit). See
 `references/Setup.md`.
+
+---
+
+> **Canonical copy.** Single source of truth for pivot services; the repo-root
+> `handbook/pivot-services.md` is a pointer to it. Merged 2026-08-27 from two copies that had
+> drifted apart. The root copy still taught the **retired** Censys query
+> `services.http.response.favicons.md5_hash`; §1 above carries the CenQL replacement. Kept from
+> the root copy and NOT present upstream: Quake, §4b cert-fingerprint pivots, §8 China registries.

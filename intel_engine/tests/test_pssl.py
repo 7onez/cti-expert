@@ -64,7 +64,14 @@ def check():
 
     # --- 2. THE SAFETY RAIL: a shared/CDN certificate can never become an operator edge -----
     saved = P._get
+    # The budget/credential gate runs BEFORE _get, so without a .env `cert_ips` returns
+    # `_skipped(...)` and never reaches the mocked transport — the section below then dies on
+    # KeyError: 'count'. That made this test pass only on a machine with credentials and fail on
+    # a fresh checkout, which is exactly where CI runs it. Stub the gate too: this section is
+    # testing the CDN-cert clustering rail, not the credential check (section 6 covers that).
+    saved_block = P._budget_block
     try:
+        P._budget_block = lambda *a, **k: None
         # a) over-prevalent certificate — a CDN edge cert on 900 addresses
         P._get = lambda path, action, query: ({"seen": [f"10.0.{i // 256}.{i % 256}"
                                                         for i in range(900)]}, None)
@@ -130,6 +137,7 @@ def check():
            "a non-clusterable certificate is emitted as INFORMATION, never as a cert_ip edge")
     finally:
         P._get = saved
+        P._budget_block = saved_block
 
     # --- 6. budget guard and the never-block degradations ---------------------------------
     b = P.budget_status()

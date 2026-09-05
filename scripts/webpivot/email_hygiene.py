@@ -222,8 +222,13 @@ def mx_lookup(domain, timeout=8):
         status = data.get("Status")
         if status == 0:  # NOERROR
             answers = data.get("Answer") or []
-            has_mx = any(isinstance(a, dict) and a.get("type") == 15 for a in answers)
-            return bool(has_mx)  # True = has MX; False = resolves but none
+            # RFC 7505 "null MX": a single `0 .` record is a PRESENT record whose meaning is
+            # "this domain accepts no mail". Counting it as an MX inverts the signal — the
+            # domain that explicitly refuses mail would grade A. Treat it as no MX.
+            mx = [a for a in answers if isinstance(a, dict) and a.get("type") == 15]
+            real = [a for a in mx
+                    if (a.get("data") or "").strip().split()[-1].rstrip(".") not in ("", ".")]
+            return bool(real)  # True = deliverable MX; False = none, or RFC 7505 null MX
         if status == 3:  # NXDOMAIN — domain does not exist
             return False
         # SERVFAIL / other rcode — indeterminate; fall through to next provider
