@@ -29,7 +29,7 @@ partition "**STEP 0 — RECALL**  (cheapest call in the toolkit)" {
 
 partition "**ACQUIRE**  (collect raw data)" {
   if (target is a domain / URL?) then (yes)
-    :/sweep · /query · /subdomain · /github-osint\n/threat-check · /scam-check · /dork-sweep;
+    :/sweep · /query · /subdomain · /github-osint\n/threat-check · /scam-check · /dork-sweep\n//subdomain_enum: subfinder (keyed from .env) · amass · assetfinder · findomain -> live names join the next round//;
     :**/webpivot**  — web-infra pivoting\nfavicon mmh3 · GA/GTM/AdSense · wallets\nemails · phones · Telegram · SaaS tokens · WHOIS\n(+ /cert-pivot · /sensitive-paths · /email-hygiene);
     :**/webpivot ~--harvest**\nfull Wayback history  ->  first-seen / last-seen selectors;
     :**/icp**   ICP filing (工信部备案)  ->  PRC entity + licence serial\n//licence serial reverses to every sibling domain//;
@@ -89,7 +89,7 @@ partition "**DELIVER**  (package output)" {
     :**/redact**  ->  stable [EMAIL_1] placeholders\n+ reversible JSON map;
   else (no)
   endif
-  :always save  .md + .json + .csv + IOC bundle (STIX 2.1 · JSONL)\nthen ASK presentation: (a) PDF · (b) DOCX · (c) HTML · (d) all;
+  :always save  .md + .json + .csv + IOC bundle (STIX 2.1 · JSONL)\nthen ASK presentation: (a) PDF · (b) DOCX · (c) HTML · (d) all\n//HTML: confirm the Blueprint mode first — Auto (apex-level fold) · force · off · skip (~--yolo keeps Auto)//;
 }
 stop
 

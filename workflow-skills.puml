@@ -28,7 +28,7 @@ box "LAYER 1 · broad collector" #F4F8FD
 end box
 
 box "typed surface" #FBFCFE
-  participant "**harness/tools.py**\n<size:10>52 @tool · MCP + SDK</size>" as MCP
+  participant "**harness/tools.py**\n<size:10>79 @tool · MCP + SDK</size>" as MCP
 end box
 
 box "LAYER 2 · intel_engine (vendored deep pipeline)" #F4F8FD
@@ -53,9 +53,9 @@ end
 group #FFF3D6 ACQUIRE  //collect raw data//
   alt domain / URL / IP
     CTI -> L1 : /sweep · /query · /subdomain · /github-osint\n/threat-check · /scam-check · /dork-sweep
-    CTI -> MCP : pivot_extract · fallback_probe\nimpersonation_hunt · search_pivot · censys
-    MCP -> WP : collect (keyless first, premium if keyed)\n<size:10>entitlement **measured** per case — a key measured //free// skips the Pro calls</size>
-    WP --> MCP : favicon mmh3 · GA/GTM/AdSense · wallets · emails · phones\nTelegram · WHOIS eras · TLS · JARM · **MO-neighbours** (origin co-tenants, WHOIS-verified)
+    CTI -> MCP : pivot_extract · fallback_probe · **subdomain_enum**\nimpersonation_hunt · search_pivot · censys
+    MCP -> WP : collect (keyless first, premium if keyed)\n<size:10>entitlement **measured** per case — a key measured //free// skips the Pro calls · every call under one **1800 s** ceiling (CTI_CALL_TIMEOUT)</size>
+    WP --> MCP : favicon mmh3 · GA/GTM/AdSense · wallets · emails · phones\nTelegram · WHOIS eras · TLS · JARM · **MO-neighbours** (origin co-tenants, WHOIS-verified)\n**ChongLuaDao** verdict per host (reputation fact; primary WHOIS for .vn) · live **subdomains** queued for the next round
     CTI -> MCP : **intelx_search**  //paste · stealer logs · darknet selectors//
     CTI -> L1 : **/icp**  ICP filing -> PRC entity + licence serial
   else file · APK · exe
@@ -98,7 +98,7 @@ group #FFF3D6 DELIVER  //package output//
   CTI -> MCP : **api_usage**  //third-party credit ledger//
 end
 
-CTI --> A : **base bundle: .md · .json · .csv · IOC bundle (STIX 2.1 · JSONL)**\n+ relationship graph  +  chosen presentation (PDF / DOCX / HTML / all)
+CTI --> A : **base bundle: .md · .json · .csv · IOC bundle (STIX 2.1 · JSONL)**\n+ relationship graph  +  chosen presentation (PDF / DOCX / HTML / all)\n<size:10>HTML: confirm the **Blueprint** mode first — Auto (apex-level fold) · force · off · skip; ~--yolo keeps Auto</size>
 deactivate CTI
 
 legend right

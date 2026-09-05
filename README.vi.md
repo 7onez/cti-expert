@@ -4,7 +4,7 @@
 
 ### Bộ công cụ Tình báo Mối đe dọa Mạng & Phân tích OSINT
 
-**Biến Claude thành một nhà phân tích tình báo lành nghề — 120+ lệnh, 56 kỹ thuật, không cần API key cho chức năng cốt lõi.**
+**Biến Claude thành một nhà phân tích tình báo lành nghề — 120+ lệnh, 57 kỹ thuật, không cần API key cho chức năng cốt lõi.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#tham-chiếu-lệnh"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
-  <a href="#danh-mục-kỹ-thuật"><img src="https://img.shields.io/badge/techniques-56-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="56 Techniques"></a>&nbsp;
+  <a href="#danh-mục-kỹ-thuật"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
   <a href="#cài-đặt"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -118,7 +118,7 @@
 
 ## CTI Expert là gì?
 
-Một **kỹ năng (skill) của Claude Code** biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở lành nghề. Nó chạy thu thập tình báo có cấu trúc với **120+ lệnh** trải trên **56 kỹ thuật** — không cần API key cho chức năng cốt lõi. Để khai thác tối đa, hãy thêm API key **miễn phí *hoặc* trả phí** của riêng bạn vào tệp `.env` của skill — mỗi key được **tự động phát hiện** và mở khóa quyền truy cập cấp cao hơn (ví dụ Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+Một **kỹ năng (skill) của Claude Code** biến Claude thành một nhà phân tích tình báo mối đe dọa mạng và tình báo nguồn mở lành nghề. Nó chạy thu thập tình báo có cấu trúc với **120+ lệnh** trải trên **57 kỹ thuật** — không cần API key cho chức năng cốt lõi. Để khai thác tối đa, hãy thêm API key **miễn phí *hoặc* trả phí** của riêng bạn vào tệp `.env` của skill — mỗi key được **tự động phát hiện** và mở khóa quyền truy cập cấp cao hơn (ví dụ Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Không cần key theo mặc định, mạnh hơn khi có key của bạn.** Mọi kỹ thuật cốt lõi đều chạy được với zero API key. Thêm bất kỳ key miễn phí hay trả phí nào vào `.env` (hoặc chạy `/apikeys set <service> <KEY>`) và skill tự phát hiện, mở khóa các pivot cấp cao hơn: reverse favicon→host, passive DNS, tra cứu chứng chỉ, phát hiện tên miền anh em. Key thiếu hoặc sai không bao giờ làm hỏng một lượt chạy — nó chỉ hạ xuống thành một ghi chú. Hướng dẫn thiết lập: [handbook/api-keys.md](handbook/api-keys.md).
@@ -197,7 +197,11 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **Netlas + phần dây nối nhà cung cấp còn lại** | Mọi key đã đăng ký nay đều có một pivot đứng sau | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py) — client Bearer trên các bộ sưu tập `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` (search, count, facet, reverse-IP, plan), trình dựng truy vấn không cần key + liên kết web-UI, có sổ ghi, UA an toàn với Cloudflare; `intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`. Đo thực tế: `domains a:<origin>` trả về **32 apex** trên một estate 32 tên miền (15 thành viên + các site anh em cùng-MO dưới persona khác). Đi kèm: **SecurityTrails** các kỷ lịch sử DNS + reverse-WHOIS qua DSL (đối chiếu với WhoisXML), **DNSLytics** reverse-IP dưới key riêng định tuyến theo đồng cư, **GrayHatWarfare** lead phơi nhiễm + mục báo cáo, **Shodan** tìm theo cert/JARM, **Censys** tìm cert một lần mỗi vụ việc với cổng chống fan-out cert dùng chung, **IntelX** tự kích hoạt trong `pipeline open` (loop: chỉ `--full`; loại hộp thư vai trò), và **Validin** nối gốc (tra cứu domain, uy tín, host theo cert và favicon). Frontier xếp ứng viên liên kết chủ sở hữu trên lookalike |
 | **Báo cáo house, ghép tất định** | PDF/DOCX biên tập không còn cần một mô hình để viết | `intel.py house-report <CASE-ID>` ghép tài liệu IntelReport từ thư mục vụ việc: mục I–XI, cả hai thang tin cậy + **biểu đồ phân tán ICD-203 × Admiralty**, đồ thị quan hệ + **bản đồ quan hệ thực thể**, chuỗi suy luận quy thuộc, xem theo thời gian + **bản đồ nhiệt đăng ký** + **ma trận domain × chỉ báo dùng chung** (tuân theo kiểm soát dương tính giả §2.5 và mang các khóa nối WHOIS), một **ảnh chụp trang đích** cho mỗi host trong estate (egress qua proxy có cổng; trang không render được sẽ lùi về ảnh **web-scan** công khai mới nhất, rồi ảnh **web-archive** — có chú thích, ghi ngày theo kho lưu trữ, và gắn nhãn *trang của chủ trước* khi nó có trước lần đăng ký hiện tại), **hồ sơ** từng tên miền, bảng thuật ngữ, Phụ lục **A–E**. Tẩy tên công cụ/nhà cung cấp/đường dẫn theo Rule 12; bên thứ ba được che qua một cổng duy nhất ([`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)). Một nguồn hình duy nhất ([`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)) nuôi cả DOCX dashboard và PDF house, nên hai sản phẩm không thể mâu thuẫn. `--no-screenshots` hoàn toàn offline; `--no-archive-fallback` cấm ảnh thay thế |
 | **ANY.RUN: cổng là thật, và tài liệu nay nói đúng** | Kích nổ có tồn tại — sau năm cổng, mỗi cổng đều là mã | SKILL.md, các callout trong README, `.env.example` và sổ đăng ký key từng khẳng định "không có đường nộp mẫu". Điều đó sai kể từ khi lớp có cổng ra đời. `anyrun_submit` được gác bởi: xác nhận theo từng lần nộp (gọi `confirm=false` để nhận **bản tóm tắt** trước — ngoại lệ `approval_briefing` theo dữ liệu trong `tool_policy.json` nay cho bước đó đi qua cổng phê duyệt MCP, và fail-closed về gác toàn phần nếu tệp không đọc được); **riêng tư theo mặc định**, `public` bị từ chối trừ khi `ANYRUN_ALLOW_PUBLIC=1` cấp ủy quyền *thường trực*, và khi đó chỉ là một lần hạ cấp tường minh, có ghi lại; **kiểm tra gói fail-closed** (hạn mức riêng tư `/user` — bằng 0 là từ chối và không lời cam kết nào vượt qua được — nếu không thì một task riêng tư trước đó, nếu không thì `--i-have-a-paid-plan`); **đọc lại quyền riêng tư sau khi nộp theo kiểu thăm dò** để rút và gắn cờ task vẫn rơi vào public (`verify-privacy <uuid>` hoàn tất kiểm tra nếu task sống lâu hơn thời gian chờ); và cổng từ chối của harness trừ khi `HARNESS_ALLOW_SUBMIT=1`. 103 kiểm tra có stub trong `test_intelx_anyrun` §7b–7c; `test_tool_gate` §2 ghim briefing-được-phép / confirm-bị-chặn / fail-closed |
-| **Vệ sinh repo** | Cây mã tự kiểm tra key bị dán nhầm | `audit.sh` §5b grep mọi tệp được theo dõi để tìm hình dạng key của nhà cung cấp và các dòng `KEY=value` — đã chứng minh kích hoạt với giá trị cài sẵn và sạch trên cây, nên key chỉ có thể sống trong `.env`. [AGENTS.md](AGENTS.md) viết lại thành *Repository Guidelines* dùng chung cho mọi agent. Sổ alias key được đối soát với mọi lệnh tra `_secret()` của công cụ và khóa lại ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter được đăng ký để banner năng lực không còn im lặng về những key nó đang dùng. Ba sơ đồ quy trình render lại từ nguồn hiện tại — 52 `@tool`, 9 lệnh, Netlas, ANY.RUN có cổng |
+| **Vệ sinh repo** | Cây mã tự kiểm tra key bị dán nhầm | `audit.sh` §5b grep mọi tệp được theo dõi để tìm hình dạng key của nhà cung cấp và các dòng `KEY=value` — đã chứng minh kích hoạt với giá trị cài sẵn và sạch trên cây, nên key chỉ có thể sống trong `.env`. [AGENTS.md](AGENTS.md) viết lại thành *Repository Guidelines* dùng chung cho mọi agent. Sổ alias key được đối soát với mọi lệnh tra `_secret()` của công cụ và khóa lại ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter được đăng ký để banner năng lực không còn im lặng về những key nó đang dùng. Ba sơ đồ quy trình render lại từ nguồn hiện tại — 79 `@tool`, 9 lệnh, Netlas, ANY.RUN có cổng |
+| **Mọi lệnh được ghi đều là thật** | 26 lệnh trong SKILL.md trước đây không có mã phía sau giờ phân giải về một công cụ — hoặc nói rõ chúng là gì | 18 CLI keyless-first mới dưới [`scripts/osint/`](scripts/osint/) (`hash_id` — MD5 vs NTLM *trước khi* bạn nộp, `vuln_check`, `username_enum`, `phone_osint`, `github_osint`, `reputation_check`, `msft_recon`, `cn_recon`, `traffic_rank`, `sharelink_resolve`, `dork_builder`, `exposure_score`, `signature_scan`, `kb_crossref`, `case_drift`, `deep_profile`, `wifi_ssid` …) cộng 8 shim `scripts/webpivot/` sẵn có (`cert_pivot`, `email_hygiene`, `wayback_fetch/harvest`, `rank_relations`, `sensitive_paths`, `pivot_suggest`, `crypto_balance`) được đăng ký thành `@tool` và op `intel.py`; mọi hàng lệnh trong SKILL.md giờ nêu CLI **T2** và công cụ **T1** của nó, hoặc được gắn nhãn `[model]` / `[unimplemented]`. **79 `@tool`**, và allowlist SDK bị khóa vào tập đã decorate ([`test_tool_registry.py`](intel_engine/tests/test_tool_registry.py)). Phân cụm thực thi **quy tắc hai-artifact**: mỗi cụm mang `corroboration`, và một artifact dùng chung bị gắn cờ `LEAD ONLY`, không bao giờ thành estate đã quy thuộc. Các bài kiểm thử riêng của engine được vendor giờ chạy trong `audit.sh` §9–10 và CI — trước đây chúng không chạy ở đâu cả |
+| **ChongLuaDao trong pipeline · subdomain · một trần timeout** | Feed first-party chấm điểm mọi host, subdomain sống tham gia vụ việc, và không lệnh gọi nào treo lượt chạy | `wp_cld.py` chạy trên mỗi host đã thu thập bên trong `enrich_live` — verdict denylist + phân tích IoC hạ cánh thành **fact uy tín** (không bao giờ là cạnh cụm) và WHOIS CLD là **nguồn chính cho tên `.vn`**. `subdomain_enum` hợp nhất subfinder (tự lấy key từ `.env`), amass, assetfinder và findomain, xác minh DNS các tên vào `cases/<id>/subenum/<apex>.json`, và frontier xếp hàng những tên **sống** cho vòng kế (plumbing của hoster là fact, không phải seed). Một trần duy nhất cho mỗi lệnh gọi — `CTI_CALL_TIMEOUT`, mặc định **1800 s** từ `WebPivot/references/timeouts.json` — sàn mọi fetch, lệnh gọi vendor, collector và subprocess renderer; probe DNS/TLS thô giữ biên fail-fast của chúng, và MCP server đang chạy giữ giá trị của nó cho đến khi restart |
+| **Apex có thể đăng ký · IP landlord · binder kit** | Frontier và KB thống nhất apex là gì và IP nào là landlord | Một **Public Suffix List** được vendor (`public_suffix_list.json`, `wp_psl_update.py`) điều khiển một reducer `_registrable()`, nên `shop.id.vn` và `panel.co.uk` gập về đúng apex ở mọi nơi — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) là **một** con số đánh dấu IP là hosting chia sẻ/hàng loạt: các cạnh `hosted_on` của nó trở thành fact, phân vùng cụm bỏ qua chúng, và co-tenant bị giữ lại làm lead. Độ sâu mở rộng được neo: host liên kết chủ sở hữu với một *hop trước* là `related_hosts`, không bao giờ là member. Liên kết mạng xã hội cào được phân giải về **tài khoản** — đường dẫn dành riêng theo mạng, router segment thứ hai và tài khoản credit thư viện/vendor là dữ liệu tham chiếu, và apex nền tảng trần (`t.me`, `facebook.com`) không bao giờ là handle |
+| **Blueprint gập xuống mức apex** | Estate hàng trăm host không còn âm thầm làm rơi tab kiến trúc của báo cáo HTML | Kiểu architecture của Archify vẽ ≤ 12 node · 18 cạnh, nên [`cti_archify.py`](scripts/cti_archify.py) giờ **gom host dưới apex có thể đăng ký** (`Estate · N hosts`), gập đuôi dài thành `+N more apexes`, xếp các apex mang finding lên trước và đặt hub nhà vận hành giữa hàng với nan hoa phía trên và dưới. `CTI_ARCHIFY=1` (tự động: đồ thị đầy đủ nếu vừa, không thì gập) · `force` (lưới 25 node rộng nhất) · `0`; `--plan` in cả hai kết quả offline, và mọi xuất HTML giờ xác nhận chế độ Blueprint trước (Bước C — `--yolo` giữ Auto). Được khóa bởi [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
 
 ## Có gì mới trong v2.11
 
@@ -663,7 +667,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-expert      # nạp skill trước — bốn lệnh dưới là lệnh quy ước
 /onboard         # hướng dẫn chạy lần đầu tương tác
 /capabilities    # lớp bằng chứng nào đang thiếu + đường miễn phí thay thế
-/backend         # xác nhận MCP có kiểu Tier-1 (52 công cụ) đang chạy, không phải Tier-3 stateless
+/backend         # xác nhận MCP có kiểu Tier-1 (79 công cụ) đang chạy, không phải Tier-3 stateless
 /apikeys status  # không key vẫn chạy; thêm key free/trả phí để mở khóa reverse pivot
 ```
 
@@ -732,11 +736,11 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 
 ### 7 &mdash; Full pipeline & full harness (chế độ sâu nhất)
 
-`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 52 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
+`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 79 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
 
 ```bash
 /cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
-/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 52 MCP tool)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 79 MCP tool)
 
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -919,7 +923,7 @@ Mọi cuộc điều tra đều đi qua bốn pha tự động:
 
 ### Sơ đồ quy trình
 
-**Luồng công cụ &amp; skill đầu-cuối** — toàn hệ thống trong một sơ đồ tuần tự: mục tiêu đi vào từ `/cti`, băng qua 56 kỹ thuật của Lớp 1 và bề mặt MCP 52 công cụ, qua WebPivot / BinaryPivot / cơ sở tri thức / IntelAnalysis, rồi đi ra dưới dạng đồ thị đã render và một file PDF:
+**Luồng công cụ &amp; skill đầu-cuối** — toàn hệ thống trong một sơ đồ tuần tự: mục tiêu đi vào từ `/cti`, băng qua 57 kỹ thuật của Lớp 1 và bề mặt MCP 79 công cụ, qua WebPivot / BinaryPivot / cơ sở tri thức / IntelAnalysis, rồi đi ra dưới dạng đồ thị đã render và một file PDF:
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="Luồng công cụ và skill đầu-cuối của cti-expert — sơ đồ tuần tự qua cả hai lớp" width="900">
@@ -1139,13 +1143,14 @@ Truy cập kỹ thuật thô, tự gán trọng số bằng chứng, xử lý ph
 ## Danh mục kỹ thuật
 
 <details>
-<summary><b>56 kỹ thuật</b> — nhấn để mở toàn bộ danh mục</summary>
+<summary><b>57 kỹ thuật</b> — nhấn để mở toàn bộ danh mục</summary>
 <br>
 
 | Kỹ thuật | Phạm vi | Cần API key? |
 |-----------|----------|-------------------|
 | `fx-metadata-parsing.md` | EXIF, header email, pháp y tài liệu | Không |
 | `fx-image-verification.md` | Tính xác thực, nguồn gốc, tìm ảnh ngược | Không |
+| `media-vision-analysis.md` | Nội dung bằng chứng ảnh / tài liệu / audio-video — OCR, logo, địa danh, khuôn mặt, bản chép lời → seed mới | Tùy chọn (vision + transcription cần Gemini key qua `multix`) |
 | `fx-breach-discovery.md` | Liệt kê CSDL rò rỉ + site paste | Tùy chọn (HIBP bulk, DeHashed trả phí) |
 | `fx-http-fingerprint.md` | Phân tích chữ ký HTTP, fingerprint máy chủ | Không |
 | `fx-leak-monitoring.md` | Tự động giám sát rò rỉ và dữ liệu bị lộ | Hỗn hợp (IntelligenceX/Shodan trả phí) |
@@ -1244,7 +1249,7 @@ Cùng một vụ việc, ở những định dạng mà công cụ khác đọc 
 </tr>
 </table>
 
-**Mỗi biến thể báo cáo chỉ là một lệnh** — bộ dữ liệu nền luôn được lưu (`.md` · `.json` · `.csv` · gói IOC: `.stix.json`/`.txt`/`.csv`/`.jsonl`) ở mọi lượt `/report`, `/brief` và `/case`, sau đó bạn được hỏi muốn xuất báo cáo trình bày nào: **(a) PDF · (b) DOCX · (c) HTML · (d) tất cả** (`--yolo`/luồng tự động mặc định HTML); các biến thể dưới đây chọn một định dạng hoặc một đối tượng người đọc cụ thể:
+**Mỗi biến thể báo cáo chỉ là một lệnh** — bộ dữ liệu nền luôn được lưu (`.md` · `.json` · `.csv` · gói IOC: `.stix.json`/`.txt`/`.csv`/`.jsonl`) ở mọi lượt `/report`, `/brief` và `/case`, sau đó bạn được hỏi muốn xuất báo cáo trình bày nào: **(a) PDF · (b) DOCX · (c) HTML · (d) tất cả**; khi HTML nằm trong các lựa chọn, một xác nhận thêm cho thấy **Blueprint** Archify sẽ nhúng gì (`cti_archify.py --plan`) và cho bạn chọn Auto / force / off trước khi tệp được ghi (`--yolo`/luồng tự động bỏ qua cả hai lời nhắc và mặc định HTML với Blueprint ở Auto). Các biến thể dưới đây chọn một định dạng hoặc một đối tượng người đọc cụ thể:
 
 | Lệnh | Định dạng | Phù hợp nhất cho |
 |---------|--------|----------|
@@ -1292,6 +1297,7 @@ cti-expert/
 ├── scripts/                    Collectors, backend dispatcher, report generators
 │   ├── backend/                backend.py (tier resolver) · intel.py (T2 CLI dispatch)
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── osint/                  18 keyless-first CLIs behind the SKILL.md commands — hash_id · vuln_check · username_enum · phone_osint · github_osint · reputation_check · cn_recon · kb_crossref · case_drift …
 │   ├── build_report_data.py    Case dir → REPORT.json (deterministic report bridge)
 │   ├── generate-cti-html.py    Interactive, offline, self-contained HTML report
 │   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
@@ -1311,7 +1317,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (52 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (79 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
