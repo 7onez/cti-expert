@@ -36,6 +36,7 @@ for _s in (sys.stdout, sys.stderr):
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cti_text_normalize import normalize_obj
+from cti_timeouts import CALL_TIMEOUT  # per-call ceiling (CTI_CALL_TIMEOUT)
 
 PLACEHOLDER = "__CTI_CASE_DATA__"
 
@@ -97,7 +98,7 @@ def build_archify_html(data):
             json.dump(ir, f, ensure_ascii=False)
         proc = subprocess.run(
             [node, ARCHIFY_BIN, "render", "architecture", ir_path, out_path],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, timeout=CALL_TIMEOUT)
         if proc.returncode != 0 or not os.path.isfile(out_path):
             lines = [l for l in (proc.stderr or proc.stdout or "").strip().splitlines()
                      if l and "file://" not in l and ".mjs:" not in l]

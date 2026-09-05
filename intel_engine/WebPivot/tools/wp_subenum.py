@@ -38,14 +38,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))            # intel_engine/
 SKILL = os.path.abspath(os.path.join(ROOT, ".."))                 # skill root (holds .env)
 
-# Per-call ceiling for the subfinder/amass enumeration subprocess. Mirrors wp_common.CALL_TIMEOUT;
-# env CTI_CALL_TIMEOUT is the single runtime source of truth (default 1800s / 30 min).
-try:
-    CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT", "") or 1800)
-    if CALL_TIMEOUT <= 0:
-        CALL_TIMEOUT = 1800
-except (TypeError, ValueError):
-    CALL_TIMEOUT = 1800
+# Per-call ceiling for the subfinder/amass enumeration subprocess — ONE resolver (wp_timeouts:
+# env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 1800s / 30 min).
+sys.path.insert(0, HERE)
+from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 
 _TOOL_DIRS = [os.path.expanduser("~/go/bin"), os.path.expanduser("~/.local/bin"), "/usr/local/bin"]
 _TOOL_DIRS += glob.glob(os.path.expanduser("~/osmedeus-base/external-binaries"))
@@ -221,6 +217,7 @@ def sync_subfinder_providers(config_path=None, env=None, dry_run=False, regenera
 
 
 def _run(cmd, timeout, env=None):
+    timeout = _floor(timeout)                   # every enumerator subprocess runs up to the ceiling
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
         return r.returncode, r.stdout, (r.stderr or "")[-2000:]
@@ -252,7 +249,7 @@ def enumerate_apex(apex, tools=None, timeout=None, env=None, extra_env=None, pc_
     """Union of every installed tool's names for `apex`. Returns {name: set(tools)}.
     `pc_path` is a skill-owned subfinder provider config (never the user's ~/.config file).
     `free_only` restricts subfinder to keyless sources so no metered provider credit is spent."""
-    timeout = CALL_TIMEOUT if timeout is None else max(int(timeout), CALL_TIMEOUT)
+    timeout = _floor(timeout)
     apex = apex.strip().lower().rstrip(".")
     tools = tools or which_tools()
     names = {}
@@ -275,8 +272,10 @@ def enumerate_apex(apex, tools=None, timeout=None, env=None, extra_env=None, pc_
                 names.setdefault(n, set()).add("subfinder")
                 runs["subfinder"]["names"] += 1
     if "amass" in tools:
+        # amass's own -timeout is MINUTES; both it and the subprocess bound are the floored ceiling —
+        # the old `min(timeout, 200)` cap was the one un-floored task call left in the engine.
         rc, out, err = _run([tools["amass"], "enum", "-passive", "-d", apex, "-silent",
-                             "-timeout", str(max(1, min(3, timeout // 60)))], min(timeout, 200), env=penv)
+                             "-timeout", str(max(1, timeout // 60))], timeout, env=penv)
         runs["amass"] = {"rc": rc, "names": 0, "stderr": err[-300:] if rc else ""}
         for ln in out.splitlines():
             # amass v4 prints "name (FQDN) --> a_record --> ip (IPAddress)"; v3 prints bare names
@@ -329,15 +328,23 @@ def _skill_provider_config():
     return os.path.join(SKILL, ".subfinder-provider-config.yaml")
 
 
-def run(apex, case_dir=None, timeout=None, no_resolve=False, free_only=False):
+def sync_providers(free_only=False):
+    """Build the subfinder provider config from .env ONCE (skill-owned path, never ~/.config) and
+    return the sync record. A caller fanning `run()` across apexes in threads calls this first and
+    passes the record as `sync=`, so N threads never rewrite the file other threads' subfinder
+    processes are reading."""
+    if free_only:
+        return {"filled": [], "kept": [], "missing": []}
+    return sync_subfinder_providers(config_path=_skill_provider_config(), env=_load_env(), regenerate=True)
+
+
+def run(apex, case_dir=None, timeout=None, no_resolve=False, free_only=False, sync=None):
     env = _load_env()
     # free-only leaves NO key file behind: skip the sync entirely (enumerate_apex uses -pc /dev/null).
-    # Otherwise build a FRESH provider config from .env into a skill-owned path (never touch ~/.config).
+    # Otherwise build a FRESH provider config from .env into a skill-owned path (never touch ~/.config)
+    # — unless the caller pre-synced (`sync=` from sync_providers()), in which case reuse it.
     cfg = _skill_provider_config()
-    if free_only:
-        sync = {"filled": [], "kept": [], "missing": []}
-    else:
-        sync = sync_subfinder_providers(config_path=cfg, env=env, regenerate=True)
+    sync = sync if sync is not None else sync_providers(free_only=free_only)
     tools = which_tools()
     res = {"apex": apex.lower(), "collected_at": _now(), "tools": {t: p for t, p in tools.items()},
            "free_only": free_only, "provider_config": None if free_only else cfg,

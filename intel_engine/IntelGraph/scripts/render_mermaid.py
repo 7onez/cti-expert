@@ -38,6 +38,20 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOUSE_CSS = os.path.normpath(os.path.join(HERE, "..", "references", "diagram.css"))
 
+# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 1800s). The engine's
+# resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
+    from wp_timeouts import floor as _floor  # noqa: E402
+except Exception:  # noqa: BLE001
+    def _floor(t):
+        try:
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+        except ValueError:
+            c = 1800
+        c = c if c > 0 else 1800
+        return c if not isinstance(t, (int, float)) else max(int(t), c)
+
 
 def find_mmdc():
     for cand in ("mmdc",
@@ -80,7 +94,7 @@ def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False, pu
             cmd += ["-p", puppeteer]        # puppeteer config (e.g. --no-sandbox for root)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 180))
+                               timeout=_floor(int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 180)))
         except subprocess.TimeoutExpired:
             sys.exit(f"mmdc timed out for {out} — render aborted (the .mmd is still written)")
         if r.returncode != 0:

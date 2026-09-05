@@ -53,6 +53,20 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bp_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 import bp_anyrun  # noqa: E402 — ANY.RUN TI Lookup: query builder (keyless) + live lookups (--anyrun)
+# Per-call ceiling for helper binaries (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
+# 1800s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "WebPivot", "tools"))
+    from wp_timeouts import floor as _floor  # noqa: E402
+except Exception:  # noqa: BLE001
+    def _floor(t):
+        try:
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+        except ValueError:
+            c = 1800
+        c = c if c > 0 else 1800
+        return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 # ---------------------------------------------------------------- reference data (RULE 3)
 # The host-token denylists and the packer/installer/protector signature tables are DATA, in
@@ -93,10 +107,11 @@ def uniq(seq):
     return out
 
 
-def _run(cmd, timeout=60, input_bytes=None):
-    """Run a helper binary; return (rc, stdout_bytes) or (None, b'') if the tool is absent."""
+def _run(cmd, timeout=None, input_bytes=None):
+    """Run a helper binary; return (rc, stdout_bytes) or (None, b'') if the tool is absent.
+    Bounded by the per-call ceiling; a shorter `timeout` is floored to it."""
     try:
-        p = subprocess.run(cmd, capture_output=True, timeout=timeout, input=input_bytes)
+        p = subprocess.run(cmd, capture_output=True, timeout=_floor(timeout), input=input_bytes)
         return p.returncode, p.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None, b""

@@ -160,7 +160,12 @@
       ".ttf",
       ".mp4",
       ".webm",
-      ".pdf"
+      ".pdf",
+      ".html",
+      ".htm",
+      ".php",
+      ".asp",
+      ".aspx"
     ]
   },
   "bulk_registrant_max_domains": {
@@ -300,7 +305,13 @@
       "contactprivacy.com",
       "domainsbyproxy.com",
       "identity-protect.org",
-      "privacyprotect.org"
+      "privacyprotect.org",
+      "tenten.vn",
+      "inet.vn",
+      "pavietnam.vn",
+      "nhanhoa.com",
+      "matbao.com",
+      "zdns.vn"
     ]
   },
   "privacy_email_tokens": {
@@ -326,10 +337,11 @@
     ]
   },
   "privacy_proxy_phones": {
-    "_comment": "Registrant phones published by a privacy/proxy provider across EVERY domain it fronts, so a `registered_by -> phone` edge would merge thousands of unrelated domains. Digits only, no '+' or separators — the matcher normalises input. ONLY add numbers you have actually OBSERVED published as a named privacy org's contact block, never guesses. Note the general rule in noise_filters.is_noise_phone covers unlisted providers when you pass the record's registrant email/org.",
+    "_comment": "Registrant phones published by a privacy/proxy provider across EVERY domain it fronts, so a `registered_by -> phone` edge would merge thousands of unrelated domains. Digits only, no '+' or separators — the matcher normalises input. ONLY add numbers you have actually OBSERVED published as a named privacy org's contact block, never guesses. Note the general rule in noise_filters.is_noise_phone covers unlisted providers when you pass the record's registrant email/org. Also REGISTRAR contact phones that a ccTLD WHOIS (e.g. .vn via Chongluadao) returns in the registrant slot — 84435501630 is Tenten/GMO-Z.com RUNSYSTEM's switchboard, stamped on thousands of domains.",
     "values": [
       "3544212434",
-      "18022274003"
+      "18022274003",
+      "84435501630"
     ]
   },
   "placeholder_phones": {
@@ -427,7 +439,8 @@
       "domainmarket.com",
       "undeveloped.com",
       "namebright.com",
-      "uk.com"
+      "uk.com",
+      "cloudflaressl.com"
     ]
   },
   "saas_tenant_suffixes": {
@@ -460,7 +473,446 @@
       "notion.site",
       "bubbleapps.io",
       "framer.website",
-      "translate.goog"
+      "translate.goog",
+      "work.gd",
+      "us.kg",
+      "qzz.io",
+      "xx.kg",
+      "dpdns.org"
     ]
+  },
+  "shared_hosting_max_cohosts": {
+    "_comment": "Above this many distinct registrable apexes answering on one IP, the IP is SHARED / bulk hosting (or a CDN edge) and a `hosted_on` edge to it is co-tenancy, not ownership: ingest records it as a fact, the cluster partition ignores it, and the frontier holds its co-tenants back as a lead. This is the ONE number for that judgement — tools/case_state.py MAX_IP_COHOSTS reads it — so the frontier and the KB cannot disagree about which IP is a landlord.",
+    "max_cohosts": 12
+  },
+  "social_reserved_paths": {
+    "_comment": "Per-network FIRST path segments on a social host that are the platform's own routes, never an account: sharing/intent endpoints, media/embed players, login/help/legal pages, repo-level words. A scraped social link whose first segment is listed here is content or a widget, not a handle, and is dropped (`social_handle()` returns None). `*` applies to every network. Extend when a network's boilerplate shows up as a shared 'contact' in shared.txt.",
+    "entries": {
+      "*": [
+        "share",
+        "sharer",
+        "sharer.php",
+        "share.php",
+        "intent",
+        "login",
+        "signup",
+        "join",
+        "about",
+        "help",
+        "legal",
+        "privacy",
+        "terms",
+        "tos",
+        "policies",
+        "settings",
+        "search",
+        "explore",
+        "trending",
+        "embed",
+        "embed.js",
+        "plugins",
+        "dialog",
+        "widgets",
+        "static",
+        "img",
+        "images",
+        "assets",
+        "favicon.ico",
+        "robots.txt",
+        "sitemap.xml"
+      ],
+      "github": [
+        "orgs",
+        "topics",
+        "features",
+        "marketplace",
+        "sponsors",
+        "pricing",
+        "apps",
+        "site",
+        "security",
+        "enterprise",
+        "customer-stories",
+        "readme",
+        "team",
+        "collections",
+        "events",
+        "codespaces",
+        "notifications",
+        "new",
+        "pulls",
+        "issues",
+        "contact",
+        "git-guides",
+        "mobile",
+        "copilot",
+        "premium-support",
+        "education",
+        "resources",
+        "solutions",
+        "blog"
+      ],
+      "youtube": [
+        "watch",
+        "vi",
+        "shorts",
+        "playlist",
+        "results",
+        "feed",
+        "s",
+        "iframe_api",
+        "player_api",
+        "yts",
+        "live",
+        "gaming",
+        "premium",
+        "music",
+        "t",
+        "howyoutubeworks",
+        "creators",
+        "ads",
+        "redirect",
+        "attribution_link",
+        "oembed",
+        "get_video_info",
+        "api"
+      ],
+      "facebook": [
+        "tr",
+        "pages",
+        "profile.php",
+        "photo.php",
+        "photo",
+        "video.php",
+        "videos",
+        "video",
+        "hashtag",
+        "watch",
+        "marketplace",
+        "gaming",
+        "ads",
+        "business",
+        "groups",
+        "events",
+        "l.php",
+        "reel",
+        "reels",
+        "stories",
+        "story.php",
+        "permalink.php",
+        "media",
+        "notes",
+        "messages",
+        "friends",
+        "bookmarks",
+        "connect",
+        "v2.0",
+        "v3.0",
+        "v10.0",
+        "v12.0",
+        "v13.0",
+        "v14.0",
+        "v15.0",
+        "v16.0",
+        "v17.0",
+        "v18.0",
+        "v19.0",
+        "v20.0",
+        "en_US",
+        "vi_VN",
+        "x",
+        "plugins"
+      ],
+      "twitter": [
+        "home",
+        "hashtag",
+        "i",
+        "messages",
+        "compose",
+        "download",
+        "account",
+        "who_to_follow",
+        "en",
+        "tos",
+        "jobs",
+        "status"
+      ],
+      "instagram": [
+        "p",
+        "reel",
+        "reels",
+        "accounts",
+        "developer",
+        "stories",
+        "tv",
+        "direct",
+        "explore",
+        "static"
+      ],
+      "linkedin": [
+        "shareArticle",
+        "sharing",
+        "share-offsite",
+        "feed",
+        "jobs",
+        "learning",
+        "legal",
+        "help",
+        "uas",
+        "checkpoint",
+        "pulse",
+        "posts",
+        "school"
+      ],
+      "tiktok": [
+        "tag",
+        "music",
+        "discover",
+        "foryou",
+        "following",
+        "live",
+        "embed",
+        "v2",
+        "t"
+      ],
+      "telegram": [
+        "iv",
+        "proxy",
+        "socks",
+        "setlanguage",
+        "addstickers",
+        "addtheme",
+        "addemoji",
+        "share",
+        "telegram",
+        "s",
+        "joinchat",
+        "c",
+        "login",
+        "confphone",
+        "auth"
+      ],
+      "whatsapp": [
+        "send",
+        "message"
+      ],
+      "zalo": [
+        "g",
+        "share",
+        "s",
+        "pc",
+        "qr",
+        "v2",
+        "app",
+        "oa",
+        "chat"
+      ],
+      "discord": [
+        "invite",
+        "channels",
+        "login",
+        "register",
+        "app",
+        "download",
+        "developers",
+        "api",
+        "widget",
+        "servers"
+      ],
+      "reddit": [
+        "r",
+        "comments",
+        "submit",
+        "login",
+        "register",
+        "search",
+        "wiki",
+        "static",
+        "message",
+        "subreddits",
+        "domain"
+      ],
+      "medium": [
+        "m",
+        "tag",
+        "search",
+        "p",
+        "_",
+        "topic",
+        "me",
+        "membership",
+        "about"
+      ],
+      "vk": [
+        "share.php",
+        "wall",
+        "video",
+        "photo",
+        "album",
+        "audio",
+        "doc",
+        "id0",
+        "away.php",
+        "login",
+        "feed",
+        "im",
+        "market",
+        "app",
+        "club",
+        "public",
+        "event",
+        "topic"
+      ]
+    }
+  },
+  "social_second_segment_networks": {
+    "_comment": "Networks whose account sits in the SECOND path segment behind a routing word (youtube.com/c/<name>, /user/<name>, /channel/<id>; facebook.com/pages/<name>; t.me/s/<name>; zalo.me/g/<group>). The router word is listed per network; anything else keeps the first segment (or the @handle form).",
+    "entries": {
+      "youtube": [
+        "c",
+        "user",
+        "channel"
+      ],
+      "facebook": [
+        "pages",
+        "pg",
+        "people",
+        "groups"
+      ],
+      "telegram": [
+        "s",
+        "joinchat"
+      ],
+      "zalo": [
+        "g",
+        "oa"
+      ],
+      "reddit": [
+        "r",
+        "user",
+        "u"
+      ],
+      "linkedin": [
+        "in",
+        "company",
+        "school",
+        "showcase"
+      ],
+      "vk": [
+        "public",
+        "club",
+        "event"
+      ],
+      "discord": [
+        "invite",
+        "users"
+      ],
+      "tiktok": []
+    }
+  },
+  "social_noise_accounts": {
+    "_comment": "Per-network ACCOUNTS that are library / vendor / platform credits every site built from a common stack links to (a core-js polyfill banner, a jQuery footer, a theme author), never the site operator's own contact. Matched case-insensitively against the account social_handle() resolved. Extend when a credit shows up as a shared 'contact' in shared.txt binding unrelated sites.",
+    "entries": {
+      "github": [
+        "zloirock",
+        "jquery",
+        "twbs",
+        "fortawesome",
+        "google",
+        "facebook",
+        "microsoft",
+        "nodejs",
+        "npm",
+        "webpack",
+        "babel",
+        "vercel",
+        "vuejs",
+        "angular",
+        "reactjs",
+        "tailwindlabs",
+        "jashkenas",
+        "lodash",
+        "moment",
+        "axios",
+        "chartjs",
+        "swiperjs",
+        "nolimits4web",
+        "owlcarousel2",
+        "aterrien",
+        "kenwheeler",
+        "mrdoob",
+        "gsap",
+        "greensock",
+        "sweetalert2",
+        "select2",
+        "malsup",
+        "jquery-validation",
+        "fancyapps",
+        "dimsemenov",
+        "michalsnik",
+        "juliangarnier",
+        "matthieua",
+        "daneden",
+        "wordpress",
+        "woocommerce",
+        "elementor",
+        "laravel",
+        "symfony",
+        "composer",
+        "php",
+        "python",
+        "django",
+        "encode",
+        "pallets",
+        "psf",
+        "cloudflare",
+        "github",
+        "githubtraining",
+        "features",
+        "octocat"
+      ],
+      "youtube": [
+        "youtube",
+        "google",
+        "youtubecreators"
+      ],
+      "twitter": [
+        "twitter",
+        "x",
+        "support",
+        "verified",
+        "jquery"
+      ],
+      "facebook": [
+        "facebook",
+        "meta",
+        "wix",
+        "shopify",
+        "squarespace",
+        "webflow"
+      ],
+      "instagram": [
+        "instagram",
+        "meta"
+      ],
+      "telegram": [
+        "telegram",
+        "durov",
+        "botfather",
+        "telegramtips"
+      ],
+      "linkedin": [
+        "linkedin"
+      ],
+      "tiktok": [
+        "tiktok"
+      ],
+      "zalo": [
+        "zalo"
+      ],
+      "discord": [
+        "discord"
+      ]
+    }
   }
 }

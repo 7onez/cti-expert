@@ -31,7 +31,8 @@ from knowledge_base import KB  # noqa: E402
 from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  # noqa: E402
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
                            is_noise_social_handle, is_bulk_registrant, is_noise_phone,
-                           is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS)
+                           is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS,
+                           is_shared_hosting_ip, social_handle)
 
 # reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
 try:
@@ -157,10 +158,15 @@ def _host_of(url):
     return host[4:] if host.startswith("www.") else host
 
 
+_NAME_MISPARSE_RE = re.compile(r"@|\+?\d[\d .()-]{6,}\d|\|")   # an e-mail, a phone, a `VALUE|DOMAIN` field
+
+
 def _name_kind(nm):
-    """Classify a registrant name → 'org' | 'person' | None(junk)."""
-    s = (nm or "").strip().lower()
-    if not s or any(j in s for j in _NAME_JUNK):
+    """Classify a registrant name → 'org' | 'person' | None(junk). Whitespace is collapsed before
+    the junk-label match ('REACTIVATION  PERIOD'), and a value carrying an e-mail address, a phone
+    number or a `|` is a mis-split WHOIS line, never a name."""
+    s = " ".join((nm or "").split()).lower()
+    if not s or any(j in s for j in _NAME_JUNK) or _NAME_MISPARSE_RE.search(s):
         return None
     if any(suf in " " + s for suf in _ORG_SUFFIX):
         return "org"
@@ -205,6 +211,24 @@ def _is_role_placeholder(v):
     """True if a WHOIS registrant NAME is a generic role/boilerplate placeholder rather than an
     identity. Such a name must never become a `registered_by` clustering edge."""
     return _norm_name(v) in _ROLE_NAME_PLACEHOLDERS
+
+
+# DATA: references/registrant_noise.json -> name_honorifics (leading courtesy tokens)
+_NAME_HONORIFICS = frozenset(str(x).lower() for x in (_RN.get("name_honorifics") or ()))
+
+
+def canonical_person(nm):
+    """ONE person node per registrant across the forms different registrars emit: strip leading
+    honorifics ('Ông Trần Văn Example' → 'Trần Văn Example'), collapse whitespace, Title-Case the
+    result so 'TRẦN VĂN EXAMPLE' and 'trần văn example' key the same node as 'Trần Văn Example'.
+    Before this the same registrant was three KB nodes and its estate shattered into components."""
+    toks = " ".join(str(nm or "").split()).split(" ")
+    while len(toks) > 1 and toks[0].lower().rstrip(".") in _NAME_HONORIFICS:
+        toks = toks[1:]
+    s = " ".join(toks)
+    if len(toks) == 1 and s.isupper():
+        return s                            # a single ALL-CAPS token is an acronym/brand, keep it
+    return s.title() if s else s
 
 
 def _is_privacy(v):
@@ -273,14 +297,60 @@ def _resolved_ip_edges(kb, host, lr, observed, ev):
             continue
         _note(ip, today, today, "passivedns")
 
+    # SHARED HOSTING: the same pivot's IP-reverse blocks (FOFA / passive-DNS / DNSLytics) say how many
+    # apexes answer on each IP. Above the shared-hosting bound the IP is a landlord — co-tenancy, not
+    # ownership — so it is recorded as a FACT on the domain (kept as evidence, never a cluster edge).
+    # Same number the frontier uses to hold co-tenants back (noise_filters.SHARED_HOSTING_MAX_COHOSTS).
+    landlords = _shared_hosting_ips_from_lr(lr)
     n = 0
     for ip, m in ips.items():
+        if ip in landlords:
+            kb.add_fact("domain", host, "shared_hosting_ip",
+                        f"{ip} ({landlords[ip]} co-tenant apexes) — shared/bulk hosting, not an owner link",
+                        "webpivot", "webpivot/dns", observed, "low", ev)
+            continue
         attrs = {"first_seen": m["first"] or today, "last_seen": m["last"] or today,
                  "via": ",".join(sorted(m["via"]))}
         kb.add_edge("domain", host, "hosted_on", "indicator", f"ip:{ip}",
                     "webpivot", "webpivot/dns", observed, "medium", ev, attrs=attrs)
         n += 1
     return n
+
+
+def _shared_hosting_ips_from_lr(lr):
+    """{ip: cohost_count} for every IP-reverse block on a domain pivot whose distinct-apex count (or
+    truncated total) exceeds the shared-hosting bound. Row shapes: FOFA results (host/ip/domain),
+    passive-DNS hosts, DNSLytics domains; the IP comes from the block, a row, or the query term."""
+    out = {}
+    for key in ("fofa_ip_reverse", "pdns_ip_reverse", "dnslytics_reverseip"):
+        blk = lr.get(key) or {}
+        if not isinstance(blk, dict):
+            continue
+        rows = blk.get("results") or blk.get("hosts") or blk.get("domains") or []
+        if not rows:
+            continue
+        ip = str(blk.get("ip") or "").strip()
+        for row in rows:
+            if ip:
+                break
+            if isinstance(row, dict) and row.get("ip"):
+                ip = str(row["ip"]).strip()
+        if not ip:
+            m = re.search(r'ip="?([0-9a-fA-F:.]+)"?', str(blk.get("query") or ""))
+            ip = m.group(1) if m else ""
+        if not ip:
+            continue
+        names = set()
+        for row in rows:
+            raw = (row.get("domain") or row.get("host") or "") if isinstance(row, dict) else row
+            nd = _norm_domain(str(raw).split(":", 1)[0])
+            if nd and not _is_ip_host(nd):
+                names.add(_registrable(nd))
+        total = blk.get("total") if isinstance(blk.get("total"), int) else 0
+        count = max(len(names), total if total > len(rows) else 0)
+        if is_shared_hosting_ip(count):
+            out[ip] = count
+    return out
 
 
 def _norm_domain(hd):
@@ -733,12 +803,13 @@ def ingest_file(kb, path):
         ind = f"verification:{label}:{tok}"
         kb.add_edge("domain", host, "uses_verification", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
         n += 1
-    # --- socials ---
+    # --- socials: the ACCOUNT behind the link (noise_filters.social_handle), never the last path
+    #     word — `github.com/x/core-js` is the user x, `youtube.com/embed/<id>` is nobody's account ---
     for net, handles in (art.get("socials") or {}).items():
         for h in handles:
-            leaf = h.rstrip("/").split("/")[-1]
-            if is_noise_social_handle(leaf):
-                continue        # a share icon or a bundle's `{u}` placeholder is nobody's account
+            leaf = social_handle(net, h)
+            if not leaf:
+                continue        # a share widget, a player/thumbnail, a bare host or a bundle's `{u}` placeholder
             ind = f"social:{net}:{leaf}"
             kb.add_edge("domain", host, "uses_contact", "indicator", ind, "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
@@ -996,7 +1067,8 @@ def ingest_file(kb, path):
                 kind = _name_kind(nm)          # org / person / None(junk label — skip)
                 if not kind:
                     continue
-                kb.add_edge("domain", host, "registered_by", kind, nm.strip(),
+                kb.add_edge("domain", host, "registered_by", kind,
+                            canonical_person(nm) if kind == "person" else nm.strip(),
                             "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
                 n += 1
             elif nm and _is_role_placeholder(nm):   # generic role boilerplate — fact, never an edge

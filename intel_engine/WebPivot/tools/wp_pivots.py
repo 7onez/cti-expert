@@ -196,6 +196,22 @@ _GENERIC_SUBLABELS = frozenset(_LABELS_REF["subdomain_labels"])
 _NOISE_TRACKER_IDS = {str(x).strip().upper() for x in _LABELS_REF["noise_tracker_ids"]}
 
 
+def _is_placeholder_tracker(value: str) -> bool:
+    """A tracker id whose body is a TEMPLATE PLACEHOLDER (`G-XXXXXXXXXX`, `GTM-XXXXXXX`,
+    `UA-00000-0`, `AW-123456789`): the theme author's stand-in the buyer never replaced, carried
+    by every site built from that template. One such id answered 29,875 domains on a reverse — it is
+    the single worst false same-owner hub, and every reverse spent on it is a wasted credit."""
+    body = re.sub(r"^[A-Za-z]+-", "", str(value or "").strip())      # drop the G- / GTM- / UA- prefix
+    digits = re.sub(r"[^A-Za-z0-9]", "", body)
+    if not digits:
+        return True
+    if len(set(digits.upper())) == 1:                                  # XXXXXXXX / 00000000 / 11111111
+        return True
+    if re.fullmatch(r"X{3,}[0-9X-]*|[0-9X]*X{3,}", body.upper()):     # G-XXXX1234, UA-XXXXXXXX-1
+        return True
+    return digits.startswith("123456789")                             # AW-123456789, ca-pub-1234567890123456 sample ids
+
+
 def _distinctive_subdomain(host: str):
     """Return the leftmost subdomain LABEL of `host` when it's a distinctive (non-generic) name.
 
@@ -374,11 +390,11 @@ def build_pivots(art: dict, base_host: str):
 
     for label, vals in art.get("trackers", {}).items():
         for v in vals:
-            if str(v).strip().upper() in _NOISE_TRACKER_IDS:
+            if str(v).strip().upper() in _NOISE_TRACKER_IDS or _is_placeholder_tracker(v):
                 add(f"platform_tracker:{label}", v, "low", [],
-                    "Platform/template analytics container carried by every tenant or every site "
-                    "built from this template — NOT the site owner's account. Recorded as context; "
-                    "never cluster on it.")
+                    "Platform/template analytics container (or an unreplaced template PLACEHOLDER id) "
+                    "carried by every tenant or every site built from this template — NOT the site "
+                    "owner's account. Recorded as context; never cluster on it.")
                 continue
             add(f"tracker:{label}", v, "high", [
                 {"service": "PublicWWW", "query": f'"{v}"'},

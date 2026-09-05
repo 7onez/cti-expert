@@ -35,14 +35,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # import wp_net / wp_refs standalone
 
-# Per-call ceiling (mirrors wp_common.CALL_TIMEOUT; env CTI_CALL_TIMEOUT is the runtime source,
-# default 1800s / 30 min). Applied to the Playwright page.goto timeout below.
-try:
-    CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT", "") or 1800)
-    if CALL_TIMEOUT <= 0:
-        CALL_TIMEOUT = 1800
-except (TypeError, ValueError):
-    CALL_TIMEOUT = 1800
+# Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 1800s).
+# Applied to the Playwright page.goto timeout below.
+from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 
 try:
     from wp_refs import load_ref, ref_path                       # shared RULE 3 loader
@@ -139,7 +134,7 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     os.makedirs(base, exist_ok=True)
     png = os.path.join(base, f"{_utc_stamp()}.png")
 
-    to_ms = max(int(timeout or CAP["timeout_seconds"]), CALL_TIMEOUT) * 1000
+    to_ms = _floor(timeout or CAP["timeout_seconds"]) * 1000
     actions: list[str] = []
     with sync_playwright() as p:
         launch = {"headless": True}

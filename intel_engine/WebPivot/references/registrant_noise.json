@@ -32,7 +32,23 @@
       "hostmaster@",
       "noc@",
       "registrar-abuse@",
-      "postmaster@"
+      "postmaster@",
+      "registrar@",
+      "expired@",
+      "reactivation-pending@",
+      "reactivation@",
+      "proxy@",
+      "tenmien@",
+      "lienhemuatenmien@",
+      "domains@",
+      "domain@",
+      "dns@",
+      "whois@",
+      "registry@",
+      "renewals@",
+      "expiring@",
+      "suspended@",
+      "pendingdelete@"
     ]
   },
   "proxy_email_domains": {
@@ -47,7 +63,34 @@
       "privacyguardian.org",
       "privacyprotect.org",
       "whoisprivacyprotect.com",
-      "withheldforprivacy.com"
+      "withheldforprivacy.com",
+      "tenten.vn",
+      "inet.vn",
+      "enom.com",
+      "dynadot.com",
+      "whoisprotectservice.com",
+      "data-protected.net",
+      "newvcorp.com",
+      "trinam.com.vn",
+      "phvmail.com",
+      "pavietnam.vn",
+      "nhanhoa.com",
+      "matbao.com",
+      "zdns.vn",
+      "gmo.jp",
+      "onamae.com",
+      "gname.com",
+      "hostinger.com",
+      "registrar-servers.com",
+      "tucows.com",
+      "publicdomainregistry.com",
+      "namesilo.com",
+      "name.com",
+      "gandi.net",
+      "key-systems.net",
+      "1api.net",
+      "markmonitor.com",
+      "cscglobal.com"
     ]
   },
   "noise_email_substrings": {
@@ -86,7 +129,15 @@
       "reactivation period",
       "c/o id#",
       "data protected",
-      "statutory masking"
+      "statutory masking",
+      "gmo-z.com runsystem",
+      "runsystem",
+      "domain administrator",
+      "domain manager",
+      "registration private",
+      "not available from registry",
+      "ripe ncc",
+      "address block"
     ]
   }
 }

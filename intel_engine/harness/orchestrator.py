@@ -24,7 +24,6 @@ import glob
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -192,10 +191,8 @@ def _domain_table(case: str) -> str:
     files = [os.path.join(raw, f) for f in os.listdir(raw)] if os.path.isdir(raw) else []
     if not files:
         return ""
-    r = subprocess.run(
-        [sys.executable, os.path.join("tools", "domain_table.py"), *files,
-         "--case", case, "--kb", T.KB_DIR],
-        cwd=ROOT, capture_output=True, text=True, timeout=180)
+    r = T._run([sys.executable, os.path.join("tools", "domain_table.py"), *files,
+     "--case", case, "--kb", T.KB_DIR], timeout=180)
     return r.stdout if r.returncode == 0 else ""
 
 
@@ -205,9 +202,7 @@ def _prior_knowledge(seeds: list[str]) -> str:
     for s in seeds:
         host = T._host(s)
         collected = bool(T._find_cached_raw(host))
-        op = subprocess.run(
-            [sys.executable, os.path.join("tools", "kb", "operator_registry.py"), "find", host],
-            cwd=ROOT, capture_output=True, text=True, timeout=60)
+        op = T._run([sys.executable, os.path.join("tools", "kb", "operator_registry.py"), "find", host], timeout=60)
         first = (op.stdout or "").strip().splitlines()
         attributed = bool(first) and "not attributed" not in first[0].lower()
         tags = [t for t, on in (("already-collected", collected), ("attributed", attributed)) if on]
@@ -442,8 +437,8 @@ async def _judge(domains: list[str], case: str) -> tuple[Assessment | None, dict
 def _convergence_snapshot(case: str) -> str:
     """Record this round in cases/<case>/rounds.jsonl via the convergence tool (its own authority
     on what counts as a new host/indicator). Returns its one-line summary for the worklog."""
-    r = subprocess.run([sys.executable, os.path.join("tools", "kb", "convergence.py"),
-                        "snapshot", case], cwd=ROOT, capture_output=True, text=True, timeout=120)
+    r = T._run([sys.executable, os.path.join("tools", "kb", "convergence.py"),
+                        "snapshot", case], timeout=120)
     return (r.stdout or r.stderr or "").strip()
 
 
@@ -470,9 +465,8 @@ def _rw_call(flag: str, term: str, mode: str) -> dict:
     """One whois_enrich reverse call (preview=free count / purchase=spend). Returns the reverse_*
     record or {} — never raises, so a network/credit failure degrades the frontier, never aborts."""
     try:
-        r = subprocess.run([sys.executable, os.path.join("WebPivot", "tools", "whois_enrich.py"),
-                            flag, term, "--search-type", "historic", "--reverse-mode", mode, "--json"],
-                           cwd=ROOT, capture_output=True, text=True, timeout=150)
+        r = T._run([sys.executable, os.path.join("WebPivot", "tools", "whois_enrich.py"),
+                            flag, term, "--search-type", "historic", "--reverse-mode", mode, "--json"], timeout=150)
         data = json.loads(r.stdout or "{}")
     except Exception:  # noqa: BLE001
         return {}
@@ -672,9 +666,8 @@ def _discover_new_seeds(case: str, known: list[str], max_new: int) -> list[str]:
     collected = [os.path.basename(p)[:-5] for p in glob.glob(os.path.join(raw, "*.json"))]
     scores: dict[str, int] = {}
     for dom in collected:
-        r = subprocess.run([sys.executable, os.path.join("tools", "kb", "query.py"),
-                            "--kb", T.KB_DIR, "--cluster", dom, "--strong"],
-                           cwd=ROOT, capture_output=True, text=True, timeout=120)
+        r = T._run([sys.executable, os.path.join("tools", "kb", "query.py"),
+                            "--kb", T.KB_DIR, "--cluster", dom, "--strong"], timeout=120)
         for line in (r.stdout or "").splitlines():
             m = re.match(r"^\s+(\S+)\s+via\s+(\d+)\s+shared", line)
             if not m:
@@ -880,9 +873,8 @@ def _compute_components(case: str, domains: list[str]) -> list[list[str]]:
     connected components (boilerplate / benign / over-prevalent edges excluded). One cluster ==
     one unit of LLM judgment, so cost scales with cluster count, not domain count."""
     hosts = sorted({T._host(d) for d in domains})
-    r = subprocess.run([sys.executable, os.path.join("tools", "kb", "query.py"),
-                        "--kb", T.KB_DIR, "--components", "--domains", ",".join(hosts)],
-                       cwd=ROOT, capture_output=True, text=True, timeout=120)
+    r = T._run([sys.executable, os.path.join("tools", "kb", "query.py"),
+                        "--kb", T.KB_DIR, "--components", "--domains", ",".join(hosts)], timeout=120)
     comps = []
     for line in (r.stdout or "").splitlines():
         if line.startswith("COMPONENT"):
@@ -942,8 +934,8 @@ def _cluster_prior_verdict(members: list[str]) -> str | None:
     unattributed, return None (the cluster still needs LLM judgment)."""
     verdicts = []
     for d in members:
-        r = subprocess.run([sys.executable, os.path.join("tools", "kb", "operator_registry.py"),
-                            "find", d], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        r = T._run([sys.executable, os.path.join("tools", "kb", "operator_registry.py"),
+                            "find", d], timeout=60)
         out = (r.stdout or "").strip()
         if not out or "not attributed" in out.lower():
             return None
@@ -1209,16 +1201,15 @@ def _ensure_case_diagram(case: str, title: str) -> str | None:
     if os.path.exists(fig) and os.path.getmtime(fig) >= max(os.path.getmtime(p) for p in raw):
         return fig
     graph_json = os.path.join(rep_dir, "case_graph.json")
-    gb = subprocess.run([sys.executable, os.path.join("WebPivot", "tools", "graph_build.py"),
-                         *raw, "-o", graph_json], cwd=ROOT, capture_output=True, text=True, timeout=240)
+    gb = T._run([sys.executable, os.path.join("WebPivot", "tools", "graph_build.py"),
+                         *raw, "-o", graph_json], timeout=240)
     if gb.returncode != 0 or not os.path.exists(graph_json):
         _log(f" deliverables: graph build skipped ({(gb.stderr or gb.stdout or '').strip()[:120]})")
         return None
-    gd = subprocess.run([sys.executable, os.path.join("IntelGraph", "scripts", "graph_to_diagram.py"),
+    gd = T._run([sys.executable, os.path.join("IntelGraph", "scripts", "graph_to_diagram.py"),
                          graph_json, os.path.join(rep_dir, "case_diagram"),
                          "--title", (title or case)[:80], "--legend",
-                         "--drop-types", ",".join(FIGURE_DROP_TYPES)],
-                        cwd=ROOT, capture_output=True, text=True, timeout=180)
+                         "--drop-types", ",".join(FIGURE_DROP_TYPES)], timeout=180)
     if gd.returncode != 0 or not os.path.exists(fig):
         _log(f" deliverables: diagram skipped ({(gd.stderr or gd.stdout or '').strip()[:120]})")
         return None
@@ -1256,8 +1247,8 @@ def _render_deliverables(case: str, snap_md: str, assessment: Assessment) -> dic
         f.write("\n".join(parts) + "\n")
 
     stem = os.path.join(rep_dir, base)
-    rr = subprocess.run([sys.executable, os.path.join("IntelReport", "scripts", "render_report.py"),
-                         report_md, stem, "--case-id", case], cwd=ROOT, capture_output=True, text=True, timeout=300)
+    rr = T._run([sys.executable, os.path.join("IntelReport", "scripts", "render_report.py"),
+                         report_md, stem, "--case-id", case], timeout=300)
     if rr.returncode == 0:
         for ext in ("pdf", "docx"):
             if os.path.exists(f"{stem}.{ext}"):

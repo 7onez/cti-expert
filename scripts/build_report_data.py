@@ -70,6 +70,19 @@ def _n_clusters(case_dir):
         return None
 
 
+def _hops(case_dir):
+    """(hops, depth) from state.json — the EXPANSION ANCHOR the loop recorded. A host at hop >= depth
+    is a LEAF: collected to bound the estate (an agency's client, a registrant's other project), owner-
+    linked to the previous hop, not to the operator. Legacy state without hops: every host is estate."""
+    st = _load_json(os.path.join(case_dir, "state.json"))
+    if not isinstance(st, dict):
+        return {}, 2
+    hops = st.get("hops") if isinstance(st.get("hops"), dict) else {}
+    depth = st.get("expansion_depth")
+    return ({str(k).lower(): int(v) for k, v in hops.items() if isinstance(v, int)},
+            depth if isinstance(depth, int) and depth >= 0 else 2)
+
+
 def _iter_raw(case_dir):
     """Yield (host, raw_dict) for every collected host pivot JSON — never an evidence sidecar."""
     d = os.path.join(case_dir, "raw")
@@ -281,6 +294,8 @@ def build(case_dir, kb_dir, classification=None):
                                "role": "actor", "confidence": 85})
 
     # ---- per-collected-host subjects + infra facts ---------------------------
+    hops, depth = _hops(case_dir)
+    leaves = []
     sub_by_host = {}
     for i, h in enumerate(hosts, start=2):
         raw = raws[h]
@@ -297,27 +312,40 @@ def build(case_dir, kb_dir, classification=None):
         for ns in who.get("name_servers") or []:
             nameservers.add(ns.lower())
         exclude |= _cdn_ips_and_origins(raw)
+        hop = hops.get(h.lower(), 0) if hops else 0
+        leaf = bool(hops) and hop >= depth
+        if leaf:
+            leaves.append(h)
         subjects.append({
-            "id": sid, "label": h, "type": "domain", "role": "infrastructure",
-            "confidence": 95 if h == seed else 85, "verified": True, "aliases": [],
+            "id": sid, "label": h, "type": "domain",
+            "role": "related" if leaf else "infrastructure",
+            "confidence": 95 if h == seed else (60 if leaf else 85), "verified": True, "aliases": [],
             "first_seen": created,
             "notes": (f"Collected host; HTTP {http or 'n/a'}"
                       + (f"; {', '.join(themes)} kit" if themes else "")
-                      + (f"; registrar {registrar}" if registrar else "") + "."),
+                      + (f"; registrar {registrar}" if registrar else "")
+                      + (f"; hop {hop} — owner-linked to a hop-{hop - 1} host, NOT to the operator: "
+                         "collected to bound the estate, excluded from IOCs" if leaf else "") + "."),
+            **({"ioc_exclude": True, "hop": hop} if leaf else ({"hop": hop} if hops else {})),
         })
-        if operator_exists:
+        if operator_exists and not leaf:
             # a host the confirmed-operator ledger lists is a confirmed member; a collected host the
-            # ledger does not (yet) hold is a candidate — the STIX/graph edge must say which.
+            # ledger does not (yet) hold is a candidate — the STIX/graph edge must say which. A hop-1
+            # host is at best probable: it is owner-linked to the estate, not part of the seed set.
             ledger_domains = {d.lower() for d in (op_rec or {}).get("domains") or []}
             in_ledger = (not op_rec) or h.lower() in ledger_domains or h == seed
             connections.append({"id": f"CON-{len(connections)+1:03d}", "from_id": "SUB-001",
                                 "to_id": sid, "relationship": "operates",
-                                "strength": "confirmed" if in_ledger else "probable"})
+                                "strength": "confirmed" if (in_ledger and hop == 0) else "probable"})
+        elif leaf and operator_exists:
+            connections.append({"id": f"CON-{len(connections)+1:03d}", "from_id": "SUB-001",
+                                "to_id": sid, "relationship": "related_to", "strength": "possible"})
         if created:
             timeline.append({"date": created, "event": f"{h} registered"
                              + (f" through {registrar}" if registrar else "")})
-        indicators.append({"type": "domain", "value": h, "category": "network",
-                           "role": "infrastructure", "confidence": 95 if h == seed else 85})
+        if not leaf:
+            indicators.append({"type": "domain", "value": h, "category": "network",
+                               "role": "infrastructure", "confidence": 95 if h == seed else 85})
         # provenance from the seed's own live page / rdap
         if h == seed:
             add_source("Live page", raw.get("meta", {}).get("final_url") or f"https://{h}/",
@@ -425,6 +453,11 @@ def build(case_dir, kb_dir, classification=None):
                     "was not gathered this run.")
     if not reg_email:
         gaps.append("No current registrant triple recovered — attribution rests on the ledger only.")
+    if leaves:
+        gaps.append(f"{len(leaves)} collected host(s) sit at expansion hop >= {depth} (owner-linked to a "
+                    "previous-hop host, not to the operator): kept as `related` subjects for context, "
+                    "wired `related_to`, and excluded from the IOC bundle — attribute them only after a "
+                    "join key to the operator is shown.")
     n_clusters = _n_clusters(case_dir)
     if n_clusters and n_clusters > 1:
         gaps.append(f"clusters.json reports {n_clusters} operator clusters for this case; this "

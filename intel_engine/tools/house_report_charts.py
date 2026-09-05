@@ -26,6 +26,10 @@ ROOT = os.path.dirname(HERE)
 SCRIPTS = os.path.join(os.path.dirname(ROOT), "scripts")
 BUILD_REPORT_DATA = os.path.join(SCRIPTS, "build_report_data.py")
 REPORT_FIGURES = os.path.join(SCRIPTS, "cti_report_figures.py")
+# Per-call ceiling for the build/figure subprocesses (env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 1800s); every bound below is floored to it.
+sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+from wp_timeouts import CALL_TIMEOUT  # noqa: E402
 
 FIGURES = ("fig_confidence", "fig_registrations", "fig_cooccurrence", "fig_entity_map")
 
@@ -43,7 +47,7 @@ def _interpreters() -> list:
 
 
 def _can_draw(py: str) -> bool:
-    r = subprocess.run([py, "-c", "import matplotlib, numpy"], capture_output=True, text=True, timeout=60)
+    r = subprocess.run([py, "-c", "import matplotlib, numpy"], capture_output=True, text=True, timeout=CALL_TIMEOUT)
     return r.returncode == 0
 
 
@@ -51,7 +55,7 @@ def build_report_json(case_dir: str, rep_dir: str) -> tuple:
     """case dir -> report/report-data.json via build_report_data.py. (path | None, note)."""
     out = os.path.join(rep_dir, "report-data.json")
     r = subprocess.run([sys.executable, BUILD_REPORT_DATA, case_dir, "-o", out],
-                       capture_output=True, text=True, timeout=300)
+                       capture_output=True, text=True, timeout=CALL_TIMEOUT)
     if r.returncode != 0 or not os.path.exists(out):
         return None, (r.stderr or r.stdout or "build_report_data failed").strip().splitlines()[-1][:160]
     return out, ""
@@ -71,7 +75,7 @@ def build_figures(case_dir: str, rep_dir: str) -> dict:
         notes["interpreter"] = "no interpreter with matplotlib + numpy found"
         figs["_notes"] = notes
         return figs
-    r = subprocess.run([py, REPORT_FIGURES, data, case_dir, rep_dir], capture_output=True, text=True, timeout=300)
+    r = subprocess.run([py, REPORT_FIGURES, data, case_dir, rep_dir], capture_output=True, text=True, timeout=CALL_TIMEOUT)
     if r.returncode != 0:
         notes["render"] = (r.stderr or r.stdout or "figure render failed").strip().splitlines()[-1][:160]
         figs["_notes"] = notes

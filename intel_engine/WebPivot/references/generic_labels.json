@@ -175,7 +175,12 @@
       ".ttf",
       ".mp4",
       ".webm",
-      ".pdf"
+      ".pdf",
+      ".html",
+      ".htm",
+      ".php",
+      ".asp",
+      ".aspx"
     ]
   },
   "multi_part_tlds": {

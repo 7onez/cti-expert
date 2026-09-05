@@ -39,14 +39,10 @@ import urllib.request
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Per-call ceiling (mirrors wp_common.CALL_TIMEOUT; env CTI_CALL_TIMEOUT is the single runtime source,
-# default 1800s / 30 min). This module is self-contained (no wp_common), so it floors its own calls.
-try:
-    CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT", "") or 1800)
-    if CALL_TIMEOUT <= 0:
-        CALL_TIMEOUT = 1800
-except (TypeError, ValueError):
-    CALL_TIMEOUT = 1800
+# Per-call ceiling — ONE resolver (WebPivot/tools/wp_timeouts: env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 1800s / 30 min). Stdlib sibling; floors every call this module makes.
+sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 
 
 def _host(s: str) -> str:
@@ -57,7 +53,7 @@ def _host(s: str) -> str:
 
 
 def _get(url: str, timeout: int = None) -> str:
-    eff = CALL_TIMEOUT if not isinstance(timeout, (int, float)) else max(int(timeout), CALL_TIMEOUT)
+    eff = _floor(timeout)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=eff) as r:
         return r.read().decode("utf-8", "ignore")

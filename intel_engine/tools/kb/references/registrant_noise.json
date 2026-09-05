@@ -24,7 +24,15 @@
       " systems",
       " media",
       " holdings",
-      " sarl"
+      " sarl",
+      " tnhh",
+      "cong ty ",
+      "công ty ",
+      "joint stock",
+      " cổ phần",
+      " co phan",
+      " jsc",
+      " công nghệ"
     ]
   },
   "name_junk": {
@@ -43,7 +51,12 @@
       "on behalf of",
       "domain buyer",
       "registrant id",
-      "not available from registry"
+      "not available from registry",
+      "not managed by the ripe ncc",
+      "address block",
+      "cloudflare, inc",
+      "gmo-z.com runsystem",
+      "c/o id#"
     ]
   },
   "role_name_placeholders": {
@@ -96,10 +109,15 @@
       "not disclosed",
       "perfect privacy",
       "privacy",
+      "privacy protection service",
       "private by design",
+      "private registration",
+      "private whois",
       "redacted",
       "registration private",
       "statutory masking",
+      "whois privacy",
+      "whois protection",
       "whoisguard",
       "withheld"
     ]
@@ -116,7 +134,34 @@
       "privacyguardian.org",
       "privacyprotect.org",
       "whoisprivacyprotect.com",
-      "withheldforprivacy.com"
+      "withheldforprivacy.com",
+      "tenten.vn",
+      "inet.vn",
+      "enom.com",
+      "dynadot.com",
+      "whoisprotectservice.com",
+      "data-protected.net",
+      "newvcorp.com",
+      "trinam.com.vn",
+      "phvmail.com",
+      "pavietnam.vn",
+      "nhanhoa.com",
+      "matbao.com",
+      "zdns.vn",
+      "gmo.jp",
+      "onamae.com",
+      "gname.com",
+      "hostinger.com",
+      "registrar-servers.com",
+      "tucows.com",
+      "publicdomainregistry.com",
+      "namesilo.com",
+      "name.com",
+      "gandi.net",
+      "key-systems.net",
+      "1api.net",
+      "markmonitor.com",
+      "cscglobal.com"
     ]
   },
   "proxy_email_tokens": {
@@ -213,6 +258,22 @@
       ".py",
       ".js",
       ".css"
+    ]
+  },
+  "name_honorifics": {
+    "_comment": "Leading honorific / courtesy tokens a ccTLD WHOIS prefixes to the registrant NAME ('Ông Trần Văn Example' = Mr. Trần Văn Example; 'Bà' = Mrs.). Stripped before a person node is keyed, so the honorific and plain forms — and the ALL-CAPS form another registrar emits — collapse onto ONE canonical person (Title Case). Without it the same registrant is three KB nodes and a 12-host estate shatters. Only UNAMBIGUOUS tokens: 'Anh', 'Chị', 'Ba' are also given names and must not be stripped.",
+    "values": [
+      "ông",
+      "bà",
+      "mr",
+      "mr.",
+      "mrs",
+      "mrs.",
+      "ms",
+      "ms.",
+      "miss",
+      "dr",
+      "dr."
     ]
   }
 }

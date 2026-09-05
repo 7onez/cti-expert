@@ -13,6 +13,21 @@ import shutil
 import subprocess
 import sys
 
+# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 1800s). The engine's
+# resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "WebPivot", "tools"))
+    from wp_timeouts import floor as _floor  # noqa: E402
+except Exception:  # noqa: BLE001
+    def _floor(t):
+        try:
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+        except ValueError:
+            c = 1800
+        c = c if c > 0 else 1800
+        return c if not isinstance(t, (int, float)) else max(int(t), c)
+
 
 def _via_dot(dot_path, src, stem):
     outs = []
@@ -22,7 +37,7 @@ def _via_dot(dot_path, src, stem):
         try:
             r = subprocess.run([dot_path, f"-T{fmt}", *extra, src, "-o", out],
                                capture_output=True, text=True,
-                               timeout=int(os.environ.get("GRAPHVIZ_RENDER_TIMEOUT") or 90))
+                               timeout=_floor(int(os.environ.get("GRAPHVIZ_RENDER_TIMEOUT") or 90)))
         except subprocess.TimeoutExpired:
             sys.exit(f"dot timed out for {out} — render aborted (the .dot is still written)")
         if r.returncode != 0:

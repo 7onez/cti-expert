@@ -67,27 +67,12 @@ DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
               "Chrome/140.0.0.0 Safari/537.36")
 
 # Per-call ceiling for every DATA-FETCHING / API / collector / subprocess call in the engine.
-# One source of truth (env CTI_CALL_TIMEOUT overrides; default 1800s = 30 min): each call runs up to
-# this long, then times out and the run moves on to the next. Deliberately NOT applied to raw DNS /
-# TLS / JARM resolution micro-probes (getaddrinfo/dig/nslookup/handshake) — a dead name or black-hole
-# IP would hang the full ceiling there with no benefit; those keep their short fail-fast bounds.
-# The DEFAULT ceiling is reference DATA (RULE 3): references/timeouts.json; the env var overrides it.
-_TIMEOUTS_FALLBACK = {"call_timeout": 1800}
-_TIMEOUTS = load_ref(ref_path(__file__, "timeouts.json"), _TIMEOUTS_FALLBACK)
-
-
-def _call_timeout(default: int = None) -> int:
-    base = default if default is not None else int(_TIMEOUTS.get("call_timeout") or 1800)
-    if base <= 0:
-        base = 1800
-    try:
-        v = int(os.environ.get("CTI_CALL_TIMEOUT", "") or base)
-        return v if v > 0 else base
-    except (TypeError, ValueError):
-        return base
-
-
-CALL_TIMEOUT = _call_timeout()
+# ONE resolver (wp_timeouts): process env CTI_CALL_TIMEOUT → skill-root/engine .env → the RULE 3
+# reference references/timeouts.json → 1800s (30 min). Each call runs up to this long, then times
+# out and the run moves on. Deliberately NOT applied to raw DNS / TLS / JARM resolution micro-probes
+# (getaddrinfo/dig/nslookup/handshake) — a dead name or black-hole IP would hang the full ceiling
+# there with no benefit; those keep their short fail-fast bounds.
+from wp_timeouts import CALL_TIMEOUT, resolve_call_timeout as _call_timeout  # noqa: E402,F401
 
 # Enforce CALL_TIMEOUT as the FLOOR for every HTTP call this process makes. Every API/collector call
 # in the engine funnels through urllib.request.urlopen, so flooring it here (process-wide, once) makes
@@ -371,23 +356,66 @@ def unwrap_wayback(url: str) -> str:
     m = _WAYBACK_RE.match(url)
     return m.group(1) if m else url
 
-# DATA: references/generic_labels.json -> multi_part_tlds
+# DATA: references/public_suffix_list.json (Mozilla PSL, ICANN + PRIVATE sections; refresh with
+# wp_psl_update.py) plus references/generic_labels.json -> multi_part_tlds as an analyst override.
+# The fallback is the conservative minimum (the old two-label heuristic + the override list); a
+# missing list narrows nothing dangerous but loses the private section — load_ref warns loudly.
+_PSL_FALLBACK = {"icann": [], "private": []}
+_PSL_REF = load_ref(ref_path(__file__, "public_suffix_list.json"), _PSL_FALLBACK)
 _MULTI_TLDS = frozenset(_GLC_REF["multi_part_tlds"])
+# rule tables: plain suffixes, wildcard parents ("*.ck" -> "ck"), exceptions ("!www.ck" -> "www.ck")
+_PSL_RULES = frozenset(r for r in (_PSL_REF["icann"] + _PSL_REF["private"])
+                       if not r.startswith(("*.", "!"))) | _MULTI_TLDS
+_PSL_WILD = frozenset(r[2:] for r in (_PSL_REF["icann"] + _PSL_REF["private"]) if r.startswith("*."))
+_PSL_EXC = frozenset(r[1:] for r in (_PSL_REF["icann"] + _PSL_REF["private"]) if r.startswith("!"))
+_PSL_PRIVATE = frozenset(r.lstrip("!*.") for r in _PSL_REF["private"])
 
-@functools.lru_cache(maxsize=2048)
-def _registrable(host: str) -> str:
-    """Best-effort registrable domain (eTLD+1) with a stdlib-only heuristic.
 
-    No tldextract dependency — uses a small known multi-part-TLD set, else the last
-    two labels. Good enough to keep the crawl scoped to one owner's domain.
-    """
-    host = strip_www(host or "").split(":")[0]   # drop any :port before eTLD+1 logic
+@functools.lru_cache(maxsize=4096)
+def public_suffix(host: str) -> str:
+    """The public suffix of `host` per the PSL algorithm (longest matching rule; an exception rule
+    wins and strips its first label; a wildcard rule covers one extra label; no match -> the TLD).
+    Stdlib only — the rules are reference DATA loaded above."""
+    host = strip_www(host or "").split(":")[0].rstrip(".")
     parts = host.split(".")
-    if len(parts) <= 2:
+    for i in range(len(parts)):                      # longest candidate first
+        cand = ".".join(parts[i:])
+        if cand in _PSL_EXC:
+            return ".".join(parts[i + 1:])
+        if cand in _PSL_RULES:
+            return cand
+        if i + 1 < len(parts) and ".".join(parts[i + 1:]) in _PSL_WILD:
+            return cand
+    return parts[-1]
+
+
+def is_private_suffix(suffix: str) -> bool:
+    """True when `suffix` comes from the PSL PRIVATE section — a hosting/SaaS platform whose tenants
+    are separately-owned sites (github.io, pages.dev, blogspot.com …), not a registry suffix. A
+    wildcard-derived suffix (`x.compute.amazonaws.com` from `*.compute.amazonaws.com`) matches on its parent."""
+    s = (suffix or "").lower()
+    return s in _PSL_PRIVATE or s.partition(".")[2] in _PSL_PRIVATE
+
+
+@functools.lru_cache(maxsize=4096)
+def _registrable(host: str) -> str:
+    """Registrable domain (eTLD+1) of `host` per the Public Suffix List, stdlib only.
+
+    `horizon.io.vn` -> `horizon.io.vn` (io.vn is a VNNIC second-level suffix), `zc2.sa.com` ->
+    `zc2.sa.com` (CentralNic), `kit.pages.dev` -> `kit.pages.dev` (private section), `a.b.example.com`
+    -> `example.com`. A host that IS a public suffix, or has fewer labels than suffix+1, is returned
+    unchanged. This is what keys the KB, the frontier and the co-tenancy guards — getting it wrong
+    merges every tenant of a shared suffix into one fake apex that then gets enumerated and
+    collected as if it were the operator's.
+    """
+    host = strip_www(host or "").split(":")[0].rstrip(".")
+    if not host or "." not in host:
         return host
-    if ".".join(parts[-2:]) in _MULTI_TLDS:
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
+    suffix = public_suffix(host)
+    if host == suffix or not host.endswith("." + suffix):
+        return host
+    label = host[:-(len(suffix) + 1)].rsplit(".", 1)[-1]
+    return f"{label}.{suffix}"
 
 
 __all__ = [_n for _n in dir() if not _n.startswith("__")]
