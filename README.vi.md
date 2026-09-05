@@ -44,7 +44,7 @@
 
 <sub>Xây dựng bởi <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><b>Hieu Ngo</b></a> &bull; <a href="mailto:hieu.ngo@chongluadao.vn">hieu.ngo@chongluadao.vn</a> &bull; <a href="https://chongluadao.vn">chongluadao.vn</a></sub>
 <br>
-<sub>Người đóng góp chính &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a></sub>
+<sub>Người đóng góp chính &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a> &bull; <a href="mailto:khuong.nguyen@chongluadao.vn">khuong.nguyen@chongluadao.vn</a></sub>
 
 </div>
 
@@ -203,6 +203,9 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **Apex có thể đăng ký · IP landlord · binder kit** | Frontier và KB thống nhất apex là gì và IP nào là landlord | Một **Public Suffix List** được vendor (`public_suffix_list.json`, `wp_psl_update.py`) điều khiển một reducer `_registrable()`, nên `shop.id.vn` và `panel.co.uk` gập về đúng apex ở mọi nơi — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) là **một** con số đánh dấu IP là hosting chia sẻ/hàng loạt: các cạnh `hosted_on` của nó trở thành fact, phân vùng cụm bỏ qua chúng, và co-tenant bị giữ lại làm lead. Độ sâu mở rộng được neo: host liên kết chủ sở hữu với một *hop trước* là `related_hosts`, không bao giờ là member. Liên kết mạng xã hội cào được phân giải về **tài khoản** — đường dẫn dành riêng theo mạng, router segment thứ hai và tài khoản credit thư viện/vendor là dữ liệu tham chiếu, và apex nền tảng trần (`t.me`, `facebook.com`) không bao giờ là handle |
 | **Blueprint gập xuống mức apex** | Estate hàng trăm host không còn âm thầm làm rơi tab kiến trúc của báo cáo HTML | Kiểu architecture của Archify vẽ ≤ 12 node · 18 cạnh, nên [`cti_archify.py`](scripts/cti_archify.py) giờ **gom host dưới apex có thể đăng ký** (`Estate · N hosts`), gập đuôi dài thành `+N more apexes`, xếp các apex mang finding lên trước và đặt hub nhà vận hành giữa hàng với nan hoa phía trên và dưới. `CTI_ARCHIFY=1` (tự động: đồ thị đầy đủ nếu vừa, không thì gập) · `force` (lưới 25 node rộng nhất) · `0`; `--plan` in cả hai kết quả offline, và mọi xuất HTML giờ xác nhận chế độ Blueprint trước (Bước C — `--yolo` giữ Auto). Được khóa bởi [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
 
+<details>
+<summary><b>Có gì mới trong v2.11</b></summary>
+
 ## Có gì mới trong v2.11
 
 > **Lô tiếp nối eCrime 2026 — lập kế hoạch trước, rồi hiện thực.** Bốn pha bị hoãn từ đợt nghiên cứu v2.10 nay đã giao dưới dạng các module không cần key, chạy offline, có kiểm thử (được lập kế hoạch trong `plans/260826-1935-ecrime-2026-followup-analyzers/`, hiện thực qua `/ak:cook`). Cam kết không đổi: test zero-dep trong `audit.sh`, an toàn quy thuộc (RULE 5). Ánh xạ đầy đủ: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
@@ -216,6 +219,11 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **Lớp phủ mô hình hóa đối thủ AAM** | Dự đoán nước đi kế, không chỉ quy thuộc quá khứ | [`handbook/aam-actor-modeling.md`](handbook/aam-actor-modeling.md) thêm một lớp phủ tùy chọn cho `/threat-model` (các mặt OODA + Mirror/Twin/Opposite/Lever) song song với ACH. Dựa trên khóa huấn luyện *"Modeling Adversaries Through Chaos"* của ISECOM. Chỉ tài liệu |
 | **Đã kiểm thử & gác cổng** | Thêm bốn bộ test zero-dep trong `audit.sh` | `test_apk_permission_scope` (tổ hợp vs đơn lẻ + đối chứng lành tính + hạ cấp AXML 0-quyền), `test_kit_template_fingerprint` (bẫy thương phẩm RULE 5 + không bao giờ tự hợp nhất), `test_render_confirm` (nâng cấp + mối nối cộng thêm + hạ cấp khi không renderer), `test_phishtrace_features` (cloaked không-benign) |
 
+</details>
+
+<details>
+<summary><b>Có gì mới trong v2.10</b></summary>
+
 ## Có gì mới trong v2.10
 
 > **Đây là bản phát hành biến nghiên cứu APWG eCrime 2026 thành các bộ phát hiện chạy được, có kiểm thử.** Ba bộ phân tích không cần key, chạy offline, kiểm thử tất định hạ cánh ở ranh giới Enrich→Assess, mỗi cái ứng với một bài báo eCrime 2026 có tên — bịt hai lỗ hổng đã được kiểm toán: phân loại mối đe dọa theo nội dung trang, và một phán quyết rõ ràng "đăng ký-độc-hại vs bị-xâm-nhập". Ánh xạ đầy đủ + kiểm toán repo: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
@@ -226,6 +234,11 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **Phát hiện ClickFix / PasteJacking** | Mồi cướp clipboard + giải mã `-EncodedCommand` → IOC C2 | [`scripts/clickfix_detect.py`](scripts/clickfix_detect.py) chấm điểm ba họ đồng-xuất-hiện (ghi clipboard · mồi social · payload lệnh hệ điều hành) nên một nút "sao chép" mã giảm giá hay chữ *powershell* trong văn bản không bao giờ đọc thành HIGH; nó giải mã base64 UTF-16LE của `-enc` PowerShell để lộ URL C2 ẩn, và ánh xạ sang ATT&CK T1204.004/T1059. Dựa trên *"PasteJacked"* (Nabeel, Melicher, Starov — Palo Alto, eCrime 2026). Xem [`techniques/clickfix-clipboard-hijack.md`](techniques/clickfix-clipboard-hijack.md) |
 | **Phân tích HTML nhận-biết-khả-kiến** | Lộ ra biểu mẫu thông tin đăng nhập ẩn / liên kết khác-nguồn / văn bản thương hiệu ngoài màn hình | [`scripts/html_visibility_analysis.py`](scripts/html_visibility_analysis.py) bắt được kiểu ẩn inline + theo class mà một parser ngây thơ bỏ sót, xếp hạng theo ý đồ che giấu + nguồn gốc (biểu mẫu thông tin đăng nhập ẩn trỏ khác nguồn là HIGH; một trường CSRF `type=hidden` lành tính thì **không** bị gắn cờ). Là xấp xỉ tĩnh, với đường renderer (agent-browser/Playwright) được ghi chú là hướng nâng cấp. Dựa trên *"Visibility-Aware HTML Analysis through Renderer-Level Extraction"* (Betts và cộng sự, Auckland, eCrime 2026). Xem [`techniques/visibility-aware-html.md`](techniques/visibility-aware-html.md) |
 | **Đã kiểm thử & gác cổng** | Ba bộ test zero-dep nối vào `audit.sh` | [`tests/test_phish_domain_survival.py`](tests/test_phish_domain_survival.py), [`tests/test_clickfix_detect.py`](tests/test_clickfix_detect.py), [`tests/test_html_visibility_analysis.py`](tests/test_html_visibility_analysis.py) — với các chốt chặn dương-tính-giả tường minh (sao chép mã giảm giá, nhắc trong văn bản, trường CSRF) và phân định bị-xâm-nhập/độc-hại RULE 5 — chạy trong [`scripts/audit.sh`](scripts/audit.sh) §6 |
+
+</details>
+
+<details>
+<summary><b>Có gì mới trong v2.9</b></summary>
 
 ## Có gì mới trong v2.9
 
@@ -238,6 +251,8 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **Auto-pivot: những ngõ cụt cuối cùng đã được hàn kín** | Một chỉ dấu đã gõ ra mà không bao giờ sinh ra pivot là một lỗ hổng câm trong bản đồ nhện | Bốn sửa lỗi trong [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py): (1) **ví altcoin** — TRON/LTC/XMR được `pivot_extract` cào ra và có thể truy vết bằng `crypto_balance.py`, nhưng trước đây chỉ BTC/ETH được gõ kiểu; cả ba giờ đều được phân loại, quay lại biên giới (frontier), và chạy dòng tiền on-chain. (2) **mật khẩu breach** không còn seed sai — một mật khẩu khôi phục được trước đây lọt qua regex username và bị liệt kê trên hơn 3000 nền tảng; nó giờ bị loại khỏi kết quả breach. (3) hạ tầng (domain/IP) của **`/email-deep`** và (4) link chia sẻ của **`/gdoc`** giờ mang theo mục nhập trong ma trận cạnh (edge-matrix), nên cả hai đều đưa phát hiện quay lại vòng lặp thay vì dừng ở một lá cây. Tên công ty có quy tắc gắn nhãn `type:"org"` đã được ghi lại — `classify()` không thể phân biệt một tổ chức với một cá nhân |
 | **46 → 52 công cụ MCP** | Bề mặt tình báo có kiểu đã lớn hơn; changelog giờ mới ghi lại điều đó | `intel_engine/harness/tools.py` đăng ký **52** `@tool` (24 collect + 28 analyze) — nhiều hơn 6 so với con số ở v2.8, được thêm cùng lần đồng bộ engine nhưng chưa từng được ghi lại. Không có bước cài đặt mới nào; chúng lộ diện qua cùng một MCP server `intel` |
 | **Số lệnh đã được sửa lại cho đúng** | Cái badge đã định giá thấp bộ công cụ | §3 giờ mang **120+** lệnh (đo đạc thực tế: 145 dòng, ~123 lệnh gốc duy nhất) — cái badge "75+" đã có từ trước ba bản phát hành bổ sung |
+
+</details>
 
 <details>
 <summary><b>Có gì mới trong v2.8</b></summary>

@@ -44,7 +44,7 @@
 
 <sub>Built by <a href="https://www.linkedin.com/in/hieu-minh-ngo-hieupc/"><b>Hieu Ngo</b></a> &bull; <a href="mailto:hieu.ngo@chongluadao.vn">hieu.ngo@chongluadao.vn</a> &bull; <a href="https://chongluadao.vn">chongluadao.vn</a></sub>
 <br>
-<sub>Core contributor &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a></sub>
+<sub>Core contributor &bull; <a href="https://github.com/Zeroska"><b>Zeroska</b></a> &bull; <a href="mailto:khuong.nguyen@chongluadao.vn">khuong.nguyen@chongluadao.vn</a></sub>
 
 </div>
 
@@ -203,6 +203,9 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Registrable apexes · landlord IPs · kit binders** | The frontier and the KB agree on what an apex is and which IP is a landlord | A vendored **Public Suffix List** (`public_suffix_list.json`, `wp_psl_update.py`) drives one `_registrable()` reducer, so `shop.id.vn` and `panel.co.uk` fold to the right apex everywhere — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) is the **one** number that marks an IP as shared/bulk hosting: its `hosted_on` edges become facts, the cluster partition ignores them, and co-tenants are held back as leads. Expansion depth is anchored: a host owner-linked to a *previous hop* is `related_hosts`, never a member. Scraped social links resolve to the **account** — per-network reserved paths, second-segment routers and library/vendor credit accounts are reference data, and a bare platform apex (`t.me`, `facebook.com`) is never a handle |
 | **Blueprint folds to apex level** | A hundred-host estate no longer silently drops the HTML report's architecture tab | Archify's architecture type draws ≤ 12 nodes · 18 edges, so [`cti_archify.py`](scripts/cti_archify.py) now **collapses hosts under their registrable apex** (`Estate · N hosts`), folds the long tail into `+N more apexes`, ranks finding-bearing apexes first and places the operator hub mid-row with spokes above and below. `CTI_ARCHIFY=1` (auto: full graph if it fits, else the fold) · `force` (the widest 25-node grid) · `0`; `--plan` prints both outcomes offline, and every HTML export now confirms the Blueprint mode first (Step C — `--yolo` keeps Auto). Locked by [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
 
+<details>
+<summary><b>What's New in v2.11</b></summary>
+
 ## What's New in v2.11
 
 > **The eCrime-2026 follow-up batch — planned, then cooked.** Four deferred phases from the v2.10 research pass ship as keyless, offline, tested modules (planned in `plans/260826-1935-ecrime-2026-followup-analyzers/`, implemented via `/ak:cook`). Same contracts: zero-dep tests in `audit.sh`, attribution-safety (RULE 5). Full mapping: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
@@ -216,6 +219,11 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **AAM actor-modeling overlay** | Anticipate the next move, not just attribute the past | [`handbook/aam-actor-modeling.md`](handbook/aam-actor-modeling.md) adds an optional `/threat-model` overlay (OODA faces + Mirror/Twin/Opposite/Lever) alongside ACH. Grounded in ISECOM's *"Modeling Adversaries Through Chaos"* training. Docs-only |
 | **Tested & gated** | Four more zero-dep suites in `audit.sh` | `test_apk_permission_scope` (combo-vs-single + benign control + AXML zero-perm degrade), `test_kit_template_fingerprint` (commodity-trap RULE 5 guard + never-auto-merge), `test_render_confirm` (promotion + seam-additivity + no-renderer degrade), `test_phishtrace_features` (cloaked-not-benign) |
 
+</details>
+
+<details>
+<summary><b>What's New in v2.10</b></summary>
+
 ## What's New in v2.10
 
 > **The release that turns APWG eCrime 2026 research into working, tested detectors.** Three keyless, offline, deterministically-tested analyzers land at the Enrich→Assess boundary, each mapped to a named eCrime 2026 paper — closing the two audited gaps: page-content threat classification, and an explicit maliciously-registered-vs-compromised call. Full mapping + repo audit: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
@@ -226,6 +234,11 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **ClickFix / PasteJacking detection** | Clipboard-hijack lures + `-EncodedCommand` decode → C2 IOCs | [`scripts/clickfix_detect.py`](scripts/clickfix_detect.py) scores three co-occurring families (clipboard write · social lure · OS-command payload) so a coupon "copy" button or the word *powershell* in prose never reads as HIGH; it decodes PowerShell `-enc` UTF-16LE base64 to surface the hidden C2 URL, and maps to ATT&CK T1204.004/T1059. Grounded in *"PasteJacked: Detection and Characterization of Clipboard-Hijacking Attacks"* (Nabeel, Melicher, Starov — Palo Alto, eCrime 2026). See [`techniques/clickfix-clipboard-hijack.md`](techniques/clickfix-clipboard-hijack.md) |
 | **Visibility-aware HTML analysis** | Surface hidden credential forms / off-origin links / off-screen brand text | [`scripts/html_visibility_analysis.py`](scripts/html_visibility_analysis.py) catches inline + class-based hiding a naive parser misses, severity-ranked by concealed intent + origin (a hidden off-origin credential form is HIGH; a benign `type=hidden` CSRF field is **not** flagged). Static approximation with the renderer-level path (agent-browser/Playwright) noted as the upgrade. Grounded in *"Visibility-Aware HTML Analysis through Renderer-Level Extraction"* (Betts et al., Auckland, eCrime 2026). See [`techniques/visibility-aware-html.md`](techniques/visibility-aware-html.md) |
 | **Tested & gated** | Three zero-dep suites wired into `audit.sh` | [`tests/test_phish_domain_survival.py`](tests/test_phish_domain_survival.py), [`tests/test_clickfix_detect.py`](tests/test_clickfix_detect.py), [`tests/test_html_visibility_analysis.py`](tests/test_html_visibility_analysis.py) — with explicit false-positive guards (coupon-copy, prose mention, CSRF field) and the RULE 5 compromised/malicious split — run in [`scripts/audit.sh`](scripts/audit.sh) §6 |
+
+</details>
+
+<details>
+<summary><b>What's New in v2.9</b></summary>
 
 ## What's New in v2.9
 
@@ -238,6 +251,8 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Auto-pivot: the last dead-ends wired shut** | A typed identifier that never spawns a pivot is a silent hole in the spider-map | Four fixes in [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py): (1) **altcoin wallets** — TRON/LTC/XMR are scraped by `pivot_extract` and traceable by `crypto_balance.py`, yet only BTC/ETH were typed; all three now classify, re-enter the frontier, and run on-chain flow. (2) **breach passwords** no longer mis-seed — a recovered password fell through to the username regex and got enumerated across 3000+ platforms; it is dropped from the breach yields. (3) **`/email-deep`** infrastructure (domain/IP) and (4) **`/gdoc`** share links now carry edge-matrix entries, so both feed discoveries back into the loop instead of ending at a leaf. Company names get a documented `type:"org"` tagging rule — `classify()` cannot tell an org from a person |
 | **46 → 52 MCP tools** | The typed intel surface grew; the changelog now says so | `intel_engine/harness/tools.py` registers **52** `@tool`s (24 collect + 28 analyze) — six past the v2.8 figure, added with the engine sync but never recorded. No new install step; they surface through the same `intel` MCP server |
 | **Command count corrected** | The badge undersold the toolkit | §3 now carries **120+** commands (measured: 145 rows, ~123 unique base commands) — the "75+" badge predated three releases of additions |
+
+</details>
 
 <details>
 <summary><b>What's New in v2.8</b></summary>
