@@ -1,5 +1,5 @@
 @startuml
-title cti-expert v2.6 — /webpivot + correlation + premium API-key workflow
+title cti-expert v2.12 — /webpivot + correlation + premium API-key workflow
 skinparam shadowing false
 skinparam dpi 150
 skinparam defaultFontName "Segoe UI"
@@ -21,28 +21,34 @@ start
 fork
   :**KEYLESS baseline — ALWAYS runs**\ncrt.sh (certificate transparency)\nHackerTarget passive DNS · anonymous urlscan\nRDAP · ipwho.is · Shodan InternetDB\nmail / SPF / DMARC · CORS · JARM;
 fork again
-  if (premium API key present?\nresolve order: ENV var -> skill .env) then (key set)
+  if (premium API key present?\nresolve order: ENV var -> repo .env -> ~/.config/cti-expert) then (key set)
     :**PREMIUM enrichers**  //(only the keys you actually set)//
     ----
     **Infrastructure**
     Shodan (favicon mmh3 + cert SHA-256) · Censys (favicon md5 + cert)
     FOFA · **Quake (360)** · **ZoomEye** · SecurityTrails · urlscan-PRO · IPinfo
+    **Netlas** (DNS · scan · WHOIS · cert index) · **Validin** (pDNS · cert · favicon · body hash — free key)
     ----
     **Ownership**
-    WhoisXML //(WHOIS + Whois History + Reverse WHOIS — DRS balance)//
+    WhoisXML //(WHOIS + Whois History eras + Reverse WHOIS — DRS balance)//
     Whoxy · DNSLytics (GA / AdSense -> sibling domains)
+    **MO-neighbours**  origin IP -> co-tenant apexes (Netlas · Validin · urlscan), WHOIS-verified
     ----
-    **Leak / breach / darknet**
+    **Leak / breach / darknet / exposure**
     **IntelX** (phonebook · paste · stealer logs · darknet selectors)
-    **Hudson Rock** · LeakCheck · HIBP
+    **Hudson Rock** · LeakCheck · HIBP · **GrayHatWarfare** //(open buckets — exposure, never a pivot)//
+    ----
+    **Search · ads**
+    **SerpApi** (Ads Transparency — who paid · cloaking probe)
     ----
     **File half of the funnel**
-    **ANY.RUN TI Lookup**  //READ-ONLY — never submits a sample//
+    **ANY.RUN TI Lookup**  //read-only// · **anyrun_submit** //ask-first, private-only, plan-checked//
     VirusTotal · MalwareBazaar · ThreatFox
     ----
     **Money**
     Blockchair / Etherscan / Subscan (wallet balance + lifetime flow);
-    :**api_usage.record(...)**\nevery metered call logged to MEMORY/api_usage.jsonl;
+    :**entitlement measured, not assumed**\nfree account probes -> cases/<id>/capability_plans.json (once per case)\na key measured //free// skips the Pro calls that would 403;
+    :**api_usage.record(...)**\nevery metered call logged to MEMORY/api_usage.jsonl\n//per-case legs (IntelX · reverse-WHOIS · MO-neighbour origins) bought ONCE per case//;
   else (no key)
     :skip premium\n**keyless leads only — identical coverage, lower tier**;
   endif
@@ -75,8 +81,8 @@ stop
 legend right
   **Key store — managed by /apikeys**
   ====
-  .env at ~/.claude/skills/cti-expert/.env
-  chmod 600 · gitignored · ENV var overrides it
+  repo-root .env  (CTI_API_KEYS_ENV overrides the path)
+  chmod 600 · gitignored · ENV var always wins
   ----
   Add a key:   /apikeys set censys <KEY>
   Check:       /apikeys status | test | unlocks

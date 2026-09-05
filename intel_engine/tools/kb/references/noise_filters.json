@@ -209,7 +209,13 @@
       "hotjar",
       "clarity",
       "cookie",
-      "consent"
+      "consent",
+      "next/prev",
+      "nav and",
+      "toolbar insert",
+      "wayback rewrite",
+      "gtranslate",
+      "fchat"
     ]
   },
   "comment_min_length": {

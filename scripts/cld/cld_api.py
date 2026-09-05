@@ -390,6 +390,19 @@ def op_onion(k, a):
                     params={"hostname": a.hostname}, timeout=a.timeout)
 
 
+def op_actor_usernames(k, a):
+    # map a handle (a committer login, a Telegram/forum alias) to a tracked threat actor
+    p = {"q": a.q, "limit": a.limit, "offset": a.offset}
+    return _request("GET", TI, "/api/v1/threat-feeds/external/threat-actor-usernames", k,
+                    params=p, timeout=a.timeout)
+
+
+def op_incidents(k, a):
+    p = {"q": a.q, "limit": a.limit, "offset": a.offset}
+    return _request("GET", TI, "/api/v1/threat-feeds/external/incidents", k, params=p,
+                    timeout=a.timeout)
+
+
 def op_feed(k, a):
     path = {"stix2": "/api/v1/ioc/external/feeds/stix2",
             "misp": "/api/v1/ioc/external/feeds/misp",
@@ -482,8 +495,11 @@ def build_parser():
     p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
     p = sub.add_parser("vuln", help="TI: one CVE by id"); p.add_argument("cve")
     p = sub.add_parser("actors", help="TI: threat-actor list")
-    p.add_argument("--q"); p.add_argument("--type"); p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--q"); p.add_argument("--type"); p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
+    p = sub.add_parser("actor-usernames", help="TI: map a handle/alias to a tracked threat actor")
+    p.add_argument("q"); p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
+    p = sub.add_parser("incidents", help="TI: threat-feed incident records")
+    p.add_argument("--q"); p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
     p = sub.add_parser("onion", help="TI: check an .onion against the abuse blocklist")
     p.add_argument("hostname")
     p = sub.add_parser("feed", help="TI: download indicator feed (STIX/MISP)")
@@ -510,7 +526,8 @@ DISPATCH = {
     "leaked-accounts": op_leaked_accounts, "devices": op_devices,
     "device-detail": op_device_detail, "device-credentials": op_device_credentials,
     "full-export": op_full_export, "brand-domains": op_brand_domains,
-    "vulns": op_vulns, "vuln": op_vuln, "actors": op_actors, "onion": op_onion,
+    "vulns": op_vulns, "vuln": op_vuln, "actors": op_actors,
+    "actor-usernames": op_actor_usernames, "incidents": op_incidents, "onion": op_onion,
     "feed": op_feed, "probe": op_probe,
 }
 

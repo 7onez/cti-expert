@@ -45,6 +45,7 @@ import wp_dnslytics       # DNSLytics: reverse GA/AdSense -> sibling domains (me
 import wp_quake           # Quake (360): favicon-hash reverse -> hosts (metered CN-dense; --no-quake)
 import wp_zoomeye         # ZoomEye: favicon-hash reverse -> hosts (metered; --no-zoomeye)
 import wp_pssl           # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
+import wp_cld            # ChongLuaDao reputation: checkurl denylist + IoC URL + .vn WHOIS (lazy cld_api)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
 try:
@@ -676,6 +677,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # UNCLASSIFIED — case_state classifies it case-wide and only a join-key-verified
     # same_registrant ever seeds the frontier; the raw block is never mined by the frontier.
     have_mo_neighbours = HAVE_WHOIS and whois_enrich.whois_configured() and not free_only
+    # ChongLuaDao first-party reputation (checkurl denylist verdict + IoC URL analyzer + .vn WHOIS).
+    # METERED, so gated `and not free_only`; CLD fetches the target server-side, so it is posture-safe.
+    # Reputation only — a verdict is an add_fact at ingest, never a same-operator edge.
+    have_cld = wp_cld.cld_configured() and not free_only
     sources = ["crtsh", "passivedns", "urlscan"]  # keyless domain enrichment
     if have_urlscan_pro:
         sources.append("urlscan-hostname")   # Pro lifecycle index (A/NS/MX eras, CT/zonefile firsts)
@@ -707,6 +712,8 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("shodan-search")
     if have_securitytrails:
         sources.append("securitytrails-dns-history")
+    if have_cld:
+        sources.append("chongluadao")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -762,6 +769,14 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                         _v = urlscan_verdict(_uuid)
                         if _v:
                             lr["urlscan_verdict"] = _v
+                # ChongLuaDao first-party reputation for THIS host: denylist verdict + IoC URL
+                # analyzer + (.vn only) WHOIS. METERED, so gated; CLD fetches the target
+                # server-side — no direct contact, safe under any posture. A verdict is a
+                # reputation fact at ingest, never a same-operator edge.
+                if have_cld:
+                    _cld = wp_cld.cld_domain(val, free_only=free_only)
+                    if _cld:
+                        lr["cld"] = _cld
             # Anchor pivots to the LIVE IP: reverse-search FOFA on what DNS resolves to
             # right now, and flag any passive source still reporting a different (stale) IP.
             live_ips = lr.get("dns", {}).get("ips", []) or []
@@ -1015,7 +1030,9 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
         return result
     result.setdefault("artifacts", {})["whois"] = w
     # record the actual source so cost/provenance is honest (rdap / whois43 / whoisxml[+rdap])
-    result.setdefault("meta", {}).setdefault("enriched_with", []).append(w.get("source", "whoisxml"))
+    _ws = w.get("source", "whoisxml")
+    if _ws not in (result.get("meta", {}).get("enriched_with") or []):
+        result.setdefault("meta", {}).setdefault("enriched_with", []).append(_ws)
 
     # registrant email → same-operator pivot (reverse WHOIS)
     hist = w.get("history") or {}
@@ -1053,6 +1070,14 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                     lr_["securitytrails_reverse_whois"] = strw
                     lr_["reverse_whois_diff"] = wp_securitytrails.reverse_whois_diff(
                         strw, [lr_.get("reverse_whois_current"), lr_.get("reverse_whois_historic")])
+        # CLD IoC on the owner's registrant e-mail — corroborates leak/abuse exposure (metered, gated).
+        # CURRENT registrant only: a prior-era address is a third party (RULE 5 — never an exposure
+        # lookup on someone who isn't the owner), same guard the SecurityTrails leg uses above.
+        if (not free_only and wp_cld.cld_configured()
+                and em == str(w.get("registrant_email") or "").lower()):
+            _ce = wp_cld.cld_email(em, free_only=free_only)
+            if _ce and not _ce.get("error"):
+                piv.setdefault("live_results", {})["cld_email"] = _ce
         result["pivots"].append(piv)
 
     name = w.get("registrant_name") or w.get("registrant_org")

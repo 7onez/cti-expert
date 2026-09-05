@@ -81,7 +81,8 @@
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-OSINT_调查平台-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 <p>
-  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS证书与Favicon图谱-1F7A5A?style=for-the-badge" alt="Validin"></a>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-DNS证书与Favicon图谱-1F7A5A?style=for-the-badge" alt="Validin"></a>&nbsp;
+  <a href="https://netlas.io"><img src="https://img.shields.io/badge/Netlas-DNS_扫描与WHOIS索引-1D4ED8?style=for-the-badge" alt="Netlas"></a>
 </p>
 
 </div>
@@ -101,7 +102,8 @@
 | [**SerpApi**](https://serpapi.com) | 搜索引擎 + Google 广告透明度结果 API——谁**付费**引流，以及多引擎 dork 结果 | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）——评级为**暴露**，并非同一运营者枢轴 | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | OSINT 调查平台——覆盖社交媒体、区块链与暗网的 1000+ 方法（SL Professional / Crimewall、Maltego transforms） | OSINT 方法论与数据 |
-| [**Validin**](https://validin.com) | DNS + 证书 + favicon + 响应体哈希汇于一张图谱——被动 DNS、子域枚举、反向 IP 与主机响应哈希枢轴（免费 Community 密钥） | 目前为 `/webpivot` 枢轴提供即用查询串；原生 API 集成进行中 |
+| [**Validin**](https://validin.com) | DNS + 证书 + favicon + 响应体哈希汇于一张图谱——被动 DNS、子域枚举、反向 IP 与主机响应哈希枢轴（免费 Community 密钥） | 已原生接入 `/webpivot`（域名查询、信誉、按证书与 favicon 反查主机）· MO-neighbour 数据源 · `/cti-pivot` |
+| [**Netlas**](https://netlas.io) | 独立的互联网资产索引——一把密钥背后的 DNS、扫描响应、WHOIS 与证书四个集合；`domains a:<origin-ip>` 可把一个未经 CDN 的源站反查到每个 apex 并附带日期 | `/webpivot` MO-neighbour 数据源 · `intel.py netlas` · 套餐权益探测 |
 
 > [!IMPORTANT]
 > **ANY.RUN 查询为只读；引爆受到严格门控。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。`anyrun_submit` 可以引爆文件或 URL，但必须通过以下门控：每次提交都需分析员确认（先返回风险简报，再以 `confirm=true` 重新调用）、默认私有且拒绝 `public`、失败即关闭的套餐检查（读取账户自身 `/user` 的私有配额——为 0 时直接拒绝，分析员声明也无法覆盖；否则需有先前的私有任务，或分析员明确声明使用付费套餐）、提交后回读实际隐私设置并在任务仍被公开时立即撤回并标记，以及 harness 在未设置 `HARNESS_ALLOW_SUBMIT=1` 时直接拒绝。公开沙箱任务全网可读且不可撤回；该门控由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
@@ -182,6 +184,20 @@
 ---
 
 <br>
+
+## v2.12 新功能
+
+> **这一版让付费密钥真正开始干活——报告也能自己写出来。** v2.11 交付的是检测器。v2.12 把一份针对付费厂商的八项审计结论变成了实际行为（每条计费分支都有门控，且**按案件买一次**而不是按主机买一次），新增 **Netlas** 作为独立索引，把编辑级 PDF/DOCX 变成从案件目录**确定性拼装**出来的产物，并补上 ANY.RUN 文档里最后一处不诚实：引爆通路确实存在，而且被五道门控守着。
+
+| 类别 | 新增内容 | 详情 |
+|------|---------|------|
+| **MO-neighbour 枢轴** | 把未经 CDN 的源站反查到同址租户——且只在拿到注册人连接键时才播种 | `wp_mo_neighbours.discover` 通过 **Netlas · Validin · urlscan** 反查该资产群未经 CDN 的源站 IP（含 MX 源站），对每个候选 apex 做 WHOIS 核验，并分类为 `same_registrant`（仅限当前注册人邮箱/电话连接键——代理隐私记录**不**贡献电话）/ `same_mo`（参考数据策略）/ `unrelated` / `unverifiable`。**只有 `same_registrant` 才进入前沿播种**；同一 MO 的人设在报告中呈现为第 10 级的 *Related personas* 表（`--mask-personas` 可聚合）。批量托管守卫在任何花费*之前*触发；按源站加锁 + 磁盘缓存 + 按运行记账的 WhoisXML 账本跨采集器子进程生效，因此一个源站每案件只买一次。RULE 5 护栏完好：知识库只以 fact 写入，绝不成 edge，绝不成 `operator_lead` |
+| **WHOIS 纪元 · urlscan Pro 生命周期** | 时间线现在知道在这个运营者*之前*是谁持有该域名 | WHOIS 历史是显式的 `--whois-history purchase`，限定于种子与聚类成员（渲染路径绝不购买）；house 报告渲染 **Registrant eras** 表（同日抖动折叠、注册商占位记录归类），并以当前纪元起点作为归档截图的截止点。urlscan **Pro** 提供主机名生命周期索引——A/NS 纪元、CT 与 zonefile 首见、遍历被截断时做左截尾——喂入时间视图；verdict 行仅在有信号时出现，API 密钥只发送给 urlscan.io |
+| **套餐权益靠测量，不靠假设** | 测得为 *free* 的密钥会跳过那些注定 403 的调用 | `wp_capabilities.discover_plans` 每案件一次探测各厂商的**免费账户端点**（urlscan 配额、Netlas 套餐、SecurityTrails/DNSLytics 用量、IntelX `/authenticate/info`、Validin `/api/paths`），写入 `cases/<id>/capability_plans.json`；`enrich_live` 读取该存储，**仅在明确测得 `free` 时**才做门控——未知则保留那次有产出的调用作为探测本身。Censys 搜索自行记录其 verdict。探测失败只在本次运行报告、绝不冻结，下一进程会重新测量 |
+| **Netlas 及其余厂商接线** | 每把已注册的密钥背后现在都有一个枢轴 | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py)——覆盖 `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` 集合的 Bearer 客户端（search、count、facet、反向 IP、plan），无密钥查询构造器 + web-UI 链接，记账，Cloudflare 安全 UA；`intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`。实测：`domains a:<origin>` 在一个 32 域名的资产群上返回 **32 个 apex**（15 个成员 + 其他人设名下的同 MO 姊妹站）。同期：**SecurityTrails** DNS 历史纪元 + DSL 反向 WHOIS（与 WhoisXML 比对）、**DNSLytics** 反向 IP（使用独立的同址路由密钥）、**GrayHatWarfare** 暴露线索 + 报告小节、**Shodan** 证书/JARM 搜索、每案件一次的 **Censys** 证书搜索并带共享证书扇出守卫、**IntelX** 在 `pipeline open` 中自动触发（loop 仅在 `--full` 下；排除角色邮箱），以及 **Validin** 原生接线（域名查询、信誉、按证书与 favicon 反查主机）。前沿把所有者链接候选排在仿冒域之前 |
+| **确定性拼装的 house 报告** | 编辑级 PDF/DOCX 不再需要模型来撰写 | `intel.py house-report <CASE-ID>` 从案件目录拼装 IntelReport 文档：第 I–XI 节、两套置信度标尺 + **ICD-203 × Admiralty 散点图**、关系图 + **实体关系图**、归因推理链、时间视图 + **注册热力图** + **域名 × 共享指标矩阵**（遵守 §2.5 误报控制并携带 WHOIS 连接键）、每个资产群主机一张**落地页截图**（经代理门控的出网；无法渲染的页面依次回退到最新的公开 **web-scan** 截图、再到 **web-archive** 快照——标注来源、按归档日期标日、早于当前注册的则标为*前任所有者的页面*）、逐域名**档案**、术语表、附录 **A–E**。按 Rule 12 洗掉工具/厂商/路径名；第三方经单一闸门遮蔽（[`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)）。单一图源（[`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)）同时供给 dashboard DOCX 与 house PDF，两份交付物不可能互相矛盾。`--no-screenshots` 完全离线；`--no-archive-fallback` 禁止替代截图 |
+| **ANY.RUN：门控是真的，文档现在也这么说** | 引爆通路存在——在五道门控之后，每一道都是代码 | SKILL.md、README 提示框、`.env.example` 与密钥注册表曾声称"没有提交通路"。自带门控的层落地以来这就是错的。`anyrun_submit` 受以下门控：逐次提交确认（先以 `confirm=false` 取回**简报**——`tool_policy.json` 中数据驱动的 `approval_briefing` 例外现在允许这一步通过 MCP 审批门，文件不可读时 fail-closed 回到全门控）；**默认私有**，`public` 被拒绝，除非 `ANYRUN_ALLOW_PUBLIC=1` 给予*常设*授权，而且即便如此也只是一次显式、有记录的降级；**fail-closed 套餐检查**（`/user` 私有配额——为 0 即拒绝，任何声明都无法覆盖——否则看先前的私有任务，否则需 `--i-have-a-paid-plan`）；**提交后轮询式隐私回读**，撤回并标记仍落入公开的任务（任务超出等待时间时用 `verify-privacy <uuid>` 完成检查）；以及 harness 拒绝，除非 `HARNESS_ALLOW_SUBMIT=1`。`test_intelx_anyrun` §7b–7c 中 103 项打桩检查；`test_tool_gate` §2 钉住"简报放行 / 确认拒绝 / fail-closed" |
+| **仓库卫生** | 代码树自检是否有粘贴进来的密钥 | `audit.sh` §5b 对每个被跟踪文件 grep 厂商密钥形态与 `KEY=value` 行——已证明对植入值会触发、对现有代码树保持干净，因此密钥只能存在于 `.env`。[AGENTS.md](AGENTS.md) 重写为跨代理的 *Repository Guidelines*。密钥别名注册表与每个工具的 `_secret()` 查询对齐并锁定（[`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)）；SecurityTrails / DNSLytics / CertSpotter 完成注册，能力横幅不再对它正在使用的密钥保持沉默。三张工作流图从当前源文件重新渲染——52 个 `@tool`、9 条命令、Netlas、带门控的 ANY.RUN |
 
 ## v2.11 新功能
 
@@ -669,7 +685,7 @@ Windows、`--all` 和 Codex 变体：见[安装](#安装)。
 /cti-recall example.com               # 永远第一步——这个种子我们见过吗？
 /cti-case CASE-0001 example.com       # 对一个或多个种子运行完整流水线
 /cti-cluster CASE-0001                # 扩展：同伙、共享指标、TLS 重叠
-/cti-report CASE-0001 --pdf           # 交付：关系图 + PDF/DOCX
+/cti-report CASE-0001                 # 交付：关系图 + house 报告（PDF/DOCX）
 ```
 
 ### 3 &mdash; 引导式流程
@@ -725,6 +741,8 @@ Windows、`--all` 和 Codex 变体：见[安装](#安装)。
 # A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
 printf "example.com\nsibling.com\n" > seeds.txt
 /pipeline open CASE-0001 seeds.txt    # 采集 → 入库 → recall → 风险 → 聚类 → ICD-203 研判
+                                      #   + 源站 MO-neighbour 枢轴 · 测量套餐权益 · IntelX 自动触发
+                                      #   --free-only：不消耗计费额度 · --whois-history purchase：注册人纪元
 /clusters CASE-0001                   # 以同一运营者聚类为单位判断，附全库普遍度
 /frontier CASE-0001                   # 未解决的缺口：已发现的免费下一批种子 + 被推迟的计费线索
 
@@ -734,7 +752,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /harness status CASE-0001             # status 无需密钥
 /loop CASE-0001                       # 或：采集↔研判反复直到收敛
 
-/cti-report CASE-0001 --pdf           # 交付：关系图 + 精美 PDF/DOCX
+/cti-report CASE-0001                 # 交付：关系图 + house 报告（从案件目录拼装的编辑级 PDF/DOCX）
 ```
 
 > **流水线 vs harness：** `/pipeline` 是确定性的基础链（无需 LLM 密钥，逐字节可复现）。`/harness` 是**智能体驱动**、跨案件推理至收敛的整案编排（最深模式），并会在确定性流水线**未收敛**且姿态为主动时**在 `/case` 内自动升级**（用 `--no-harness` 关闭）。**免密钥优先：** 在 Claude Code 交互式运行时，它使用 CLI 自身的模型、走你的订阅（无需单独的 LLM 密钥）；仅无人值守的 SDK `continue` 才需要 `HARNESS_BACKEND=local`（Ollama/vLLM/LM Studio，免密钥）或一个 API 密钥。两者都持久化在 `cases/<ID>/` 下；已注册的冷启动别名 `/cti-case <ID> <seeds>` 运行确定性流水线。
@@ -1239,9 +1257,9 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 | `/report json` · `/report csv` | JSON · CSV 导出 | 流水线、电子表格、SIEM |
 | `/report ioc` | IOC／选择子包（STIX 2.1 · 扁平 · CSV） | SIEM / TIP 摄入、威胁情报共享 |
 | `/report docx` · `/report pdf` · 选择 **a**/**b**/**d** | Word / PDF 文档 *（图表、封面、目录）* | 正式分享 |
-| `/cti-report <ID> --pdf` | IntelReport pandoc PDF/DOCX | 精美的、出版级案件交付物 |
+| `/cti-report <ID>` | **House 报告**——从案件目录拼装的编辑级 PDF/DOCX *（图表、落地页截图、档案、附录 A–E）* | 精美的、出版级案件交付物 |
 
-<sub>由 <code>scripts/generate-cti-html.py</code>（HTML）· <code>scripts/generate-cti-iocs.py</code>（IOC）· <code>scripts/generate-cti-docx-hybrid.py</code>（DOCX）· <code>intel_engine/IntelReport</code>（pandoc PDF/DOCX）生成</sub>
+<sub>由 <code>scripts/build_report_data.py</code>（报告 JSON）· <code>scripts/generate-cti-html.py</code>（HTML）· <code>scripts/generate-cti-iocs.py</code>（IOC）· <code>scripts/generate-cti-docx-hybrid.py</code>（dashboard DOCX）· <code>intel_engine/tools/house_report.py</code> + <code>intel_engine/IntelReport</code>（house PDF/DOCX）生成</sub>
 
 <br>
 
@@ -1274,14 +1292,15 @@ cti-expert/
 ├── scripts/                    采集器、后端调度器、报告生成器
 │   ├── backend/                backend.py（层级解析）· intel.py（T2 CLI 调度）
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── build_report_data.py    案件目录 → REPORT.json（确定性报告数据桥）
 │   ├── generate-cti-html.py    交互式、离线、自包含的 HTML 报告
-│   ├── generate-cti-iocs.py    IOC／选择子导出（STIX 2.1 · 扁平 · CSV）
-│   ├── generate-cti-docx-hybrid.py   DOCX 报告（图表、示意图、封面）
+│   ├── generate-cti-iocs.py    IOC／选择子导出（STIX 2.1 · 扁平 · CSV · JSONL）
+│   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF（图表、示意图、封面）
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
 │   ├── install.sh · install.ps1      一体化跨平台安装脚本
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   漂移 · 泄露 · 预提交门禁
 │
-├── techniques/                 49 种采集技术（OSINT 技艺本体）
+├── techniques/                 57 种采集技术（OSINT 技艺本体）
 ├── handbook/                   枢轴要素、API 密钥、运营者查询、分析规范
 ├── engine/                     案件数据模型设计文档（schema、发现、枢轴逻辑）
 ├── analysis/ · validation/     模式与暴露面引擎 · QA + 覆盖度矩阵
@@ -1292,13 +1311,15 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（24 个 @tool）
-    ├── tools/                  intel.py（确定性流水线）· kb/（KB + 关联）· cert_overlap
-    ├── WebPivot/               引擎侧采集器助手 + 去重再导出的 shim
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（52 个 @tool）
+    ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
+    ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）
-    ├── IntelReport/            用 Pandoc 渲染研判报告 → 精美 PDF/DOCX
+    ├── IntelReport/            用 Pandoc 渲染拼装好的 house 报告 → PDF/DOCX
     ├── IntelAnalysis/          关联、归因、置信度校准
-    ├── BinaryPivot/            从诈骗 APK / exe 提取静态 IOC
+    ├── IntelShare/             MISP 导出 · 暂存 · 发布（两个独立决策）
+    ├── Engage/                 登录探测 · 合成人设 · 带门控的会员区采集
+    ├── BinaryPivot/            从诈骗 APK / exe 提取静态 IOC · ANY.RUN 查询 + 带门控的提交
     └── knowledge/ · cases/     本地运行时数据 —— 已 gitignore，绝不提交
 ```
 

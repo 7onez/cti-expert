@@ -1,9 +1,8 @@
 @startuml
-title cti-expert v2.6 — end-to-end tool & skill flow (one skill, two layers)
+title cti-expert v2.12 — end-to-end tool & skill flow (one skill, two layers)
 skinparam shadowing false
 skinparam dpi 150
 skinparam defaultFontName "Segoe UI"
-skinparam sequenceMessageAlign direction
 skinparam BoxPadding 14
 skinparam sequence {
   ArrowColor #34495E
@@ -21,15 +20,15 @@ skinparam sequence {
 actor "Analyst" as A
 
 box "entry" #FBFCFE
-  participant "**/cti** router\n<size:10>SKILL.md · 8 registered commands</size>" as CTI
+  participant "**/cti** router\n<size:10>SKILL.md · 9 registered commands</size>" as CTI
 end box
 
 box "LAYER 1 · broad collector" #F4F8FD
-  participant "**scripts/**\n<size:10>49 techniques</size>" as L1
+  participant "**scripts/**\n<size:10>57 techniques</size>" as L1
 end box
 
 box "typed surface" #FBFCFE
-  participant "**harness/tools.py**\n<size:10>24 @tool · MCP + SDK</size>" as MCP
+  participant "**harness/tools.py**\n<size:10>52 @tool · MCP + SDK</size>" as MCP
 end box
 
 box "LAYER 2 · intel_engine (vendored deep pipeline)" #F4F8FD
@@ -55,15 +54,15 @@ group #FFF3D6 ACQUIRE  //collect raw data//
   alt domain / URL / IP
     CTI -> L1 : /sweep · /query · /subdomain · /github-osint\n/threat-check · /scam-check · /dork-sweep
     CTI -> MCP : pivot_extract · fallback_probe\nimpersonation_hunt · search_pivot · censys
-    MCP -> WP : collect (keyless first, premium if keyed)
-    WP --> MCP : favicon mmh3 · GA/GTM/AdSense · wallets\nemails · phones · Telegram · WHOIS · TLS · JARM
+    MCP -> WP : collect (keyless first, premium if keyed)\n<size:10>entitlement **measured** per case — a key measured //free// skips the Pro calls</size>
+    WP --> MCP : favicon mmh3 · GA/GTM/AdSense · wallets · emails · phones\nTelegram · WHOIS eras · TLS · JARM · **MO-neighbours** (origin co-tenants, WHOIS-verified)
     CTI -> MCP : **intelx_search**  //paste · stealer logs · darknet selectors//
     CTI -> L1 : **/icp**  ICP filing -> PRC entity + licence serial
   else file · APK · exe
     CTI -> MCP : **analyze_artifact**
     MCP -> BP : hash · APK signing-cert SHA-256 · package name\npermissions · embedded C2 · Firebase · S3 · wallets
     BP --> MCP : **WebPivot-shaped pivot JSON**  //same graph as the web infra//
-    CTI -> MCP : **anyrun_lookup**  //TI Lookup — READ-ONLY, never submits//
+    CTI -> MCP : **anyrun_lookup**  //TI Lookup — read-only//\n**anyrun_submit**  //detonation — ask-first, private-only, plan-checked//
   else username · email · phone
     CTI -> L1 : /username · /email-deep · /phone\n/breach-deep · /stealer-log · /saas-map · /msft-recon
   end
@@ -94,8 +93,8 @@ end
 group #FFF3D6 DELIVER  //package output//
   CTI -> MCP : **render_diagram**
   MCP -> IG : case graph  ->  PNG / SVG / Mermaid + lifecycle timeline
-  CTI -> MCP : **render_report**
-  MCP -> IR : pandoc  ->  polished PDF / DOCX
+  CTI -> MCP : **render_report**  ·  //house-report//
+  MCP -> IR : composed from the case dir  ->  editorial PDF / DOCX\n<size:10>charts · landing-page captures · dossiers · Appendices A–E</size>
   CTI -> MCP : **api_usage**  //third-party credit ledger//
 end
 
@@ -103,7 +102,7 @@ CTI --> A : **base bundle: .md · .json · .csv · IOC bundle (STIX 2.1 · JSONL
 deactivate CTI
 
 legend right
-  **The 8 registered commands** //(work from a cold prompt, any project)//
+  **The 9 registered commands** //(work from a cold prompt, any project)//
   ====
   **/cti** <target>            route by type, run the whole chain
   **/cti-recall** <seed>       have I seen this before?  — run first
@@ -111,8 +110,9 @@ legend right
   **/cti-pivot** <url|ip>      artifacts from ONE target
   **/cti-cluster** <domain>    expand + correlate an existing case
   **/cti-check** <indicator>   operator link, or shared noise?
-  **/cti-report** <ID>         graph + PDF/DOCX
+  **/cti-report** <ID>         graph + house report (PDF/DOCX)
   **/cti-status**              backend tier · MCP tools · credit balances
+  **/cti-proxy**               egress proxy / rotation pool for every collector
   ----
   Everything else is a **convention command** — available
   once the skill is loaded via /cti or /cti-expert.

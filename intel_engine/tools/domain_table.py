@@ -283,6 +283,34 @@ def _whois_cached(domain, case_dir, history_mode="off", free_only=False):
         except Exception:
             cached = None
         if cached is not None:
+            # An all-null CURRENT record on a `.vn` sidecar (written before CLD became the .vn-primary
+            # WHOIS source) self-heals: refetch the current record and merge it over the blanks,
+            # preserving any purchased `history` block, then rewrite. Scoped to `.vn` so no other
+            # domain re-spends, and never under free_only. One CLD call; heals on the next render.
+            _core = ("registrar", "created", "expires", "name_servers")
+            if (not free_only and domain.lower().endswith(".vn")
+                    and not cached.get("refetch_attempted")
+                    and not any(cached.get(k) for k in _core)):
+                try:
+                    fresh = (whois_summary(domain, history_mode="off") if whois_summary else {}) or {}
+                except Exception:
+                    fresh = {}
+                # Stamp + rewrite ONLY on a definitive vendor answer (a response with no `error`, even
+                # if it carried no record). A transient failure — exception, CLD 5xx, proxy hiccup —
+                # leaves the sidecar untouched so the next render retries instead of freezing it blank.
+                if fresh and not fresh.get("error"):
+                    cached["refetch_attempted"] = True
+                    for k, v in fresh.items():
+                        if v and k not in ("history", "source", "raw") and not cached.get(k):
+                            cached[k] = v
+                    if any(cached.get(k) for k in _core):
+                        cached["source"] = fresh.get("source") or cached.get("source")
+                        cached.pop("error", None)
+                    if cache:
+                        try:
+                            json.dump(cached, open(cache, "w", encoding="utf-8"), indent=2)
+                        except Exception:
+                            pass
             if history_mode != "purchase" or free_only or _has_purchased_history(cached):
                 return cached
             # purchase requested but the cache is history-less/preview → fall through and refetch

@@ -622,8 +622,9 @@ def main():
                     screenshot_file = shot
                     print(f"[+] saved screenshot -> {shot}", file=sys.stderr)
                 try:
-                    _, _, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
-                                             proxy=seed_proxy)
+                    _, _status, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
+                                                   proxy=seed_proxy)
+                    headers["_status"] = str(_status)      # liveness reads this; never unset it
                 except Exception:
                     headers = {}
             else:
@@ -638,6 +639,21 @@ def main():
         except Exception as e:
             live_error = str(e)
             html = ""
+        # A failed RENDER is not a dead target: degrade to the plain fetch (rendered → raw → archive).
+        # Without this step a Chromium/proxy hiccup discards a live page for an archive copy.
+        if not html and args.render:
+            try:
+                base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
+                                                        proxy=seed_proxy, redirects_out=redirects)
+                cf_challenge = detect_cloudflare_challenge(status, headers, body.decode("utf-8", "ignore"))
+                if status < 400 and len(body) >= 200 and not cf_challenge:
+                    html = body.decode("utf-8", "ignore")
+                    headers["_status"] = str(status)
+                    print(f"[!] render failed ({live_error}); collected the plain fetch instead",
+                          file=sys.stderr)
+                    live_error = None
+            except Exception as e2:
+                live_error = f"{live_error}; plain fetch: {e2}"
 
         # --- Cloudflare escalation: try to SOLVE the live challenge before going passive ---
         # (weak→strong; a plain UA swap can't beat a managed challenge, a real browser can)
@@ -720,12 +736,21 @@ def main():
                   file=sys.stderr)
             snap_url, ts = wayback_closest(src, ua=seed_ua)
             if snap_url:
+                # `id_` mode returns the ORIGINAL bytes — no archive toolbar, no rewritten URLs, no
+                # archive.org headers. Without it every recovered page shares the toolbar's HTML
+                # comments / DOM and the KB links unrelated archive-recovered hosts to each other.
+                raw_url = wayback_raw_url(snap_url)
                 try:
-                    base_url, _, headers, body = fetch(snap_url, timeout=args.timeout, ua=seed_ua,
+                    base_url, _, headers, body = fetch(raw_url, timeout=args.timeout, ua=seed_ua,
                                                        proxy=seed_proxy)
+                    # the response headers are archive.org's (server, CSP …); the target's own are
+                    # replayed as x-archive-orig-* — keep those, drop the rest, so no `server=nginx`
+                    # or archive CSP fingerprint is attributed to the target
+                    headers = {k.lower()[len("x-archive-orig-"):]: v for k, v in (headers or {}).items()
+                               if k.lower().startswith("x-archive-orig-")}
                     html = body.decode("utf-8", "ignore")
                     recovered_via = f"wayback:{ts}"
-                    print(f"[+] recovered archived copy: {snap_url}", file=sys.stderr)
+                    print(f"[+] recovered archived copy: {raw_url}", file=sys.stderr)
                 except Exception:
                     pass
             intel = urlscan_intel(host_for_intel, ua=seed_ua, free_only=args.free_only)

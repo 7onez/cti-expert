@@ -83,7 +83,7 @@ Fire by identifier type, then feed every hit **back into the recursive pivot loo
 | Discovered | Auto-fire (leaks / breach / OSINT / dork) |
 |---|---|
 | **email** | `/breach-deep` + `/email-deep` (LeakCheck·HudsonRock·CLD) → `/intelx <email>` (breach dumps, **infostealer logs**, pastes, darknet — logs-first pass is ~50% keyless) → `/github-osint` (commit attribution) → `/dork-sweep --telegram --docs` on the address and `@domain` |
-| **username** | `/username` (3000+ platforms) → social-platform recon → `/intelx` on any email the profiles expose → `/github-osint` if a GitHub profile/hit exists → `/dork-sweep --telegram --docs` |
+| **username** | `/username` (3000+ platforms) → social-platform recon → `/intelx` on any email the profiles expose → `/github-osint` if a GitHub profile/hit exists (`github_harvest`: `.patch` From: e-mails, first 2 + last 2 commits per repo, org about-profile + members + top contributors, former logins from no-reply addresses) → `/dork-sweep --telegram --docs` |
 | **person name** | `/dork-sweep --docs` + `/docleak` (author/uploader fields) → `/github-osint` only after a likely handle/commit-email surfaces → `/email-permute` **against the case's own domains** (hypothesis only — never a finding, never ingested; §2.5) |
 | **phone** | `/phone` (carrier + reputation + **infostealer exposure** + VN scam reports) → `/intelx <phone>` → `/dork-sweep` |
 | **domain / org** | `/intelx --phonebook <apex>` (every email/subdomain/URL IntelX has seen) → `/secrets` + `/github-osint` (org, primary domain, discovered repos) → `/dork-sweep --filetype --docs` + `/docleak` on domain + org → `wayback_harvest --indicators` (Acquire already runs this) |

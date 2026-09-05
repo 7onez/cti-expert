@@ -134,8 +134,15 @@ def main():
         # The KB-wide count is still printed alongside, because an indicator shared by 3 domains
         # here but 47 KB-wide is prevalence noise, not an owner link.
         scope = f" among the {len(restrict)} given domain(s)" if restrict else ""
+        try:
+            from reference import benign_values          # curated globally-benign fingerprints
+            benign = benign_values(args.kb)
+        except Exception:  # noqa: BLE001
+            benign = set()
         print(f"\n# Shared indicators (>= {args.min} domains{scope}) — cluster seeds\n")
         for s in kb.shared_indicators(1 if restrict else args.min):
+            if s["indicator"] in benign or f"{s['indicator_type']}:{s['indicator']}" in benign:
+                continue                                  # platform default / archive artifact — never a seed
             doms = s["domains"]
             if restrict is not None:
                 doms = [d for d in doms if d.lower() in restrict]

@@ -489,6 +489,89 @@ async def impersonation_hunt(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "github_harvest",
+    "Harvest COMMITTER IDENTITIES from GitHub for a user, organisation, repository or single commit "
+    "URL — the one identity surface GitHub never redacts. For each repository it reads the commit "
+    "history and fetches `<commit>.patch`, whose `From:` line is git's own record of the author's "
+    "configured name and e-mail (a personal mailbox, a company address, or the "
+    "`<id>+<login>@users.noreply.github.com` form that binds a numeric user id to a login — and "
+    "reveals a FORMER login when the account was renamed). Sampling: a repository with more than "
+    "10 commits contributes its FIRST 2 and LAST 2 (founder and current maintainer); shorter "
+    "histories contribute every commit. For an organisation it also reads the about-profile "
+    "(public e-mail, website, socials, location), the public member list and the top "
+    "contributors' profile selectors, then walks every repository. Rails: identities seen only "
+    "in FORKED repositories are upstream authors and never become pivots; bots are dropped; a "
+    "commit e-mail identifies the COMMITTER, not necessarily the repository owner. Writes the "
+    "harvest into cases/<case>/raw/github.com_<owner>.json (kb_ingest joins its e-mails on the "
+    "same `email` node as WHOIS registrants and on-page contacts). FREE: 60 API calls/hour "
+    "keyless, 5000 with GITHUB_TOKEN; GitHub is a vendor endpoint, never the hostile target.",
+    {"target": str, "case": str},  # max_repos:int, max_contributors:int, patches:bool optional
+)
+async def github_harvest(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args["target"]).strip()
+    case = args["case"]
+    raw_dir = os.path.join(ROOT, "cases", case, "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    owner = [x for x in target.replace("https://", "").replace("http://", "").replace("github.com/", "").split("/") if x]
+    stem = "github.com_" + (owner[0] if owner else "target")
+    out = os.path.join(raw_dir, stem + ".json")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_github.py"), target, "-o", out,
+           "--max-repos", str(int(args.get("max_repos") or 30)),
+           "--max-contributors", str(int(args.get("max_contributors") or 10))]
+    if args.get("patches") is False:
+        cmd.append("--no-patches")
+    r = _run(cmd, timeout=900)
+    data = _load_json(out)
+    if data is None:
+        return _err(f"github_harvest failed for {target}: {(r.stderr or '')[-500:]}")
+    ids = [i for i in data.get("identities") or [] if i.get("kind") != "bot" and i.get("own_repo")]
+    summary = (r.stderr or "").strip().split("\n")
+    summary = "\n".join(ln for ln in summary if not ln.startswith("wrote "))[-6000:]
+    return _ok(f"GitHub harvest on {target}: {len(data.get('repos') or [])} repo(s), "
+               f"{len(ids)} committer identity(ies) from the target's own repositories, "
+               f"{len(data.get('pivots') or [])} pivot(s). Written to {os.path.relpath(out, ROOT)} "
+               f"for kb_ingest.\n{summary}", where=os.path.relpath(out, ROOT))
+
+
+@tool(
+    "subdomain_enum",
+    "Enumerate a seed apex's SUBDOMAINS with the installed passive tools — subfinder (auto-keyed from "
+    "the skill's .env: Shodan, SecurityTrails, WhoisXML, CertSpotter, FOFA, IntelX, GitHub, Netlas, "
+    "and any other provider whose key is set), amass -passive, assetfinder, findomain — unions the "
+    "names, DNS-verifies them and writes cases/<case>/subenum/<apex>.json. The frontier then queues "
+    "the LIVE subdomains for next-round collection exactly like the apex (client., api., panel., "
+    "shop.… are the same registration, so kb_ingest joins them to the apex on `apex:<registrable>`, "
+    "rung 1); dead CT/archive names are recorded, not collected; hoster plumbing (cpanel, webmail, "
+    "autodiscover…) is a fact, not a seed. `pipeline open` runs this once per apex automatically; "
+    "call it directly to enumerate a new apex or re-run after adding provider keys. Egress goes to "
+    "the enumeration providers only — the target is never touched here.",
+    {"apex": str, "case": str},  # timeout:int optional
+)
+async def subdomain_enum(args: dict[str, Any]) -> dict[str, Any]:
+    apex = _host(args["apex"])
+    case = args["case"]
+    case_dir = os.path.join(ROOT, "cases", case)
+    os.makedirs(case_dir, exist_ok=True)
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_subenum.py"), apex, "--case-dir", case_dir,
+           "--timeout", str(int(args.get("timeout") or 240))]
+    # keyless-only when asked, or when the case scope forbids spending metered credits
+    scope = _load_json(os.path.join(case_dir, "scope.json")) or {}
+    if args.get("free_only") or scope.get("no_spend"):
+        cmd.append("--free-only")
+    r = _run(cmd, timeout=900)
+    out = os.path.join(case_dir, "subenum", apex + ".json")
+    data = _load_json(out)
+    if data is None:
+        return _err(f"subdomain_enum failed for {apex}: {(r.stderr or '')[-500:]}")
+    live = data.get("live") or []
+    return _ok(f"subdomain enumeration on {apex}: {len(data.get('subdomains') or [])} name(s) via "
+               f"{', '.join(data.get('tools') or []) or 'no tool installed'}; {len(live)} resolving → "
+               f"queued for the next round by `case_frontier` (subdomains_pending). "
+               f"{('subfinder keyed from .env: ' + ', '.join(data['provider_sync']['filled'])) if (data.get('provider_sync') or {}).get('filled') else ''}\n"
+               f"live: {', '.join(live[:40])}{' …' if len(live) > 40 else ''}\n"
+               f"{(r.stderr or '')[-2500:]}", where=os.path.relpath(out, ROOT))
+
+@tool(
     "domain_liveness",
     "Is this host actually SERVING the operator's content? Decides by READING THE PAGE plus DNS, "
     "never by the HTTP status code alone — the guardrail in front of every 'is it still up' "

@@ -104,10 +104,12 @@ def _read_domains(path):
     return out
 
 
-# No pipeline sub-step may hang the whole run. Bound every _run() child; a hung child (a wedged
-# render, a stuck local tool) is a bounded, logged skip — never an unbounded stall. Generous by
-# default (a large-KB ingest/graph is legitimately slow); override with $INTEL_STEP_TIMEOUT.
-_STEP_TIMEOUT = int(os.environ.get("INTEL_STEP_TIMEOUT") or 600)
+# No pipeline sub-step may hang the whole run: each is bounded, and a timeout degrades to a logged
+# rc-124 skip. The DEFAULT bound is the shared per-call ceiling (collect_core.CALL_TIMEOUT = 1800s /
+# 30 min, env CTI_CALL_TIMEOUT) instead of the old 600, so a step that makes no explicit request gets
+# the ceiling. INTEL_STEP_TIMEOUT overrides the default to ANY value, and a caller may still pass an
+# explicit per-step timeout (e.g. a fast bound in a test) — both are honoured.
+_STEP_TIMEOUT = int(os.environ.get("INTEL_STEP_TIMEOUT") or collect_core.CALL_TIMEOUT)
 
 
 def _run(cmd, **kw):
@@ -161,12 +163,22 @@ def _prior_overlap(hosts, min_shared=1):
         print(f"   note: prior-overlap check skipped ({e})")
         return
     kb = _KB(KB)
+    # The curated reference's BENIGN verdicts (platform defaults, mass-market themes, archive
+    # artifacts) are the same denylist clustering honours — an overlap that rests only on them
+    # is a base-rate coincidence, and printing it as a CONFIRMED-OPERATOR MATCH names an innocent.
+    try:
+        from reference import benign_values as _benign_values  # noqa: E402
+        benign = _benign_values(KB)
+    except Exception:
+        benign = set()
     seeds = {h.lower() for h in hosts}
     edges = kb.edges()
     # indicator (type,value) -> set(domains that use it)
     ind_domains = {}
     for e in edges:
         if e["src_type"] == "domain" and e["dst_type"] in ("indicator", "email", "person", "org"):
+            if str(e["dst"]) in benign:
+                continue
             ind_domains.setdefault((e["dst_type"], e["dst"]), set()).add(e["src"].lower())
     # for each seed, the prior (non-seed) domains it shares an indicator with, and via what
     prior_peers = {}     # peer_domain -> set("kind:value")
@@ -267,10 +279,15 @@ def cmd_open(a):
     # explicit opt-out is passed through.
     if getattr(a, "no_pssl", False):
         extra.append("--no-pssl")
+    # --free-only (explicit, or a no_spend scope): forward to the collector so its metered layers
+    # gate off — subenum reads it via cmd_open too.
+    if getattr(a, "free_only", False) or _case_no_spend(case_dir):
+        extra.append("--free-only")
     # IntelX auto-fire (SKILL.md declares it required; the pipeline never appended the flag). METERED,
-    # so it fires only when a key is present AND the case is not a no-spend posture. The loop is
-    # free-only by default and appends it only under --full (see cmd_loop).
-    extra += _intelx_flag(case_dir, loop=False)
+    # so it fires only when a key is present AND the case is not a no-spend / free-only posture. The
+    # loop is free-only by default and appends it only under --full (see cmd_loop).
+    if not getattr(a, "free_only", False):
+        extra += _intelx_flag(case_dir, loop=False)
     # collect_core.filter_args probes the collector's --help and drops whatever it does not accept,
     # surfacing every dropped flag (RULE 4) — so a flag the cti-expert collector lacks degrades
     # loudly instead of aborting the batch.
@@ -304,8 +321,14 @@ def cmd_open(a):
     # 1b) Censys cert search — ONCE per case over the estate's leaf-cert SHA-256s (bounded budget).
     #     Run-unless-`free` (the search is the probe). NEVER under --no-collect (documented zero-egress:
     #     the /case hand-off and case-restore flows rely on it) and never on a no-spend posture.
-    if not getattr(a, "no_collect", False) and not _case_no_spend(case_dir):
+    if not getattr(a, "no_collect", False) and not _case_no_spend(case_dir) and not getattr(a, "free_only", False):
         _censys_certs_once(case_dir, raw_files)
+
+    # 1c) subdomain enumeration — ONCE per apex per case via the installed passive tools
+    #     (subfinder / amass / assetfinder / findomain, subfinder keyed from the skill-owned config).
+    #     never under --no-collect; keyless-only under a no-spend scope or --free-only.
+    if not getattr(a, "no_collect", False):
+        _subenum_once(case_dir, hosts, free_only=getattr(a, "free_only", False))
 
     # 2) ingest into the KB (idempotent) ------------------------------------
     print(f"== ingesting {len(raw_files)} raw file(s) into {os.path.relpath(KB, ROOT)} ==")
@@ -414,6 +437,39 @@ def _ingest_case(raw_files):
     if not raw_files:
         return
     _run([sys.executable, os.path.join(KB_TOOLS, "ingest_webpivot.py"), "--kb", KB, *raw_files])
+
+
+def _subenum_once(case_dir, hosts, timeout=240, free_only=False):
+    """Subdomain enumeration per registrable apex of the case's hosts (wp_subenum: every installed
+    passive tool, unioned, DNS-verified) → cases/<case>/subenum/<apex>.json, which the frontier reads
+    to queue the apex's live subdomains for the next round. Idempotent per apex (an existing file is
+    reused); no tool installed → one note, no failure. `free_only` (no-spend scope OR --free-only)
+    restricts subfinder to keyless sources."""
+    try:
+        sys.path.insert(0, WP)
+        sys.path.insert(0, HERE)
+        import wp_subenum
+        import case_state as _cs
+        tools = wp_subenum.which_tools()
+        if not tools:
+            print("   subdomain enumeration: no enumerator installed (subfinder/amass/assetfinder/findomain) — skipped")
+            return
+        apexes = sorted({_cs._frontier_apex(h) for h in hosts if h and "." in h})
+        for apex in apexes:
+            if not apex or re.fullmatch(r"[\d.]+", apex):
+                continue
+            p = os.path.join(case_dir, "subenum", apex + ".json")
+            if os.path.isfile(p):
+                continue
+            res = wp_subenum.run(apex, case_dir=case_dir, timeout=timeout,
+                                 free_only=free_only or _case_no_spend(case_dir))
+            filled = (res.get("provider_sync") or {}).get("filled") or []
+            print(f"   subdomains {apex}: {len(res.get('subdomains') or [])} name(s) via "
+                  f"{', '.join(tools)} — {len(res.get('live') or [])} resolving"
+                  + (f" (subfinder keyed from .env: {', '.join(filled)})" if filled else "")
+                  + f" -> {os.path.relpath(p, ROOT)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"   note: subdomain enumeration failed ({e}); skipped.")
 
 
 def _censys_certs_once(case_dir, raw_files, budget=1):
@@ -867,6 +923,8 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
                    for c in multi]
     next_pivots += [f"collect {ap} (via {', '.join(fr['candidates'].get(ap, {}).get('sources', []))}) — free"
                     for ap in fr["pending"]]
+    next_pivots += [f"collect subdomain {sub} of {apex} (via {', '.join(fr['subdomains'].get(sub, {}).get('sources', []))}) — free, same registration"
+                    for apex, subs in (fr.get("subdomains_pending") or {}).items() for sub in subs]
     next_pivots += [f"[metered — approve first] {ml['service']} {ml['query']} — {ml['why']}"
                     for ml in fr["metered_leads"]]
     doc = {
@@ -975,7 +1033,9 @@ def cmd_loop(a):
         # replenish the queue from the discovered free frontier when empty
         if not st["pending"]:
             fr = cs.frontier(case, max_new=a.max_new)
-            st["pending"] = fr["pending"]
+            # new apexes first, then the collected apexes' own live subdomains (same registration)
+            st["pending"] = fr["pending"] + [s for subs in (fr.get("subdomains_pending") or {}).values()
+                                            for s in subs]
             st["metered_leads"] = fr["metered_leads"]
             if not st["pending"]:
                 st["status"] = "cold"
@@ -1069,6 +1129,8 @@ def cmd_loop(a):
             print(f"   CONVERGED after round {st['round']}. Stop; write the final assessment.")
             break
         st["pending"] = analyst_new + [h for h in fr["pending"] if h.lower() not in done]
+        st["pending"] += [s for subs in (fr.get("subdomains_pending") or {}).values()
+                          for s in subs if s.lower() not in done and s not in st["pending"]]
         if not st["pending"]:
             st["status"] = "cold"
             cs.save_state(case, st)
@@ -1178,6 +1240,10 @@ def main():
     o.add_argument("--operator-links", default=None)
     o.add_argument("--min", type=int, default=2)
     o.add_argument("--timeout", type=int, default=20)
+    o.add_argument("--free-only", action="store_true", dest="free_only",
+                   help="spend no metered credits: the collector's metered layers are gated off and "
+                        "subdomain enumeration uses keyless sources only. Also inferred from a "
+                        "no_spend scope.json.")
     o.add_argument("--force", action="store_true",
                    help="re-collect even if this host was already investigated in another case "
                         "(default: reuse the cached pivot — inherited from the shared collector core)")

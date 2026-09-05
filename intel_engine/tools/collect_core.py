@@ -32,14 +32,27 @@ from urllib.parse import urlparse
 _FLAGS_CACHE: dict[str, frozenset[str]] = {}
 _FLAGS_LOCK = threading.Lock()
 
+# Per-call ceiling for subprocess "task calls". Mirrors wp_common.CALL_TIMEOUT; the env var
+# CTI_CALL_TIMEOUT is the single runtime source of truth (default 1800s / 30 min). Flooring here
+# means every harness _run(...) call and every collector subprocess this module launches runs up to
+# the ceiling, then times out and the run moves on — without editing each of the ~40 call sites.
+try:
+    CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT", "") or 1800)
+    if CALL_TIMEOUT <= 0:
+        CALL_TIMEOUT = 1800
+except (TypeError, ValueError):
+    CALL_TIMEOUT = 1800
+
 
 def host_of(url: str) -> str:
     """Bare hostname for a URL/host string (no scheme/path)."""
     return urlparse(url if "://" in url else "http://" + url).hostname or url
 
 
-def run(cmd: Sequence[str], cwd: str, timeout: int = 180) -> subprocess.CompletedProcess:
-    return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True, timeout=timeout)
+def run(cmd: Sequence[str], cwd: str, timeout: int = None) -> subprocess.CompletedProcess:
+    # Floor to CALL_TIMEOUT: a caller's shorter per-call timeout is raised to the ceiling.
+    eff = CALL_TIMEOUT if not isinstance(timeout, (int, float)) else max(int(timeout), CALL_TIMEOUT)
+    return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True, timeout=eff)
 
 
 def load_json(path: str):

@@ -97,7 +97,8 @@ _LIVE_FALLBACK = {
     "blocked_markers": ["just a moment...", "attention required! | cloudflare",
                         "checking your browser before accessing", "verify you are human"],
     "thresholds": {"body_read_bytes": 200000, "marker_scan_chars": 60000,
-                   "thin_body_chars": 512, "min_text_chars": 64, "http_timeout": 15},
+                   "thin_body_chars": 512, "min_text_chars": 64, "http_timeout": 15,
+                   "widget_page_text_chars": 1500},
     "states": {
         "live": {"live": True, "reuse_watch": False, "dead": False, "note": "Serves real content."},
         "unknown": {"live": None, "reuse_watch": True, "dead": False,
@@ -253,8 +254,11 @@ def classify(*, url: str = "", final_url: str = "", status=None, headers: dict =
     code = int(status)
 
     # -- 1. bot wall FIRST: it invalidates every content test below ------------------------
+    # …unless the "wall" sits on a page with thousands of characters of real copy: then the
+    # marker is a widget (reCAPTCHA badge on a login form, a Ray-ID in a footer) and the page
+    # WAS seen. An interstitial never carries that much visible text.
     hits = _hits(scan, BLOCKED_MARKERS)
-    if hits:
+    if hits and len(text) <= int(THRESHOLDS.get("widget_page_text_chars", 1500)):
         return _finalize("blocked", f"HTTP {code} carrying a bot-wall/WAF interstitial — the "
                                     f"real page was never seen; this is absence of record, "
                                     f"not evidence about the target", hits, signals, **common)
@@ -402,12 +406,15 @@ def from_pivot_result(result: dict) -> dict:
         ns = [str(x).lower().rstrip(".") for x in (((result or {}).get("whois") or {}).get("nameServers") or [])]
 
     body = arts.get("body") or arts.get("html") or ""
+    document_read = bool(body)                 # True only when the page itself was read
     if not body:
-        dom = meta.get("dom") or meta.get("dom_path") or ""
+        # the collector writes the captured DOM path as meta.raw_dom_file (older captures: dom/dom_path)
+        dom = meta.get("raw_dom_file") or meta.get("dom") or meta.get("dom_path") or ""
         if dom and os.path.exists(dom):
             try:
                 with open(dom, "rb") as fh:
                     body = fh.read(BODY_READ_BYTES)
+                document_read = bool(body)
             except Exception:                                   # noqa: BLE001
                 body = ""
     if not body:
@@ -417,10 +424,20 @@ def from_pivot_result(result: dict) -> dict:
         if not (arts.get("title") or arts.get("description")):
             body = ""
 
+    # Status: the collector's own record first (artifacts.http.status; meta.http_status is the
+    # legacy field). A LIVE capture whose document was actually read but whose status code was
+    # lost is a served page, not "no HTTP response" — infer 200. Never for an archive/urlscan
+    # recovery (recovered_via set) and never from the title-only fallback.
+    status = (((arts.get("http") or {}).get("status"))
+              or meta.get("http_status") or meta.get("status"))
+    live_error = meta.get("live_error") or ""
+    if (status is None and document_read and len(body) >= 200 and not live_error
+            and not meta.get("recovered_via")):
+        status = 200
+    headers = meta.get("headers") or arts.get("server_headers") or {}
     return classify(url=meta.get("source") or "", final_url=meta.get("final_url") or "",
-                    status=meta.get("http_status") or meta.get("status"),
-                    headers=meta.get("headers") or {}, body=body, ips=ips, nameservers=ns,
-                    error=meta.get("live_error") or "")
+                    status=status, headers=headers, body=body, ips=ips, nameservers=ns,
+                    error=live_error)
 
 
 # ------------------------------------------------------------------ CLI

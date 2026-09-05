@@ -343,8 +343,8 @@ def test_censys_search_file_seeds_on_exact_cert_only():
     check("casememo.put refuses a budget skip on disk", wp_casememo.put("t", "k", {"skipped": "per-run cap"}) is False
           and wp_casememo.get("t", "k") is None)
     src = open(os.path.join(ROOT, "tools", "intel.py"), encoding="utf-8").read()
-    check("cmd_open never runs the Censys search under --no-collect (documented zero-egress) or no_spend",
-          'if not getattr(a, "no_collect", False) and not _case_no_spend(case_dir):\n        _censys_certs_once(case_dir, raw_files)' in src)
+    check("cmd_open never runs the Censys search under --no-collect, no_spend, or --free-only",
+          'if not getattr(a, "no_collect", False) and not _case_no_spend(case_dir) and not getattr(a, "free_only", False):\n        _censys_certs_once(case_dir, raw_files)' in src)
     check("a skipped prior censys_search.json is retried, not frozen",
           'and not prev.get("skipped")' in src)
 

@@ -81,7 +81,8 @@
   <a href="https://sociallinks.io"><img src="https://img.shields.io/badge/Social_Links-Nền_tảng_điều_tra_OSINT-4B2E83?style=for-the-badge" alt="Social Links"></a>
 </p>
 <p>
-  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-Đồ_thị_DNS_Chứng_chỉ_%26_Favicon-1F7A5A?style=for-the-badge" alt="Validin"></a>
+  <a href="https://validin.com"><img src="https://img.shields.io/badge/Validin-Đồ_thị_DNS_Chứng_chỉ_%26_Favicon-1F7A5A?style=for-the-badge" alt="Validin"></a>&nbsp;
+  <a href="https://netlas.io"><img src="https://img.shields.io/badge/Netlas-Chỉ_mục_DNS_Scan_%26_WHOIS-1D4ED8?style=for-the-badge" alt="Netlas"></a>
 </p>
 
 </div>
@@ -101,7 +102,8 @@
 | [**SerpApi**](https://serpapi.com) | API kết quả công cụ tìm kiếm + Google Ads Transparency — ai **trả tiền** để kéo traffic, cùng kết quả dork đa công cụ | `/serp` · `/search-pivot` |
 | [**GrayHatWarfare**](https://grayhatwarfare.com) | Tìm kiếm bucket lưu trữ mở &amp; tệp bị phơi nhiễm (S3/Azure/GCS/Spaces) — xếp loại **phơi nhiễm**, không phải pivot cùng-người-vận-hành | `/secrets` · `/docleak` |
 | [**Social Links**](https://sociallinks.io) | Nền tảng điều tra OSINT — hơn 1000 phương pháp trên mạng xã hội, blockchain và dark web (SL Professional / Crimewall, Maltego transforms) | Phương pháp luận &amp; dữ liệu OSINT |
-| [**Validin**](https://validin.com) | DNS + chứng chỉ + favicon + hash nội dung phản hồi gộp trong một đồ thị — passive DNS, liệt kê subdomain, reverse-IP và pivot hash host-response trên key Community miễn phí | Hiện cung cấp chuỗi truy vấn dựng sẵn cho các pivot `/webpivot`; đang tích hợp API gốc |
+| [**Validin**](https://validin.com) | DNS + chứng chỉ + favicon + hash nội dung phản hồi gộp trong một đồ thị — passive DNS, liệt kê subdomain, reverse-IP và pivot hash host-response trên key Community miễn phí | Tích hợp gốc trong `/webpivot` (tra cứu domain, uy tín, host theo chứng chỉ &amp; favicon) · nguồn MO-neighbour · `/cti-pivot` |
+| [**Netlas**](https://netlas.io) | Chỉ mục tài sản Internet độc lập — các bộ sưu tập DNS, phản hồi quét, WHOIS và chứng chỉ sau một key; `domains a:<origin-ip>` đảo ngược một origin không qua CDN ra mọi apex kèm ngày tháng | Nguồn MO-neighbour của `/webpivot` · `intel.py netlas` · thăm dò quyền hạn gói |
 
 > [!IMPORTANT]
 > **Tra cứu ANY.RUN là chỉ-đọc; việc kích nổ được gác chặt.** `anyrun_lookup` tra cứu TI Lookup cho các hash **đã** được kích nổ từ trước. `anyrun_submit` có thể kích nổ một file hoặc URL, nhưng chỉ sau khi vượt qua: xác nhận của analyst cho **từng lần nộp** (xem bản tóm tắt rủi ro rồi mới gọi lại với `confirm=true`), quyền riêng tư mặc định là riêng tư và `public` bị từ chối, kiểm tra gói dịch vụ theo nguyên tắc fail-closed (đọc hạn mức riêng tư trong `/user` của chính tài khoản — bằng 0 là từ chối thẳng, xác nhận của analyst cũng không vượt qua được; nếu không có thì cần một task riêng tư trước đó, hoặc analyst phải xác nhận rõ ràng đang dùng gói trả phí), đọc lại quyền riêng tư sau khi nộp để thu hồi và cảnh báo nếu task vẫn bị công khai, và harness từ chối nếu không có `HARNESS_ALLOW_SUBMIT=1`. Một task sandbox công khai là ai cũng đọc được và không thể thu hồi; cơ chế gác được bảo vệ bằng một bài kiểm thử hồi quy ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), chứ không chỉ bằng quy ước.
@@ -182,6 +184,20 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 ---
 
 <br>
+
+## Có gì mới trong v2.12
+
+> **Bản phát hành mà các key trả phí bắt đầu gánh đúng phần việc của mình — và bản báo cáo tự viết ra.** v2.11 giao các bộ phát hiện. v2.12 biến một bản kiểm toán tám phát hiện về các nhà cung cấp trả phí thành hành vi thật (mọi nhánh tính phí đều có cổng, mua **một lần cho mỗi vụ việc** thay vì mỗi host), thêm **Netlas** làm chỉ mục độc lập, biến PDF/DOCX biên tập thành một **bản ghép tất định** từ thư mục vụ việc, và khép lại khoảng trống trung thực cuối cùng trong tài liệu ANY.RUN: đường kích nổ có tồn tại, và nó được gác bằng năm cổng.
+
+| Hạng mục | Có gì mới | Chi tiết |
+|----------|-----------|---------|
+| **Pivot MO-neighbour** | Đảo ngược một origin không qua CDN ra các đồng cư dân — và chỉ gieo seed khi có khóa nối registrant | `wp_mo_neighbours.discover` đảo ngược IP origin không qua CDN của estate (kể cả origin MX) qua **Netlas · Validin · urlscan**, xác minh WHOIS từng apex ứng viên, rồi phân loại `same_registrant` (chỉ khóa nối e-mail/điện thoại registrant hiện tại — bản ghi proxy **không** đóng góp số điện thoại) / `same_mo` (chính sách từ dữ liệu tham chiếu) / `unrelated` / `unverifiable`. **Chỉ `same_registrant` mới gieo vào frontier**; các persona cùng-MO hiển thị thành bảng *Related personas* bậc 10 trong báo cáo (`--mask-personas` để gộp). Cổng chống bulk-hosting kích hoạt *trước* mọi khoản chi; khóa theo origin + cache trên đĩa + sổ WhoisXML theo lượt chạy giữ vững qua các tiến trình con của collector, nên một origin chỉ mua một lần mỗi vụ việc. Thanh chắn RULE 5 nguyên vẹn: chỉ ingest KB dạng fact, không bao giờ là edge, không bao giờ là `operator_lead` |
+| **Các kỷ WHOIS · vòng đời urlscan Pro** | Dòng thời gian nay biết ai từng giữ tên miền *trước* nhà vận hành này | Lịch sử WHOIS là `--whois-history purchase` tường minh, giới hạn ở seed và thành viên cụm (đường render không bao giờ mua); báo cáo house hiển thị bảng **Registrant eras** (gộp các lần đổi trong cùng ngày, phân loại placeholder của registrar) và lấy mốc bắt đầu kỷ hiện tại làm ngưỡng cắt cho ảnh chụp lưu trữ. urlscan **Pro** cung cấp chỉ mục vòng đời hostname — các kỷ A/NS, lần đầu xuất hiện trong CT và zonefile, cắt trái khi duyệt bị chặn — nuôi phần xem theo thời gian; hàng verdict chỉ xuất hiện khi có tín hiệu, và API key chỉ gửi tới urlscan.io |
+| **Quyền hạn gói được đo, không giả định** | Key đo ra *free* sẽ bỏ qua các lệnh gọi sẽ trả 403 | `wp_capabilities.discover_plans` thăm dò **endpoint tài khoản miễn phí** của từng nhà cung cấp (hạn mức urlscan, gói Netlas, mức dùng SecurityTrails/DNSLytics, IntelX `/authenticate/info`, Validin `/api/paths`) một lần mỗi vụ việc vào `cases/<id>/capability_plans.json`; `enrich_live` đọc kho này và chỉ chặn **khi có kết luận `free` rõ ràng** — chưa rõ thì giữ lệnh gọi hữu ích làm chính bước thăm dò. Censys search tự ghi verdict của mình. Thăm dò thất bại được báo trong lượt này và không bao giờ bị đóng băng, nên tiến trình kế tiếp đo lại |
+| **Netlas + phần dây nối nhà cung cấp còn lại** | Mọi key đã đăng ký nay đều có một pivot đứng sau | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py) — client Bearer trên các bộ sưu tập `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` (search, count, facet, reverse-IP, plan), trình dựng truy vấn không cần key + liên kết web-UI, có sổ ghi, UA an toàn với Cloudflare; `intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`. Đo thực tế: `domains a:<origin>` trả về **32 apex** trên một estate 32 tên miền (15 thành viên + các site anh em cùng-MO dưới persona khác). Đi kèm: **SecurityTrails** các kỷ lịch sử DNS + reverse-WHOIS qua DSL (đối chiếu với WhoisXML), **DNSLytics** reverse-IP dưới key riêng định tuyến theo đồng cư, **GrayHatWarfare** lead phơi nhiễm + mục báo cáo, **Shodan** tìm theo cert/JARM, **Censys** tìm cert một lần mỗi vụ việc với cổng chống fan-out cert dùng chung, **IntelX** tự kích hoạt trong `pipeline open` (loop: chỉ `--full`; loại hộp thư vai trò), và **Validin** nối gốc (tra cứu domain, uy tín, host theo cert và favicon). Frontier xếp ứng viên liên kết chủ sở hữu trên lookalike |
+| **Báo cáo house, ghép tất định** | PDF/DOCX biên tập không còn cần một mô hình để viết | `intel.py house-report <CASE-ID>` ghép tài liệu IntelReport từ thư mục vụ việc: mục I–XI, cả hai thang tin cậy + **biểu đồ phân tán ICD-203 × Admiralty**, đồ thị quan hệ + **bản đồ quan hệ thực thể**, chuỗi suy luận quy thuộc, xem theo thời gian + **bản đồ nhiệt đăng ký** + **ma trận domain × chỉ báo dùng chung** (tuân theo kiểm soát dương tính giả §2.5 và mang các khóa nối WHOIS), một **ảnh chụp trang đích** cho mỗi host trong estate (egress qua proxy có cổng; trang không render được sẽ lùi về ảnh **web-scan** công khai mới nhất, rồi ảnh **web-archive** — có chú thích, ghi ngày theo kho lưu trữ, và gắn nhãn *trang của chủ trước* khi nó có trước lần đăng ký hiện tại), **hồ sơ** từng tên miền, bảng thuật ngữ, Phụ lục **A–E**. Tẩy tên công cụ/nhà cung cấp/đường dẫn theo Rule 12; bên thứ ba được che qua một cổng duy nhất ([`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)). Một nguồn hình duy nhất ([`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)) nuôi cả DOCX dashboard và PDF house, nên hai sản phẩm không thể mâu thuẫn. `--no-screenshots` hoàn toàn offline; `--no-archive-fallback` cấm ảnh thay thế |
+| **ANY.RUN: cổng là thật, và tài liệu nay nói đúng** | Kích nổ có tồn tại — sau năm cổng, mỗi cổng đều là mã | SKILL.md, các callout trong README, `.env.example` và sổ đăng ký key từng khẳng định "không có đường nộp mẫu". Điều đó sai kể từ khi lớp có cổng ra đời. `anyrun_submit` được gác bởi: xác nhận theo từng lần nộp (gọi `confirm=false` để nhận **bản tóm tắt** trước — ngoại lệ `approval_briefing` theo dữ liệu trong `tool_policy.json` nay cho bước đó đi qua cổng phê duyệt MCP, và fail-closed về gác toàn phần nếu tệp không đọc được); **riêng tư theo mặc định**, `public` bị từ chối trừ khi `ANYRUN_ALLOW_PUBLIC=1` cấp ủy quyền *thường trực*, và khi đó chỉ là một lần hạ cấp tường minh, có ghi lại; **kiểm tra gói fail-closed** (hạn mức riêng tư `/user` — bằng 0 là từ chối và không lời cam kết nào vượt qua được — nếu không thì một task riêng tư trước đó, nếu không thì `--i-have-a-paid-plan`); **đọc lại quyền riêng tư sau khi nộp theo kiểu thăm dò** để rút và gắn cờ task vẫn rơi vào public (`verify-privacy <uuid>` hoàn tất kiểm tra nếu task sống lâu hơn thời gian chờ); và cổng từ chối của harness trừ khi `HARNESS_ALLOW_SUBMIT=1`. 103 kiểm tra có stub trong `test_intelx_anyrun` §7b–7c; `test_tool_gate` §2 ghim briefing-được-phép / confirm-bị-chặn / fail-closed |
+| **Vệ sinh repo** | Cây mã tự kiểm tra key bị dán nhầm | `audit.sh` §5b grep mọi tệp được theo dõi để tìm hình dạng key của nhà cung cấp và các dòng `KEY=value` — đã chứng minh kích hoạt với giá trị cài sẵn và sạch trên cây, nên key chỉ có thể sống trong `.env`. [AGENTS.md](AGENTS.md) viết lại thành *Repository Guidelines* dùng chung cho mọi agent. Sổ alias key được đối soát với mọi lệnh tra `_secret()` của công cụ và khóa lại ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter được đăng ký để banner năng lực không còn im lặng về những key nó đang dùng. Ba sơ đồ quy trình render lại từ nguồn hiện tại — 52 `@tool`, 9 lệnh, Netlas, ANY.RUN có cổng |
 
 ## Có gì mới trong v2.11
 
@@ -669,7 +685,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-recall example.com               # always first — have we seen this seed before?
 /cti-case CASE-0001 example.com       # full pipeline on one or more seeds
 /cti-cluster CASE-0001                # expand: peers, shared indicators, TLS overlap
-/cti-report CASE-0001 --pdf           # deliver: relationship graph + PDF/DOCX
+/cti-report CASE-0001                 # giao nộp: đồ thị quan hệ + báo cáo house (PDF/DOCX)
 ```
 
 ### 3 &mdash; Quy trình có hướng dẫn
@@ -725,6 +741,8 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
 /pipeline open CASE-0001 seeds.txt    # collect → ingest → recall → risk → cluster → đánh giá ICD-203
+                                      #   + pivot MO-neighbour trên origin · quyền hạn gói được đo · IntelX tự kích hoạt
+                                      #   --free-only: không tiêu credit · --whois-history purchase: các kỷ registrant
 /clusters CASE-0001                   # phán xét theo cụm cùng-nhà-vận-hành, kèm mức phổ biến toàn KB
 /frontier CASE-0001                   # khoảng trống chưa giải: seed miễn phí kế tiếp + lead tính phí bị hoãn
 
@@ -734,7 +752,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 /harness status CASE-0001             # status không cần key
 /loop CASE-0001                       # hoặc: collect↔assess lặp lại đến khi hội tụ
 
-/cti-report CASE-0001 --pdf           # giao nộp: đồ thị quan hệ + PDF/DOCX chỉn chu
+/cti-report CASE-0001                 # giao nộp: đồ thị quan hệ + báo cáo house (PDF/DOCX biên tập từ thư mục vụ việc)
 ```
 
 > **Pipeline vs harness:** `/pipeline` là chuỗi tất định (không cần LLM key, tái lập từng byte). `/harness` là điều phối toàn vụ việc **do agent dẫn dắt**, suy luận xuyên các vụ việc đến hội tụ (chế độ sâu nhất), và **tự động nâng cấp trong `/case`** khi pipeline tất định chưa hội tụ và posture đang chủ động (dùng `--no-harness` để tắt). **Ưu tiên không-key:** chạy tương tác trong Claude Code, nó dùng chính model của CLI trên gói đăng ký của bạn (không cần LLM key riêng); `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, không key) hoặc một API key chỉ cần cho `continue` chạy SDK không giám sát. Cả hai lưu dưới `cases/<ID>/`; alias đăng ký chạy nguội `/cti-case <ID> <seeds>` chạy pipeline tất định.
@@ -1239,9 +1257,9 @@ Cùng một vụ việc, ở những định dạng mà công cụ khác đọc 
 | `/report json` · `/report csv` | Xuất JSON · CSV | Pipeline, bảng tính, SIEM |
 | `/report ioc` | Gói IOC / selector (STIX 2.1 · danh sách phẳng · CSV) | Nạp vào SIEM / TIP, chia sẻ tình báo mối đe dọa |
 | `/report docx` · `/report pdf` · chọn **a**/**b**/**d** | Tài liệu Word / PDF *(biểu đồ, trang bìa, mục lục)* | Chia sẻ chính thức |
-| `/cti-report <ID> --pdf` | PDF/DOCX qua pandoc của IntelReport | Sản phẩm bàn giao chỉn chu, đạt chuẩn xuất bản |
+| `/cti-report <ID>` | **Báo cáo house** — PDF/DOCX biên tập ghép từ thư mục vụ việc *(biểu đồ, ảnh chụp trang đích, hồ sơ, Phụ lục A–E)* | Sản phẩm bàn giao chỉn chu, đạt chuẩn xuất bản |
 
-<sub>Được tạo bởi <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOC) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX) · <code>intel_engine/IntelReport</code> (pandoc PDF/DOCX)</sub>
+<sub>Được tạo bởi <code>scripts/build_report_data.py</code> (JSON báo cáo) · <code>scripts/generate-cti-html.py</code> (HTML) · <code>scripts/generate-cti-iocs.py</code> (IOC) · <code>scripts/generate-cti-docx-hybrid.py</code> (DOCX dashboard) · <code>intel_engine/tools/house_report.py</code> + <code>intel_engine/IntelReport</code> (PDF/DOCX house)</sub>
 
 <br>
 
@@ -1274,14 +1292,15 @@ cti-expert/
 ├── scripts/                    Collectors, backend dispatcher, report generators
 │   ├── backend/                backend.py (tier resolver) · intel.py (T2 CLI dispatch)
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── build_report_data.py    Case dir → REPORT.json (deterministic report bridge)
 │   ├── generate-cti-html.py    Interactive, offline, self-contained HTML report
-│   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV)
-│   ├── generate-cti-docx-hybrid.py   DOCX report (charts, diagrams, cover page)
+│   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
+│   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF (charts, diagrams, cover page)
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
 │   ├── install.sh · install.ps1      All-in-one cross-platform installer
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
-├── techniques/                 49 collection techniques (the OSINT tradecraft)
+├── techniques/                 57 collection techniques (the OSINT tradecraft)
 ├── handbook/                   Pivot artifacts, API keys, operator queries, analytic standards
 ├── engine/                     Case data-model design docs (schema, findings, pivot logic)
 ├── analysis/ · validation/     Pattern & exposure engines · QA + coverage matrices
@@ -1292,13 +1311,15 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (24 @tool)
-    ├── tools/                  intel.py (deterministic pipeline) · kb/ (KB + correlation) · cert_overlap
-    ├── WebPivot/               Engine collector helpers + de-dup re-export shims
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (52 @tool)
+    ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
+    ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
-    ├── IntelReport/            Pandoc render of an assessment → polished PDF/DOCX
+    ├── IntelReport/            Pandoc render of the composed house report → PDF/DOCX
     ├── IntelAnalysis/          Correlation, attribution, confidence calibration
-    ├── BinaryPivot/            Static IOC extraction from a scam APK / exe
+    ├── IntelShare/             MISP export · stage · publish (two separate decisions)
+    ├── Engage/                 Login detection · synthetic persona · gated members-area harvest
+    ├── BinaryPivot/            Static IOC extraction from a scam APK / exe · ANY.RUN lookup + gated submit
     └── knowledge/ · cases/     Local runtime data — gitignored, never committed
 ```
 

@@ -1,5 +1,5 @@
 @startuml
-title cti-expert v2.6 — /cti and /case: the recursive spider-map pipeline (AEAD)
+title cti-expert v2.12 — /cti and /case: the recursive spider-map pipeline (AEAD)
 skinparam shadowing false
 skinparam dpi 150
 skinparam defaultFontName "Segoe UI"
@@ -42,7 +42,7 @@ partition "**ACQUIRE**  (collect raw data)" {
     end note
   elseif (target is a file / APK / exe?) then (yes)
     :**/binary**  — BinaryPivot static IOC extraction\nAPK signing-cert SHA-256 · package name · permissions\nembedded C2 / backend hosts · Firebase · S3 · wallets;
-    :**/hash-id**  ->  file hash or credential material?\nthen ANY.RUN TI Lookup //(read-only, never submits)//;
+    :**/hash-id**  ->  file hash or credential material?\nthen ANY.RUN **TI Lookup** //(read-only)//\n//detonation (anyrun_submit) is ask-first, private-only, plan-checked//;
   else (username / email / phone / person)
     :/username · /email-deep · /phone · /breach-deep\n/stealer-log · /saas-map · /msft-recon;
     note right: **/webpivot is NOT run**\nfor non-web targets
@@ -61,7 +61,7 @@ partition "**ENRICH**  (expand leads — recursive)" {
     Screen every indicator *before* clustering.
   end note
   :**kb_ingest**  ->  shared knowledge base;
-  :**/cti-cluster**  — peers · shared indicators\nTLS/SAN overlap · reverse-WHOIS;
+  :**/cti-cluster**  — peers · shared indicators\nTLS/SAN overlap · reverse-WHOIS\n**MO-neighbours** — origin-IP co-tenants, WHOIS-verified\n//only a registrant join-key ever seeds; same-MO personas stay a rung-10 table//;
 }
 
 repeat :**spider-map**  — every new identifier becomes a seed;
@@ -69,7 +69,7 @@ repeat :**spider-map**  — every new identifier becomes a seed;
   :dedup + depth cap  ·  per-depth checkpoint;
 repeat while (frontier exhausted?) is (no — new seeds) not (yes)
 note right
-  **autonomy = auto** (v2.6 default).
+  **autonomy = auto** (default).
   Expands **to closure with no approval prompts** —
   the confidence gate, not a human, keeps it tight.
   Narrow with ~--checkpoint · ~--depth N · ~--reach focused
@@ -83,7 +83,7 @@ partition "**ASSESS**  (score + verify)" {
 }
 
 partition "**DELIVER**  (package output)" {
-  :**/cti-report CASE-ID**\n~--graph  ->  IntelGraph relationship render (PNG/SVG/Mermaid)\n~--pdf    ->  IntelReport pandoc PDF/DOCX;
+  :**/cti-report CASE-ID**\n~--graph  ->  IntelGraph relationship render (PNG/SVG/Mermaid)\n**house report**  ->  editorial PDF/DOCX composed from the case dir\n//charts · landing-page captures (web-scan / web-archive stand-ins) · dossiers · Appendices A–E//;
   :/report · /brief · /render;
   if (sharing outside the org?) then (yes — **opt-in**)
     :**/redact**  ->  stable [EMAIL_1] placeholders\n+ reversible JSON map;

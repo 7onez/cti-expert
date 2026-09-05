@@ -116,6 +116,11 @@ _MO_FALLBACK = {
     "classification": {"window_days": 60, "persona_handle_regex": r"^[a-z]+\d{4,}$", "min_token_len": 4,
                        "stop_tokens": ["www", "mail", "shop", "store", "online", "site", "web", "app", "info"]},
     "discovery": {"max_candidates": 40, "whois_run_cap": 160, "whois_workers": 4, "sibling_wait_s": 90},
+    # a seed apex's OWN subdomains: conservative minimum — few per round, DNS-verified, the
+    # hoster-generated labels that never carry a page are facts, not seeds
+    "subdomains": {"max_per_apex": 6, "require_dns": True,
+                   "stop_labels": ["www", "mail", "webmail", "cpanel", "cpcalendars", "cpcontacts", "webdisk",
+                                   "autodiscover", "autoconfig", "_dmarc", "_domainkey", "ftp", "ns1", "ns2"]},
 }
 try:
     import kb_refs as _kb_refs   # tools/kb/kb_refs.py
@@ -124,6 +129,7 @@ except Exception:
     _MO_REF = dict(_MO_FALLBACK)
 _MO_CLS = _MO_REF.get("classification") or _MO_FALLBACK["classification"]
 _MO_DISC = _MO_REF.get("discovery") or _MO_FALLBACK["discovery"]
+_SUB_POLICY = _MO_REF.get("subdomains") or _MO_FALLBACK["subdomains"]
 MO_MAX_CANDIDATES = int(_MO_DISC["max_candidates"])   # wp_mo_neighbours reads this — one source of truth
 MO_WHOIS_RUN_CAP = int(_MO_DISC["whois_run_cap"])
 MO_WHOIS_WORKERS = int(_MO_DISC["whois_workers"])
@@ -132,6 +138,9 @@ MO_WINDOW_DAYS = int(_MO_CLS["window_days"])           # a same-MO registration 
 MO_PERSONA_HANDLE_RE = re.compile(_MO_CLS["persona_handle_regex"])   # throwaway-mailbox shape
 MO_MIN_TOKEN_LEN = int(_MO_CLS["min_token_len"])
 _MO_STOP = frozenset(_MO_CLS["stop_tokens"])
+SUB_MAX_PER_APEX = int(_SUB_POLICY["max_per_apex"])
+SUB_REQUIRE_DNS = bool(_SUB_POLICY.get("require_dns", True))
+_SUB_STOP = frozenset(str(x).lower() for x in _SUB_POLICY["stop_labels"])
 
 
 def _new_deferred():
@@ -285,15 +294,87 @@ def _is_noise_apex(apex, seed_apexes, benign=None):
     return _is_shared_infra(apex)
 
 
+# Seed-apex SUBDOMAINS. `_add_cand` reduces every discovered host to its registrable apex, and an
+# apex already in the case is "not a new lead" — correct for the apex, but it silently threw away
+# the operator's own hosts under it (client., api., shop., panel.…), which are the same registration
+# and usually carry the panel/API the landing page never links. They are collected like the apex
+# and joined to it on `apex:<registrable>` at ingest (rung 1). Kept in a SEPARATE bucket so they
+# never inflate the "new operator infrastructure" count.
+_SUBS = {}          # module-level scratch: {apex: {sub: {"sources": set()}}} — reset per frontier()
+
+
+def _note_subdomain(host, source, seed_apexes):
+    h = (host or "").strip().lower().rstrip(".")
+    if not h or "*" in h or "/" in h or ":" in h or re.fullmatch(r"[\d.]+", h):
+        return
+    apex = _frontier_apex(h)
+    if apex not in seed_apexes or h == apex:
+        return
+    labels = h[: -len(apex) - 1].split(".") if h.endswith("." + apex) else []
+    if not labels or labels[0] in _SUB_STOP or any(l.startswith("_") for l in labels):
+        return
+    if re.fullmatch(r"[0-9a-f]{16,}", labels[0]):          # hoster-generated hash labels
+        return
+    _SUBS.setdefault(apex, {}).setdefault(h, {"sources": set()})["sources"].add(source)
+
+
 def _add_cand(cands, host, source, seed_apexes):
-    """Reduce a discovered host to its registrable apex and record it as a free frontier candidate."""
+    """Reduce a discovered host to its registrable apex and record it as a free frontier candidate.
+    A host under an apex the case already holds is recorded as that apex's SUBDOMAIN instead."""
     apex = _frontier_apex(host)
+    if apex in seed_apexes:
+        _note_subdomain(host, source, seed_apexes)
+        return
     if _is_noise_apex(apex, seed_apexes):
         return
     slot = cands.setdefault(apex, {"sources": set(), "examples": set()})
     slot["sources"].add(source)
     if host and host.lower() != apex:
         slot["examples"].add(host.lower())
+
+
+def _resolves(host, timeout=4.0):
+    """Live A/AAAA/CNAME answer for `host` — a CT/archive name that no longer resolves is a fact,
+    not a collection target."""
+    import socket
+    try:
+        socket.setdefaulttimeout(timeout)
+        return bool(socket.getaddrinfo(host, None))
+    except Exception:
+        return False
+
+
+def _subdomain_frontier(collected, consumed):
+    """Rank the noted subdomains per apex: corroboration desc, then name; drop collected/consumed
+    and (policy) non-resolving names; cap per apex. Returns ({apex: [sub…]}, {sub: {sources, dns}})."""
+    have = {h.lower() for h in collected} | {h.lower() for h in consumed}
+    pending, detail = {}, {}
+    # rank by INDEPENDENT evidence class, not raw source count: subfinder/assetfinder/findomain and
+    # crt.sh all read certificate transparency, so they collapse to ONE "ct" class; a page-linked or
+    # phonebook/passive-DNS/index name is independent corroboration and outranks a CT-only one.
+    _CLASS = {"page_link": "owner", "intelx_phonebook": "intelx", "passive_dns": "pdns",
+              "securitytrails": "securitytrails", "validin_subdomain": "validin",
+              "urlscan_hostname": "urlscan", "urlscan_related": "urlscan",
+              "crtsh_san": "ct", "subenum": "ct"}
+
+    def _weight(srcs):
+        return len({_CLASS.get("subenum" if s.startswith("subenum:") else s, s) for s in srcs})
+    for apex, subs in _SUBS.items():
+        ranked = sorted(subs.items(), key=lambda kv: (-_weight(kv[1]["sources"]), kv[0]))
+        picked = []
+        for sub, meta in ranked:
+            if sub in have:
+                continue
+            live = _resolves(sub) if SUB_REQUIRE_DNS else None
+            detail[sub] = {"apex": apex, "sources": sorted(meta["sources"]), "dns": live}
+            if SUB_REQUIRE_DNS and not live:
+                continue
+            picked.append(sub)
+            if len(picked) >= SUB_MAX_PER_APEX:
+                break
+        if picked:
+            pending[apex] = picked
+    return pending, detail
 
 
 # Phase 10 — UNIVERSAL frontier consumption. Every engine that attaches a host/domain-yielding
@@ -411,6 +492,27 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
     # top-level urlscan-related infra attached when the page itself was gone
     for d in ((obj.get("related_urlscan") or {}).get("domains") or []):
         _add_cand(cands, d, "urlscan_related", seed_apexes)
+    for d in ((obj.get("related_urlscan") or {}).get("related_domains") or []):
+        _add_cand(cands, d, "urlscan_related", seed_apexes)
+    # SUBDOMAIN-ONLY sources — hosts under an apex the case holds, never new apexes:
+    #   * the page's own links to its sibling hosts (client., api., shop.… on the same apex)
+    #   * the IntelX phonebook inventory (every hostname the leak corpora ever saw under the apex)
+    #   * urlscan's hostname lifecycle index for the apex
+    art = obj.get("artifacts") or {}
+    for h in art.get("third_party_hosts") or []:
+        _note_subdomain(h, "page_link", seed_apexes)
+    pb = (obj.get("intelx") or {}).get("phonebook") or {}
+    for h in (pb.get("domains") or []) if isinstance(pb, dict) else []:
+        _note_subdomain(h, "intelx_phonebook", seed_apexes)
+    for piv in obj.get("pivots", []) or []:
+        lr = piv.get("live_results") or {}
+        for blk_key in ("phonebook", "intelx_phonebook"):
+            for h in ((lr.get(blk_key) or {}).get("domains") or []):
+                _note_subdomain(h, "intelx_phonebook", seed_apexes)
+        # urlscan's hostname index answers per-hostname; sibling hosts arrive through the hostname
+        # search on the apex when the collector ran it (`hosts`), else through related scans above
+        for h in ((lr.get("urlscan_hostname") or {}).get("hosts") or []):
+            _note_subdomain(_row_host(h), "urlscan_hostname", seed_apexes)
 
 
 def _crtsh_candidates(crt, cands, seed_apexes, deferred, host):
@@ -600,8 +702,8 @@ def _enrichment_leads_from_raw(obj, leads):
             "tool": "/dork-sweep --filetype --docs", "value": apex, "key": f"dork:{apex}", "cost": "free",
             "why": f"Google/Bing dork sweep + doc-leak hunt on {apex}"}
         leads[("github", apex)] = {
-            "tool": "/github-osint + /secrets", "value": apex, "key": f"github:{apex}", "cost": "free",
-            "why": f"GitHub org/repo/code + exposed-secret recon for {apex}"}
+            "tool": "/github-osint + /secrets (github_harvest)", "value": apex, "key": f"github:{apex}", "cost": "free",
+            "why": f"GitHub org/repo search for {apex} → committer-identity harvest (.patch From: e-mails) + exposed-secret recon"}
         # GrayHatWarfare: open-bucket EXPOSURE for the brand label — an exposure/leak lead (graded as
         # such in the report's Exposure section), never a same-operator pivot, never a frontier seed.
         # Keyless the tool degrades to its dork fallback, so the lead is always emittable.
@@ -609,6 +711,18 @@ def _enrichment_leads_from_raw(obj, leads):
             "tool": "/secrets", "value": apex, "key": f"grayhatwarfare:{apex}",      # /secrets owns the GHW layer
             "cost": "metered (keyless dork fallback)",
             "why": f"open S3/Azure/GCS buckets carrying the {apex.split('.')[0]} label — exposure, not attribution"}
+    # a GitHub profile/org the page itself links to is the direct target of the committer harvest —
+    # the one identity surface that survives WHOIS privacy (bots/licence links are dropped upstream)
+    for u in ((art.get("socials") or {}).get("github") or []):
+        m = re.search(r"github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?:/|$)", str(u))
+        if not m:
+            continue
+        login = m.group(1)
+        if login.lower() in ("features", "topics", "sponsors", "login", "marketplace", "about", "site", "orgs"):
+            continue
+        leads[("github-account", login.lower())] = {
+            "tool": "github_harvest", "value": f"github.com/{login}", "key": f"github-account:{login.lower()}", "cost": "free",
+            "why": f"GitHub account linked from {host}: harvest committer e-mails (.patch From:), former logins, org members/contributors"}
 
 
 def _censys_search_candidates(cdir, cands, seed_apexes, deferred=None):
@@ -921,6 +1035,7 @@ def frontier(case, max_new=8):
     seed_apexes = {_frontier_apex(h) for h in collected} | {_frontier_apex(h) for h in consumed}
     cands, leads, enr = {}, {}, {}
     deferred = _new_deferred()
+    _SUBS.clear()
     for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -935,6 +1050,18 @@ def frontier(case, max_new=8):
     _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred)
     # Censys case-level cert search (exact leaf-cert match = owner link) — seeds directly.
     _censys_search_candidates(cdir, cands, seed_apexes, deferred)
+    # subdomain enumerators (wp_subenum: subfinder / amass / assetfinder / findomain) — the seed
+    # apex's own hosts, DNS-verified by the tool run; a name under a NEW apex is a normal candidate
+    for path in sorted(glob.glob(os.path.join(cdir, "subenum", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                se = json.load(fh)
+        except Exception:
+            continue
+        for row in se.get("subdomains") or []:
+            if isinstance(row, dict) and row.get("name"):
+                for src in row.get("sources") or ["subenum"]:
+                    _add_cand(cands, row["name"], f"subenum:{src}", seed_apexes)
     # drop apexes already collected or already queued/consumed; rank by # of corroborating sources
     already = {_frontier_apex(h) for h in collected} | {_frontier_apex(h) for h in consumed}
     fresh = {a: v for a, v in cands.items() if a not in already}
@@ -949,12 +1076,17 @@ def frontier(case, max_new=8):
         return (-owner, -len(srcs), kv[0])
     ranked = sorted(fresh.items(), key=_rank)
     pending = [a for a, _ in ranked][:max_new] if max_new else [a for a, _ in ranked]
+    # the collected apexes' OWN subdomains: same registration, collected next round like the apex,
+    # kept out of `pending`/`candidate_total` so they never read as new operator infrastructure
+    sub_pending, sub_detail = _subdomain_frontier(collected, consumed)
     return {
         "case": st["case"], "round": st.get("round", 0),
         "pending": pending,
         "candidates": {a: {"sources": sorted(v["sources"]),
                            "examples": sorted(v["examples"])[:4]} for a, v in ranked},
         "candidate_total": len(fresh),
+        "subdomains_pending": sub_pending,          # {apex: [host, …]} — next-round collection
+        "subdomains": sub_detail,                   # {host: {apex, sources, dns}} incl. dead names
         "metered_leads": list(leads.values()),
         # co-tenancy held back from seeding (multi-tenant certs / shared-hosting IPs) — free to
         # check by hand, never auto-chased, and surfaced so the suppression is visible not silent.
@@ -1093,6 +1225,18 @@ def main():
         for apex in fr["pending"]:
             why = fr["candidates"].get(apex, {})
             print(f"    {apex:32} via {', '.join(why.get('sources', []))}")
+        if fr.get("subdomains_pending"):
+            n_sub = sum(len(v) for v in fr["subdomains_pending"].values())
+            print(f"  {n_sub} live subdomain(s) of collected apex(es) to collect next (same registration — "
+                  f"joined to the apex at ingest, never counted as new infrastructure):")
+            for apex, subs in fr["subdomains_pending"].items():
+                for sub in subs:
+                    d = fr["subdomains"].get(sub, {})
+                    print(f"    {sub:40} under {apex}  via {', '.join(d.get('sources', []))}")
+        dead = [h for h, d in (fr.get("subdomains") or {}).items() if d.get("dns") is False]
+        if dead:
+            print(f"  {len(dead)} discovered subdomain(s) do not resolve (recorded, not collected): "
+                  f"{', '.join(sorted(dead)[:8])}{' …' if len(dead) > 8 else ''}")
         if fr["metered_leads"]:
             print(f"  {len(fr['metered_leads'])} metered lead(s) — need approval before spending credits:")
             for ml in fr["metered_leads"][:12]:

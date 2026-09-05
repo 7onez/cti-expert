@@ -179,6 +179,31 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
             if v:
                 _KEEP.add(v)
     _MASK_EXTRA = load_case_mask(case_dir)
+    # A registrant NAME that appears only in ONE host's WHOIS history and is neither the current
+    # registrant nor an operator identity is a previous owner — an uninvolved third party under the
+    # output rule. E-mails/phones already fall to the generic mask; names need the same treatment.
+    ops_text = " ".join(str(r.get("operator") or "") for r in c["operators"]).lower()
+    current = {str(w.get(k) or "").strip().lower()
+               for w in c["whois"].values() for k in ("registrant_name", "registrant_org")}
+    name_hosts: dict = {}
+    hist_sources = [(h, (w.get("history") or {})) for h, w in c["whois"].items()]
+    for rp in c["raw"]:                       # the collector's own WHOIS layer keeps the era names
+        arts = (_load_json(rp, {}) or {}).get("artifacts") or {}
+        hist_sources.append((os.path.basename(rp)[:-5].lower(), ((arts.get("whois") or {}).get("history") or {})))
+    for host, hist in hist_sources:
+        for n in (hist.get("registrant_names") or []) if isinstance(hist, dict) else []:
+            n = str(n).strip()
+            if not n or (_is_privacy and _is_privacy(n)):
+                continue
+            if re.search(r"whois|privacy|private|redacted|domain", n, re.I):
+                continue                      # a privacy service / registrar placeholder, not a person
+            name_hosts.setdefault(n, set()).add(host)
+    for n, hs in name_hosts.items():
+        nl = n.lower()
+        if len(hs) >= 2 or nl in current or nl in _KEEP or (ops_text and (nl in ops_text or ops_text in nl)):
+            continue
+        if n not in _MASK_EXTRA:
+            _MASK_EXTRA.append(n)
     return c
 
 
@@ -833,9 +858,17 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     conf = a.get("confidence", "—")
     attribution = a.get("attribution_level", "—")
 
+    # Cover "Basis": a run that fetched live pages is not passive OSINT — say which it was.
+    live_hosts = 0
+    for rp in c["raw"]:
+        meta = (_load_json(rp, {}) or {}).get("meta") or {}
+        if meta.get("host") and not meta.get("recovered_via"):
+            live_hosts += 1
+    basis = "OSINT incl. live retrieval" if live_hosts else "Passive OSINT"   # label-length: the cover column is narrow
+
     L = []
     L += ["---", f'title: "{title[:140].replace(chr(34), chr(39))}"', f"case_id: {case}",
-          f"classification: {classification}", f"date: {observed}", "---", ""]
+          f"classification: {classification}", f"date: {observed}", f'basis: "{basis}"', "---", ""]
 
     # I — Executive summary
     L += ["# Executive Summary — Key Judgments", "", f"*{purpose}*", ""]
@@ -849,8 +882,13 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     L += [f"- **Attribution:** {_md_escape(attribution)}", f"- **Confidence:** {conf}"]
     if a.get("premise_verdict"):
         L.append(f"- **Stated premise:** {_md_escape(scrub(a.get('premise', '')))} — verdict **{a['premise_verdict']}**")
+    # "Impersonated" is only true when the class says the seed is the imposter; on a benign_check /
+    # victim_host / unknown run the brand is the entity in play, and the report must not say otherwise.
+    brand_label = ("Impersonated brand"
+                   if (c["scope"].get("target_class") or "") in ("confirmed_scam", "suspected_scam", "threat_actor_infra")
+                   else "Brand / entity in play")
     if brand:
-        L.append(f"- **Impersonated brand:** {brand}")
+        L.append(f"- **{brand_label}:** {brand}")
     L.append("")
 
     # II — Methodology
@@ -865,7 +903,7 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     # III — Scope and seed
     L += ["# Scope and the seed", ""]
     L += ["| Field | Value |", "|:------|:----------------------------|",
-          f"| Seed | `{seed}` |", f"| Impersonated brand | {_md_escape(brand or '—')} |",
+          f"| Seed | `{seed}` |", f"| {brand_label} | {_md_escape(brand or '—')} |",
           f"| Target class | {_md_escape(c['scope'].get('target_class') or '—')} |",
           f"| Purpose | {_md_escape(c['scope'].get('purpose') or '—')} |",
           f"| Claim under test | {_md_escape(scrub(c['scope'].get('claim') or a.get('premise') or '—'))} |",

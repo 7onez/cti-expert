@@ -66,6 +66,58 @@ DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/140.0.0.0 Safari/537.36")
 
+# Per-call ceiling for every DATA-FETCHING / API / collector / subprocess call in the engine.
+# One source of truth (env CTI_CALL_TIMEOUT overrides; default 1800s = 30 min): each call runs up to
+# this long, then times out and the run moves on to the next. Deliberately NOT applied to raw DNS /
+# TLS / JARM resolution micro-probes (getaddrinfo/dig/nslookup/handshake) — a dead name or black-hole
+# IP would hang the full ceiling there with no benefit; those keep their short fail-fast bounds.
+# The DEFAULT ceiling is reference DATA (RULE 3): references/timeouts.json; the env var overrides it.
+_TIMEOUTS_FALLBACK = {"call_timeout": 1800}
+_TIMEOUTS = load_ref(ref_path(__file__, "timeouts.json"), _TIMEOUTS_FALLBACK)
+
+
+def _call_timeout(default: int = None) -> int:
+    base = default if default is not None else int(_TIMEOUTS.get("call_timeout") or 1800)
+    if base <= 0:
+        base = 1800
+    try:
+        v = int(os.environ.get("CTI_CALL_TIMEOUT", "") or base)
+        return v if v > 0 else base
+    except (TypeError, ValueError):
+        return base
+
+
+CALL_TIMEOUT = _call_timeout()
+
+# Enforce CALL_TIMEOUT as the FLOOR for every HTTP call this process makes. Every API/collector call
+# in the engine funnels through urllib.request.urlopen, so flooring it here (process-wide, once) makes
+# "each call runs up to CALL_TIMEOUT, then moves on" hold WITHOUT editing 40 call sites — including the
+# ones that pass an explicit short timeout. DNS (getaddrinfo/dig), raw-TLS and JARM probes use sockets,
+# not urlopen, so their fail-fast bounds are untouched by construction. Idempotent; a test that stubs
+# urllib.request.urlopen replaces this wrapper and is unaffected.
+def _install_urlopen_floor():
+    _orig = urllib.request.urlopen
+    if getattr(_orig, "_cti_capped", False):
+        return
+
+    def _urlopen_capped(url, *args, **kwargs):
+        if len(args) >= 2:                                  # positional timeout: urlopen(url, data, timeout, …)
+            t = args[1]
+            if not isinstance(t, (int, float)) or t < CALL_TIMEOUT:
+                args = (args[0], CALL_TIMEOUT) + args[2:]
+        else:
+            t = kwargs.get("timeout")
+            if not isinstance(t, (int, float)) or t < CALL_TIMEOUT:
+                kwargs["timeout"] = CALL_TIMEOUT
+        return _orig(url, *args, **kwargs)
+
+    _urlopen_capped._cti_capped = True
+    _urlopen_capped._cti_orig = _orig
+    urllib.request.urlopen = _urlopen_capped
+
+
+_install_urlopen_floor()
+
 # Set by --decode-qr in main(): when true, extract_qr fetches candidate QR images and
 # decodes them from pixels (needs pyzbar+PIL or OpenCV). Off by default — the zero-dep
 # generator-param decode always runs regardless.

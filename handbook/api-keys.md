@@ -45,8 +45,10 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | Hunter.how | `HUNTERHOW_API_KEY` | freemium | `/webpivot`,`/cert-pivot`: independent CN cyberspace index — reverse favicon **mmh3** / cert / `web.body` / domain / IP → hosts (a FOFA/Quake/ZoomEye peer) | hunter.how/search-api |
 | Quake (360) | `QUAKE_API_KEY` | freemium | `/webpivot`: reverse favicon **mmh3** → hosts; independent CN-dense cyberspace index (FOFA/Hunter.how peer) | quake.360.net |
 | ZoomEye | `ZOOMEYE_API_KEY` | freemium | `/webpivot`: reverse favicon **iconhash (mmh3)** → hosts; independent cyberspace index | zoomeye.ai/profile |
+| Netlas | `NETLAS_API_KEY` | freemium | `/webpivot` MO-neighbour source, `intel.py netlas`: independent DNS + scan + WHOIS + cert index — `domains a:<origin-ip>` reverses a non-CDN origin to every apex with dates; `ns:`/`txt:spf` provider reverses as counts; per-domain registrar/created cross-check. Plan probed once per case (entitlement). Paid plans unlimited; free metered, 60 req/min | app.netlas.io/profile |
 | **DNS / certs / WHOIS** ||||
 | SecurityTrails | `SECURITYTRAILS_API_KEY` (+`_FALLBACK`) | freemium | `/webpivot`,`/dns-history`: passive DNS, subdomains, DNS/WHOIS history | securitytrails.com |
+| Validin | `VALIDIN_API_KEY` (+`_FALLBACK`) | free (Community) | `/webpivot`,`/cti-pivot`,`/impersonate`: passive DNS + subdomains, reverse-IP, favicon/cert/body-hash → co-hosted hosts, quick reputation, lookalikes; MO-neighbour source. Runs even under `--free-only` (unmetered key); WHOIS history is paid-tier | app.validin.com |
 | WhoisXML | `WHOISXML_API_KEY` | freemium | `/webpivot --whois`,`/whois`: current + historic + reverse WHOIS | whoisxmlapi.com |
 | SSLMate CertSpotter | `CERTSPOTTER_API_KEY` | free-tier | `/cert-history`,`/webpivot`: higher-rate CT lookups | sslmate.com/certspotter |
 | ZoneCruncher/zetalytics | `ZONECRUNCHER_API_KEY` | freemium | **not scripted** — no code sends this key and no run queries it; reverse-email→domains is covered by Validin + WhoisXML. Listed for key-inventory completeness | zonecruncher.com |
@@ -57,7 +59,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | **ChongLuaDao** ⭐ | `CHONGLUADAO_API_KEY` | premium | **first-party** — `/cld`,`/scam-check`,`/threat-check`,`/phone`,`/breach-deep`,`/email-deep`,`/vuln-check`,`/impersonate`,`/webpivot --whois`: URL/IP/hash/email/phone/bank IoC verdicts (server-side + passive), 20M-URL denylist search, data-leak/breach exposure, deep AI URL analysis, brand lookalikes, CVE/KEV feeds. See [`connectors/chongluadao-api.md`](../connectors/chongluadao-api.md) | chongluadao.vn |
 | Intelligence X | `INTELX_API_KEY` | freemium | `/breach-deep`, darknet: dark-web/paste/leak selectors | intelx.io |
 | GrayHatWarfare | `GRAYHATWARFARE_API_KEY` | freemium | `/secrets`,`/docleak`: open S3/Azure/GCS/Spaces buckets + exposed files by keyword/domain — **EXPOSURE, not a same-operator pivot** | grayhatwarfare.com/account |
-| ANY.RUN | `ANYRUN_API_KEY` | freemium | `/anyrun`,`/binary`: TI Lookup over prior detonations — a packed sample's runtime endpoints (never submits a sample) | app.any.run/profile |
+| ANY.RUN | `ANYRUN_API_KEY` | freemium | `/anyrun`,`/binary`: TI Lookup over prior detonations — a packed sample's runtime endpoints. Detonation (`anyrun_submit` / `bp_anyrun.py submit`) exists but is **ask-first**: per-submission confirm, private by default (`ANYRUN_ALLOW_PUBLIC=1` is the only standing public authorization), fail-closed plan check, post-submit privacy read-back, `HARNESS_ALLOW_SUBMIT=1` in the harness | app.any.run/profile |
 | **Code / repos** ||||
 | GitHub token | `GITHUB_TOKEN` | free | `/github-osint`,`/secrets`: higher limits, repo/code discovery | github.com/settings/tokens |
 | **Search-engine dorking** ||||
