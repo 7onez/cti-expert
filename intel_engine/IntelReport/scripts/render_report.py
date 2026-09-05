@@ -54,6 +54,18 @@ if HERE not in sys.path:                       # importable however the script w
     sys.path.insert(0, HERE)
 from ir_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in references/*.json
 
+# Per-call ceiling for pandoc/xelatex (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
+# 1800s). The engine's resolver is a stdlib sibling; standalone falls back to the exported env value.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
+    from wp_timeouts import CALL_TIMEOUT  # noqa: E402
+except Exception:  # noqa: BLE001
+    try:
+        CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+    except ValueError:
+        CALL_TIMEOUT = 1800
+    CALL_TIMEOUT = CALL_TIMEOUT if CALL_TIMEOUT > 0 else 1800
+
 # --- reference DATA (RULE 3): the report's LANGUAGE. Everything the renderer prints that the
 #     analyst did not write — cover labels, TOC title, "Appendix", figure/table captions — is
 #     finite, generated furniture and belongs in a data file, not in Python string literals.
@@ -523,7 +535,11 @@ def build_defs_and_cover(m, tmpdir, resource_dir="."):
 
 
 def run(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=CALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("\n$ " + " ".join(cmd) + f"\n  timed out after {CALL_TIMEOUT}s\n")
+        return False
     if r.returncode != 0:
         sys.stderr.write("\n$ " + " ".join(cmd) + "\n")
         sys.stderr.write((r.stdout or "") + (r.stderr or "") + "\n")

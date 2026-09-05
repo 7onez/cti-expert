@@ -62,6 +62,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from theme import (COMMUNITY_CYCLE as COMM, EDGE_CLASS as EDGE_COLOR,  # noqa: E402
                    OPERATOR_FILL, OPERATOR_STROKE, mermaid_init)
 
+# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 1800s). The engine's
+# resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "WebPivot", "tools"))
+    from wp_timeouts import floor as _floor  # noqa: E402
+except Exception:  # noqa: BLE001
+    def _floor(t):
+        try:
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+        except ValueError:
+            c = 1800
+        c = c if c > 0 else 1800
+        return c if not isinstance(t, (int, float)) else max(int(t), c)
+
 # A subgraph title is centred over a box whose width comes from its CONTENT, so a long one
 # overflows onto the nodes underneath — the defect that made the old inline legend unreadable.
 # Every title this module emits goes through `box_title`, so it cannot come back by accident.
@@ -469,7 +484,7 @@ def render_triple(mmd_path, stem, *, scale=2, width=0, pdf=False):
         cmd += ["--pdf"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 200))
+                           timeout=_floor(int(os.environ.get("MERMAID_RENDER_TIMEOUT") or 200)))
     except subprocess.TimeoutExpired:
         sys.stderr.write(f"[graph_to_diagram] render timed out for {stem} — kept the .mmd, "
                          "skipped raster; companion figures continue.\n")

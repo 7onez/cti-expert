@@ -112,6 +112,31 @@ def test_text_harvest_skips_file_extensions_and_registrar_names_but_keeps_real_t
     assert "evil-lure.zip" in doms and "notes.example.md" in doms
 
 
+def test_expansion_leaf_subject_is_not_an_ioc():
+    """A host build_report_data marks as an expansion LEAF (`ioc_exclude: true`, role `related`)
+    is context for the narrative, never an IOC — its `related_to` link is not an attribution."""
+    data = {
+        "subjects": [
+            {"id": "s0", "label": "Operator (persona)", "type": "person", "role": "actor", "confidence": 90},
+            {"id": "s1", "label": "operator-estate.example", "type": "domain", "role": "infrastructure",
+             "confidence": 90, "hop": 0},
+            {"id": "s2", "label": "agency-client.example", "type": "domain", "role": "related",
+             "confidence": 60, "hop": 2, "ioc_exclude": True,
+             "notes": "Collected host; hop 2 — owner-linked to a hop-1 host, NOT to the operator."},
+        ],
+        "connections": [
+            {"id": "c1", "from_id": "s0", "to_id": "s1", "relationship": "operates", "strength": "confirmed"},
+            {"id": "c2", "from_id": "s0", "to_id": "s2", "relationship": "related_to", "strength": "possible"},
+        ],
+    }
+    recs = gen.extract(data)
+    doms = _domains(recs)
+    assert "operator-estate.example" in doms
+    assert "agency-client.example" not in doms
+    attr = gen.attribution(data)
+    assert {a["to"] for a in attr} == {"operator-estate.example"}, attr
+    assert not any(a["rel"] == "related_to" for a in attr)
+
 if __name__ == "__main__":
     import sys
     failed = 0

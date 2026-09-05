@@ -105,6 +105,15 @@ try:  # registrar/privacy-proxy classifier for the Registrant-eras table (best-e
     from whois_enrich import is_privacy as _is_privacy  # noqa: E402
 except Exception:  # pragma: no cover — the table still renders, class falls back to "named"
     _is_privacy = None
+# Per-call ceiling for every figure/renderer subprocess (env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 1800s). _run() floors a caller's shorter bound to it.
+from wp_timeouts import floor as _floor  # noqa: E402
+try:  # eTLD+1 reducer shared with the collectors/frontier (PSL-aware); degrade to last-two-labels
+    from wp_common import _registrable as _registrable_apex  # noqa: E402
+except Exception:  # pragma: no cover
+    def _registrable_apex(host):
+        parts = (host or "").lower().split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else (host or "")
 
 _KEEP: set = set()
 _HOSTS: set = set()
@@ -148,13 +157,32 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
     c["mo_neighbours"] = _load_json(os.path.join(case_dir, "mo_neighbours.json"), {}) or {}
     c["mask_personas"] = bool(mask_personas)
     c["graph"] = os.path.join(case_dir, "case_graph.json")
+    # EXPANSION ANCHOR: the report's ESTATE is the hosts within the loop's expansion depth (state.json
+    # hops / clusters.json related_hosts). A LEAF — owner-linked to a previous hop, not to the operator —
+    # is rendered ONCE as a bounding host and is otherwise invisible: no dossier, no WHOIS era, no
+    # cohort, no landing page, and its registrant never enters _KEEP (so it masks like any third party).
+    st = _load_json(os.path.join(case_dir, "state.json"), {}) or {}
+    hops = {str(k).lower(): int(v) for k, v in (st.get("hops") or {}).items() if isinstance(v, int)}
+    depth = st.get("expansion_depth") if isinstance(st.get("expansion_depth"), int) else 2
+    related = {str(h).lower() for h in (c["clusters"].get("related_hosts") or [])}
+    all_raw = sorted(p for p in glob.glob(os.path.join(case_dir, "raw", "*.json"))
+                     if not os.path.basename(p).startswith("harvest.")
+                     and not p.endswith(".impersonation.json"))
+
+    def _is_leaf(host):
+        h = host.lower()
+        return h in related or (bool(hops) and hops.get(h, depth) >= depth)
+    c["related_hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in all_raw
+                                if _is_leaf(os.path.basename(p)[:-5]))
+    c["hops"] = hops
+    c["raw"] = [p for p in all_raw if not _is_leaf(os.path.basename(p)[:-5])]
+    c["hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in c["raw"])
+    estate_apexes = {_registrable_apex(h) for h in c["hosts"]}
     c["whois"] = {}
     for p in glob.glob(os.path.join(case_dir, "whois", "*.json")):
-        c["whois"][os.path.basename(p)[:-5].lower()] = _load_json(p, {}) or {}
-    c["raw"] = sorted(p for p in glob.glob(os.path.join(case_dir, "raw", "*.json"))
-                      if not os.path.basename(p).startswith("harvest.")
-                      and not p.endswith(".impersonation.json"))
-    c["hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in c["raw"])
+        dom = os.path.basename(p)[:-5].lower()
+        if dom in c["hosts"] or dom in estate_apexes:
+            c["whois"][dom] = _load_json(p, {}) or {}
     sh = os.path.join(case_dir, "shared.txt")
     c["shared"] = parse_shared(open(sh, encoding="utf-8").read()) if os.path.exists(sh) else []
     c["benign"] = load_benign()
@@ -164,7 +192,7 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
     _CURRENT_CASE = c["case"]
     _HOSTS = set(c["hosts"])
     counts = {}
-    for w in c["whois"].values():
+    for w in c["whois"].values():                 # estate WHOIS only — a leaf's registrant stays masked
         for k in ("registrant_email", "registrant_phone"):
             v = (w.get(k) or "").strip().lower()
             if v and "privacy" not in v and not v.startswith("abuse@"):
@@ -347,9 +375,9 @@ def parse_judgments(section: str) -> list:
 
 
 # --------------------------------------------------------------------------- figures
-def _run(cmd, timeout=300):
+def _run(cmd, timeout=None):
     try:
-        return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=_floor(timeout))
     except Exception as e:  # noqa: BLE001
         class R:  # minimal stand-in
             returncode, stdout, stderr = 1, "", str(e)
@@ -930,6 +958,23 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     L += [f"The same-operator partition over the collected hosts yields **{c['clusters'].get('n_clusters', '—')} component(s)**; "
           f"the operator cluster holds **{n} domains**. The relationship graph below keeps only edges that survived the "
           f"false-positive controls; managed nameservers, registrar and template edges are dropped as noise.", ""]
+    if c.get("related_hosts"):
+        rel = c["related_hosts"]
+        by_apex: dict = {}
+        for h in rel:
+            by_apex.setdefault(_registrable_apex(h), []).append(h)
+        L += ["## Bounding hosts — collected, not attributed", "",
+              f"Collection also reached **{len(rel)} host(s) under {len(by_apex)} registration(s)** at the expansion "
+              f"depth: each is owner-linked to a host of the previous hop (a hosting or design vendor's other "
+              f"customers, a registrant's other projects), not to the operator. They bound the estate and are "
+              f"listed here once for completeness; they carry no dossier, no indicator and no attribution in this "
+              f"report. Their registrants are masked as third parties.", "",
+              "| Registration | Hosts reached | Hop |", "|---|---:|---:|"]
+        for apex in sorted(by_apex):
+            known = [c["hops"][h] for h in by_apex[apex] if h in (c.get("hops") or {})]
+            hop = min(known) if known else "—"
+            L += [f"| `{_md_escape(apex)}` | {len(by_apex[apex])} | {hop} |"]
+        L += [""]
     if figs.get("relationship"):
         cap = (f"The estate by impersonated sector — one registrant record (e-mail + phone) over {n} domains; "
                f"the seed is highlighted. Sector is assigned from the domain label. Observed {observed}."

@@ -37,6 +37,7 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # importable from anywhere
 from wp_refs import ref_path, load_ref    # noqa: E402 — reference DATA in references/*.json
+from wp_timeouts import floor as _floor_timeout  # noqa: E402 — per-call ceiling (CTI_CALL_TIMEOUT)
 
 try:
     import api_usage                      # licensed-API credit ledger
@@ -146,26 +147,35 @@ _WHOIS_FALLBACK = {
     "proxy_email_domains": ("godaddy.com", "namecheap.com", "domainsbyproxy.com",
                             "withheldforprivacy.com", "privacyprotect.org"),
 }
+_WHOIS_FALLBACK["noise_name_substrings"] = ("domain admin", "c/o id#", "reactivation period", "whois", "proxy")
 _WHOIS_REF = load_ref(ref_path(__file__, "registrant_noise.json"), _WHOIS_FALLBACK)
 _PRIVACY_MARKERS = tuple(_WHOIS_REF["privacy_markers"])
 _ROLE_PREFIXES = tuple(_WHOIS_REF["role_email_prefixes"])
 _PROXY_DOMAINS = tuple(_WHOIS_REF["proxy_email_domains"])
+# registrant NAME boilerplate (role placeholders, registrar org names, WHOIS labels) — the same list
+# evidence_report uses to drop a cluster row, so a name the report would refuse is never REVERSED
+_NOISE_NAME_SUBSTR = tuple(_WHOIS_REF["noise_name_substrings"])
 
 
 def is_privacy(value):
-    """True if a registrant value is a privacy proxy / registrar role / non-identifying."""
+    """True if a registrant value is a privacy proxy / registrar role / non-identifying — i.e. a
+    term that must never be reverse-WHOIS'd (10,000 strangers, credits gone) or become a hub.
+    Emails: privacy markers, role local-parts (`abuse@`, `registrar@`, `expired@`, `tenmien@`…), a
+    registrar/proxy domain (exact or sub-domain). Names: privacy markers + role/registrar boilerplate
+    (`Domain Admin`, `C/O ID#…`, a registrar's own company name)."""
     if not value:
         return True
-    s = str(value).strip().lower()
+    s = " ".join(str(value).split()).lower()
     if s.startswith("http"):
         return True  # a URL placeholder, not a real contact
     if any(m in s for m in _PRIVACY_MARKERS):
         return True
-    if any(s.startswith(p) for p in _ROLE_PREFIXES):
-        return True
-    if "@" in s and s.split("@", 1)[1] in _PROXY_DOMAINS:
-        return True
-    return False
+    if "@" in s:
+        local, _, dom = s.partition("@")
+        if any(s.startswith(p) for p in _ROLE_PREFIXES):
+            return True
+        return any(dom == d or dom.endswith("." + d) for d in _PROXY_DOMAINS)
+    return any(m in s for m in _NOISE_NAME_SUBSTR)
 
 
 def _wx_action(url):
@@ -613,14 +623,15 @@ _W43_FIELDS = {
 }
 
 
-def whois_port43(domain, timeout=25):
-    """System `whois` fallback for TLDs with no RDAP service (e.g. .vn). None if unavailable."""
+def whois_port43(domain, timeout=None):
+    """System `whois` fallback for TLDs with no RDAP service (e.g. .vn). None if unavailable.
+    Bounded by the per-call ceiling (wp_common.CALL_TIMEOUT); a shorter `timeout` is floored."""
     binary = shutil.which("whois")
     if not binary:
         return None
     try:
         out = subprocess.run([binary, domain], capture_output=True, text=True,
-                             timeout=timeout, errors="replace").stdout
+                             timeout=_floor_timeout(timeout), errors="replace").stdout
     except Exception:
         return None
     if not out:

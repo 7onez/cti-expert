@@ -33,10 +33,13 @@ from knowledge_base import KB  # noqa: E402
 REGISTRANT_RELS = frozenset({"registered_by"})
 
 try:  # canonical registrant-noise predicates — single source of truth with both ingest paths
-    from noise_filters import is_noise_email, is_bulk_registrant  # noqa: E402
+    from noise_filters import is_noise_email, is_bulk_registrant, BOILERPLATE_RELS  # noqa: E402
 except Exception:  # noqa: BLE001 — degrade safely; a read-only query must never crash
+    BOILERPLATE_RELS = frozenset({"same_inline_css", "same_comment", "same_template", "same_bundle"})
+
     def is_noise_email(_):        # pragma: no cover
         return False
+
     def is_bulk_registrant(_):    # pragma: no cover
         return False
 
@@ -179,7 +182,7 @@ def main():
         # Boilerplate relations — shared page-template/cache-plugin artifacts (WP Rocket CSS,
         # HTML comments, DOM skeleton) that many UNRELATED operators emit. They create false
         # same-operator edges; --strong drops them so only owner-set indicators remain.
-        NOISE_RELS = {"same_inline_css", "same_comment", "same_template"}
+        NOISE_RELS = BOILERPLATE_RELS
         inds = {(dt, dv) for dt, dv, rel, c in kb.neighbors("domain", target)
                 if dt in ("indicator", "email", "person", "org")}
         # Guided-pivot prevalence: an indicator shared by too many domains (generic kit favicons,
@@ -223,11 +226,15 @@ def main():
             print(f"COMPONENT {i}\t{', '.join(sorted(doms))}")
 
 
-def _components(kb, kb_dir, max_prevalence, restrict):
+def _components(kb, kb_dir, max_prevalence, restrict, noise_ips=frozenset()):
     """Union-find over domains that share a STRONG indicator (drop boilerplate rels, reference-
     benign values, and indicators shared by > max_prevalence domains). `restrict` limits clustering
-    to a domain set (a case); domains in it with no strong edge come back as singletons."""
-    NOISE_RELS = {"same_inline_css", "same_comment", "same_template"}
+    to a domain set (a case); domains in it with no strong edge come back as singletons.
+    `noise_ips`: IPs the CASE's own collection showed to be shared/bulk hosting or CDN edges — a
+    `hosted_on` edge to one is co-tenancy, never a binder, even when the KB itself has only seen two
+    tenants there (the collector saw the IP answer with 2,500)."""
+    NOISE_RELS = BOILERPLATE_RELS
+    noise_ips = {f"ip:{ip}" for ip in (noise_ips or ())}
     prevalence: dict = {}
     for e in kb.edges():
         if e["src_type"] == "domain":
@@ -241,6 +248,8 @@ def _components(kb, kb_dir, max_prevalence, restrict):
     for e in kb.edges():
         if e["src_type"] != "domain" or e["rel"] in NOISE_RELS or e["dst"] in benign:
             continue
+        if e["rel"] == "hosted_on" and e["dst"] in noise_ips:
+            continue                              # landlord IP — co-tenancy is not ownership
         is_reg = e["rel"] in REGISTRANT_RELS
         prev = len(prevalence.get((e["dst_type"], e["dst"]), ()))
         if is_reg:

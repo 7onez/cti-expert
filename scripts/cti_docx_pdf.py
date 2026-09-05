@@ -18,6 +18,9 @@ import shutil
 import subprocess
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cti_timeouts import floor as _floor  # noqa: E402 — per-call ceiling (CTI_CALL_TIMEOUT)
+
 # Common install locations when soffice is not on PATH (macOS app bundle, Windows).
 _PROBE_PATHS = (
     "/Applications/LibreOffice.app/Contents/MacOS/soffice",
@@ -86,7 +89,7 @@ def ensure_soffice() -> str:
 
 
 def convert_docx_to_pdf(docx_path: str, out_pdf: str | None = None,
-                        timeout: int = 180) -> str:
+                        timeout: int | None = None) -> str:
     """Convert `docx_path` to PDF; return the PDF path. `out_pdf` defaults to the
     DOCX path with a .pdf extension.
 
@@ -107,7 +110,7 @@ def convert_docx_to_pdf(docx_path: str, out_pdf: str | None = None,
             "--convert-to", "pdf:writer_pdf_Export",
             "--outdir", out_dir, docx_path,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_floor(timeout))
 
     produced = os.path.join(out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
     if not os.path.isfile(produced):

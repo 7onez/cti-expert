@@ -677,6 +677,32 @@ def test_registrant_eras_fold_same_day_flaps_and_placeholders_and_current_era():
     assert hrx.era_start_of(ev, "single.example.com", fallback="2025-01-05") == "2025-01-05"
 
 
+def test_expansion_leaves_are_bounding_hosts_not_estate():
+    """A host at the loop's expansion depth (state.json hops / clusters.json related_hosts) is
+    collected to BOUND the estate: it gets no dossier and no WHOIS era, its registrant masks like any
+    third party, and it is listed once under 'Bounding hosts — collected, not attributed'."""
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        leaf = "client-of-agency.example.net"
+        json.dump({"meta": {"host": leaf, "fetched_with": "urllib"}, "artifacts": {}, "pivots": []},
+                  open(os.path.join(case, "raw", leaf + ".json"), "w"))
+        json.dump(dict(_WHOIS, registrant_email="leafowner@example.net", registrant_phone="0900000099"),
+                  open(os.path.join(case, "whois", leaf + ".json"), "w"))
+        json.dump({"hops": {"seed-brand.example.com": 0, "sibling-a.example.com": 1, "sibling-b.example.com": 1, leaf: 2},
+                   "expansion_depth": 2}, open(os.path.join(case, "state.json"), "w"))
+        cl = json.load(open(os.path.join(case, "clusters.json")))
+        cl["related_hosts"] = [leaf]
+        json.dump(cl, open(os.path.join(case, "clusters.json"), "w"))
+        c, md = _compose(case)
+    assert leaf not in c["hosts"] and c["related_hosts"] == [leaf]
+    assert leaf not in c["whois"], "a leaf's WHOIS never feeds the estate identity (_KEEP)"
+    assert "leafowner@example.net" not in hr._KEEP
+    sec = md.split("## Bounding hosts — collected, not attributed")[1].split("\n## ")[0]
+    assert "`example.net`" in sec and "| 1 | 2 |" in sec
+    prof = md.split("# Domain and infrastructure profiles")[1].split("# Cluster enumeration")[0]
+    assert leaf not in prof, "no dossier for a bounding host"
+    assert md.count(leaf) == 0, "a leaf host name never appears (the bounding table keys on the apex)"
+
 _TESTS = [
     test_structure_is_the_house_order_with_appendix_marker,
     test_seed_comes_from_scope_claim_not_alphabetical_order,
@@ -705,6 +731,7 @@ _TESTS = [
     test_near_empty_live_capture_is_held_provisional_then_rerendered_next_build,
     test_urlscan_screenshot_fetch_sends_the_key_when_present,
     test_urlscan_verdict_rows_parse_as_b2_evidence_in_the_ledger,
+    test_expansion_leaves_are_bounding_hosts_not_estate,
 ]
 
 

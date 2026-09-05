@@ -365,7 +365,12 @@ def test_live_run_followups_ranking_memo_mask_roles():
         fr = cs.frontier(cdir, max_new=1)
         check("an owner-link candidate outranks alphabetically-earlier lookalike-only candidates",
               fr["pending"] == ["zzz-sibling.example"], detail=str(fr["pending"]))
-        check("…lookalikes are still candidates (not dropped)", "aaa-lookalike.example" in fr["candidates"])
+        related = {r["apex"] for r in fr["related_leads"]}
+        check("…lookalikes are still surfaced (as related_leads, not dropped)",
+              {"aaa-lookalike.example", "aab-lookalike.example"} <= related, detail=str(sorted(related)))
+        fr_all = cs.frontier(cdir, max_new=0)
+        check("…and a lookalike-only candidate never enters pending even with no cap",
+              fr_all["pending"] == ["zzz-sibling.example"], detail=str(fr_all["pending"]))
     # (2) WhoisXML reverse memo
     import whois_enrich as we, wp_casememo
     with _tempfile.TemporaryDirectory() as tmp:

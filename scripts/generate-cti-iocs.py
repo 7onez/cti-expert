@@ -332,10 +332,15 @@ def extract(data):
 
 
 def attribution(data):
+    """Actor↔subject links for the export. A link whose endpoint is an EXCLUDED subject (rejected,
+    masked, an expansion leaf marked `ioc_exclude`) is dropped: naming a stranger's domain next to
+    the operator — even as `related_to … possible` — is exactly what a scraper strips the caveat from."""
     by_id = {s.get("id"): s for s in (data.get("subjects") or [])}
     rows = []
     for c in (data.get("connections") or []):
         a, b = by_id.get(c.get("from_id")), by_id.get(c.get("to_id"))
+        if (a and _is_excluded_subject(a)) or (b and _is_excluded_subject(b)):
+            continue
         rel = str(c.get("relationship") or c.get("type") or "linked_to")
         rows.append({
             "from": a.get("label") if a else c.get("from_id"),

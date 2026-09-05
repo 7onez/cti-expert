@@ -33,6 +33,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cti_timeouts import CALL_TIMEOUT  # noqa: E402 — per-call ceiling (CTI_CALL_TIMEOUT)
+
 # keyword -> (diagrams class import path, display label). Short tokens (<=4 chars)
 # are matched on word boundaries to avoid false hits.
 CLOUD_NODES = {
@@ -201,7 +204,7 @@ def build_cloud_png(data):
                 runner = ["uv", "run", "--with", "diagrams", "python3",
                           os.path.abspath(__file__), case_path, out_png]
             if runner:
-                proc = subprocess.run(runner, capture_output=True, text=True, timeout=180)
+                proc = subprocess.run(runner, capture_output=True, text=True, timeout=CALL_TIMEOUT)
                 ok = proc.returncode == 0 and os.path.isfile(out_png)
                 if not ok:
                     detail = (proc.stderr or proc.stdout or "").strip().splitlines()

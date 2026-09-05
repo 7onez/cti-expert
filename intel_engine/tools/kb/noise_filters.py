@@ -51,6 +51,7 @@ _FALLBACK = {
     "social_handle_noise": [".png", ".jpg", ".svg", ".css", ".js"],
     "bulk_registrant_max_domains": {"max_domains": 200},
     "reverse_search_edge_cap": {"max_hits": 500},
+    "shared_hosting_max_cohosts": {"max_cohosts": 12},
     "comment_boilerplate": ["litespeed", "wordpress", "google tag manager", "gtag",
                             "google analytics", "open graph", "start of head", "end of head",
                             "start of body", "end of body", "cache", "begin", "end"],
@@ -101,6 +102,12 @@ REVERSE_SEARCH_EDGE_CAP = int(_REF["reverse_search_edge_cap"]["max_hits"])
 # Tighter than the artifact cap above: a contact is a much weaker hub than a technical artifact.
 BULK_REGISTRANT_MAX_DOMAINS = int(_REF["bulk_registrant_max_domains"]["max_domains"])
 
+# Above this many distinct registrable apexes on one IP, the IP is shared/bulk hosting (or a CDN
+# edge): `hosted_on` to it is co-tenancy, never an owner link. ONE number, read by the KB ingester
+# (fact, not edge), the cluster partition (ignored as a binder) and the frontier (case_state
+# MAX_IP_COHOSTS) — so the frontier and the KB can never disagree about which IP is a landlord.
+SHARED_HOSTING_MAX_COHOSTS = int(_REF["shared_hosting_max_cohosts"]["max_cohosts"])
+
 # HTML-comment boilerplate (substring match) + the length floor below which a comment is a
 # section marker, not a fingerprint.
 COMMENT_BOILERPLATE = tuple(_REF["comment_boilerplate"])
@@ -109,10 +116,26 @@ COMMENT_MIN_LENGTH = int(_REF["comment_min_length"]["chars"])
 # Minimum tag count before a DOM tag-skeleton hash is distinctive enough to cluster on.
 DOM_SKELETON_MIN_TAGS = int(_REF["dom_skeleton_min_tags"]["tags"])
 
+# Relations that carry TEMPLATE / BUILD artifacts rather than owner-set identity: a cache-plugin's
+# inline CSS, an HTML comment, the DOM skeleton — and the page's JS BUNDLE hash. A vendor that sells
+# or installs a template leaves the same bundle on every buyer's site; a same_bundle edge merged a
+# template vendor with 60 of its customers into one "operator". Kept as EVIDENCE edges, never as
+# cluster binders (query._components / intel._write_clusters / --strong).
+BOILERPLATE_RELS = frozenset({"same_inline_css", "same_comment", "same_template", "same_bundle"})
+
 # Scraped social "handles" that are really static assets or templating placeholders.
 SOCIAL_HANDLE_NOISE = tuple(_REF["social_handle_noise"])
 # {u} ${name} %s %(x)s <user> :user — every templating dialect a bundle might ship.
 _PLACEHOLDER_RE = re.compile(r"\{[^/}]*\}|\$\{[^}]*\}|%[sd]\b|%\([^)]*\)|<[^/>]+>|^:\w+$")
+# Per-network routing words (never an account) and the networks whose account sits behind a
+# router word in the SECOND path segment. DATA: references/noise_filters.json.
+_SOCIAL_RESERVED = {k: frozenset(str(x).lower() for x in v)
+                    for k, v in (_REF.get("social_reserved_paths") or {}).items()}
+_SOCIAL_SECOND = {k: frozenset(str(x).lower() for x in v)
+                  for k, v in (_REF.get("social_second_segment_networks") or {}).items()}
+# Library / vendor / platform credit accounts (a polyfill banner, a theme author) — never the operator.
+_SOCIAL_NOISE_ACCOUNTS = {k: frozenset(str(x).lower() for x in v)
+                          for k, v in (_REF.get("social_noise_accounts") or {}).items()}
 
 # Analytics/tag IDs belonging to a hosting PLATFORM's own parking/default pages, not to the
 # site owner. Clustering on one links every tenant of that provider.
@@ -247,12 +270,61 @@ def is_noise_social_handle(handle: str) -> bool:
     return bool(_PLACEHOLDER_RE.search(h))
 
 
+def social_handle(net: str, url: str):
+    """The ACCOUNT a scraped social link points at, or None when the link is not an account.
+
+    `github.com/zloirock/core-js` -> `zloirock` (the repo is content, the user is the identity);
+    `youtube.com/embed/<id>`, `youtube.com/vi/<id>/0.jpg`, `facebook.com/sharer.php?u=…`,
+    `twitter.com/intent/tweet` -> None (players, thumbnails, share widgets); `youtube.com/c/<name>`,
+    `t.me/s/<name>`, `zalo.me/g/<group>` -> the second segment; `youtube.com/@name` -> `name`; a
+    bare host (`https://zalo.me`) -> None. Taking the LAST path segment — the old rule — made
+    `LICENSE`, `core-js`, `embed` and `zalo.me` shared "contacts" that merged unrelated sites."""
+    try:
+        from urllib.parse import urlparse, parse_qs
+        u = str(url or "").strip()
+        if u.startswith("//"):                  # protocol-relative (`//img.youtube.com/vi/`)
+            u = "https:" + u
+        pr = urlparse(u if "://" in u else "https://" + u)
+    except Exception:  # noqa: BLE001
+        return None
+    segs = [s for s in (pr.path or "").split("/") if s]
+    net = (net or "").lower()
+    if not segs:
+        return None
+    first = segs[0].lower()
+    if first.startswith("@") and len(first) > 1:
+        handle = segs[0][1:]
+    elif net == "facebook" and first == "profile.php":
+        ids = parse_qs(pr.query or "").get("id") or []
+        handle = ids[0] if ids else None
+    elif first in _SOCIAL_SECOND.get(net, ()):
+        handle = segs[1] if len(segs) > 1 and not is_noise_social_handle(segs[1]) else None
+    elif first in _SOCIAL_RESERVED.get("*", ()) or first in _SOCIAL_RESERVED.get(net, ()):
+        handle = None
+    elif is_noise_social_handle(segs[0]):
+        handle = None                   # a file (share.png, index.html) is never an account
+    else:
+        handle = segs[0]
+    if handle and handle.lower() in _SOCIAL_NOISE_ACCOUNTS.get(net, ()):
+        return None                     # an OSS / platform credit (core-js, jQuery…), not the operator
+    return handle
+
+
 def is_bulk_registrant(count) -> bool:
     """True if this many domains under one registrant contact makes it a shared registration
     service (reseller / IT agency / corporate-services firm / resale portfolio) rather than an
     owner. Read by BOTH ingest paths so they cannot disagree about where the line sits."""
     try:
         return count is not None and int(count) > BULK_REGISTRANT_MAX_DOMAINS
+    except (TypeError, ValueError):
+        return False
+
+
+def is_shared_hosting_ip(cohost_count) -> bool:
+    """True if this many distinct apexes answering on one IP make it shared/bulk hosting — its
+    co-tenants are strangers, and a `hosted_on` edge to it must never bind a cluster."""
+    try:
+        return cohost_count is not None and int(cohost_count) > SHARED_HOSTING_MAX_COHOSTS
     except (TypeError, ValueError):
         return False
 

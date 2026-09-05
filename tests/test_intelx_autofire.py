@@ -58,7 +58,9 @@ try:
     # the two call sites actually consume the helper (a refactor must not silently drop one)
     src = open(ip.__file__, encoding="utf-8").read()
     check("cmd_open wires _intelx_flag(loop=False)", "extra += _intelx_flag(case_dir, loop=False)" in src)
-    check("cmd_loop wires _intelx_flag(loop=True, full=…)", 'loop_extra += _intelx_flag(case_dir, loop=True, full=getattr(a, "full", False))' in src)
+    check("cmd_loop wires _intelx_flag(loop=True, full=…)", 'metered_extra = _intelx_flag(case_dir, loop=True, full=getattr(a, "full", False))' in src)
+    check("…and spends it only on EXPANDING hosts (a leaf is collected without the metered identity tier)",
+          '(expanding_batch, loop_extra + metered_extra), (leaf_batch, loop_extra)' in src)
     check("the default loop still passes --free-only", 'loop_extra = [] if getattr(a, "full", False) else ["--free-only"]' in src)
 finally:
     ip._intelx_keyed = saved

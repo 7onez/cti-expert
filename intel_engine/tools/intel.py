@@ -328,7 +328,19 @@ def cmd_open(a):
     #     (subfinder / amass / assetfinder / findomain, subfinder keyed from the skill-owned config).
     #     never under --no-collect; keyless-only under a no-spend scope or --free-only.
     if not getattr(a, "no_collect", False):
-        _subenum_once(case_dir, hosts, free_only=getattr(a, "free_only", False))
+        _subenum_once(case_dir, hosts, free_only=getattr(a, "free_only", False), jobs=max(1, a.jobs))
+
+    # 1d) EXPANSION ANCHOR: the analyst's seeds are hop 0 in state.json, so a later `loop` knows which
+    #     hosts are the operator's own registrations and which were reached over owner-link hops.
+    try:
+        sys.path.insert(0, HERE)
+        import case_state as _cs
+        _st = _cs.load_state(a.case)
+        for h in hosts:
+            _st.setdefault("hops", {}).setdefault(_host(h).lower(), 0)
+        _cs.save_state(a.case, _st)
+    except Exception as e:  # noqa: BLE001 — bookkeeping must never fail the pipeline
+        print(f"   note: could not record seed hops in state.json ({e})")
 
     # 2) ingest into the KB (idempotent) ------------------------------------
     print(f"== ingesting {len(raw_files)} raw file(s) into {os.path.relpath(KB, ROOT)} ==")
@@ -439,35 +451,47 @@ def _ingest_case(raw_files):
     _run([sys.executable, os.path.join(KB_TOOLS, "ingest_webpivot.py"), "--kb", KB, *raw_files])
 
 
-def _subenum_once(case_dir, hosts, timeout=240, free_only=False):
+def _subenum_once(case_dir, hosts, timeout=None, free_only=False, jobs=4):
     """Subdomain enumeration per registrable apex of the case's hosts (wp_subenum: every installed
     passive tool, unioned, DNS-verified) → cases/<case>/subenum/<apex>.json, which the frontier reads
     to queue the apex's live subdomains for the next round. Idempotent per apex (an existing file is
     reused); no tool installed → one note, no failure. `free_only` (no-spend scope OR --free-only)
-    restricts subfinder to keyless sources."""
+    restricts subfinder to keyless sources. Apexes run in a small thread pool (mechanical, no LLM):
+    every enumerator is floored to the per-call ceiling, so serial apexes would sum to N × 30 min —
+    the pool bounds the stage by one apex, not the sum."""
     try:
         sys.path.insert(0, WP)
         sys.path.insert(0, HERE)
         import wp_subenum
         import case_state as _cs
+        import concurrent.futures as _cf
         tools = wp_subenum.which_tools()
         if not tools:
             print("   subdomain enumeration: no enumerator installed (subfinder/amass/assetfinder/findomain) — skipped")
             return
         apexes = sorted({_cs._frontier_apex(h) for h in hosts if h and "." in h})
-        for apex in apexes:
-            if not apex or re.fullmatch(r"[\d.]+", apex):
-                continue
-            p = os.path.join(case_dir, "subenum", apex + ".json")
-            if os.path.isfile(p):
-                continue
-            res = wp_subenum.run(apex, case_dir=case_dir, timeout=timeout,
-                                 free_only=free_only or _case_no_spend(case_dir))
-            filled = (res.get("provider_sync") or {}).get("filled") or []
-            print(f"   subdomains {apex}: {len(res.get('subdomains') or [])} name(s) via "
-                  f"{', '.join(tools)} — {len(res.get('live') or [])} resolving"
-                  + (f" (subfinder keyed from .env: {', '.join(filled)})" if filled else "")
-                  + f" -> {os.path.relpath(p, ROOT)}")
+        todo = [a for a in apexes if a and not re.fullmatch(r"[\d.]+", a)
+                and not os.path.isfile(os.path.join(case_dir, "subenum", a + ".json"))]
+        if not todo:
+            return
+        no_spend = free_only or _case_no_spend(case_dir)
+        sync = wp_subenum.sync_providers(free_only=no_spend)   # ONCE: threads must not rewrite the config
+
+        def _one(apex):
+            return apex, wp_subenum.run(apex, case_dir=case_dir, timeout=timeout, free_only=no_spend, sync=sync)
+        with _cf.ThreadPoolExecutor(max_workers=max(1, min(jobs, 4, len(todo)))) as ex:   # ≤4: each apex spawns 4 tools + a resolve pool
+            for fu in _cf.as_completed([ex.submit(_one, a) for a in todo]):
+                try:
+                    apex, res = fu.result()
+                except Exception as e:  # noqa: BLE001 — one apex failing must not sink the stage
+                    print(f"   note: subdomain enumeration failed for one apex ({e}); skipped.")
+                    continue
+                p = os.path.join(case_dir, "subenum", apex + ".json")
+                filled = (res.get("provider_sync") or {}).get("filled") or []
+                print(f"   subdomains {apex}: {len(res.get('subdomains') or [])} name(s) via "
+                      f"{', '.join(tools)} — {len(res.get('live') or [])} resolving"
+                      + (f" (subfinder keyed from .env: {', '.join(filled)})" if filled else "")
+                      + f" -> {os.path.relpath(p, ROOT)}")
     except Exception as e:  # noqa: BLE001
         print(f"   note: subdomain enumeration failed ({e}); skipped.")
 
@@ -570,6 +594,16 @@ def _write_shared(case_dir, min_shared, hosts=None):
     cmd = [sys.executable, os.path.join(KB_TOOLS, "query.py"),
            "--kb", KB, "--shared", "--min", str(min_shared)]
     hosts = hosts if hosts is not None else _case_hosts(case_dir)
+    # EXPANSION ANCHOR: shared indicators are cluster SEEDS for attribution, so they are computed over
+    # the estate (hop < depth). A leaf's registrant would otherwise surface as a "join key" row.
+    try:
+        sys.path.insert(0, HERE)
+        import case_state as _cs
+        expanding = {h.lower() for h in _cs._expanding_hosts(case_dir)}
+        if expanding:
+            hosts = [h for h in hosts if h.lower() in expanding]
+    except Exception:  # noqa: BLE001
+        pass
     if hosts:
         cmd += ["--domains", ",".join(hosts)]
     r = _run(cmd, capture_output=True, text=True)
@@ -660,7 +694,7 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
     try:
         from knowledge_base import KB as _KB  # noqa: E402
         from query import (_components, REGISTRANT_RELS, is_registrant_noise)  # noqa: E402
-        from noise_filters import is_bulk_registrant  # noqa: E402
+        from noise_filters import is_bulk_registrant, BOILERPLATE_RELS  # noqa: E402
     except Exception as e:
         print(f"   note: cluster partition skipped ({e})")
         return []
@@ -669,13 +703,30 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
         return []
     kb = _KB(KB)
     restrict = {h.lower() for h in hosts}
-    comps = _components(kb, KB, max_prevalence, restrict)
+    # EXPANSION ANCHOR + landlord IPs, both from case_state: the partition is the unit of ATTRIBUTION,
+    # so it runs over the hosts within the expansion depth only. A LEAF (hop >= depth) is owner-linked
+    # to a previous-hop host, not to the operator — it is listed as `related_hosts`, never a member.
+    # `hosted_on` to a landlord IP (an IP the case's own reverses showed answering > the shared-hosting
+    # bound, or a CDN edge) is co-tenancy, not a binder.
+    related_hosts = []
+    try:
+        sys.path.insert(0, HERE)
+        import case_state as _cs
+        noise_ips = _cs.shared_hosting_ips(case_dir)
+        expanding = {h.lower() for h in _cs._expanding_hosts(case_dir)}
+        if expanding:
+            related_hosts = sorted(restrict - expanding)
+            restrict = restrict & expanding
+    except Exception:  # noqa: BLE001
+        noise_ips = set()
+    comps = _components(kb, KB, max_prevalence, restrict, noise_ips=noise_ips)
+    noise_ip_inds = {f"ip:{ip}" for ip in noise_ips}
     shared = kb.shared_indicators(1)          # count in-cluster below; keep KB-wide as prevalence
     # The reported binding must be the edges that ACTUALLY formed the component, so it is filtered
     # by the same strong-edge rules _components uses — boilerplate rels (shared cache-plugin CSS /
     # HTML comment / DOM skeleton), reference-benign values, and over-prevalent indicators. Without
     # this the brief cites a template hash as the reason two domains are one operator.
-    NOISE_RELS = {"same_inline_css", "same_comment", "same_template"}
+    NOISE_RELS = BOILERPLATE_RELS
     try:
         from reference import benign_values  # noqa: E402
         benign = benign_values(KB)
@@ -689,6 +740,8 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
             strong_rels = [r for r in s["rels"] if r not in NOISE_RELS]
             if not strong_rels or s["indicator"] in benign:
                 continue
+            if s["indicator"] in noise_ip_inds and strong_rels == ["hosted_on"]:
+                continue                          # landlord IP — the same exclusion _components applied
             # Registrant edges get the operator-grade carve-out (same as query._components): exempt
             # from the generic prevalence cap up to the bulk-registrant bound, and placeholder/
             # privacy values dropped — so a 31-domain estate binds instead of shattering, and the
@@ -711,21 +764,25 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
         clusters.append({"id": i, "size": len(mset), "domains": sorted(mset),
                          "singleton": len(mset) == 1, "binding_indicators": binding[:15],
                          "binding_total": len(binding)})
-    doc = {"case": case, "generated": _iso_now(), "scope_hosts": len(hosts),
+    doc = {"case": case, "generated": _iso_now(), "scope_hosts": len(restrict),
            "n_clusters": len(clusters), "max_prevalence": max_prevalence,
            "note": ("Same-operator components over STRONG shared indicators (boilerplate / "
                     "reference-benign / over-prevalent edges excluded). Judge each cluster "
                     "separately with IntelAnalysis — a cluster, not the case, is one attribution "
                     "question. kb_wide_domains >> domains_in_cluster means the indicator is "
-                    "prevalent noise, not an owner link."),
+                    "prevalent noise, not an owner link. `related_hosts` sit at the expansion depth "
+                    "(owner-linked to a previous hop, not to the operator): collected for context, "
+                    "never cluster members."),
+           "related_hosts": related_hosts,
            "clusters": clusters}
     import json as _json
     with open(os.path.join(case_dir, "clusters.json"), "w", encoding="utf-8") as fh:
         _json.dump(doc, fh, indent=2, ensure_ascii=False)
     multi = [c for c in clusters if not c["singleton"]]
-    print(f"   clusters: {len(clusters)} component(s) over {len(hosts)} host(s) — "
-          f"{len(multi)} multi-domain, {len(clusters) - len(multi)} singleton "
-          f"-> {os.path.relpath(os.path.join(case_dir, 'clusters.json'), ROOT)}")
+    print(f"   clusters: {len(clusters)} component(s) over {len(restrict)} host(s) — "
+          f"{len(multi)} multi-domain, {len(clusters) - len(multi)} singleton"
+          + (f"; {len(related_hosts)} related host(s) at the expansion depth kept out" if related_hosts else "")
+          + f" -> {os.path.relpath(os.path.join(case_dir, 'clusters.json'), ROOT)}")
     for c in multi[:8]:
         top = c["binding_indicators"][0]["indicator"] if c["binding_indicators"] else "—"
         print(f"      c{c['id']} ({c['size']}): {', '.join(c['domains'][:5])}"
@@ -879,11 +936,14 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
             existing = _json.load(open(apath, encoding="utf-8"))
         except Exception:
             existing = None
-    # read analyst-authored leads (any assessment.json — canonical strings) for the chain
+    # read analyst-authored leads (any assessment.json — canonical strings) for the chain. Free text
+    # names the engine's own vendors ("reverses ran only on Hunter.how") and shared infra; a
+    # domain-shaped token is a lead only when case_state.never_seed() does not reject it.
+    import case_state as cs
     analyst_leads = set()
     if existing:
         for s in list(existing.get("next_pivots") or []) + list(existing.get("gaps") or []):
-            analyst_leads |= _domains_in_text(str(s))
+            analyst_leads |= {d for d in _domains_in_text(str(s)) if not cs.never_seed(d)}
 
     cluster = []
     sp = os.path.join(case_dir, "shared.txt")
@@ -991,6 +1051,27 @@ def _export_run_env(case_dir):
     os.environ["WP_RUN_ID"] = f"{_iso_now()}-{uuid.uuid4().hex[:8]}"
 
 
+def _promote(fr, hops, depth):
+    """Frontier → next-round batch, with HOP bookkeeping (the expansion anchor). A new apex's hop is
+    1 + the smallest hop among the collected hosts whose raw yielded it; a collected apex's own
+    subdomain inherits the apex's hop (same registration). A candidate that would land beyond
+    `depth` is not collected at all — it could only ever be a leaf's leaf. New apexes first, then
+    the collected apexes' own live subdomains."""
+    batch = []
+    for apex in fr["pending"]:
+        hop = int((fr["candidates"].get(apex) or {}).get("hop", 1))
+        if hop > depth:
+            continue
+        hops[apex.lower()] = min(hop, hops.get(apex.lower(), hop))
+        batch.append(apex)
+    for apex, subs in (fr.get("subdomains_pending") or {}).items():
+        for s in subs:
+            if s not in batch:
+                hops[s.lower()] = hops.get(apex.lower(), 0)
+                batch.append(s)
+    return batch
+
+
 def cmd_loop(a):
     """Resumable convergence feedback loop: collect (free-only WebPivot) -> ingest -> snapshot ->
     assess (md+json) -> chase the discovered free frontier -> repeat until CONVERGED, cold (no free
@@ -1005,6 +1086,9 @@ def cmd_loop(a):
 
     st = cs.load_state(case)
     st["depth_limit"] = a.max_rounds
+    if getattr(a, "depth", None) is not None:
+        st["expansion_depth"] = int(a.depth)
+    hops = st.setdefault("hops", {})
     # seed the pending queue: a domains file or a comma list, merged (first run or added evidence)
     if a.seeds:
         if os.path.isfile(a.seeds):
@@ -1015,12 +1099,21 @@ def cmd_loop(a):
         for h in new:
             if h not in have:
                 st.setdefault("pending", []).append(h)
+            hops.setdefault(h.lower(), 0)               # analyst seeds are hop 0
         if st.get("status") in ("converged", "cold"):
             st["status"] = "expanding"          # new evidence reopens a finished case
     # reconcile against ground truth on disk (robust to a mid-round interrupt)
     collected = cs.collected_hosts(case_dir)
     st["collected"] = sorted(collected)
     st["pending"] = [h for h in st.get("pending", []) if h.lower() not in collected]
+    # EXPANSION ANCHOR reconcile: in an anchored case every collected host needs a hop. A subdomain
+    # inherits its apex's hop; anything else of unknown provenance is a LEAF (depth), never a seed —
+    # only analyst seeds (`open` / `loop <seeds>`) are hop 0. A legacy case with no hops at all keeps
+    # its old behaviour (every host a seed) until the analyst seeds it.
+    if hops:
+        for h in sorted(collected):
+            if h.lower() not in hops:
+                hops[h.lower()] = hops.get(cs._frontier_apex(h), st["expansion_depth"])
     if not st["pending"] and not collected:
         sys.exit("no seeds — first run needs a domains file or comma list: "
                  "intel.py loop <case> seeds.txt")
@@ -1034,8 +1127,7 @@ def cmd_loop(a):
         if not st["pending"]:
             fr = cs.frontier(case, max_new=a.max_new)
             # new apexes first, then the collected apexes' own live subdomains (same registration)
-            st["pending"] = fr["pending"] + [s for subs in (fr.get("subdomains_pending") or {}).values()
-                                            for s in subs]
+            st["pending"] = _promote(fr, hops, st["expansion_depth"])
             st["metered_leads"] = fr["metered_leads"]
             if not st["pending"]:
                 st["status"] = "cold"
@@ -1045,6 +1137,9 @@ def cmd_loop(a):
         batch = st["pending"]
         st["pending"] = []
         st["round"] += 1
+        # checkpoint NOW: frontier() re-reads state.json, so the batch's hops must be on disk before
+        # this round's end-of-round frontier decides which of these hosts are leaves
+        cs.save_state(case, st)
         print(f"\n-- round {st['round']}: collecting {len(batch)} host(s) (free-only): "
               f"{', '.join(batch[:8])}{' …' if len(batch) > 8 else ''}")
 
@@ -1058,9 +1153,6 @@ def cmd_loop(a):
         loop_extra = [] if getattr(a, "full", False) else ["--free-only"]
         if a.render_extract:
             loop_extra.append("--render")
-        # IntelX is the loop's METERED tier: only under --full (never in the default free-only loop),
-        # only with a key, never on a no-spend posture.
-        loop_extra += _intelx_flag(case_dir, loop=True, full=getattr(a, "full", False))
         # DEEP ARCHIVE (passive, keyless — safe under the free-only guard). Default: only the
         # primary seeds (round 1) get the exhaustive Wayback+urlscan+CommonCrawl+archive.today
         # pass; --deep-archive extends it to every frontier seed; --no-deep-primary turns it off.
@@ -1068,6 +1160,14 @@ def cmd_loop(a):
             st["round"] == 1 and not getattr(a, "no_deep_primary", False))
         if deep_this_round:
             loop_extra.append("--deep-archive")
+        # IntelX is the loop's METERED identity tier: only under --full (never in the default free-only
+        # loop), only with a key, never on a no-spend posture — and ONLY on hosts that may still expand
+        # the estate. A LEAF (hop == depth) is collected to bound the estate; buying leak/phonebook
+        # units on a hosting vendor's customers is how one drift run exhausted a month's allowance.
+        metered_extra = _intelx_flag(case_dir, loop=True, full=getattr(a, "full", False))
+        depth = st["expansion_depth"]
+        expanding_batch = [h for h in batch if not cs.is_leaf(h, hops, depth)]   # unknown hop = leaf in an anchored case
+        leaf_batch = [h for h in batch if h not in expanding_batch]
 
         def _loop_status(res):
             good = _extract_ok(res)
@@ -1075,15 +1175,18 @@ def cmd_loop(a):
             print(f"   [{'ok ' if good else 'MISS'}] {res['host']}  {note}")
             (ok if good else failed).append(res["host"])
 
-        collect_core.collect_many(
-            [f"https://{h}" for h in batch], case,
-            max_workers=max(1, a.jobs), on_result=_loop_status, retry_misses=1,
-            root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
-            # no_archive=True keeps the ported behaviour EXACTLY: the routine this replaced never
-            # passed --archive-missing/--master. Archiving asks a third-party archive to fetch the
-            # target, which is outbound and attributable — an autonomous loop must not start doing
-            # that as a side effect of a refactor. `open` still archives; that run is analyst-driven.
-            timeout=a.timeout, no_archive=True, extra_flags=loop_extra)
+        for hosts_part, extra in ((expanding_batch, loop_extra + metered_extra), (leaf_batch, loop_extra)):
+            if not hosts_part:
+                continue
+            collect_core.collect_many(
+                [f"https://{h}" for h in hosts_part], case,
+                max_workers=max(1, a.jobs), on_result=_loop_status, retry_misses=1,
+                root=ROOT, py=sys.executable, collector=PIVOT_EXTRACT,
+                # no_archive=True keeps the ported behaviour EXACTLY: the routine this replaced never
+                # passed --archive-missing/--master. Archiving asks a third-party archive to fetch the
+                # target, which is outbound and attributable — an autonomous loop must not start doing
+                # that as a side effect of a refactor. `open` still archives; that run is analyst-driven.
+                timeout=a.timeout, no_archive=True, extra_flags=extra)
         for h in batch:                              # consumed even on miss (don't re-queue a dead host)
             if h.lower() not in {c.lower() for c in st["consumed"]}:
                 st["consumed"].append(h.lower())
@@ -1128,9 +1231,10 @@ def cmd_loop(a):
             cs.save_state(case, st)
             print(f"   CONVERGED after round {st['round']}. Stop; write the final assessment.")
             break
-        st["pending"] = analyst_new + [h for h in fr["pending"] if h.lower() not in done]
-        st["pending"] += [s for subs in (fr.get("subdomains_pending") or {}).values()
-                          for s in subs if s.lower() not in done and s not in st["pending"]]
+        for h in analyst_new:
+            hops.setdefault(h.lower(), 1)              # analyst-directed: linked to the case, hop 1
+        st["pending"] = analyst_new + [h for h in _promote(fr, hops, st["expansion_depth"])
+                                       if h.lower() not in done and h not in analyst_new]
         if not st["pending"]:
             st["status"] = "cold"
             cs.save_state(case, st)
@@ -1264,6 +1368,10 @@ def main():
                     help="first run / added evidence: a domains file OR a comma list (omit to resume)")
     lp.add_argument("--max-rounds", type=int, default=6, help="round cap before pausing (default 6)")
     lp.add_argument("--max-new", type=int, default=8, help="new frontier seeds collected per round")
+    lp.add_argument("--depth", type=int, default=None,
+                    help="expansion anchor: owner-link HOPS from the seeds a host may be at and still "
+                         "be mined for new apexes (default 2 — seeds=0, their siblings=1, a sibling's "
+                         "siblings=2 are collected as LEAVES and never expanded further)")
     lp.add_argument("--stale", type=int, default=2,
                     help="consecutive zero-growth rounds that mean CONVERGED (default 2)")
     lp.add_argument("--jobs", type=int, default=4)
