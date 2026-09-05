@@ -914,5 +914,52 @@
         "discord"
       ]
     }
+  },
+  "social_platform_apexes": {
+    "_comment": "A scraped social 'handle' whose value is the PLATFORM'S OWN apex carries no account: virtually every site on the web links to facebook.com or t.me, so clustering two domains on one asserts they share an operator because they both have a Facebook link. Values here are matched as a whole host (optionally with a leading www.), never as a substring, so a real account under the platform (t.me/some_channel) is unaffected. ADD a platform when you see its bare apex bridging unrelated cases.",
+    "values": [
+      "facebook.com",
+      "www.facebook.com",
+      "m.facebook.com",
+      "web.facebook.com",
+      "twitter.com",
+      "www.twitter.com",
+      "x.com",
+      "www.x.com",
+      "instagram.com",
+      "www.instagram.com",
+      "linkedin.com",
+      "www.linkedin.com",
+      "youtube.com",
+      "www.youtube.com",
+      "m.youtube.com",
+      "youtu.be",
+      "t.me",
+      "telegram.me",
+      "telegram.org",
+      "wa.me",
+      "api.whatsapp.com",
+      "whatsapp.com",
+      "www.whatsapp.com",
+      "tiktok.com",
+      "www.tiktok.com",
+      "vm.tiktok.com",
+      "pinterest.com",
+      "www.pinterest.com",
+      "reddit.com",
+      "www.reddit.com",
+      "discord.com",
+      "discord.gg",
+      "www.discord.com",
+      "threads.net",
+      "www.threads.net",
+      "vk.com",
+      "www.vk.com",
+      "weibo.com",
+      "www.weibo.com",
+      "zalo.me",
+      "line.me",
+      "skype.com"
+    ]
   }
 }

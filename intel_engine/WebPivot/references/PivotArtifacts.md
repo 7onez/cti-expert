@@ -15,11 +15,14 @@ Confidence = how strongly a shared value implies **same operator**.
 | **Facebook Pixel ID** | `fbq('init','…')` | Medium-High | PublicWWW, urlscan (no dedicated reverse svc) | ✅ `trackers.facebook_pixel` |
 | **GA `UA-` (legacy)** | old analytics.js | Medium | Historical only (UA shut down 2023) — SpyOnWeb, DNSlytics history | ✅ `trackers.google_analytics_ua` |
 | **Yandex Metrika / Hotjar / Matomo / Mixpanel / Sentry DSN / Clarity / Intercom / Crisp / Segment** | vendor JS | Medium-High | PublicWWW / NerdyData source search; Sentry DSN reveals internal host | ✅ `trackers.*` |
+| **ICP licence `苏ICP备…号`** | page footer, `<meta>` | **High** (serial) | PublicWWW / NerdyData `"ICP备…"`, FOFA `body=`, Quake/ZoomEye body search, ENScan_GO; `-N` suffixes = sibling sites under one filing | ❌ **not extracted** — read the footer by hand, see [`techniques/china-recon.md`](../../../techniques/china-recon.md) §1.2 |
+| **MPS public-security filing `…公安备…号`** | page footer | Medium-High | source search; corroborates the ICP registrant | ❌ **not extracted** — manual |
 | **Crypto wallet (BTC/ETH/XMR/TRON/LTC)** | body text, JS, `href` | Medium | blockchain explorers, Chainabuse, Arkham/Breadcrumbs clustering, PublicWWW | ✅ `crypto.*` |
 | **Contact / registrant email** | mailto, body, JSON-LD | Medium | reverse-WHOIS (ViewDNS/WhoisXML), Epieos, hunter.io, urlscan | ✅ `emails` |
 | **Contact phone** | `tel:` href, footer/body text | Medium | PublicWWW/urlscan source search, reverse-WHOIS (phone), WhatsApp/Telegram/Zalo | ✅ `phones` |
 | **Telegram channel / group-invite** | `t.me/…`, `tg://` links | Medium-High | PublicWWW, urlscan, search; invite links (`t.me/+…`) are operator-run groups | ✅ `telegram[]` |
 | **Google Doc / Sheet / Form / Drive / Slides ID** | `docs.google.com/…`, `forms.gle`, `drive.google.com/…` | **High** | PublicWWW, urlscan, NerdyData — operator-owned backend; often publicly readable | ✅ `saas_ids.google_*` |
+| **SaaS / no-code operator tokens** (GoHighLevel `msgsndr`, Make/Zapier/Apps-Script webhooks, TrustedForm) | inline/rendered JS, form scripts | **High** (private) | source search (PublicWWW/urlscan); the automation backend clusters funnels a shared favicon never will | ✅ `saas_ids.*` (`msgsndr` / `make_webhook` / `apps_script` / `trustedform`) |
 | **Footer postal address** | `<footer>` text | Medium | PublicWWW/urlscan/Google verbatim source search — a distinctive registered address is copied across an operator's sites | ✅ `footer.addresses` |
 | **Footer copyright / company** | `<footer>` text | Low-Medium | source search a distinctive company string | ✅ `footer.copyright` |
 | **Page description** | `<meta description>` / `og:description` | Low | PublicWWW/NerdyData verbatim search → template/operator reuse | ✅ `description` |
@@ -38,13 +41,24 @@ Confidence = how strongly a shared value implies **same operator**.
 
 ## Pivot logic
 
-1. **Rank by confidence.** Favicon hash and shared analytics/ad IDs are the strongest
-   same-operator signals. Start there.
+1. **Rank by confidence.** Favicon hash and shared analytics/ad IDs (and private SaaS
+   tokens) are the strongest same-operator signals. Start there.
 2. **A shared artifact is a lead, not proof.** Trackers can be copied, favicons reused
    by templates. Require **≥2 independent artifacts** overlapping before asserting a cluster.
 3. **Compose queries.** Combine artifacts on one engine when possible
    (e.g. urlscan `page.url:* AND "G-XXXX"`; Shodan `http.favicon.hash:123 http.html:"pub-456"`).
 4. **Passive before active.** Resolve via urlscan/Wayback/crt.sh before touching the live host,
    especially for adversarial infrastructure.
-5. **Right hash per engine.** Shodan/FOFA/ZoomEye use **mmh3**, Censys uses **MD5** (never hand Censys the mmh3 value — that query can never match),
+5. **Right hash per engine.** Shodan/FOFA/ZoomEye/**Quake** use **mmh3**, Censys uses **MD5** (never hand Censys the mmh3 value — that query can never match),
    Netlas uses **SHA-256** — the harness emits all three from one favicon.
+6. **ICP: pivot on the serial, never the province.** `苏ICP备12345678号-3` → cluster on
+   `12345678` (one registrant, HIGH). The `苏` prefix is a whole province; the `-3` is one site
+   within the filing — enumerate siblings by walking the suffix. See
+   [`techniques/china-recon.md`](../../../techniques/china-recon.md) §1.2.
+
+---
+
+> **Canonical copy.** This file is the single source of truth for pivot artifacts; the repo-root
+> `handbook/pivot-artifacts.md` is a pointer to it. Merged 2026-08-27 from two copies that had
+> drifted apart — if an `intelligence_assist` re-sync offers to replace this file, keep the ICP /
+> MPS / SaaS rows and the Quake mention, which upstream does not carry.

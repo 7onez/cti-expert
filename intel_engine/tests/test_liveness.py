@@ -88,12 +88,21 @@ def check():
         ok(v["dead"] is False, f"  HTTP {status} is NOT dead — a status code cannot kill a name")
         ok(v["reuse_watch"] is True, f"  HTTP {status} sets reuse_watch")
 
+    # A real interstitial carries a few lines of text, never pages of copy — keep the fixture
+    # under `widget_page_text_chars` (1500) so it is a wall, not a widget.
     v = L.classify(url="site-a.example", status=403,
                    body=page("Just a moment... Checking your browser before accessing the site. "
-                             "Attention Required! | Cloudflare"), ips=["203.0.113.10"])
+                             "Attention Required! | Cloudflare", chars=600), ips=["203.0.113.10"])
     ok(v["state"] == "blocked", f"Cloudflare interstitial -> blocked (got {v['state']})")
     ok(v["live"] is None, "  blocked is live=None — the page was never seen")
     ok(v["dead"] is False, "  blocked is never dead")
+
+    v = L.classify(url="site-a.example", status=200,
+                   body=page("Verify you are human to sign in. Welcome to our shop. ", chars=4000),
+                   ips=["203.0.113.10"])
+    ok(v["state"] != "blocked",
+       f"wall marker on a page with thousands of chars of copy is a WIDGET (captcha badge), "
+       f"the page WAS seen -> not blocked (got {v['state']})")
 
     v = L.classify(url="site-a.example", status=404,
                    body=page("This domain is parked. Buy this domain."), ips=["203.0.113.10"])

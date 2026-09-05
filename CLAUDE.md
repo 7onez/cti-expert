@@ -60,7 +60,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (54 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (79 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an
@@ -217,5 +217,11 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
 - If a tool needs case-specific behaviour, take it as a **parameter or CLI arg** — never bake the
   case into the code.
 - Ran `uv pip install`? Update `requirements.txt`.
+- **The vendored engine's own tests run in CI now** — `audit.sh` §8 runs the 15 stdlib-only
+  ones on every push; §9 runs the 5 that import `claude_agent_sdk` and SKIPS LOUDLY when it
+  is absent, with the `engine tests (with SDK)` job in `.github/workflows/audit.yml`
+  failing if that skip ever appears there. Until 2026-08-28 `intel_engine/tests/` ran
+  nowhere in CI, which is how 15 `@tool`s sat outside the context governor for two commits
+  while the audit stayed green. If you add an engine test, add it to §8 or §9.
 - Changed a collector's flags, a `DISPATCH` op, or a `/command`? Update `SKILL.md` §3 in the same
   commit — a stale command reference is the most common way this skill breaks for other people.
