@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 120+ commands, 56 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 120+ commands, 57 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-56-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="56 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -118,7 +118,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **120+ commands** across **56 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **120+ commands** across **57 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default, more powerful with your keys.** Every core technique runs with zero API keys. Add any free or paid keys to `.env` (or run `/apikeys set <service> <KEY>`) and the skill auto-detects them, unlocking higher-tier pivots: reverse favicon→host, passive DNS, certificate search, sibling-domain discovery. A missing or bad key never breaks a run — it just degrades to a note. Setup guide: [handbook/api-keys.md](handbook/api-keys.md).
@@ -197,7 +197,11 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **Netlas + the rest of the vendor wiring** | Every registered key now has a pivot behind it | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py) — Bearer client over the `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` collections (search, count, facet, reverse-IP, plan), keyless query builder + web-UI links, ledgered, Cloudflare-safe UA; `intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`. Live-measured: `domains a:<origin>` returned **32 apexes** on a 32-domain estate (15 members + same-MO siblings under other personas). Alongside: **SecurityTrails** DNS-history eras + DSL reverse-WHOIS (diffed against WhoisXML), **DNSLytics** reverse-IP under its own co-tenancy-routed key, **GrayHatWarfare** exposure lead + report section, **Shodan** cert/JARM search, once-per-case **Censys** cert search with a shared-cert fan-out guard, **IntelX** auto-fire in `pipeline open` (loop: `--full` only; role mailboxes excluded), and **Validin** wired natively (domain lookup, reputation, cert and favicon hosts). Frontier ranks owner-link candidates above lookalikes |
 | **The house report, composed deterministically** | The editorial PDF/DOCX no longer needs a model to write it | `intel.py house-report <CASE-ID>` composes the IntelReport document from the case dir: sections I–XI, both confidence scales + the **ICD-203 × Admiralty scatter**, relationship graph + **entity-relationship map**, attribution inference chain, temporal view + **registration heatmap** + **domain × shared-indicator matrix** (which honours the §2.5 false-positive control and carries the WHOIS join keys), a **landing-page capture** per estate host (proxy-gated egress; a page that will not render falls back to the newest public **web-scan**, then a **web-archive** snapshot — captioned, dated by the archive, and labelled a *previous owner's page* when it predates the current registration), per-domain **dossiers**, a glossary, Appendices **A–E**. Rule 12 scrub of tool/vendor/path names; third parties masked through one gate ([`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)). One figure source ([`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)) feeds both the dashboard DOCX and the house PDF, so the two deliverables cannot disagree. `--no-screenshots` is fully offline; `--no-archive-fallback` forbids the stand-ins |
 | **ANY.RUN: the gate is real, and the docs now say so** | Detonation exists — behind five gates, each of them code | SKILL.md, the README callouts, `.env.example` and the key registry claimed "no submit path". False since the gated layer landed. `anyrun_submit` is gated by: per-submission confirmation (a `confirm=false` **briefing** first — a data-driven `approval_briefing` exemption in `tool_policy.json` now lets that step through the MCP approval gate, fail-closed to fully gated if the file is unreadable); **private by default**, `public` refused unless `ANYRUN_ALLOW_PUBLIC=1` grants a *standing* authorization, and then only as an explicit, recorded downgrade; a **fail-closed plan check** (`/user` private quota — zero is denied and no attestation overrides it — else a prior private task, else `--i-have-a-paid-plan`); a **polled post-submit privacy read-back** that withdraws and flags a task that still landed public (`verify-privacy <uuid>` finishes the check if the task outlives the wait); and the harness deny unless `HARNESS_ALLOW_SUBMIT=1`. 103 stubbed checks in `test_intelx_anyrun` §7b–7c; `test_tool_gate` §2 pins briefing-allowed / confirm-denied / fail-closed |
-| **Repo hygiene** | The tree checks itself for pasted keys | `audit.sh` §5b greps every tracked file for vendor key shapes and `KEY=value` lines — proven to fire on a planted value and clean on the tree, so a key can only live in `.env`. [AGENTS.md](AGENTS.md) rewritten as the cross-agent *Repository Guidelines*. Key-alias registries reconciled with every tool's `_secret()` lookup and locked ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter registered so the capability banner stops going silent on keys it uses. The three workflow diagrams re-rendered from current sources — 52 `@tool`s, 9 commands, Netlas, gated ANY.RUN |
+| **Repo hygiene** | The tree checks itself for pasted keys | `audit.sh` §5b greps every tracked file for vendor key shapes and `KEY=value` lines — proven to fire on a planted value and clean on the tree, so a key can only live in `.env`. [AGENTS.md](AGENTS.md) rewritten as the cross-agent *Repository Guidelines*. Key-alias registries reconciled with every tool's `_secret()` lookup and locked ([`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)); SecurityTrails / DNSLytics / CertSpotter registered so the capability banner stops going silent on keys it uses. The three workflow diagrams re-rendered from current sources — 79 `@tool`s, 9 commands, Netlas, gated ANY.RUN |
+| **Every documented command is real** | 26 SKILL.md commands that had no code behind them now resolve to a tool — or say what they are | 18 new keyless-first CLIs under [`scripts/osint/`](scripts/osint/) (`hash_id` — MD5 vs NTLM *before* you submit, `vuln_check`, `username_enum`, `phone_osint`, `github_osint`, `reputation_check`, `msft_recon`, `cn_recon`, `traffic_rank`, `sharelink_resolve`, `dork_builder`, `exposure_score`, `signature_scan`, `kb_crossref`, `case_drift`, `deep_profile`, `wifi_ssid` …) plus 8 existing `scripts/webpivot/` shims (`cert_pivot`, `email_hygiene`, `wayback_fetch/harvest`, `rank_relations`, `sensitive_paths`, `pivot_suggest`, `crypto_balance`) registered as `@tool`s and `intel.py` ops; every SKILL.md command row now names its **T2** CLI and **T1** tool, or is labelled `[model]` / `[unimplemented]`. **79 `@tool`s**, and the SDK allowlists are locked to the decorated set ([`test_tool_registry.py`](intel_engine/tests/test_tool_registry.py)). Clustering enforces the **two-artifact rule**: each cluster carries `corroboration`, and one shared artifact is flagged `LEAD ONLY`, never an attributed estate. The vendored engine's own tests now run in `audit.sh` §9–10 and CI — they ran nowhere before |
+| **ChongLuaDao in the pipeline · subdomains · one timeout ceiling** | The first-party feeds grade every host, live subdomains join the case, and no call hangs a run | `wp_cld.py` runs per collected host inside `enrich_live` — denylist verdict + IoC analysis land as **reputation facts** (never a cluster edge) and CLD WHOIS is the **primary source for `.vn`** names. `subdomain_enum` unions subfinder (auto-keyed from `.env`), amass, assetfinder and findomain, DNS-verifies the names into `cases/<id>/subenum/<apex>.json`, and the frontier queues the **live** ones for the next round (hoster plumbing is a fact, not a seed). A single per-call ceiling — `CTI_CALL_TIMEOUT`, default **1800 s** from `WebPivot/references/timeouts.json` — floors every fetch, vendor call, collector and renderer subprocess; raw DNS/TLS probes keep their fail-fast bounds, and a running MCP server keeps its value until restarted |
+| **Registrable apexes · landlord IPs · kit binders** | The frontier and the KB agree on what an apex is and which IP is a landlord | A vendored **Public Suffix List** (`public_suffix_list.json`, `wp_psl_update.py`) drives one `_registrable()` reducer, so `shop.id.vn` and `panel.co.uk` fold to the right apex everywhere — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) is the **one** number that marks an IP as shared/bulk hosting: its `hosted_on` edges become facts, the cluster partition ignores them, and co-tenants are held back as leads. Expansion depth is anchored: a host owner-linked to a *previous hop* is `related_hosts`, never a member. Scraped social links resolve to the **account** — per-network reserved paths, second-segment routers and library/vendor credit accounts are reference data, and a bare platform apex (`t.me`, `facebook.com`) is never a handle |
+| **Blueprint folds to apex level** | A hundred-host estate no longer silently drops the HTML report's architecture tab | Archify's architecture type draws ≤ 12 nodes · 18 edges, so [`cti_archify.py`](scripts/cti_archify.py) now **collapses hosts under their registrable apex** (`Estate · N hosts`), folds the long tail into `+N more apexes`, ranks finding-bearing apexes first and places the operator hub mid-row with spokes above and below. `CTI_ARCHIFY=1` (auto: full graph if it fits, else the fold) · `force` (the widest 25-node grid) · `0`; `--plan` prints both outcomes offline, and every HTML export now confirms the Blueprint mode first (Step C — `--yolo` keeps Auto). Locked by [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
 
 ## What's New in v2.11
 
@@ -687,7 +691,7 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /cti-expert      # load the skill first — the four below are convention commands
 /onboard         # interactive first-run guide
 /capabilities    # which evidence classes are unavailable now + the free path that substitutes
-/backend         # confirm Tier-1 typed MCP (52 tools) is live, not Tier-3 stateless
+/backend         # confirm Tier-1 typed MCP (79 tools) is live, not Tier-3 stateless
 /apikeys status  # keyless works; add free/paid keys to unlock reverse pivots
 ```
 
@@ -756,13 +760,13 @@ Before your first real case, run these once in Claude Code so you're not silentl
 
 ### 7 &mdash; Full pipeline & full harness (deepest mode)
 
-`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 52 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
+`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 79 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
 
 > **`/case` already persists a versioned case — with NO extra egress on the persist step.** When `/backend` is live (Tier 1/2), a `/case` run **reuses the pivots it just collected** (it does **not** re-fetch): it writes them under `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` and runs the deterministic pipeline in reuse mode — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — which skips the live fetch and runs the whole chain (ingest → recall → risk → clusters → `case_graph.json` → ICD-203 `assessment.md`) over that raw. The complete versioned case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**not your CWD**) and is correlated across every prior case. **If the case has not converged** (`intel.py convergence <ID>` reports status ≠ `converged`, or `/frontier` still lists open leads) **and** posture is active, `/case` then **auto-escalates to the `/harness` deepening loop** — keyless-first (it uses the CLI's own model), egress **hard-gated** on hostile infra (the harness `audit.py` denies outbound collection on `hostile=True`), `--no-harness` opts out. Plain `/pipeline open` (without `--no-collect`) and `/cti-case` still **collect** — they re-fetch every seed directly — so run those by hand only for a **fresh** case with no prior collection, after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive` for hostile infra). Tier 3 / no host seeds → `/case` skips the handoff silently.
 
 ```bash
 /cti-expert                           # load the skill first (the commands below are convention commands)
-/backend                              # confirm the deep layer is live (Tier-1 = 52 MCP tools)
+/backend                              # confirm the deep layer is live (Tier-1 = 79 MCP tools)
 
 # A — full DETERMINISTIC pipeline (no LLM key, reproducible, persisted to cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -945,7 +949,7 @@ Every investigation follows four automated phases:
 
 ### Workflow diagrams
 
-**End-to-end tool &amp; skill flow** — the whole system as one sequence: your target enters at `/cti`, crosses Layer 1's 56 techniques and the 52-tool MCP surface, through WebPivot / BinaryPivot / the knowledge base / IntelAnalysis, and leaves as a rendered graph and a PDF:
+**End-to-end tool &amp; skill flow** — the whole system as one sequence: your target enters at `/cti`, crosses Layer 1's 57 techniques and the 79-tool MCP surface, through WebPivot / BinaryPivot / the knowledge base / IntelAnalysis, and leaves as a rendered graph and a PDF:
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert end-to-end tool and skill flow — sequence diagram across both layers" width="900">
@@ -1165,13 +1169,14 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>56 techniques</b> — click to expand full catalog</summary>
+<summary><b>57 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
 |-----------|----------|-------------------|
 | `fx-metadata-parsing.md` | EXIF, email headers, document forensics | No |
 | `fx-image-verification.md` | Image authenticity, provenance, reverse search | No |
+| `media-vision-analysis.md` | Content of image / document / audio-video evidence — OCR, logos, landmarks, faces, transcripts → new seeds | Optional (vision + transcription need a Gemini key via `multix`) |
 | `fx-breach-discovery.md` | Breach database + paste site enumeration | Optional (HIBP bulk, DeHashed paid) |
 | `fx-http-fingerprint.md` | HTTP signature analysis, server fingerprinting | No |
 | `fx-leak-monitoring.md` | Leak and breach monitoring automation | Mixed (IntelligenceX/Shodan paid) |
@@ -1270,7 +1275,7 @@ The same case, in formats other tools can read.
 </tr>
 </table>
 
-**Every report variant is one command** — the base data bundle (`.md` · `.json` · `.csv` · IOC bundle: `.stix.json`/`.txt`/`.csv`/`.jsonl`) saves automatically on every `/report`, `/brief`, and `/case`, then you're asked which presentation report to render: **(a) PDF · (b) DOCX · (c) HTML · (d) all** (`--yolo`/guided-auto default to HTML). The variants below pick a specific format or audience:
+**Every report variant is one command** — the base data bundle (`.md` · `.json` · `.csv` · IOC bundle: `.stix.json`/`.txt`/`.csv`/`.jsonl`) saves automatically on every `/report`, `/brief`, and `/case`, then you're asked which presentation report to render: **(a) PDF · (b) DOCX · (c) HTML · (d) all**; when HTML is among them, one more confirmation shows what the Archify **Blueprint** would embed (`cti_archify.py --plan`) and lets you pick Auto / force / off before the file is written (`--yolo`/guided-auto skip both prompts and default to HTML with Blueprint in Auto). The variants below pick a specific format or audience:
 
 | Command | Format | Best for |
 |---------|--------|----------|
@@ -1318,6 +1323,7 @@ cti-expert/
 ├── scripts/                    Collectors, backend dispatcher, report generators
 │   ├── backend/                backend.py (tier resolver) · intel.py (T2 CLI dispatch)
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── osint/                  18 keyless-first CLIs behind the SKILL.md commands — hash_id · vuln_check · username_enum · phone_osint · github_osint · reputation_check · cn_recon · kb_crossref · case_drift …
 │   ├── build_report_data.py    Case dir → REPORT.json (deterministic report bridge)
 │   ├── generate-cti-html.py    Interactive, offline, self-contained HTML report
 │   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
@@ -1337,7 +1343,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (52 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (79 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)

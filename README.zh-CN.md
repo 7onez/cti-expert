@@ -4,7 +4,7 @@
 
 ### 网络威胁情报与开源情报分析工具箱
 
-**把 Claude 变成一名训练有素的情报分析师 —— 120+ 条命令、56 种技术，核心功能零 API 密钥。**
+**把 Claude 变成一名训练有素的情报分析师 —— 120+ 条命令、57 种技术，核心功能零 API 密钥。**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#命令参考"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
-  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-56-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="56 Techniques"></a>&nbsp;
+  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
   <a href="#安装"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -118,7 +118,7 @@
 
 ## 什么是 CTI Expert？
 
-一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **120+ 条命令**、**56 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
+一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **120+ 条命令**、**57 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
 > [!TIP]
 > **默认无密钥，有你的密钥则更强。** 每一项核心技术都能零密钥运行。把任意免费或付费密钥放入 `.env`（或运行 `/apikeys set <service> <KEY>`），技能会自动检测并解锁更高层级的枢轴：反向 favicon→主机、被动 DNS、证书检索、兄弟域名发现。缺失或失效的密钥绝不会中断运行 —— 它只会降级为一条提示。配置指南：[handbook/api-keys.md](handbook/api-keys.md)。
@@ -197,7 +197,11 @@
 | **Netlas 及其余厂商接线** | 每把已注册的密钥背后现在都有一个枢轴 | [`wp_netlas.py`](intel_engine/WebPivot/tools/wp_netlas.py)——覆盖 `domains` · `responses` · `whois_domains` · `whois_ip` · `certs` 集合的 Bearer 客户端（search、count、facet、反向 IP、plan），无密钥查询构造器 + web-UI 链接，记账，Cloudflare 安全 UA；`intel.py netlas ip\|ns\|spf\|domain\|san\|title\|plan\|raw`。实测：`domains a:<origin>` 在一个 32 域名的资产群上返回 **32 个 apex**（15 个成员 + 其他人设名下的同 MO 姊妹站）。同期：**SecurityTrails** DNS 历史纪元 + DSL 反向 WHOIS（与 WhoisXML 比对）、**DNSLytics** 反向 IP（使用独立的同址路由密钥）、**GrayHatWarfare** 暴露线索 + 报告小节、**Shodan** 证书/JARM 搜索、每案件一次的 **Censys** 证书搜索并带共享证书扇出守卫、**IntelX** 在 `pipeline open` 中自动触发（loop 仅在 `--full` 下；排除角色邮箱），以及 **Validin** 原生接线（域名查询、信誉、按证书与 favicon 反查主机）。前沿把所有者链接候选排在仿冒域之前 |
 | **确定性拼装的 house 报告** | 编辑级 PDF/DOCX 不再需要模型来撰写 | `intel.py house-report <CASE-ID>` 从案件目录拼装 IntelReport 文档：第 I–XI 节、两套置信度标尺 + **ICD-203 × Admiralty 散点图**、关系图 + **实体关系图**、归因推理链、时间视图 + **注册热力图** + **域名 × 共享指标矩阵**（遵守 §2.5 误报控制并携带 WHOIS 连接键）、每个资产群主机一张**落地页截图**（经代理门控的出网；无法渲染的页面依次回退到最新的公开 **web-scan** 截图、再到 **web-archive** 快照——标注来源、按归档日期标日、早于当前注册的则标为*前任所有者的页面*）、逐域名**档案**、术语表、附录 **A–E**。按 Rule 12 洗掉工具/厂商/路径名；第三方经单一闸门遮蔽（[`scripts/cti_third_party_mask.py`](scripts/cti_third_party_mask.py)）。单一图源（[`scripts/cti_report_figures.py`](scripts/cti_report_figures.py)）同时供给 dashboard DOCX 与 house PDF，两份交付物不可能互相矛盾。`--no-screenshots` 完全离线；`--no-archive-fallback` 禁止替代截图 |
 | **ANY.RUN：门控是真的，文档现在也这么说** | 引爆通路存在——在五道门控之后，每一道都是代码 | SKILL.md、README 提示框、`.env.example` 与密钥注册表曾声称"没有提交通路"。自带门控的层落地以来这就是错的。`anyrun_submit` 受以下门控：逐次提交确认（先以 `confirm=false` 取回**简报**——`tool_policy.json` 中数据驱动的 `approval_briefing` 例外现在允许这一步通过 MCP 审批门，文件不可读时 fail-closed 回到全门控）；**默认私有**，`public` 被拒绝，除非 `ANYRUN_ALLOW_PUBLIC=1` 给予*常设*授权，而且即便如此也只是一次显式、有记录的降级；**fail-closed 套餐检查**（`/user` 私有配额——为 0 即拒绝，任何声明都无法覆盖——否则看先前的私有任务，否则需 `--i-have-a-paid-plan`）；**提交后轮询式隐私回读**，撤回并标记仍落入公开的任务（任务超出等待时间时用 `verify-privacy <uuid>` 完成检查）；以及 harness 拒绝，除非 `HARNESS_ALLOW_SUBMIT=1`。`test_intelx_anyrun` §7b–7c 中 103 项打桩检查；`test_tool_gate` §2 钉住"简报放行 / 确认拒绝 / fail-closed" |
-| **仓库卫生** | 代码树自检是否有粘贴进来的密钥 | `audit.sh` §5b 对每个被跟踪文件 grep 厂商密钥形态与 `KEY=value` 行——已证明对植入值会触发、对现有代码树保持干净，因此密钥只能存在于 `.env`。[AGENTS.md](AGENTS.md) 重写为跨代理的 *Repository Guidelines*。密钥别名注册表与每个工具的 `_secret()` 查询对齐并锁定（[`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)）；SecurityTrails / DNSLytics / CertSpotter 完成注册，能力横幅不再对它正在使用的密钥保持沉默。三张工作流图从当前源文件重新渲染——52 个 `@tool`、9 条命令、Netlas、带门控的 ANY.RUN |
+| **仓库卫生** | 代码树自检是否有粘贴进来的密钥 | `audit.sh` §5b 对每个被跟踪文件 grep 厂商密钥形态与 `KEY=value` 行——已证明对植入值会触发、对现有代码树保持干净，因此密钥只能存在于 `.env`。[AGENTS.md](AGENTS.md) 重写为跨代理的 *Repository Guidelines*。密钥别名注册表与每个工具的 `_secret()` 查询对齐并锁定（[`tests/test_key_alias_registry.py`](tests/test_key_alias_registry.py)）；SecurityTrails / DNSLytics / CertSpotter 完成注册，能力横幅不再对它正在使用的密钥保持沉默。三张工作流图从当前源文件重新渲染——79 个 `@tool`、9 条命令、Netlas、带门控的 ANY.RUN |
+| **每一条文档中的命令都是真的** | 26 条原先没有代码支撑的 SKILL.md 命令现在会解析到工具——或如实说明其身份 | 18 个优先无密钥的新 CLI，位于 [`scripts/osint/`](scripts/osint/)（`hash_id` —— 提交*前*区分 MD5 与 NTLM，`vuln_check`，`username_enum`，`phone_osint`，`github_osint`，`reputation_check`，`msft_recon`，`cn_recon`，`traffic_rank`，`sharelink_resolve`，`dork_builder`，`exposure_score`，`signature_scan`，`kb_crossref`，`case_drift`，`deep_profile`，`wifi_ssid` …）外加 8 个既有的 `scripts/webpivot/` 垫片（`cert_pivot`，`email_hygiene`，`wayback_fetch/harvest`，`rank_relations`，`sensitive_paths`，`pivot_suggest`，`crypto_balance`）注册为 `@tool` 与 `intel.py` 操作；每一行 SKILL.md 命令现在都点名其 **T2** CLI 与 **T1** 工具，或标注为 `[model]` / `[unimplemented]`。**79 个 `@tool`**，且 SDK 白名单锁定到带装饰器的集合（[`test_tool_registry.py`](intel_engine/tests/test_tool_registry.py)）。聚类强制执行**双制品规则**：每个聚类携带 `corroboration`，仅共享一件制品的被标为 `LEAD ONLY`，绝不作为已归因资产群。内置引擎自身的测试现在跑在 `audit.sh` §9–10 与 CI 中——此前它们无处可跑 |
+| **ChongLuaDao 进入流水线 · 子域名 · 统一超时上限** | 自有 feed 给每台主机打分，存活子域名加入案件，且没有任何调用会拖死一次运行 | `wp_cld.py` 在 `enrich_live` 内对每个已采集主机运行——黑名单裁决 + IoC 分析以**信誉事实**落地（绝不成聚类边），且 CLD WHOIS 是 **`.vn` 域名的主来源**。`subdomain_enum` 合并 subfinder（从 `.env` 自动取密钥）、amass、assetfinder 与 findomain，DNS 核验名称写入 `cases/<id>/subenum/<apex>.json`，前沿把**存活**的排入下一轮队列（主机商管线是事实，不是种子）。统一的每次调用上限——`CTI_CALL_TIMEOUT`，默认 **1800 s**，来自 `WebPivot/references/timeouts.json`——托住每一次 fetch、厂商调用、采集器与渲染器子进程；原始 DNS/TLS 探测保留其快速失败边界，正在运行的 MCP server 在重启前保持其取值 |
+| **可注册 apex · 房东 IP · 套件绑定器** | 前沿与知识库就何为 apex、哪类 IP 是房东达成一致 | 内置的 **Public Suffix List**（`public_suffix_list.json`，`wp_psl_update.py`）驱动单一 `_registrable()` 归约器，因此 `shop.id.vn` 与 `panel.co.uk` 在各处——前沿、入库、报告、Blueprint——都折叠到正确的 apex。`shared_hosting_max_cohosts`（12）是标记 IP 为共享/批量托管的**唯一**数字：其 `hosted_on` 边变为事实，聚类分区忽略它们，同址租户仅作为线索保留。扩展深度被锚定：与*上一跳*所有者链接的主机是 `related_hosts`，绝不成成员。抓取到的社交链接解析到**账号**——按网络的保留路径、第二段路由器以及库/厂商署名账号属于参考数据，裸平台 apex（`t.me`，`facebook.com`）绝不是 handle |
+| **Blueprint 折叠到 apex 级** | 上百主机的资产群不再悄无声息地丢掉 HTML 报告的架构页 | Archify 的架构类型最多画 ≤ 12 个节点 · 18 条边，因此 [`cti_archify.py`](scripts/cti_archify.py) 现在**把主机折叠到其可注册 apex 之下**（`Estate · N hosts`），把长尾折进 `+N more apexes`，优先排列带发现的 apex，并把运营者枢纽放在中行、辐条上下分布。`CTI_ARCHIFY=1`（自动：能放下就全图，否则折叠）· `force`（最宽的 25 节点网格）· `0`；`--plan` 离线打印两种结果，每次 HTML 导出现在先确认 Blueprint 模式（步骤 C——`--yolo` 保持 Auto）。由 [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) 锁定 |
 
 ## v2.11 新功能
 
@@ -663,7 +667,7 @@ Windows、`--all` 和 Codex 变体：见[安装](#安装)。
 /cti-expert      # 先加载技能 —— 下面四条是约定命令
 /onboard         # 交互式首次运行引导
 /capabilities    # 当前缺失哪些证据类别 + 可替代的免费路径
-/backend         # 确认 Tier-1 类型化 MCP（52 个工具）在跑，而非 Tier-3 无状态
+/backend         # 确认 Tier-1 类型化 MCP（79 个工具）在跑，而非 Tier-3 无状态
 /apikeys status  # 无密钥也能跑；添加免费/付费密钥以解锁反向枢轴
 ```
 
@@ -732,11 +736,11 @@ Windows、`--all` 和 Codex 变体：见[安装](#安装)。
 
 ### 7 &mdash; 完整流水线与完整 harness（最深模式）
 
-`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 52 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
+`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 79 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
 
 ```bash
 /cti-expert                           # 先加载技能（下面是约定命令）
-/backend                              # 确认深度层在线（Tier-1 = 52 个 MCP 工具）
+/backend                              # 确认深度层在线（Tier-1 = 79 个 MCP 工具）
 
 # A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -919,7 +923,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 56 项技术与 52 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
+**端到端工具与技能流** —— 用一张时序图呈现整个系统：目标从 `/cti` 进入，穿过第 1 层的 57 项技术与 79 个工具的 MCP 接口，流经 WebPivot / BinaryPivot / 知识库 / IntelAnalysis，最终以渲染好的关系图与 PDF 交付：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -1139,13 +1143,14 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 ## 技术目录
 
 <details>
-<summary><b>56 种技术</b> —— 点击展开完整目录</summary>
+<summary><b>57 种技术</b> —— 点击展开完整目录</summary>
 <br>
 
 | 技术 | 覆盖范围 | 是否需要 API 密钥？ |
 |-----------|----------|-------------------|
 | `fx-metadata-parsing.md` | EXIF、邮件头、文档取证 | 否 |
 | `fx-image-verification.md` | 图像真实性、来源溯源、反向检索 | 否 |
+| `media-vision-analysis.md` | 图像 / 文档 / 音视频证据的内容——OCR、logo、地标、人脸、转写 → 新种子 | 可选（视觉 + 转写需通过 `multix` 使用 Gemini 密钥） |
 | `fx-breach-discovery.md` | 泄露库 + 粘贴站枚举 | 可选（HIBP 批量、DeHashed 付费） |
 | `fx-http-fingerprint.md` | HTTP 签名分析、服务器指纹识别 | 否 |
 | `fx-leak-monitoring.md` | 泄露与失窃数据监控自动化 | 混合（IntelligenceX/Shodan 付费） |
@@ -1244,7 +1249,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 </tr>
 </table>
 
-**每一种报告变体都只是一条命令** —— 基础数据套件（`.md` · `.json` · `.csv` · IOC 包：`.stix.json`/`.txt`/`.csv`/`.jsonl`）在每次 `/report`、`/brief` 与 `/case` 时始终自动保存，随后会询问你要渲染哪种呈现报告：**(a) PDF · (b) DOCX · (c) HTML · (d) 全部**（`--yolo`/引导自动模式默认 HTML）；下面的变体则用于指定某种具体格式或读者对象：
+**每一种报告变体都只是一条命令** —— 基础数据套件（`.md` · `.json` · `.csv` · IOC 包：`.stix.json`/`.txt`/`.csv`/`.jsonl`）在每次 `/report`、`/brief` 与 `/case` 时始终自动保存，随后会询问你要渲染哪种呈现报告：**(a) PDF · (b) DOCX · (c) HTML · (d) 全部**；当 HTML 在其中时，会再确认一次 Archify **Blueprint** 将嵌入的内容（`cti_archify.py --plan`），并在写入文件前让你选择 Auto / force / off（`--yolo`/引导自动模式跳过两次提示，默认 HTML 且 Blueprint 为 Auto）；下面的变体则用于指定某种具体格式或读者对象：
 
 | 命令 | 格式 | 最适合 |
 |---------|--------|----------|
@@ -1292,6 +1297,7 @@ cti-expert/
 ├── scripts/                    采集器、后端调度器、报告生成器
 │   ├── backend/                backend.py（层级解析）· intel.py（T2 CLI 调度）
 │   ├── webpivot/               pivot_extract · cert_pivot · wayback_* · rank_relations …
+│   ├── osint/                  18 个优先无密钥的 CLI，支撑 SKILL.md 命令 —— hash_id · vuln_check · username_enum · phone_osint · github_osint · reputation_check · cn_recon · kb_crossref · case_drift …
 │   ├── build_report_data.py    案件目录 → REPORT.json（确定性报告数据桥）
 │   ├── generate-cti-html.py    交互式、离线、自包含的 HTML 报告
 │   ├── generate-cti-iocs.py    IOC／选择子导出（STIX 2.1 · 扁平 · CSV · JSONL）
@@ -1311,7 +1317,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（52 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（79 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
     ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）
