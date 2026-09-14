@@ -82,6 +82,15 @@ Reverse image search engine. Finds all indexed instances of an image across the 
 - **Strength:** Best tool for provenance dating — "Oldest" sort finds first appearance
 - **Limitation:** Does not index all web content; absence of result does not confirm originality
 
+### 2.8 Face2social — Social Media Face Search
+**URL:** https://face2social.com/
+
+Matches a face crop against public profile pictures on Instagram, Facebook, TikTok, and X. Scope is deliberately narrow — it indexes social media profile photos only and does not crawl the open web.
+
+- **Usage:** Upload face crop → free results preview with no sign-up; full names and profile links require a paid plan
+- **Strength:** Social-platform-only index surfaces accounts that general web face engines miss
+- **Limitation:** No open-web coverage — PimEyes and FaceCheck.id beat it on blogs, news, and general pages; US-focused index, paid beyond the preview
+
 ---
 
 ## 3. Investigation Workflow
