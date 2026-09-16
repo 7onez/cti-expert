@@ -177,11 +177,11 @@
   },
 
   "search_budget": {
-    "_comment": "The spend guard, same shape and same reasoning as the Censys one: a free SerpApi plan grants a fixed number of searches a MONTH, the quota is per ACCOUNT, and the ledger it is measured against (MEMORY/api_usage.jsonl) is shared by every case — so a careless fan-out does not just spoil its own run, it removes SerpApi from every later one. Spend is therefore checked BEFORE the call and refused as a `skipped` reason with the free UI address attached, never discovered as an HTTP 429 halfway through a batch. `max_searches_per_run` is the blast-radius cap on one case; `max_creative_details_per_run` bounds the follow-up calls that open individual creatives, which is where a wide advertiser can quietly cost a whole month. Override per run with SERPAPI_MONTHLY_SEARCHES / SERPAPI_MAX_SEARCHES_PER_RUN. `monthly_searches` here is what the GUARD enforces and it is a local assumption: the ledger only counts spend made through this toolkit, so a search spent in the SerpApi playground or by another script is invisible to it. `wp_serp.py budget` prints the account's own figure next to the ledger and flags a drift — believe the account.",
+    "_comment": "THE SPEND LEDGER. A SerpApi plan grants a fixed number of searches per month and the quota is per account. MEMORY/api_usage.jsonl records toolkit spend across cases; `wp_serp.py budget` prints the provider's account figure alongside it because searches made elsewhere are invisible to the local ledger. `monthly_searches`, `max_searches_per_run`, and `max_creative_details_per_run` are advisory thresholds in the shipped policy: the would-have-blocked reason is printed once, the call proceeds, and the vendor's 402/429 is authoritative. Override thresholds with SERPAPI_MONTHLY_SEARCHES / SERPAPI_MAX_SEARCHES_PER_RUN. Set `block_when_exhausted` true for strict refusal. POLICY (project decision): the skill imposes no hard usage limit by default; it keeps the ledger and warnings.",
     "monthly_searches": 250,
     "max_searches_per_run": 8,
     "max_creative_details_per_run": 3,
-    "block_when_exhausted": true,
+    "block_when_exhausted": false,
     "warn_at_remaining": 25
   },
 

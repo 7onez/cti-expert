@@ -26,6 +26,8 @@ each of these has a silent failure mode:
 
 Run standalone (`python3 tools/eval/test_intelx_anyrun.py`) or via run_eval.py.
 """
+import contextlib
+import io
 import os
 import sys
 
@@ -521,19 +523,34 @@ def check():
     ok(ar.grade_field("madeUpField") == "ungraded",
        "an unknown field is ungraded (never silently clusterable)")
 
-    # --- 9. the spend guards actually block ----------------------------------------------------
+    # --- 9. the spend guards: IntelX WARNS (project decision — no skill-imposed hard limit, the
+    #        vendor quota governs), ANY.RUN still BLOCKS ---------------------------------------
     saved = (ix._RUN_SPENT, ar._RUN_SPENT)
+    saved_flag = ix.SEARCH_BUDGET.get("block_when_exhausted")
     try:
+        ok(ix.SEARCH_BUDGET.get("block_when_exhausted") is False,
+           "IntelX: shipped data does not hard-block (block_when_exhausted is false)")
         ix._RUN_SPENT = ix.budget_status()["max_searches_per_run"]
+        ix._WARNED.discard(("advisory", "test search"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r1 = ix._budget_block(1, "test search")
+            r2 = ix._budget_block(1, "test search")
+        ok(r1 is None and r2 is None,
+           "IntelX: over the per-run cap the call PROCEEDS (warn, don't block)")
+        ok("per-run IntelX cap" in err.getvalue() and err.getvalue().count("proceeding") == 1,
+           "IntelX: …the would-have-blocked reason is printed ONCE as an advisory, never silent")
+        ix.SEARCH_BUDGET["block_when_exhausted"] = True
         blocked = ix._budget_block(1, "test search")
         ok(isinstance(blocked, str) and "per-run" in blocked,
-           "IntelX: over the per-run cap returns a skip REASON, not a silent call")
+           "IntelX: with block_when_exhausted on, the same breach is a skip REASON")
         ar._RUN_SPENT = ar.budget_status()["max_requests_per_run"]
         blocked = ar._budget_block(1, "test lookup")
         ok(isinstance(blocked, str) and "per-run" in blocked,
            "ANY.RUN: over the per-run cap returns a skip REASON, not a silent call")
     finally:
         ix._RUN_SPENT, ar._RUN_SPENT = saved
+        ix.SEARCH_BUDGET["block_when_exhausted"] = saved_flag
 
     # --- 10. the two layers never crash a keyless run -----------------------------------------
     _AR_KEYS = ("ANYRUN_API_KEY", "ANY_RUN_API_KEY", "ANYRUN_KEY")   # every alias bp_anyrun.anyrun_key() reads

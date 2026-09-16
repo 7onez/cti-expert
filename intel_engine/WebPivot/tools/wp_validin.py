@@ -62,7 +62,8 @@ _VALIDIN_FALLBACK = {
         "lookalike": "/api/lookalike/domain/{q}",
         "bulk_osint": "/api/axon/bulk/osint/context",
     },
-    "budget": {"max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3},
+    "budget": {"max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3,
+               "block_when_exhausted": True},
 }
 _REFS = load_ref(ref_path(__file__, "validin_endpoints.json"), _VALIDIN_FALLBACK)
 EP = _REFS["endpoints"]
@@ -79,6 +80,7 @@ _MIN_REMAINING = int(os.environ.get("VALIDIN_MIN_REMAINING", _BUDGET["min_remain
 _RUN_CALLS = 0
 _DOMAIN_CALLS = {}
 _USAGE = None                                # cached {"daily_remaining", "monthly_remaining"} or None
+_WARNED = set()                              # advisory keys already printed this process
 _LOCK = threading.Lock()
 
 _STATUS_REASON = {
@@ -176,18 +178,38 @@ def entitlement(timeout=15):
 
 
 def _allow(bucket):
-    """Per-domain cap + per-run ceiling + quota gate, all BEFORE any HTTP call. Increments the
-    counters when it allows. `bucket` is the domain/IP the call is attributed to."""
+    """Per-domain threshold + per-run threshold + quota gate, evaluated BEFORE any HTTP call.
+    `bucket` is the domain/IP the call is attributed to.
+
+    With `block_when_exhausted: true` a breached threshold returns False and the caller degrades
+    to `{"skipped": "quota"}`. Shipped policy is false (project decision: no skill-imposed hard
+    limit): the would-have-blocked reason is printed once per threshold, the counters still
+    advance, the call proceeds, and Validin's own 402/429 (tri-state in `_get`) is the limit."""
     global _RUN_CALLS
     if _USAGE is None:
         usage()                              # prime the quota cache ONCE per run so can_spend() is live
     with _LOCK:
+        reason = key = None
         if _RUN_CALLS >= _MAX_PER_RUN:
-            return False
-        if _DOMAIN_CALLS.get(bucket, 0) >= _MAX_PER_DOMAIN:
-            return False
-        if not can_spend(1):
-            return False
+            key = ("run",)
+            reason = (f"per-run Validin threshold reached ({_RUN_CALLS}/{_MAX_PER_RUN} calls). "
+                      f"Raise VALIDIN_MAX_CALLS_PER_RUN for a run that genuinely needs it.")
+        elif _DOMAIN_CALLS.get(bucket, 0) >= _MAX_PER_DOMAIN:
+            key = ("domain", bucket)
+            reason = (f"per-domain Validin threshold reached for {bucket} "
+                      f"({_DOMAIN_CALLS.get(bucket, 0)}/{_MAX_PER_DOMAIN} calls). Raise "
+                      f"VALIDIN_MAX_CALLS_PER_DOMAIN if one seed genuinely needs more.")
+        elif not can_spend(1):
+            key = ("quota",)
+            reason = (f"cached Validin quota below the safety margin ({_USAGE}); min_remaining="
+                      f"{_MIN_REMAINING}. The account's own 402 is authoritative.")
+        if reason is not None:
+            if _BUDGET.get("block_when_exhausted", True):
+                return False
+            if key not in _WARNED:
+                _WARNED.add(key)
+                print(f"[validin] ⚠ {reason} (block_when_exhausted is off — proceeding; the "
+                      f"vendor quota is the limit.)", file=sys.stderr)
         _RUN_CALLS += 1
         _DOMAIN_CALLS[bucket] = _DOMAIN_CALLS.get(bucket, 0) + 1
         return True

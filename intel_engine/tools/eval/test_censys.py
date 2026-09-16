@@ -17,14 +17,18 @@ and every one of these has a silent failure mode:
      that must surface as `skipped` with the UI URL, so the analyst still has a runnable query.
   5. **No key = no crash.** WebPivot's contract is that everything works keyless, with the metered
      extras simply absent.
-  6. **The credit guard actually blocks.** A free account gets 100 credits a MONTH, no rollover,
-     shared across every case. A guard that computes a budget but still lets the call through is
-     worse than none: it reports a balance nobody can trust. So we assert an over-budget spend
-     comes back as a `skipped` reason carrying the balance, and that the UI link — which costs the
-     same 5 credits as an API search — says its price rather than reading as a free escape hatch.
+  6. **The credit guard is honest in both modes.** A free account gets 100 credits a MONTH, no
+     rollover, shared across every case. Shipped data runs the guard in WARN mode
+     (`block_when_exhausted: false` — project decision: no skill-imposed hard limit, the vendor
+     quota governs): a breach proceeds but prints the would-have-blocked reason once, never
+     silently. With the flag on, the same breach comes back as a `skipped` reason carrying the
+     balance, and the UI link — which costs the same 5 credits as an API search — says its price
+     rather than reading as a free escape hatch.
 
 Run standalone (`python3 tools/eval/test_censys.py`) or via run_eval.py.
 """
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -144,26 +148,52 @@ def check():
        "a 403 degrades to an analyst-readable plan message, not an opaque error")
 
     # --- 6. the credit budget guard ----------------------------------------------------------
-    # Censys is the tightest quota in the toolkit and the quota is per ACCOUNT, so an overspend in
-    # one case silently disarms Censys in every later one. These assert the guard is real.
+    # These tests pin the shipped reference thresholds rather than inheriting an analyst's live
+    # CENSYS_* overrides (a paid-plan workstation may deliberately set both values much higher).
+    saved_monthly_env = os.environ.get("CENSYS_MONTHLY_CREDITS")
+    saved_run_env = os.environ.get("CENSYS_MAX_CREDITS_PER_RUN")
+    os.environ["CENSYS_MONTHLY_CREDITS"] = str(cen.CREDIT_BUDGET["monthly_credits"])
+    os.environ["CENSYS_MAX_CREDITS_PER_RUN"] = str(cen.CREDIT_BUDGET["max_credits_per_run"])
     b = cen.budget_status()
     ok(b["monthly_credits"] >= 1 and b["remaining_this_month"] <= b["monthly_credits"],
        "budget_status reports a coherent monthly balance")
     ok(b["max_credits_per_run"] < b["monthly_credits"],
-       "the per-run cap is smaller than the month — one run cannot spend the whole quota")
-    # These two assert the guard's SHAPE, so they must not depend on how much of the real month's
+       "the advisory per-run threshold is smaller than the monthly threshold")
+    # These assert the guard's SHAPE, so they must not depend on how much of the real month's
     # quota happens to be spent — otherwise the gate turns red for every contributor once the
     # account's 100 credits run out, which says nothing about the code. Pin the ledger the same
     # way the exhausted-month case below does.
+    #
+    # Shipped data has `block_when_exhausted: false` (project decision: no skill-imposed hard
+    # limit, the vendor quota governs). So a cap breach must PROCEED (None) with a one-time stderr
+    # advisory — never a silent None — and flipping the flag on must turn the same breach into a
+    # refusal string. Both halves are exercised so neither behaviour can regress unnoticed.
     _saved_run, _saved_month = cen._RUN_SPENT, cen._MONTH_SPENT
+    _saved_flag = cen.CREDIT_BUDGET.get("block_when_exhausted")
     try:
         cen._RUN_SPENT = cen._MONTH_SPENT = 0
         ok(cen._budget_block(1, "cert lookup") is None,
            "a 1-credit lookup inside budget is allowed")
+        ok(cen.CREDIT_BUDGET.get("block_when_exhausted") is False,
+           "shipped data does not hard-block: block_when_exhausted is false")
+        cen._WARNED.discard(("advisory", "huge bulk lookup"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r1 = cen._budget_block(b["max_credits_per_run"] + 1, "huge bulk lookup")
+            r2 = cen._budget_block(b["max_credits_per_run"] + 1, "huge bulk lookup")
+        ok(r1 is None and r2 is None, "over the per-run cap the call PROCEEDS (warn, don't block)")
+        ok("per-run Censys credit cap" in err.getvalue() and err.getvalue().count("proceeding") == 1,
+           "…with the would-have-blocked reason printed ONCE as an advisory, not silently")
+        cen.CREDIT_BUDGET["block_when_exhausted"] = True
         ok(isinstance(cen._budget_block(b["max_credits_per_run"] + 1, "huge bulk lookup"), str),
-           "a spend over the per-run cap is BLOCKED with an analyst-readable reason")
+           "with block_when_exhausted on, the same breach is REFUSED with a readable reason")
     finally:
         cen._RUN_SPENT, cen._MONTH_SPENT = _saved_run, _saved_month
+        cen.CREDIT_BUDGET["block_when_exhausted"] = _saved_flag
+
+    # The refusal path (exhausted month, lookup reserve) is tested with blocking forced on: it is
+    # the opt-in strict mode and its messages are part of the contract.
+    cen.CREDIT_BUDGET["block_when_exhausted"] = True
 
     saved_run = cen._RUN_SPENT
     saved_month = cen._MONTH_SPENT
@@ -191,10 +221,19 @@ def check():
            "…but a 5-credit search is refused, reserving the balance for lookups")
     finally:
         cen._RUN_SPENT, cen._MONTH_SPENT = saved_run, saved_month
+        cen.CREDIT_BUDGET["block_when_exhausted"] = _saved_flag
         cen.ENABLED = saved_enabled
         os.environ.pop("CENSYS_PAT", None)
         if saved_token is not None:
             os.environ["CENSYS_PAT"] = saved_token
+        if saved_monthly_env is None:
+            os.environ.pop("CENSYS_MONTHLY_CREDITS", None)
+        else:
+            os.environ["CENSYS_MONTHLY_CREDITS"] = saved_monthly_env
+        if saved_run_env is None:
+            os.environ.pop("CENSYS_MAX_CREDITS_PER_RUN", None)
+        else:
+            os.environ["CENSYS_MAX_CREDITS_PER_RUN"] = saved_run_env
         cen._MEMO.clear()
 
     ui = [q for q in cen.censys_queries("favicon_hash", FAKE_MD5)

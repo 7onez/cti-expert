@@ -6,10 +6,12 @@ guideline). Reuses that file's `patched()` harness and the `wp_validin` module h
 
 WHAT THIS FILE PROTECTS
 ------------------------
-  3. wp_validin's quota gate — a low cached remaining-quota short-circuits domain_lookup() to
-     {"skipped": "quota"} BEFORE any HTTP call; the per-domain cap
-     (VALIDIN_MAX_CALLS_PER_DOMAIN, default 2) allows exactly 2 calls to the same bucket and
-     short-circuits the 3rd.
+  3. wp_validin's quota gate in BOTH modes. Shipped data has `block_when_exhausted: false`
+     (project decision: no skill-imposed hard limit): a low cached quota or a breached per-domain
+     threshold PROCEEDS, still fires the HTTP call, and prints the would-have-blocked reason
+     exactly once — never silently. With the flag forced on, the same breach short-circuits to
+     {"skipped": "quota"} BEFORE any HTTP call and the per-domain cap (default 2) allows exactly
+     2 calls to a bucket and refuses the 3rd.
   4. wp_validin.cert_hosts uses the SHA1 hash/pivots reverse path (CERT_FINGERPRINT category),
      never bleeding into favicon_hosts' FAVICON_HASH category.
   5. case_state._free_candidates_from_raw actually MINES the validin/validin_subs/hunterhow/
@@ -22,6 +24,8 @@ OFFLINE, DETERMINISTIC, ZERO NETWORK — see test_validin_engines.py's module do
 Run:  python3 tests/test_validin_engines_quota_frontier.py
       pytest -q tests/test_validin_engines_quota_frontier.py
 """
+import contextlib
+import io
 import os
 import sys
 
@@ -69,20 +73,48 @@ def check():
             failed += 1
             out.append(("FAIL", label))
 
-    # --- 3a. low remaining quota short-circuits BEFORE any HTTP call -----------------------
+    # --- 3a. WARN mode (shipped): low quota proceeds, advisory printed once, call still fires -
+    ok(V._BUDGET.get("block_when_exhausted") is False,
+       "validin: shipped data does not hard-block (block_when_exhausted is false)")
     calls = []
+    err = io.StringIO()
     with patched(V, validin_key=(lambda: "FAKEKEY"),
+                 _USAGE={"daily_remaining": 0, "monthly_remaining": 0},
+                 _RUN_CALLS=0, _DOMAIN_CALLS={}, _WARNED=set()):
+        with patched(V, _get=_counting_get(calls)), contextlib.redirect_stderr(err):
+            r1 = V.domain_lookup("quota.example")
+            r2 = V.domain_lookup("quota2.example")
+    ok(r1 != {"skipped": "quota"} and r2 != {"skipped": "quota"} and len(calls) == 2,
+       f"validin: warn mode — low cached quota PROCEEDS and the call fires (got {len(calls)} calls)")
+    ok("cached Validin quota" in err.getvalue() and err.getvalue().count("proceeding") == 1,
+       "validin: warn mode — the quota reason is printed ONCE as an advisory, never silently")
+
+    # --- 3b. WARN mode: per-domain threshold proceeds; advisory once per bucket -----------
+    calls = []
+    err = io.StringIO()
+    with patched(V, validin_key=(lambda: "FAKEKEY"),
+                 _USAGE={"daily_remaining": 100, "monthly_remaining": 100},
+                 _RUN_CALLS=0, _DOMAIN_CALLS={}, _MAX_PER_DOMAIN=2, _WARNED=set()):
+        with patched(V, _get=_counting_get(calls)), contextlib.redirect_stderr(err):
+            for _ in range(4):
+                V.domain_lookup("cap.example")
+    ok(len(calls) == 4, f"validin: warn mode — 3rd/4th calls to a bucket still fire (got {len(calls)})")
+    ok("per-domain Validin threshold" in err.getvalue() and err.getvalue().count("proceeding") == 1,
+       "validin: warn mode — per-domain advisory printed once for the bucket, not per call")
+
+    # --- 3c. STRICT mode (flag forced on): the old contract still holds --------------------
+    strict = dict(V._BUDGET, block_when_exhausted=True)
+    calls = []
+    with patched(V, validin_key=(lambda: "FAKEKEY"), _BUDGET=strict,
                  _USAGE={"daily_remaining": 0, "monthly_remaining": 0},
                  _RUN_CALLS=0, _DOMAIN_CALLS={}):
         with patched(V, _get=_counting_get(calls)):
             r = V.domain_lookup("quota.example")
     ok(r == {"skipped": "quota"},
-       f"validin: low remaining quota -> {{'skipped':'quota'}} (got {r!r})")
-    ok(not calls, "validin: quota-gated domain_lookup fires ZERO HTTP calls")
-
-    # --- 3b. per-domain cap (VALIDIN_MAX_CALLS_PER_DOMAIN=2) short-circuits the 3rd call ----
+       f"validin: strict — low remaining quota -> {{'skipped':'quota'}} (got {r!r})")
+    ok(not calls, "validin: strict — quota-gated domain_lookup fires ZERO HTTP calls")
     calls = []
-    with patched(V, validin_key=(lambda: "FAKEKEY"),
+    with patched(V, validin_key=(lambda: "FAKEKEY"), _BUDGET=strict,
                  _USAGE={"daily_remaining": 100, "monthly_remaining": 100},
                  _RUN_CALLS=0, _DOMAIN_CALLS={}, _MAX_PER_DOMAIN=2):
         with patched(V, _get=_counting_get(calls)):
@@ -90,10 +122,10 @@ def check():
             r2 = V.domain_lookup("cap.example")
             r3 = V.domain_lookup("cap.example")
     ok(len(calls) == 2,
-       f"validin: per-domain cap allows exactly 2 calls to the same bucket (got {len(calls)})")
+       f"validin: strict — per-domain cap allows exactly 2 calls to the same bucket (got {len(calls)})")
     ok(r1 != {"skipped": "quota"} and r2 != {"skipped": "quota"},
-       "validin: the first 2 calls to the bucket are NOT quota-skipped")
-    ok(r3 == {"skipped": "quota"}, f"validin: the 3rd call to the SAME bucket short-circuits (got {r3!r})")
+       "validin: strict — the first 2 calls to the bucket are NOT quota-skipped")
+    ok(r3 == {"skipped": "quota"}, f"validin: strict — the 3rd call to the SAME bucket short-circuits (got {r3!r})")
 
     # --- 4. cert_hosts: SHA1 hash/pivots path, CERT_FINGERPRINT category only --------------
     captured = {}

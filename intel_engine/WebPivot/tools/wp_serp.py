@@ -354,30 +354,42 @@ def _budget_block(cost: int, action: str, is_detail: bool = False):
 
     Returned as a `skipped` reason, never an exception: an unaffordable SerpApi call is the same
     class of outcome as a missing key — the transparency UI address is still the deliverable, and it
-    costs nothing to open."""
+    costs nothing to open.
+
+    With `block_when_exhausted: false` the ledger still counts and the balance banner still prints,
+    but a cap that would have refused the call is printed once as an advisory and the call proceeds:
+    SerpApi's own 429 (already tri-state) becomes the real limit."""
     b = budget_status()
-    if not SEARCH_BUDGET.get("block_when_exhausted", True):
-        return None
-    if is_detail and b["creative_details_this_run"] + 1 > b["max_creative_details_per_run"]:
-        return (f"per-run creative-detail cap reached ({b['creative_details_this_run']}/"
-                f"{b['max_creative_details_per_run']}). Each detail call opens ONE creative; a wide "
-                f"advertiser would otherwise spend a month's quota on one domain. Open the rest in "
-                f"the Ads Transparency Center UI.")
-    if b["spent_this_run"] + cost > b["max_searches_per_run"]:
-        return (f"per-run SerpApi cap reached ({b['spent_this_run']}/{b['max_searches_per_run']} "
-                f"searches spent this run; {action} needs {cost}). Raise "
-                f"SERPAPI_MAX_SEARCHES_PER_RUN for a run that genuinely needs it, or use the "
-                f"emitted Ads Transparency Center URL by hand.")
     remaining = b["remaining_this_month"]
-    if cost > remaining:
-        return (f"monthly SerpApi search budget exhausted ({b['spent_this_month']}/"
-                f"{b['monthly_searches']} spent in {b['month']}; {action} needs {cost}). Raise "
-                f"SERPAPI_MONTHLY_SEARCHES if you are on a larger plan.")
     if remaining <= _budget("warn_at_remaining", default=25) and action not in _WARNED:
         _WARNED.add(action)
         print(f"[serp] ⚠ {remaining} of {b['monthly_searches']} monthly SerpApi searches left "
               f"({b['spent_this_month']} spent in {b['month']}). Spending {cost} on {action}.",
               file=sys.stderr)
+    reason = None
+    if is_detail and b["creative_details_this_run"] + 1 > b["max_creative_details_per_run"]:
+        reason = (f"per-run creative-detail cap reached ({b['creative_details_this_run']}/"
+                  f"{b['max_creative_details_per_run']}). Each detail call opens ONE creative; a wide "
+                  f"advertiser would otherwise spend a month's quota on one domain. Open the rest in "
+                  f"the Ads Transparency Center UI.")
+    elif b["spent_this_run"] + cost > b["max_searches_per_run"]:
+        reason = (f"per-run SerpApi cap reached ({b['spent_this_run']}/{b['max_searches_per_run']} "
+                  f"searches spent this run; {action} needs {cost}). Raise "
+                  f"SERPAPI_MAX_SEARCHES_PER_RUN for a run that genuinely needs it, or use the "
+                  f"emitted Ads Transparency Center URL by hand.")
+    elif cost > remaining:
+        reason = (f"monthly SerpApi search budget exhausted ({b['spent_this_month']}/"
+                  f"{b['monthly_searches']} spent in {b['month']}; {action} needs {cost}). Raise "
+                  f"SERPAPI_MONTHLY_SEARCHES if you are on a larger plan.")
+    if reason is None:
+        return None
+    if SEARCH_BUDGET.get("block_when_exhausted", True):
+        return reason
+    key = ("advisory", action)
+    if key not in _WARNED:
+        _WARNED.add(key)
+        print(f"[serp] ⚠ {reason} (block_when_exhausted is off — proceeding; the vendor quota "
+              f"is the limit.)", file=sys.stderr)
     return None
 
 

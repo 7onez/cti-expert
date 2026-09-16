@@ -16,6 +16,7 @@
     "bulk_osint": "/api/axon/bulk/osint/context"
   },
   "budget": {
-    "_comment": "quota caps: per-domain (protect a 10/day key), per-run ceiling, and the min remaining before degrading to query strings.",
-    "max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3}
+    "_comment": "Quota thresholds: per-domain (sized for a 10/day Community key), per-run, and the min remaining before the quota gate trips. POLICY (project decision): `block_when_exhausted` is FALSE — the skill imposes no hard usage limit; a breached threshold is printed once as an advisory, the counters still advance, the call proceeds, and Validin's own 402/429 (handled tri-state) is the real limit. Set it true to degrade to `{\"skipped\": \"quota\"}` instead.",
+    "max_calls_per_domain": 2, "max_calls_per_run": 40, "min_remaining": 3,
+    "block_when_exhausted": false}
 }
