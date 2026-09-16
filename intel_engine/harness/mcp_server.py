@@ -41,6 +41,8 @@ import asyncio
 import json
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # find harness/tools.py first
 import audit  # noqa: E402  — the shared tool-call gate + ledger (front-end neutral)
@@ -57,6 +59,10 @@ TOOLS = {
 }
 
 _JSON_TYPE = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+# Executor for blocking tool coroutines (concurrency governed by vendor limits, not a codebase cap)
+_EXECUTOR = ThreadPoolExecutor()
+_WRITE_LOCK = threading.Lock()
 
 
 def _input_schema(sdk_schema: dict, optional: dict | None = None) -> dict:
@@ -135,15 +141,31 @@ class _MethodNotFound(Exception):
 
 
 def _write(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    with _WRITE_LOCK:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
 
-def _serve() -> None:
-    """Blocking read loop over newline-delimited JSON-RPC. Requests carry an `id` and get a
-    reply; notifications (no `id`, e.g. notifications/initialized) are acted on but never answered."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+async def _handle(msg: dict) -> None:
+    mid = msg.get("id")
+    method = msg.get("method", "")
+    params = msg.get("params") or {}
+    try:
+        def _run_dispatch():
+            return asyncio.run(_dispatch(method, params))
+        result = await asyncio.get_running_loop().run_in_executor(_EXECUTOR, _run_dispatch)
+        if mid is not None:
+            _write({"jsonrpc": "2.0", "id": mid, "result": result})
+    except _MethodNotFound:
+        if mid is not None:
+            _write({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}})
+    except Exception as e:  # noqa: BLE001
+        if mid is not None:
+            _write({"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": f"internal error: {e!r}"}})
+
+
+def _stdin_reader(loop: asyncio.AbstractEventLoop) -> None:
+    """Background thread: reads stdin and schedules work on the main loop."""
     try:
         for line in sys.stdin:
             line = line.strip()
@@ -152,28 +174,24 @@ def _serve() -> None:
             try:
                 msg = json.loads(line)
             except json.JSONDecodeError:
-                _write({"jsonrpc": "2.0", "id": None,
-                        "error": {"code": -32700, "message": "parse error"}})
+                _write({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
                 continue
-            mid = msg.get("id")
-            method = msg.get("method", "")
-            params = msg.get("params") or {}
-            try:
-                result = loop.run_until_complete(_dispatch(method, params))
-            except _MethodNotFound:
-                if mid is not None:
-                    _write({"jsonrpc": "2.0", "id": mid,
-                            "error": {"code": -32601, "message": f"method not found: {method}"}})
-                continue
-            except Exception as e:  # noqa: BLE001
-                if mid is not None:
-                    _write({"jsonrpc": "2.0", "id": mid,
-                            "error": {"code": -32603, "message": f"internal error: {e!r}"}})
-                continue
-            if mid is not None:  # a request — reply; a notification carries no id, so stay silent
-                _write({"jsonrpc": "2.0", "id": mid, "result": result})
+            loop.call_soon_threadsafe(loop.create_task, _handle(msg))
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+
+
+def _serve() -> None:
+    """Main thread owns the event loop. Stdin is read by a daemon thread."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    reader = threading.Thread(target=_stdin_reader, args=(loop,), daemon=True)
+    reader.start()
+    try:
+        loop.run_forever()
     finally:
         loop.close()
+        _EXECUTOR.shutdown(wait=False)
 
 
 if __name__ == "__main__":
