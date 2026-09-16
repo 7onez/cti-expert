@@ -282,6 +282,8 @@ def main():
                               "free-only mode, no banner when fully keyed"),
         ("test_intelx_anyrun", "IntelX + ANY.RUN layers — keyless ~50% disclosure, strong-selector "
                                "refusal, observation-field mapping, false-cluster policy, spend guard"),
+        ("test_mcp_server_concurrency", "mcp_server concurrency — stdin thread + per-call worker loop, "
+                                        "two slow calls finish in max not sum time"),
         ("test_docmeta", "document/image metadata — PDF /Info + XMP, EXIF incl. GPS, PNG chunks, "
                          "magic-byte dispatch, base-rate filter on both the pivot and ingest paths"),
         ("test_tool_registry", "tool registry (RULE 2) — every @tool served by an SDK server and "

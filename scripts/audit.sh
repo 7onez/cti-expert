@@ -191,6 +191,7 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
          intel_engine/tests/test_misconfig.py intel_engine/tests/test_misp.py \
          intel_engine/tests/test_paths_capture.py intel_engine/tests/test_pssl.py \
          intel_engine/tests/test_serp.py intel_engine/tests/test_timeline.py \
+         intel_engine/tests/test_mcp_server_concurrency.py \
          intel_engine/tests/test_tool_registry.py; do
   if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
   if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
