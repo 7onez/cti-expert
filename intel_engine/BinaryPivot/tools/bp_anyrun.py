@@ -778,7 +778,8 @@ def submit_preflight(target: str, kind: str = "file") -> dict:
 
 def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: str = None,
            timeout_s: int = None, auto_delete: str = None, allow_public: bool = False,
-           allow_unverified_plan: bool = False, tags: str = None, timeout: int = 120):
+           allow_unverified_plan: bool = False, tags: str = None, timeout: int = 120,
+           env_os: str = None):
     """Detonate a file or URL in the ANY.RUN sandbox. **Refuses unless `confirm=True`.**
 
     `confirm` is a function parameter rather than a config value on purpose: `submission_policy` in
@@ -868,6 +869,8 @@ def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: s
             "opt_privacy_type": privacy,
             "opt_timeout": int(timeout_s or 120),
             "opt_auto_delete_after": auto_delete or policy.get("default_auto_delete_after") or ""}
+    if env_os:
+        body["env_os"] = env_os
     if tags:
         # RULE 1 crossing an API boundary: a case identifier must not travel to a third party.
         body["user_tags"] = tags
@@ -1299,6 +1302,8 @@ def main():
     p.add_argument("--sandbox-timeout", type=int, default=None, metavar="SECONDS")
     p.add_argument("--tags", default=None,
                    help="ANY.RUN user tags — NEVER put a case ID or an analyst/client name here")
+    p.add_argument("--env-os", default=None, choices=["windows", "android"],
+                   help="sandbox OS (default: windows)")
     vp = sub.add_parser("verify-privacy",
                         help="finish a submission's privacy read-back once the task has run: reads "
                              "the applied privacy and withdraws a task that landed in a forbidden "
@@ -1366,7 +1371,7 @@ def main():
         out = submit(args.target, "url" if args.url else "file", confirm=True,
                      privacy=args.privacy, timeout_s=args.sandbox_timeout,
                      allow_public=args.allow_public, allow_unverified_plan=args.allow_unverified_plan,
-                     tags=args.tags)
+                     tags=args.tags, env_os=args.env_os)
     else:
         if args.query:
             out = ti_lookup(args.query, days=args.days)
