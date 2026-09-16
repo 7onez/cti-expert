@@ -25,10 +25,12 @@ silent bug here mis-routes (or leaks) every outbound request in the skill:
      FRESH process (the common one-shot case) still deprioritizes it — not just
      the single long-lived opener instance that happened to observe the failure.
 """
+import argparse
+import contextlib
+import io
 import os
 import sys
 import urllib.error
-
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "scripts", "proxy"))
 
@@ -294,6 +296,22 @@ def test_disabled_inert():
     cp._INSTALLED = False
     check("install() returns None with an empty pool",
           cp.install(_cfg(proxies=[])) is None)
+    _clear_env()
+
+# ── 6c. status warns when enabled+empty (direct egress) ──────────────────────
+def test_status_warns_on_empty_pool():
+    print("\n[6c] status warns when enabled+empty (direct egress)")
+    _clear_env()
+    os.environ["CTI_PROXY_ENABLED"] = "1"
+    # no proxies in cfg, no env CTI_PROXY* → build_pool returns []
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        cp_status = __import__("proxy", fromlist=["cmd_status"])
+        cp_status.cmd_status(_cfg(proxies=[]), argparse.Namespace())
+    txt = out.getvalue()
+    check("status prints WARNING when enabled+empty",
+          "WARNING" in txt and "DIRECT" in txt and "pool empty" in txt)
+    _clear_env()
 
 
 # ── 6b. SOCKS raw-socket fail-closed contract ────────────────────────────────
@@ -441,7 +459,7 @@ def main():
     print("cti_proxy — normalization, precedence, rotation, failover, no-leak, live")
     for fn in (test_normalize, test_precedence, test_rotation, test_failover,
                test_vendor_direct_fallback, test_health_persistence, test_no_leak_and_bypass, test_disabled_inert,
-               test_socks_failclosed, test_live_proxy_roundtrip):
+               test_status_warns_on_empty_pool, test_socks_failclosed, test_live_proxy_roundtrip):
         fn()
     try:
         os.remove(os.environ["CTI_PROXY_STORE"])

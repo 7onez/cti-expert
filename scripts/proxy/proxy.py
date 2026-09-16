@@ -97,6 +97,8 @@ def cmd_status(cfg, args):
               f"{label}   last_ok={last}")
     print(f"  effective egress pool ({len(pool)}): "
           f"{', '.join(_mask(p) for p in pool) or '(direct — no proxy)'}")
+    if cp.is_enabled(cfg) and not pool:
+        print("  WARNING      : egress is DIRECT (pool empty) — analyst IP will touch targets.")
     return 0
 
 
@@ -273,6 +275,7 @@ def main(argv):
     ap = build_parser()
     args = ap.parse_args(argv)
     cfg = cp.load_store()
+    cp.load_env_file()          # make CTI_PROXIES/CTI_PROXY visible to build_pool/status
     dispatch = {
         None: cmd_status, "status": cmd_status, "add": cmd_add, "remove": cmd_remove,
         "clear": cmd_clear, "enable": cmd_enable, "disable": cmd_disable,
