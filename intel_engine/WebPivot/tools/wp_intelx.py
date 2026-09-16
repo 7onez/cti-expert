@@ -79,9 +79,10 @@ CREDITS
 -------
 Searches are metered (a free key gets a small allowance; a paid key spends credits) and running out
 is SILENT from the analyst's side — the search just returns nothing. So spend is counted from
-`MEMORY/api_usage.jsonl` and capped before the call, per run and per month, exactly like the Censys
-guard. Thresholds are DATA (`references/intelx.json -> search_budget`), overridable with
-`INTELX_MAX_SEARCHES_PER_RUN` / `INTELX_MONTHLY_SEARCHES`.
+`MEMORY/api_usage.jsonl` per run and per month. The shipped policy warns at/over those thresholds
+but does not block; the vendor's 402/429 is the real limit. Set `block_when_exhausted: true` in
+`references/intelx.json -> search_budget` for strict refusal. Thresholds are DATA and remain
+overridable with `INTELX_MAX_SEARCHES_PER_RUN` / `INTELX_MONTHLY_SEARCHES`.
 
 Auth: `INTELX_KEY` (Account -> Developer tab), sent as the `x-key` header. `INTELX_BASE_URL`
 overrides the API root when your account is issued against a different instance.
@@ -264,10 +265,11 @@ def _record(action: str, credits: int, query: str, results=None, ok: bool = True
         api_usage.record("intelx", action, credits=credits, query=query, results=results, ok=ok)
 
 
-# --------------------------------------------------------------------------- search BUDGET guard
+# --------------------------------------------------------------------------- search BUDGET ledger
 # Running out of IntelX searches is silent from the analyst's side: the call returns nothing, and an
-# empty result reads as "this selector appears in no leak". So the spend is tracked against the
-# shared ledger and capped BEFORE the call, never discovered as an empty page mid-batch.
+# empty result reads as "this selector appears in no leak". Spend is therefore tracked against the
+# shared ledger and threshold breaches are reported before the call. Shipped policy is advisory;
+# `block_when_exhausted: true` makes the same thresholds strict.
 _RUN_SPENT = 0
 _MONTH_SPENT = None          # summed from the ledger once per process
 _WARNED = set()
@@ -349,23 +351,35 @@ def budget_status() -> dict:
 
 def _budget_block(cost: int, action: str):
     """None when `cost` units may be spent, else the analyst-readable reason not to. Returned as a
-    `skipped` reason, never an exception — the UI link is still the deliverable."""
-    if not SEARCH_BUDGET.get("block_when_exhausted", True):
-        return None
+    `skipped` reason, never an exception — the UI link is still the deliverable.
+
+    With `block_when_exhausted: false` the ledger still counts and the balance banner still prints,
+    but a cap that would have refused the call is printed once as an advisory and the call proceeds:
+    the vendor's own 402/429 (already tri-state) becomes the real limit."""
     b = budget_status()
-    if b["spent_this_run"] + cost > b["max_searches_per_run"]:
-        return (f"per-run IntelX cap reached ({b['spent_this_run']}/{b['max_searches_per_run']} "
-                f"units spent this run; {action} needs {cost}). Raise INTELX_MAX_SEARCHES_PER_RUN "
-                f"for a run that genuinely needs it, or run the emitted selector in the web UI.")
-    if cost > b["remaining_this_month"]:
-        return (f"monthly IntelX allowance exhausted ({b['spent_this_month']}/"
-                f"{b['monthly_searches']} units in {b['month']}; {action} needs {cost}). Raise "
-                f"INTELX_MONTHLY_SEARCHES if your plan is larger.")
     if b["remaining_this_month"] <= _budget("warn_at_remaining", default=50) and action not in _WARNED:
         _WARNED.add(action)
         print(f"[intelx] ⚠ {b['remaining_this_month']} of {b['monthly_searches']} monthly search "
               f"units left ({b['spent_this_month']} spent in {b['month']}). Spending {cost} on "
               f"{action}.", file=sys.stderr)
+    reason = None
+    if b["spent_this_run"] + cost > b["max_searches_per_run"]:
+        reason = (f"per-run IntelX cap reached ({b['spent_this_run']}/{b['max_searches_per_run']} "
+                  f"units spent this run; {action} needs {cost}). Raise INTELX_MAX_SEARCHES_PER_RUN "
+                  f"for a run that genuinely needs it, or run the emitted selector in the web UI.")
+    elif cost > b["remaining_this_month"]:
+        reason = (f"monthly IntelX allowance exhausted ({b['spent_this_month']}/"
+                  f"{b['monthly_searches']} units in {b['month']}; {action} needs {cost}). Raise "
+                  f"INTELX_MONTHLY_SEARCHES if your plan is larger.")
+    if reason is None:
+        return None
+    if SEARCH_BUDGET.get("block_when_exhausted", True):
+        return reason
+    key = ("advisory", action)
+    if key not in _WARNED:
+        _WARNED.add(key)
+        print(f"[intelx] ⚠ {reason} (block_when_exhausted is off — proceeding; the vendor quota "
+              f"is the limit.)", file=sys.stderr)
     return None
 
 

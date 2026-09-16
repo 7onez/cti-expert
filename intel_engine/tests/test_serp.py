@@ -29,6 +29,8 @@ Three failure modes, all silent in production.
 
 Plus the keyless contract: with no SERPAPI_KEY nothing may be reported as a negative finding.
 """
+import contextlib
+import io
 import json
 import os
 import sys
@@ -325,17 +327,31 @@ def check():
     # --- 8. the spend guard ------------------------------------------------------------------
     b = S.budget_status()
     ok(b["max_searches_per_run"] > 0 and b["monthly_searches"] > 0,
-       "the budget guard has a per-run cap and a monthly ceiling")
+       "the ledger still defines advisory per-run and monthly thresholds")
     saved = S._RUN_SPENT
+    saved_flag = S.SEARCH_BUDGET.get("block_when_exhausted")
     try:
+        ok(S.SEARCH_BUDGET.get("block_when_exhausted") is False,
+           "shipped data does not hard-block: block_when_exhausted is false")
         S._RUN_SPENT = b["max_searches_per_run"]
+        S._WARNED.discard(("advisory", "advertiser lookup"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r1 = S._budget_block(1, "advertiser lookup")
+            r2 = S._budget_block(1, "advertiser lookup")
+        ok(r1 is None and r2 is None,
+           "spending past the per-run threshold PROCEEDS (warn, don't block)")
+        ok("per-run SerpApi cap" in err.getvalue() and err.getvalue().count("proceeding") == 1,
+           "…with the would-have-blocked reason printed ONCE as an advisory, never silently")
+        S.SEARCH_BUDGET["block_when_exhausted"] = True
         blocked = S._budget_block(1, "advertiser lookup")
         ok(isinstance(blocked, str) and "per-run" in blocked,
-           "spending past the per-run cap is REFUSED before the call, with a readable reason")
+           "with block_when_exhausted on, the same breach is REFUSED with a readable reason")
         ok("Ads Transparency" in blocked or "SERPAPI_MAX_SEARCHES_PER_RUN" in blocked,
            "and the refusal names the free alternative / the override")
     finally:
         S._RUN_SPENT = saved
+        S.SEARCH_BUDGET["block_when_exhausted"] = saved_flag
 
     # --- 9. reference DATA is loaded, not the fallback ---------------------------------------
     ok(len(S.AD_PARAMETERS) > len(S._SERP_FALLBACK["ad_parameters"]),

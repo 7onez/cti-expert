@@ -29,10 +29,10 @@ account gets **100 a month that do not roll over**. Twenty searches empty the mo
 is per ACCOUNT, so a careless batch does not just spoil its own run, it takes Censys away from every
 later case until the 1st. This is the tightest budget in the toolkit and is treated accordingly:
 
-  - **spend is tracked and capped BEFORE the call** (`budget_status` / `_budget_block`), summed from
-    `MEMORY/api_usage.jsonl` across every case, with a per-run blast-radius cap and a reserve that
-    keeps the cheap 1-credit lookups affordable when a 5-credit search would empty the balance.
-    Over budget -> the same `{"skipped": reason}` degradation as a plan 403, never a 402 surprise;
+  - **spend is tracked before the call** (`budget_status` / `_budget_block`), summed from
+    `MEMORY/api_usage.jsonl` across every case, with per-run and reserve thresholds. The shipped
+    policy warns when a call crosses one of those thresholds but does not block; Censys' own 402 is
+    the real limit. Set `block_when_exhausted: true` for strict `{"skipped": reason}` refusal;
   - the **UI link is not free either** — running the emitted CenQL in the web console costs the same
     5 credits, so every UI entry states its price rather than reading as a free escape hatch;
   - Censys is **skipped under `--free-only`**, disabled by `--no-censys`, memoised per process, and
@@ -206,13 +206,13 @@ def _record(action: str, credits: int, query: str, results=None, ok: bool = True
         api_usage.record("censys", action, credits=credits, query=query, results=results, ok=ok)
 
 
-# --------------------------------------------------------------------------- credit BUDGET guard
+# --------------------------------------------------------------------------- credit BUDGET ledger
 # The free plan grants 100 credits a MONTH and they do not roll over. Four searches a day empties
 # it, and the failure mode is nasty: the month dies silently mid-case and every LATER case loses
-# Censys too. So the spend is tracked against the ledger and capped BEFORE the call, rather than
-# discovered as an HTTP 402 halfway through a batch. Thresholds are DATA (references/censys_queries
-# .json → credit_budget); the env overrides exist for the analyst who bought credits today and does
-# not want to edit a tracked file for one run.
+# Censys too. Spend is therefore tracked against the ledger and threshold breaches are reported
+# before the call. Shipped policy is advisory; `block_when_exhausted: true` makes the same
+# thresholds strict. Thresholds are DATA (references/censys_queries.json → credit_budget); env
+# overrides let an analyst reflect a larger plan without editing tracked data.
 _RUN_SPENT = 0
 _MONTH_SPENT = None          # summed from the ledger once per process
 _WARNED = set()
@@ -300,33 +300,46 @@ def _budget_block(cost: int, action: str, is_search: bool = False):
 
     Returned as a `skipped` reason, never an exception: a Censys call that cannot be afforded is
     the same class of outcome as one the plan does not allow — the CenQL query and its UI link are
-    still the deliverable."""
+    still the deliverable.
+
+    With `block_when_exhausted: false` the ledger still counts and the balance banner still prints,
+    but a cap that would have refused the call is printed once as an advisory and the call proceeds:
+    Censys' own 402 (already tri-state) becomes the real limit."""
     b = budget_status()
-    if not CREDIT_BUDGET.get("block_when_exhausted", True):
-        return None
-    if b["spent_this_run"] + cost > b["max_credits_per_run"]:
-        return (f"per-run Censys credit cap reached ({b['spent_this_run']}/"
-                f"{b['max_credits_per_run']} credits spent this run; {action} needs {cost}). "
-                f"Raise CENSYS_MAX_CREDITS_PER_RUN for a run that genuinely needs it, or run the "
-                f"emitted CenQL in the Censys web UI instead.")
     remaining = b["remaining_this_month"]
-    if cost > remaining:
-        return (f"monthly Censys credit budget exhausted ({b['spent_this_month']}/"
-                f"{b['monthly_credits']} spent in {b['month']}; {action} needs {cost}). Credits do "
-                f"not roll over — the balance resets on the 1st. Raise CENSYS_MONTHLY_CREDITS if "
-                f"you bought more.")
-    # The cheap cert/host/webproperty lookups are the free plan's whole value; a 5-credit search
-    # must not eat the last of the month and leave them unaffordable.
-    reserve = b["reserve_for_lookups"]
-    if is_search and reserve and remaining - cost < reserve:
-        return (f"a {cost}-credit search would leave {remaining - cost} credits, below the "
-                f"{reserve} reserved for 1-credit lookups (cert/host/webproperty — the highest-"
-                f"value calls on a free plan). Run this CenQL in the Censys web UI instead.")
     if remaining <= _budget("warn_at_remaining", default=30) and action not in _WARNED:
         _WARNED.add(action)
         print(f"[censys] ⚠ {remaining} of {b['monthly_credits']} monthly credits left "
               f"({b['spent_this_month']} spent in {b['month']}, no rollover). Spending {cost} on "
               f"{action}.", file=sys.stderr)
+    reason = None
+    if b["spent_this_run"] + cost > b["max_credits_per_run"]:
+        reason = (f"per-run Censys credit cap reached ({b['spent_this_run']}/"
+                  f"{b['max_credits_per_run']} credits spent this run; {action} needs {cost}). "
+                  f"Raise CENSYS_MAX_CREDITS_PER_RUN for a run that genuinely needs it, or run the "
+                  f"emitted CenQL in the Censys web UI instead.")
+    elif cost > remaining:
+        reason = (f"monthly Censys credit budget exhausted ({b['spent_this_month']}/"
+                  f"{b['monthly_credits']} spent in {b['month']}; {action} needs {cost}). Credits do "
+                  f"not roll over — the balance resets on the 1st. Raise CENSYS_MONTHLY_CREDITS if "
+                  f"you bought more.")
+    else:
+        # The cheap cert/host/webproperty lookups are the free plan's whole value; a 5-credit search
+        # must not eat the last of the month and leave them unaffordable.
+        reserve = b["reserve_for_lookups"]
+        if is_search and reserve and remaining - cost < reserve:
+            reason = (f"a {cost}-credit search would leave {remaining - cost} credits, below the "
+                      f"{reserve} reserved for 1-credit lookups (cert/host/webproperty — the highest-"
+                      f"value calls on a free plan). Run this CenQL in the Censys web UI instead.")
+    if reason is None:
+        return None
+    if CREDIT_BUDGET.get("block_when_exhausted", True):
+        return reason
+    key = ("advisory", action)
+    if key not in _WARNED:
+        _WARNED.add(key)
+        print(f"[censys] ⚠ {reason} (block_when_exhausted is off — proceeding; the vendor quota "
+              f"is the limit.)", file=sys.stderr)
     return None
 
 

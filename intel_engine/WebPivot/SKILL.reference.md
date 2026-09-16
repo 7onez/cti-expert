@@ -366,8 +366,10 @@ python3 "$WP/tools/pivot_extract.py" "https://scam-site.example/" --case <case> 
   clients (live testing saw it absent even for high-commercial-intent queries), so an empty result
   sets `ads_block_present: false` and is a fact about the *response* — never the finding "nobody
   advertises against this brand". The Ads Transparency archive is the reliable path.
-- **Metered, capped, and honest keyless.** One SerpApi search per call, capped per run and per month
-  from the same ledger (`references/serpapi.json → search_budget`), skipped under `--free-only`.
+- **Metered, warned, and honest keyless.** One SerpApi search per call, measured per run and per
+  month from the same ledger (`references/serpapi.json → search_budget`). The shipped policy warns
+  at/over those thresholds but lets the vendor's 402/429 govern; `block_when_exhausted: true`
+  restores strict refusal. Calls remain skipped under `--free-only`.
   With no `SERPAPI_KEY` the layer runs at **~55%**: the cloaking probe in full, every parameter
   classified, and the free `adstransparency.google.com` address for the domain and for any
   advertiser id — but the archive is **never queried**, so *"no advertiser found" means "never
@@ -431,9 +433,11 @@ python3 "$WP/tools/pivot_extract.py" <url> --intelx           # run it inside a 
   evidence lives. Handle as real victim credentials — **cite metadata, never paste secrets into the
   case file**. Judging an item is the analyst's call: **`IntelAnalysis` §1.7 +
   `Workflows/StealerLog.md`**.
-- **Metered**, capped per run and per month from the same ledger as everything else
+- **Metered and warned** per run and per month from the same ledger as everything else
   (`references/intelx.json → search_budget`, or `INTELX_MAX_SEARCHES_PER_RUN` /
-  `INTELX_MONTHLY_SEARCHES` for one run). `--free-only` suppresses it entirely.
+  `INTELX_MONTHLY_SEARCHES` for one run). The shipped policy does not hard-block at those
+  thresholds; the vendor's 402/429 governs. `block_when_exhausted: true` restores strict refusal.
+  `--free-only` suppresses the layer entirely.
 - 🔑 **Without `INTELX_KEY` the layer runs at ~50%** — it still classifies every selector and hands
   you a working `intelx.io` / `phonebook.cz` URL for each, but **executes nothing**. So a run with
   no IntelX section has **not** established that the operator is absent from any leak, paste or
