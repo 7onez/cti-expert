@@ -542,10 +542,13 @@ _HOST_YIELDING_SOURCES = (
 #   * urlscan_related / urlscan_related_domain — urlscan `domain:<host>` search returns every page
 #     that merely LOADED a resource from the host (customers of a hosting/template vendor, victims
 #     embedding its script, third parties). Same-kit / consumer relation, rung far below owner.
+#   * webamon_same_kit — hosts whose Webamon scan shares the seed's kit fingerprints (DOM band /
+#     link set / script set). Same KIT is the same phishing template, not the same registrant: a
+#     kit is sold and resold, so its other deployments are as often other crews as the same one.
 # They stay visible as `related_leads` for analyst triage; seeding them is how a 12-host estate
 # drifted into 300 strangers' hosts (and their subdomains) in one loop run.
 _NON_OWNER_SOURCES = frozenset({"impersonation", "archive_related_domain",
-                                "urlscan_related", "urlscan_related_domain"})
+                                "urlscan_related", "urlscan_related_domain", "webamon_same_kit"})
 _LOOKALIKE_SOURCES = _NON_OWNER_SOURCES        # historical name, kept for callers/tests
 
 
@@ -634,6 +637,11 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
                 _add_cand(cands, h.get("host") if isinstance(h, dict) else h, "passive_dns", seed_apexes, origin=host)
             for d in (lr.get("urlscan") or {}).get("domains") or []:
                 _add_cand(cands, d, "urlscan_related", seed_apexes, origin=host)
+            # Webamon same-kit siblings: same template ≠ same operator — a related lead, never a seed
+            # (label is in _NON_OWNER_SOURCES). The block already dropped its list when the fingerprint
+            # was boilerplate (> max_siblings), so an empty `domains` is the prevalence guard firing.
+            for d in (lr.get("webamon_same_kit") or {}).get("domains") or []:
+                _add_cand(cands, d, "webamon_same_kit", seed_apexes, origin=host)
             # co-hosted domains from a PRIOR keyed run (already paid for — reusing is free). DNSLytics
             # reverse-IP lives under its own key ON PURPOSE: its rows are IPs, so they take the
             # co-host route (CDN-range + MAX_IP_COHOSTS guards) instead of the artifact route below.

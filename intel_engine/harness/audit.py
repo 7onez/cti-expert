@@ -81,6 +81,7 @@ _POLICY_FALLBACK = {
     "free_only_args": ["free_only"],
     "metered_arg_triggers": ["whois_reverse", "fofa_full"],
     "approval_required_tools": {"anyrun_submit": "HARNESS_ALLOW_SUBMIT",
+                                "webamon_scan": "HARNESS_ALLOW_SUBMIT",
                                 "misp_publish": "INTEL_MISP_PUBLISH"},
     # Conservative minimum: NO briefing exemption when the data file is unreadable, so an
     # approval-required tool stays fully gated rather than opening a branch the fallback cannot see.

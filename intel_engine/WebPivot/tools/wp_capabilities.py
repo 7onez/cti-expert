@@ -194,9 +194,15 @@ def _probe_grayhatwarfare():
     return {"tier": "unknown", "note": "no free quota endpoint — presence only"} if present else None
 
 
+def _probe_webamon():
+    import wp_webamon
+    p = wp_webamon.plan()
+    return None if p is None else {k: p.get(k) for k in ("tier", "campaigns", "error") if k in p}
+
+
 _PROBES = (("urlscan", _probe_urlscan), ("netlas", _probe_netlas), ("securitytrails", _probe_securitytrails),
            ("dnslytics", _probe_dnslytics), ("intelx", _probe_intelx), ("validin", _probe_validin),
-           ("grayhatwarfare", _probe_grayhatwarfare))
+           ("grayhatwarfare", _probe_grayhatwarfare), ("webamon", _probe_webamon))
 
 
 def _measured(entry) -> bool:

@@ -53,6 +53,7 @@
     "_comment": "Tools that are outbound AND attributable AND irreversible, and therefore need a human 'yes' that a prompt cannot supply. Each maps to the environment variable that must be set to 1 for the call to be permitted; without it the call is DENIED before it reaches the tool. anyrun_submit detonates a sample or URL in a sandbox: a URL detonation tells the operator they are being analysed, the task may be PUBLIC on a free plan, and nothing can be recalled once sent. engage_account CREATES AN ACCOUNT on the operator's own backend and logs in: the operator sees a new member at a known time from your egress, and you cannot un-register. misp_publish SHARES the case's indicators: MISP pushes the event to every server the instance synchronises with and notifies subscribers, so a wrong indicator becomes other people's blocking rule and deleting your copy deletes nothing of theirs — note that its sibling misp_push is NOT listed here on purpose, because a push is clamped in code to an organisation-only, unpublished event that has reached nobody and can be deleted. None of these is 'outbound' in the hostile-egress sense (they do not touch the target from your IP), so they are not in outbound_tools; the risk is irreversibility, not exposure. Each of these tools also has its OWN internal confirmation gate (a confirm flag in the signature) — this entry is the second lock, so an agent loop cannot reach the first one unattended.",
     "entries": {
       "anyrun_submit": "HARNESS_ALLOW_SUBMIT",
+      "webamon_scan": "HARNESS_ALLOW_SUBMIT",
       "engage_account": "INTEL_ENGAGE_CONFIRM",
       "misp_publish": "INTEL_MISP_PUBLISH"
     }
@@ -61,7 +62,8 @@
   "approval_briefing": {
     "_comment": "The read-only BRIEFING branch of an approval-required tool, which must stay reachable WITHOUT the approval env var — otherwise the two-step 'show the analyst the risk briefing, ask, then confirm' gate is impossible in the MCP/harness path, because the briefing call itself would be denied. Maps a tool to the argument names that must ALL be falsy for the exemption to apply: when every one is absent/false the call does nothing outbound or irreversible (it composes the briefing offline), so it is allowed; set any of them and the call is the real, gated action again. anyrun_submit: `confirm` (the POST that detonates) and `verify_task` (reads a task and can DELETE it) — with neither, submit() only returns submit_preflight(). Leave a tool out to keep it fully gated. This exemption never applies under hostile posture (an outbound tool is still egress-blocked there).",
     "entries": {
-      "anyrun_submit": ["confirm", "verify_task"]
+      "anyrun_submit": ["confirm", "verify_task"],
+      "webamon_scan": ["confirm"]
     }
   },
 

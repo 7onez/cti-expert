@@ -117,6 +117,8 @@ DISPATCH = {
     "intelx":        ("WebPivot/tools/wp_intelx.py",  []),     # leak/paste/darknet selector search
     "anyrun":        ("BinaryPivot/tools/bp_anyrun.py", []),   # TI Lookup — READ-ONLY by default;
                                                                # --submit needs analyst confirmation
+    "webamon":       ("WebPivot/tools/wp_webamon.py", []),    # scan corpus: <domain> | report <id> |
+                                                               # scan <url> (--confirm-submission gated)
     "docmeta":       ("WebPivot/tools/wp_docmeta.py", []),     # PDF/EXIF/PNG author+GPS metadata
     "paths":         ("WebPivot/tools/wp_paths.py",   []),     # URL-path kit extraction (path_kit:)
     "capture":       ("WebPivot/tools/wp_capture.py", []),     # raw-evidence capture + manifest hash
@@ -282,6 +284,7 @@ BLURB = {
     "email-permute": "name/username -> ranked email CANDIDATES (hypotheses, never findings)",
     "intelx": "IntelX: search a strong selector in leaks/pastes/darknet",
     "anyrun": "ANY.RUN TI Lookup (read-only; --submit needs confirmation)",
+    "webamon": "Webamon scan corpus: seed report + same-kit siblings; scan <url> needs --confirm-submission",
     "docmeta": "document/image metadata: PDF /Info + XMP, EXIF incl. GPS",
     "paths": "URL-path kit extraction — path_kit: when hosts rotate",
     "capture": "raw-evidence capture + tamper-evident manifest hashing",

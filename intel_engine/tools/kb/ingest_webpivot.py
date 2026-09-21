@@ -745,6 +745,66 @@ def ingest_file(kb, path):
                 n += 1
         break
 
+    # --- Webamon scan corpus (facts only — nothing here is an owner link) ---
+    # `webamon` = the seed's own latest scan (risk score, first NRD feed day, kit fingerprints);
+    # `webamon_same_kit` = other deployments of the SAME KIT — recorded as a fact naming the sibling
+    # and the agreeing fingerprint keys, never as an edge: KB.shared_indicators() clusters on edges,
+    # and a resold phishing template would fuse unrelated crews into one operator. Infostealer
+    # exposure is a victim-side COUNT (privacy bucket), servers are IP eras for the timeline.
+    for piv in d.get("pivots") or []:
+        if piv.get("kind") != "domain" or piv.get("value") != host:
+            continue
+        lr = piv.get("live_results") or {}
+        wa = lr.get("webamon")
+        if isinstance(wa, dict) and wa.get("report_id"):
+            if wa.get("risk_score") is not None:
+                kb.add_fact("domain", host, "webamon_risk_score", str(wa["risk_score"]),
+                            "webamon", COLLECTOR, observed, "medium", ev)
+                n += 1
+            if wa.get("page_title"):
+                kb.add_fact("domain", host, "webamon_title", str(wa["page_title"])[:200],
+                            "webamon", COLLECTOR, observed, "medium", ev)
+                n += 1
+            for k, v in (wa.get("fingerprint") or {}).items():
+                val = v[-1] if isinstance(v, list) and v else v
+                if val:
+                    kb.add_fact("domain", host, f"webamon_fingerprint_{k}", str(val)[:80],
+                                "webamon", COLLECTOR, observed, "medium", ev)
+                    n += 1
+        feeds = lr.get("webamon_feeds")
+        if isinstance(feeds, dict):
+            for k in ("registered", "removed"):
+                if feeds.get(k):
+                    kb.add_fact("domain", host, f"webamon_feed_{k}", str(feeds[k]),
+                                "webamon", COLLECTOR, observed, "high", ev)
+                    n += 1
+        kit = lr.get("webamon_same_kit")
+        if isinstance(kit, dict):
+            if kit.get("boilerplate"):
+                kb.add_fact("domain", host, "webamon_same_kit_note",
+                            f"fingerprint shared by {kit.get('total')} hosts — template boilerplate, siblings not recorded",
+                            "webamon", COLLECTOR, observed, "low", ev)
+                n += 1
+            for sib in kit.get("domains") or []:
+                keys = sorted(k for k, doms in (kit.get("matched") or {}).items() if sib in doms)
+                kb.add_fact("domain", host, "webamon_same_kit_sibling",
+                            f"{sib} ({', '.join(keys) or 'fingerprint'})",
+                            "webamon", COLLECTOR, observed, "low", ev)
+                n += 1
+        stl = lr.get("webamon_infostealers")
+        if isinstance(stl, dict) and isinstance(stl.get("total"), int):
+            kb.add_fact("domain", host, "webamon_infostealer_rows", str(stl["total"]),
+                        "webamon", COLLECTOR, observed, "medium", ev)
+            n += 1
+        srv = lr.get("webamon_servers")
+        for s in (srv.get("servers") or []) if isinstance(srv, dict) else []:
+            if s.get("ip"):
+                kb.add_fact("domain", host, "webamon_hosting_ip",
+                            f"{s['ip']} AS{s.get('asn') or '?'} {s.get('first_seen') or '?'}..{s.get('last_seen') or '?'}",
+                            "webamon", COLLECTOR, observed, "medium", ev)
+                n += 1
+        break
+
     # --- trackers -> indicators ---
     for label, vals in (art.get("trackers") or {}).items():
         rel, conf = REL.get(label, ("uses_tracker", "medium"))

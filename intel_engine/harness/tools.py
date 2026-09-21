@@ -1969,6 +1969,47 @@ async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(body)
 
 
+@tool(
+    "webamon_scan",
+    "Submit a URL to the Webamon sandbox and follow it to a report + same-kit siblings. **YOU MUST "
+    "ASK THE USER FIRST, EVERY TIME.** Call with confirm=false (or omitted) to get the RISK BRIEFING "
+    "(nothing is sent), show it, and only call again with confirm=true after an explicit yes to THIS "
+    "submission. How it differs from anyrun_submit: the fetch comes from Webamon's OWN egress, so "
+    "your IP never touches the target (posture-safe on hostile infrastructure) — but every scan is "
+    "indexed into the PUBLIC searchable Webamon corpus with no private mode and no delete, and the "
+    "operator sees a datacenter visit. The corpus is world-readable, so what is disclosed is the URL "
+    "ITSELF: the query string/fragment (where a phishing link carries the victim id or one-time "
+    "token) is STRIPPED by default and the briefing shows the exact `will_submit` — pass "
+    "keep_query=true only when the analyst explicitly decides the full URL may be public. TRY "
+    "FIRST: pivot_extract already reads the corpus (`webamon` block) — a host scanned recently needs "
+    "no submission. Never submit a URL whose path carries a victim token or a case ID. Indexing "
+    "takes ~1-5 min: the tool polls by report_id (wait, default 240 s) and a still-pending result "
+    "returns the report_id for a later wp_webamon.py report <id> — nothing is re-submitted. "
+    "Free-keyed; the vendor's 429 is the limit.",
+    {"target": str},  # confirm:bool, wait:int, keep_query:bool optional
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def webamon_scan(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("WebPivot", "tools", "wp_webamon.py")
+    confirmed = bool(args.get("confirm"))
+    wait = max(0, min(int(args.get("wait", 240) or 0), 240))   # + one poll < the 290 s _run budget
+    cmd = [PY, script, "scan", str(args["target"]), "--wait", str(wait)]
+    if confirmed:
+        cmd.append("--confirm-submission")
+    if args.get("keep_query"):
+        cmd.append("--keep-query")
+    r = _run(cmd, timeout=290)
+    body = (r.stdout or "") + ("\n" + r.stderr if r.stderr else "")
+    if not confirmed:
+        # rc=3 is the gate firing — the DESIGNED outcome. Returned as ok so the model is never
+        # nudged to retry with confirm=true on its own.
+        return _ok("NOTHING WAS SUBMITTED — confirmation required.\n"
+                   "Show the briefing below to the analyst, ask explicitly whether to submit this URL "
+                   "to the PUBLIC Webamon corpus, and only then call webamon_scan again with "
+                   "confirm=true.\n\n" + body)
+    return _ok(body)
+
+
 # ---------------------------------------------------------------- Engage (auth surface + gated engagement)
 _ENGAGE = os.path.join("Engage", "tools")
 
@@ -2931,7 +2972,7 @@ for _t in list(globals().values()):
 COLLECT_SERVER = create_sdk_mcp_server(
     "collect", tools=[pivot_extract, doc_metadata, analyze_artifact, fallback_probe,
                       impersonation_hunt, search_pivot, censys, intelx_search,
-                      anyrun_lookup, anyrun_submit, capability_check,
+                      anyrun_lookup, anyrun_submit, webamon_scan, capability_check,
                       url_paths, capture_evidence, capture_screenshot, serp_ads, passive_ssl, ip_info,
                       domain_liveness,
                       detect_login, make_persona, engage_account, harvest_authenticated,
@@ -2960,6 +3001,7 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__search_pivot", "mcp__collect__censys",
                  "mcp__collect__intelx_search",
                  "mcp__collect__anyrun_lookup", "mcp__collect__anyrun_submit",
+                 "mcp__collect__webamon_scan",
                  "mcp__collect__capability_check",
                  "mcp__collect__url_paths", "mcp__collect__capture_evidence",
                  "mcp__collect__capture_screenshot",

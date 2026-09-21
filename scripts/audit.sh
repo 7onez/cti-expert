@@ -194,7 +194,8 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
          intel_engine/tests/test_mcp_server_concurrency.py \
          intel_engine/tests/test_validin_engines.py \
          intel_engine/tests/test_validin_engines_quota_frontier.py \
-         intel_engine/tests/test_tool_registry.py; do
+         intel_engine/tests/test_tool_registry.py \
+         intel_engine/tools/eval/test_webamon_same_kit.py; do
   if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
   if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
 done

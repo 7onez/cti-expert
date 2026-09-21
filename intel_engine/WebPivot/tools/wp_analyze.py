@@ -46,6 +46,7 @@ import wp_quake           # Quake (360): favicon-hash reverse -> hosts (metered 
 import wp_zoomeye         # ZoomEye: favicon-hash reverse -> hosts (metered; --no-zoomeye)
 import wp_pssl           # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
 import wp_cld            # ChongLuaDao reputation: checkurl denylist + IoC URL + .vn WHOIS (lazy cld_api)
+import wp_webamon        # Webamon scan corpus: seed report + same-kit fingerprints + hosting/feed facts (free key)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
 try:
@@ -681,6 +682,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # METERED, so gated `and not free_only`; CLD fetches the target server-side, so it is posture-safe.
     # Reputation only — a verdict is an add_fact at ingest, never a same-operator edge.
     have_cld = wp_cld.cld_configured() and not free_only
+    # Webamon is FREE-keyed (no credits; the vendor's own 429 is the daily limit), so like Validin it
+    # runs EVEN under --free-only. Its blocks are enrichment + leads, never seeds: `webamon` describes
+    # the seed's own latest scan, `webamon_same_kit` names lures built from the same kit (a rung
+    # below owner — case_state._NON_OWNER_SOURCES), `webamon_servers` is IP-valued (timeline),
+    # `webamon_feeds` are registration-feed dates, `webamon_infostealers` is a COUNT ONLY.
+    have_webamon = wp_webamon.webamon_configured()
     sources = ["crtsh", "passivedns", "urlscan"]  # keyless domain enrichment
     if have_urlscan_pro:
         sources.append("urlscan-hostname")   # Pro lifecycle index (A/NS/MX eras, CT/zonefile firsts)
@@ -714,6 +721,8 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
         sources.append("securitytrails-dns-history")
     if have_cld:
         sources.append("chongluadao")
+    if have_webamon:
+        sources.append("webamon")
     result.setdefault("meta", {})["enriched_with"] = sources
     for piv in result.get("pivots", []):
         kind, val = piv.get("kind", ""), piv.get("value")
@@ -751,7 +760,13 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 # the registry line for `securitytrails` existed, the invocation did not. IP-valued,
                 # so it feeds the case timeline (hosting eras), never the host-yielding frontier.
                 jobs["securitytrails_dns_history"] = lambda: wp_securitytrails.dns_history(val, "a")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+            if have_webamon:
+                _apex = _registrable(val) or val
+                jobs["webamon"] = lambda: wp_webamon.domain_scans(val)
+                jobs["webamon_servers"] = lambda: wp_webamon.servers_for_domain(val)
+                jobs["webamon_feeds"] = lambda: wp_webamon.feed_dates(_apex)
+                jobs["webamon_infostealers"] = lambda: wp_webamon.infostealer_exposure(_apex)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=11) as ex:
                 futures = {k: ex.submit(fn) for k, fn in jobs.items()}
                 lr = {k: fu.result() for k, fu in futures.items()}
                 # Reputation is CORROBORATION only (folded into exposure scoring, never a sole
@@ -777,6 +792,16 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     _cld = wp_cld.cld_domain(val, free_only=free_only)
                     if _cld:
                         lr["cld"] = _cld
+                # Same-kit siblings from the seed's OWN scan fingerprints (one call per key, depends
+                # on the report above). Attached as a lead block: the frontier lists it under
+                # related_leads and the ingest records facts only — never a seed, never an edge.
+                # Serial section (outside the executor), so a fault here degrades to tri-state
+                # instead of aborting the whole domain pivot.
+                if have_webamon and isinstance(lr.get("webamon"), dict) and lr["webamon"].get("fingerprint"):
+                    try:
+                        lr["webamon_same_kit"] = wp_webamon.same_kit(lr["webamon"]["fingerprint"], val)
+                    except Exception as e:  # noqa: BLE001
+                        lr["webamon_same_kit"] = {"error": str(e)}
             # Anchor pivots to the LIVE IP: reverse-search FOFA on what DNS resolves to
             # right now, and flag any passive source still reporting a different (stale) IP.
             live_ips = lr.get("dns", {}).get("ips", []) or []

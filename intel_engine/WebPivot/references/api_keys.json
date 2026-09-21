@@ -279,6 +279,19 @@
         "without_it": "the mail-server reverse-IP is covered by Validin ip/dns/history when keyed, so the loss is redundancy; the Netlas `responses` index had not scanned the small doorway hosts in the test case, so no web-layer pivot is lost",
         "free_fallback": "Validin ip/dns/history, urlscan page.ip search, and the emitted Netlas query string + web-UI link for the analyst",
         "signup": "https://app.netlas.io/registration/"
+      },
+      "WEBAMON_API_KEY": {
+        "service": "Webamon Search",
+        "aliases": [
+          "WEBAMON_KEY"
+        ],
+        "companion": [],
+        "metered": false,
+        "impact": "medium",
+        "unlocks": "the Webamon scan corpus (pro.webamon.com): the seed's latest sandbox scan (server IPs, certs, resources, risk score) and its KIT FINGERPRINTS — one same-kit query returns the other lures built from the same phishing template (measured live: 7 siblings of a 'Sign in' lure, 3 agreeing on every fingerprint key); plus reverse-IP hosting eras from the `servers` index, NRD/removed-feed dates, and a count-only infostealer exposure check. No credits: the vendor's daily 429 is the only limit, so it runs under --free-only",
+        "without_it": "no same-kit sibling discovery from a scan-corpus fingerprint — the case sees only the kit deployments its own crawl and urlscan reached; no registration-feed day for the seed; no infostealer exposure count",
+        "free_fallback": "urlscan structure-similarity (Pro) and the local DOM-skeleton / inline-CSS same-template indicators the extractor computes itself",
+        "signup": "https://intel.webamon.com"
       }
     }
   },

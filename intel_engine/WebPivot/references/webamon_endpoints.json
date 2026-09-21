@@ -1,0 +1,73 @@
+{
+  "_comment": "Webamon Search (pro.webamon.com, header x-api-key) — endpoint paths, Lucene query templates, the scan-report field list and the same-kit fingerprint policy for wp_webamon.py. Verified live 2026-09-16 on a STARTER key: /search over the `scans`, `servers`, `resources`, `infostealers`, `new_domains`, `removed_domains` indices works; `domains` is broken server-side (sorts on an unmapped field); /campaigns, /clusters, /changes are 403 below research_lab/soc/mssp; /screenshot 404s even for a completed report; /report/{id} is not routed on pro. Every rule below was learned from a 400 body, not guessed. Overrides the inline _WEBAMON_FALLBACK; a missing/bad file degrades to that fallback with a warning.",
+  "endpoints": {
+    "_comment": "Paths joined to https://pro.webamon.com. `plan_probe` is any Pro-plan-gated route: its 403 body names the current plan (`current: starter`), which is the only free way to measure the tier.",
+    "search": "/search",
+    "scan": "/scan",
+    "plan_probe": "/campaigns/tags"
+  },
+  "search": {
+    "_comment": "Query rules the server enforces: leading wildcards and free text REQUIRE a `submission_utc` range; date literals are `now-Nd` or full `yyyy-MM-ddTHH:mm:ssZ` (a bare date is a parse error); `from+size` must stay <= 10000; the domain-scoped queries run 10-27 s WITHOUT a range and 1-5 s with one, so `window` is applied to every query, not only the ones that demand it. `report_fields` is what one scan report is reduced to (DOM bodies, cookies, request/response headers and infostealer credential fields are never requested).",
+    "window": "now-90d",
+    "size": 25,
+    "report_fields": [
+      "report_id",
+      "submission_utc",
+      "completion_utc",
+      "submission_url",
+      "resolved_url",
+      "resolved_domain",
+      "page_title",
+      "scan_status",
+      "meta.risk_score",
+      "tag",
+      "server.ip",
+      "server.asn.number",
+      "server.asn.name",
+      "server.country.iso",
+      "domain.name",
+      "domain.dns.ns",
+      "domain.dns.a",
+      "domain.dns.mx",
+      "certificate.subject_name",
+      "certificate.san_list",
+      "certificate.issuer",
+      "resource.sha256",
+      "resource.url",
+      "resource.mime_type",
+      "page_scripts",
+      "technology.name",
+      "fingerprint"
+    ],
+    "server_fields": ["ip", "asn.number", "asn.name", "country.iso", "first_seen_utc", "last_seen_utc", "hosting_scripts"],
+    "timeout": 45
+  },
+  "fingerprints": {
+    "_comment": "Webamon's per-scan kit fingerprints (the same hashes its Pro-only /clusters API clusters on). `same_kit` are the keys measured to isolate ONE kit: on a live 'Rubicon — Sign in' phish, dom_band/dom/links/scripts each returned exactly the 4 sibling lures and page_title agreed; a later run widened links/dom_structure to a few site-builder templates, which the per-key `matched` view exposes. `noise` keys are excluded from the same-kit query for one of two reasons: MEASURED boilerplate — cert_config answered 179,598 hosts and asn 288,847 (Cloudflare / Let's Encrypt configuration, not a kit); or UNMEASURED / per-seed-unique — tech, ssl, domains, cert_san, cert_issuer, header_order, cookies, cookie_names, mx_set, ns_set returned only the seed itself (1 hit) or were never probed, so they stay out until measured on more samples. The client queries ONE KEY PER CALL and applies `max_siblings` per key: a key answering more hosts than this is template boilerplate for THAT seed — its count is kept, its hosts are dropped — so one saturated key cannot drown a tight match on another. A same-kit relation is a rung below owner: the block is a related_lead / add_fact, never a frontier seed and never an edge.",
+    "same_kit": ["dom_band", "dom", "links", "scripts", "dom_structure"],
+    "noise": [
+      "cert_config",
+      "asn",
+      "cert_issuer",
+      "header_order",
+      "cookie_names",
+      "cookies",
+      "tech",
+      "mx_set",
+      "ns_set",
+      "ssl",
+      "cert_san",
+      "domains"
+    ],
+    "max_siblings": 50,
+    "size": 100
+  },
+  "status_reasons": {
+    "_comment": "HTTP statuses that mean 'the vendor said no' (tri-state `skipped`) rather than a transport fault (`error`). 429 additionally latches a per-process quota flag so a run that has hit the daily cap stops asking. The 403 body's `message` names the current plan (`(current: starter)`), which plan() parses.",
+    "401": "Webamon rejected the key (WEBAMON_API_KEY missing/expired)",
+    "403": "your Webamon plan does not include this route (campaigns/clusters/changes need research_lab, soc or mssp)",
+    "404": "not in the Webamon corpus",
+    "429": "Webamon daily quota reached — vendor-enforced; wait for reset or upgrade",
+    "502": "Webamon search backend unavailable"
+  }
+}
