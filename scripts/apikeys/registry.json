@@ -409,6 +409,25 @@
       "tier": "freemium",
       "url": "https://app.netlas.io/profile/",
       "unlocks": "/webpivot: independent DNS + scan + WHOIS + cert index — `domains a:<origin-ip>` reverses a non-CDN origin (shared mail/web host) to every apex with dates (measured: 32 apexes, 15 estate + same-MO siblings under other personas); ns:/txt:spf provider reverses as counts; per-domain registrar/created cross-check. Paid plans unlimited requests; Cloudflare-fronted (browser UA required)"
+    },
+    {
+      "id": "webamon",
+      "name": "Webamon Search",
+      "env": "WEBAMON_API_KEY",
+      "aliases": [
+        "WEBAMON_KEY"
+      ],
+      "category": "infra",
+      "tier": "freemium",
+      "url": "https://intel.webamon.com",
+      "unlocks": "/webpivot + /cti: Webamon scan corpus (pro.webamon.com, x-api-key) — the seed's latest sandbox scan + KIT FINGERPRINTS (dom_band/dom/links/scripts) -> other lures built from the same template (same-kit LEAD, never a seed); reverse-IP hosting eras (`servers` index); NRD/removed-feed dates; count-only infostealer exposure. Starter plan: /search only — campaigns/clusters/changes need research_lab/soc/mssp. No credits; vendor 429 is the daily limit",
+      "test": {
+        "url": "https://pro.webamon.com/search?lucene_query=resolved_domain%3A%22example.com%22%20AND%20submission_utc%3A%5Bnow-7d%20TO%20now%5D&index=scans&size=1&fields=report_id",
+        "header": {
+          "x-api-key": "{key}"
+        },
+        "expect_json": "total_hits"
+      }
     }
   ]
 }

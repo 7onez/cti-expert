@@ -331,6 +331,20 @@
           "description": "With verify_task: seconds to keep polling for the task to finish before giving up (default 0 = a single read)."
         }
       },
+      "webamon_scan": {
+        "confirm": {
+          "type": "boolean",
+          "description": "Explicit per-submission approval. WITHOUT this the tool only returns the risk briefing and sends NOTHING — a Webamon scan lands in the PUBLIC searchable corpus permanently (no private mode, no delete) and the operator sees a datacenter visit."
+        },
+        "wait": {
+          "type": "integer",
+          "description": "Seconds to poll for the scan to be indexed (~5 min typical; capped at 240). A still-pending result returns the report_id for `wp_webamon.py report <id>` later — nothing is re-submitted."
+        },
+        "keep_query": {
+          "type": "boolean",
+          "description": "Submit the URL WITH its query string/fragment. Default false: they are stripped because on a phishing link that is where the victim identifier or one-time token lives, and the Webamon corpus is public and permanent. Set ONLY when the analyst has explicitly decided the full URL may be disclosed."
+        }
+      },
       "case_clusters": {
         "min": {
           "type": "integer",

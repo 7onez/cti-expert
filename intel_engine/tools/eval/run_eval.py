@@ -275,6 +275,9 @@ def main():
         ("test_frontier_guards", "frontier co-tenancy guards — multi-tenant cert / shared IP / bulk registrant"),
         ("test_mo_neighbours_classify", "MO-neighbour pivot — bulk-origin guard / per-origin memo / classified-only "
                                         "frontier seeding / privacy + unverifiable buckets / facts-only KB ingest"),
+        ("test_webamon_same_kit", "Webamon layer — keyless safety, tri-state + 429 latch, same-kit normaliser + "
+                                  "prevalence guard, count-only infostealers, same-kit = related_lead never seed, "
+                                  "facts-only ingest"),
         ("test_assets_layer", "asset layer — JS bundle select / sourcemap dev-identity / API+build-env / well-known"),
         ("test_censys", "Censys layer — CenQL not Legacy Search / = vs : / MD5 favicon / "
                         "free-plan degradation / monthly credit guard"),

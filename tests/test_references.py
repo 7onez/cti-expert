@@ -108,7 +108,7 @@ def check():
     # catches that, and unlike a hardcoded count it does not rot as analysts extend a list.
     import wp_pivots, wp_analyze, wp_assets, wp_recon, wp_ippivot, wp_impersonate  # noqa: E401
     import wp_censys, wp_capabilities, wp_net                                      # noqa: E401
-    import whois_enrich, evidence_report                                           # noqa: E401
+    import whois_enrich, evidence_report, wp_webamon                               # noqa: E401
 
     consumers = [
         ("wp_pivots._GENERIC_SUBLABELS", wp_pivots._GENERIC_SUBLABELS,
@@ -189,6 +189,16 @@ def check():
          wp_net._USCAN_FALLBACK["verdict"]["structural_labels"]),
         ("evidence_report._NOISE_EMAIL_SUBSTR", evidence_report._NOISE_EMAIL_SUBSTR,
          evidence_report._RN_FALLBACK["noise_email_substrings"]),
+        # Webamon (RULE 5 adjacent): `report_fields` is what a scan is reduced to — on the fallback the
+        # DNS/ASN/issuer columns vanish from the seed block; `fingerprints.noise` is the list of
+        # configuration-level hashes that must NEVER be queried as a same-kit pivot (cert_config alone
+        # answers 179k hosts) — a shorter list means a boilerplate hash gets asked as if it were a kit.
+        ("wp_webamon.SEARCH.report_fields", wp_webamon.SEARCH["report_fields"],
+         wp_webamon._WEBAMON_FALLBACK["search"]["report_fields"]),
+        ("wp_webamon.FINGERPRINTS.noise", wp_webamon.FINGERPRINTS["noise"],
+         wp_webamon._WEBAMON_FALLBACK["fingerprints"]["noise"]),
+        ("wp_webamon.FINGERPRINTS.same_kit", wp_webamon.FINGERPRINTS["same_kit"],
+         wp_webamon._WEBAMON_FALLBACK["fingerprints"]["same_kit"]),
     ]
     for name, loaded, fallback in consumers:
         ok(len(loaded) > len(fallback),

@@ -180,6 +180,11 @@ _ARTIFACT_DISCOVERY = {"validin": "Validin", "validin_subs": "Validin subdomains
 #    cert SHA-256 — the report reads that file, not a per-pivot block.
 #  - GrayHatWarfare: an open bucket carrying the brand label is EXPOSURE (a leak lead), not a
 #    same-operator pivot — it gets its own report section, never a discovered host.
+#  - every `webamon*` block: NOT in _HIT_SOURCES either. _live_hits() feeds `live_corroborated`
+#    (estimative bump) and the `corroborated` cluster flag, and a same-kit count is same TEMPLATE, not
+#    same operator — a resold kit fuses unrelated crews — while the seed's own scan/hosting/feed blocks
+#    describe the seed, not a pivot. They reach the report as KB facts (ingest_webpivot `webamon_*`)
+#    and the frontier lists same-kit hosts under related_leads (case_state._NON_OWNER_SOURCES).
 
 
 def _discovered_host(h):

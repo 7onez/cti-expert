@@ -70,7 +70,7 @@ PUBLIC_CLASS = [
     (r"\bIntelX\b|\bIntelligence X\b", "leak-corpus search"),
     (r"\bCLD\b|\bChongLuaDao\b|\bChống Lừa Đảo\b", "anti-scam verdict service"),
     (r"\bHudsonRock(-class)?\b", "infostealer-corpus"),
-    (r"\bFOFA\b|\burlscan(\.io)?\b|\bCensys\b|\bShodan\b|\bValidin\b|\bSecurityTrails\b|\bDNSLytics\b|\bQuake\b|\bZoomEye\b|\bHunter\.how\b",
+    (r"\bFOFA\b|\burlscan(\.io)?\b|\bCensys\b|\bShodan\b|\bValidin\b|\bSecurityTrails\b|\bDNSLytics\b|\bQuake\b|\bZoomEye\b|\bHunter\.how\b|\bWebamon\b",
      "web-scan index"),
     (r"\bmaigret\b|\bsherlock\b", "username enumeration"),
     (r"\bWayback\b", "web-archive"),

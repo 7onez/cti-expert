@@ -452,7 +452,7 @@ def test_measured_free_plan_skips_urlscan_pro_calls():
     gates = [(WA, "censys_configured"), (WA, "hunterhow_configured"), (WA.wp_validin, "validin_configured"),
              (WA.wp_securitytrails, "securitytrails_configured"), (WA.wp_dnslytics, "dnslytics_configured"),
              (WA.wp_quake, "quake_configured"), (WA.wp_zoomeye, "zoomeye_configured"), (WA.wp_pssl, "pssl_configured"),
-             (WA.wp_cld, "cld_configured")]
+             (WA.wp_cld, "cld_configured"), (WA.wp_webamon, "webamon_configured")]
     saved_gates = [(m, n, getattr(m, n)) for m, n in gates]
     for m, n in gates:
         setattr(m, n, lambda: False)
