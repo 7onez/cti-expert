@@ -881,11 +881,29 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
 
 
 _DOMAIN_RE = re.compile(r'\b((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})\b', re.I)
+_LOOP_GENERATOR = "intel-loop"
 
 
 def _domains_in_text(s):
     """Domain-like tokens in a free-text string (for reading an analyst's next_pivots / gaps)."""
     return {m.group(1).lower().rstrip(".") for m in _DOMAIN_RE.finditer(s or "")}
+
+
+def _analyst_leads(existing):
+    """Domain leads named in an ANALYST/SDK-authored assessment.json's next_pivots + gaps.
+
+    The loop's OWN assessment.json is never a source: its strings quote binding indicators
+    (`bound by indicator:ns:a.example-dns.net`) and artifact names (`see clusters.json`), and
+    reading them back seeded a registrar nameserver and a filename as hosts — and paid WHOIS for
+    both. Analyst free text still names vendors and shared infra, so every token also has to pass
+    case_state.never_seed()."""
+    if not isinstance(existing, dict) or existing.get("_generator") == _LOOP_GENERATOR:
+        return set()
+    import case_state as cs
+    leads = set()
+    for s in list(existing.get("next_pivots") or []) + list(existing.get("gaps") or []):
+        leads |= {d for d in _domains_in_text(str(s)) if not cs.never_seed(d)}
+    return leads
 
 
 def _is_loop_authored_md(path):
@@ -1026,14 +1044,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
             existing = _json.load(open(apath, encoding="utf-8"))
         except Exception:
             existing = None
-    # read analyst-authored leads (any assessment.json — canonical strings) for the chain. Free text
-    # names the engine's own vendors ("reverses ran only on Hunter.how") and shared infra; a
-    # domain-shaped token is a lead only when case_state.never_seed() does not reject it.
-    import case_state as cs
-    analyst_leads = set()
-    if existing:
-        for s in list(existing.get("next_pivots") or []) + list(existing.get("gaps") or []):
-            analyst_leads |= {d for d in _domains_in_text(str(s)) if not cs.never_seed(d)}
+    analyst_leads = _analyst_leads(existing)
 
     cluster = []
     sp = os.path.join(case_dir, "shared.txt")
@@ -1099,7 +1110,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
                      f"({len(multi)} multi-domain)"] + _urlscan_verdict_evidence(results),
         "gaps": gaps,
         "next_pivots": next_pivots,
-        "_generator": "intel-loop",
+        "_generator": _LOOP_GENERATOR,
         "loop": {
             "round": fr["round"], "generated": _iso_now(), "convergence": verdict,
             "collected": collected, "cluster_shared": cluster,
@@ -1115,7 +1126,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None)
         },
     }
     # only (over)write assessment.json when it is absent or loop-authored — never clobber the analyst's
-    if not existing or existing.get("_generator") == "intel-loop":
+    if not existing or existing.get("_generator") == _LOOP_GENERATOR:
         with open(apath, "w", encoding="utf-8") as fh:
             _json.dump(doc, fh, indent=2, ensure_ascii=False)
     else:
