@@ -60,7 +60,9 @@
       "ui-dns.org",
       "ui-dns.biz",
       "1and1.com",
-      "ionos.com"
+      "ionos.com",
+      "share-dns.com",
+      "share-dns.net"
     ]
   },
   "generic_nameserver_labels": {

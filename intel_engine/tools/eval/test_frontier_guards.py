@@ -200,6 +200,26 @@ def check():
        "the engine's own data vendors are never leads (api_keys.json signup hosts)")
     ok(CS.never_seed("cloudflaressl.com"), "a shared-cert CDN apex is never a lead")
     ok(not CS.never_seed("real-lead.example"), "an ordinary apex is not rejected")
+    # A domain-SHAPED token is not a hostname when its last label is not a TLD. The loop once read
+    # "see clusters.json" and "indicator:ns:a.<registrar-dns>" out of its own assessment and paid
+    # WHOIS for both; the TLD gate closes the first class on every route, the managed-DNS denylist
+    # the second.
+    ok(CS.never_seed("clusters.json") and CS.never_seed("state.txt") and CS.never_seed("index.html"),
+       "a filename-shaped token is never a lead (no PSL TLD)")
+    ok(CS._clean_name("clusters.json") == "" and CS._clean_name("lead.example") == "lead.example",
+       "_clean_name drops a non-TLD token but keeps a reserved .example fixture host")
+    ok(not CS.never_seed("shop.onion"), ".onion is a real pivot target, not a filename")
+    ok(CS._is_noise_apex("share-dns.com", set()) or CS.never_seed("a.share-dns.com"),
+       "a registrar's default nameserver apex is never a lead")
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import intel as IP  # noqa: E402
+    own = {"_generator": IP._LOOP_GENERATOR,
+           "next_pivots": ["judge cluster c1 (3 domains: x.example) — bound by indicator:ns:a.self-fed.example"],
+           "gaps": ["6 components (see clusters.json)"]}
+    ok(IP._analyst_leads(own) == set(), "the loop never reads its OWN assessment.json back as leads")
+    theirs = dict(own, _generator="analyst")
+    ok(IP._analyst_leads(theirs) == {"x.example", "a.self-fed.example"},
+       "an analyst-authored assessment still yields its domain leads, minus filename tokens")
 
     # --- 8. PSL-aware apex keying (second-level registries / free-subdomain platforms) -----------
     ok(CS._frontier_apex("horizon.io.vn") == "horizon.io.vn", "io.vn is a VNNIC public suffix: tenant is the apex")

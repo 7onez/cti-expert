@@ -222,14 +222,15 @@ def test_deep_archive_merges_and_feeds_frontier():
               any(k == "email" for k, _ in vals) and any(k == "phone" for k, _ in vals))
         check("indicators built for the IOC bundle", bool(res["indicators"]))
 
-        # the two archive kinds must actually be mined by the frontier
+        # the two archive kinds must actually be mined by the frontier (real TLDs — the frontier
+        # rejects filename-shaped / non-PSL-TLD tokens, so these use .example per repo convention)
         cands, deferred = {}, CS._new_deferred()
-        obj = {"meta": {"host": "seed.ex"}, "pivots": [
-            {"kind": "urlscan_related_domain", "value": "sibling.ex"},
-            {"kind": "archive_related_domain", "value": "other.ex"}]}
-        CS._free_candidates_from_raw(obj, cands, {CS._registrable("seed.ex")}, deferred)
-        check("frontier mines urlscan_related_domain", "sibling.ex" in cands, detail=set(cands))
-        check("frontier mines archive_related_domain", "other.ex" in cands, detail=set(cands))
+        obj = {"meta": {"host": "seed.example"}, "pivots": [
+            {"kind": "urlscan_related_domain", "value": "sibling.example"},
+            {"kind": "archive_related_domain", "value": "other.example"}]}
+        CS._free_candidates_from_raw(obj, cands, {CS._registrable("seed.example")}, deferred)
+        check("frontier mines urlscan_related_domain", "sibling.example" in cands, detail=set(cands))
+        check("frontier mines archive_related_domain", "other.example" in cands, detail=set(cands))
     finally:
         (WH.analyze_domain, wp_net.urlscan_intel, wp_net.urlscan_dom_all,
          XA.commoncrawl_index, XA.commoncrawl_fetch,

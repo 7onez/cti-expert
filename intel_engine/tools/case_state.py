@@ -59,7 +59,7 @@ for _p in (WP, KB_TOOLS):
 
 # registrable-domain reducer — reuse WebPivot's so apex logic matches the collectors exactly.
 try:
-    from wp_common import _registrable  # noqa: E402
+    from wp_common import _registrable, has_known_tld as _has_known_tld  # noqa: E402
 except Exception:
     def _registrable(host):
         parts = (host or "").strip(".").lower().split(".")
@@ -67,6 +67,9 @@ except Exception:
         if len(parts) >= 3 and parts[-2] in ("com", "co", "org", "net", "gov", "edu"):
             return ".".join(parts[-3:])
         return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+    def _has_known_tld(_):             # no PSL → cannot judge the TLD; block nothing
+        return True
 
 # noise / convergence helpers from the KB toolkit (best-effort — degrade gracefully)
 try:
@@ -165,12 +168,23 @@ def _new_deferred():
 # gate and the correlation gate could disagree about the same domain; now they cannot.
 try:
     from noise_filters import SAAS_TENANT_SUFFIXES as _SAAS
-    from noise_filters import is_shared_infra_apex as _is_shared_infra
+    from noise_filters import is_shared_infra_apex as _shared_infra_apex
+    from noise_filters import is_managed_dns as _managed_dns
 except Exception:
     _SAAS = frozenset()
 
-    def _is_shared_infra(apex):          # degrade to "block nothing" rather than block wrongly
+    def _shared_infra_apex(apex):        # degrade to "block nothing" rather than block wrongly
         return False
+
+    def _managed_dns(_):
+        return False
+
+
+def _is_shared_infra(apex):
+    """Shared infrastructure by EITHER denylist: a CDN/SaaS/parking apex, or a managed / registrar
+    DNS provider (its nameservers are stamped on every customer's domain — the provider's own apex
+    is exactly as much a lead as cloudflare.com is)."""
+    return _shared_infra_apex(apex) or _managed_dns(apex)
 
 # ONE number for "this IP is a landlord": the KB ingester, the cluster partition and this frontier
 # all read noise_filters.SHARED_HOSTING_MAX_COHOSTS (references/noise_filters.json). The literal
@@ -412,7 +426,7 @@ def never_seed(apex):
     engine's own data vendors (api_keys.json). The mechanical routes already apply the first two via
     _is_noise_apex; this is the single check for the analyst-directed (next_pivots/gaps) route."""
     a = (apex or "").strip().lower().rstrip(".")
-    if not a or "." not in a:
+    if not a or "." not in a or not _has_known_tld(a):
         return True
     return a in _vendor_apexes() or a in _benign_set() or _is_shared_infra(a)
 
@@ -585,7 +599,7 @@ def _clean_name(name):
     s = s.split(":", 1)[0]                      # strip :port (FOFA hosts are often host:port)
     if s.startswith("*."):
         s = s[2:]
-    if "." not in s or _IP_RE.match(s) or not _HOSTNAME_RE.match(s):
+    if "." not in s or _IP_RE.match(s) or not _HOSTNAME_RE.match(s) or not _has_known_tld(s):
         return ""
     return s
 
@@ -1354,8 +1368,9 @@ def frontier(case, max_new=8):
         # non-owner-sourced apexes (urlscan related pages, lookalikes): NOT seeded, surfaced for triage
         "related_leads": [{"apex": a, "sources": sorted(v["sources"]), "examples": sorted(v["examples"])[:4],
                            "why": ("only non-owner sources (" + ", ".join(sorted(v["sources"])) +
-                                   ") — a page that loaded the host's resources or a lookalike, not the "
-                                   "operator's registration; triage by hand, never auto-collected")}
+                                   ") — a page that loaded the host's resources, a lookalike, or a "
+                                   "same-kit deployment, not the operator's registration; triage by "
+                                   "hand, never auto-collected")}
                           for a, v in sorted(related.items(), key=lambda kv: (-len(kv[1]["sources"]), kv[0]))],
         "subdomains_pending": sub_pending,          # {apex: [host, …]} — next-round collection
         "subdomains": sub_detail,                   # {host: {apex, sources, dns}} incl. dead names

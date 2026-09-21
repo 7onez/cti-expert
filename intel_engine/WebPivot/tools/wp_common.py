@@ -417,5 +417,17 @@ def _registrable(host: str) -> str:
     label = host[:-(len(suffix) + 1)].rsplit(".", 1)[-1]
     return f"{label}.{suffix}"
 
+# RFC 2606 / RFC 6761 reserved names: not in the PSL, yet legitimately domain-shaped — fixtures and
+# docs use `.example`/`.test`, and a `.onion` is a real pivot target.
+_RESERVED_TLDS = frozenset({"example", "test", "invalid", "localhost", "onion"})
+
+
+def has_known_tld(host: str) -> bool:
+    """True when `host` ends in a TLD the PSL knows (or a reserved special-use name). A
+    domain-shaped token whose last label is a file extension (`clusters.json`, `report.md`) or a
+    field name is not a hostname, whatever the regex that matched it thought."""
+    tld = (host or "").strip().lower().rstrip(".").rsplit(".", 1)[-1]
+    return bool(tld) and (tld in _PSL_RULES or tld in _PSL_WILD or tld in _RESERVED_TLDS)
+
 
 __all__ = [_n for _n in dir() if not _n.startswith("__")]
