@@ -230,6 +230,6 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   need both a managed-provider and a self-hosted-NS case (`CLAUDE.md` Rule 5).
 - Live verification (real vendors, real case) is a separate, non-gating smoke on a case copy; record
   its diff under `intel_engine/cases/<id>/report/`, never under `plans/`.
-- CI: `.github/workflows/audit.yml` runs `bash scripts/audit.sh` (structural + leak sections; the
-  local-only tests are absent there); `smoke.yml` runs installer + `scripts/smoke-test.sh` on fresh
-  machines.
+- CI: `.github/workflows/audit.yml` runs `bash scripts/audit.sh` (structural + leak sections only;
+  no tests run on GitHub). The installer readiness check `scripts/smoke-test.sh` is local-only too:
+  run it by hand after `scripts/install.sh` on a fresh machine.

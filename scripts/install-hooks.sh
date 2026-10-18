@@ -17,7 +17,7 @@ root="$(git rev-parse --show-toplevel)"
 hooks="$root/.git/hooks"
 
 # One pattern for both hooks; keep in step with the "Tests are LOCAL-ONLY" block in .gitignore.
-TEST_RE='(^|/)tests/|^intel_engine/tools/eval/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$|(^|/)pytest\.ini$'
+TEST_RE='(^|/)tests/|^intel_engine/tools/eval/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$|(^|/)pytest\.ini$|smoke-test'
 
 cat > "$hooks/pre-commit" <<EOF
 #!/usr/bin/env bash

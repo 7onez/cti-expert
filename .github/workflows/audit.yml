@@ -1,8 +1,8 @@
 name: audit
 
-# Structural drift + leak gate (complements smoke.yml, which proves a fresh VPS can install).
+# Structural drift + leak gate. No tests run here: every test (including the installer smoke
+# test) is local-only, gitignored and never pushed, so audit.sh skips its test sections.
 # Fast: stdlib/grep only, no venv or SDK — py_compile is syntax-only so it needs no claude_agent_sdk.
-# Tests are local-only (gitignored, never pushed), so audit.sh skips its test sections here.
 on:
   push:
   pull_request:

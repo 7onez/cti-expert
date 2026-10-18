@@ -72,10 +72,12 @@ scripts/proxy/.proxy-health
 .orca/
 
 # Tests are LOCAL-ONLY — never committed or pushed (owner rule, 2026-10-18). Every test suite,
-# the eval harness and its fixtures stay on disk; scripts/audit.sh skips them where absent.
+# the eval harness, its fixtures and the installer smoke test stay on disk; scripts/audit.sh
+# skips them where absent.
 tests/
 /intel_engine/tools/eval/
 test_*.py
 *_test.py
 conftest.py
 pytest.ini
+*smoke-test*
