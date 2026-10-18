@@ -1,0 +1,190 @@
+{
+  "files": {
+    "seed.example": {
+      "artifacts": {
+        "whois": {
+          "created": "2024-01-01"
+        }
+      },
+      "meta": {
+        "host": "seed.example"
+      },
+      "pivots": [
+        {
+          "kind": "domain",
+          "live_results": {
+            "crtsh": {
+              "certs": [
+                {
+                  "id": 1,
+                  "issuer": "CA",
+                  "names": [
+                    "seed.example",
+                    "sibling.example"
+                  ],
+                  "not_before": "2024-06-01T00:00:00"
+                }
+              ],
+              "subdomains": [
+                "sibling.example"
+              ]
+            }
+          },
+          "value": "seed.example"
+        }
+      ]
+    }
+  },
+  "goldens": {
+    "max0": {
+      "candidate_total": 1,
+      "candidates": {
+        "sibling.example": {
+          "examples": [],
+          "hop": 1,
+          "origins": [
+            "seed.example"
+          ],
+          "sources": [
+            "crtsh_san"
+          ]
+        }
+      },
+      "case": "CASE-cert",
+      "co_tenancy_leads": [],
+      "enrichment_gaps": [],
+      "enrichment_leads": [
+        {
+          "cost": "metered",
+          "key": "intelx-phonebook:seed.example",
+          "run": [
+            {
+              "argv": [
+                "phonebook",
+                "seed.example"
+              ],
+              "op": "intelx"
+            }
+          ],
+          "tool": "/intelx phonebook",
+          "value": "seed.example",
+          "why": "inventory every email/subdomain/URL IntelX has seen under seed.example"
+        },
+        {
+          "cost": "free",
+          "key": "dork:seed.example",
+          "tool": "/dork-sweep --filetype --docs",
+          "value": "seed.example",
+          "why": "Google/Bing dork sweep + doc-leak hunt on seed.example"
+        },
+        {
+          "cost": "free",
+          "key": "github:seed.example",
+          "tool": "/github-osint + /secrets (github_harvest)",
+          "value": "seed.example",
+          "why": "GitHub org/repo search for seed.example → committer-identity harvest (.patch From: e-mails) + exposed-secret recon"
+        },
+        {
+          "cost": "metered (keyless dork fallback)",
+          "key": "grayhatwarfare:seed.example",
+          "tool": "/secrets",
+          "value": "seed.example",
+          "why": "open S3/Azure/GCS buckets carrying the seed label — exposure, not attribution"
+        }
+      ],
+      "enrichment_results": [],
+      "expansion_depth": 2,
+      "leaves": [],
+      "metered_leads": [],
+      "pending": [
+        "sibling.example"
+      ],
+      "related_leads": [],
+      "round": 0,
+      "subdomains": {},
+      "subdomains_pending": {},
+      "ips_pending": [],
+      "origin_ips": {}
+    },
+    "max8": {
+      "candidate_total": 1,
+      "candidates": {
+        "sibling.example": {
+          "examples": [],
+          "hop": 1,
+          "origins": [
+            "seed.example"
+          ],
+          "sources": [
+            "crtsh_san"
+          ]
+        }
+      },
+      "case": "CASE-cert",
+      "co_tenancy_leads": [],
+      "enrichment_gaps": [],
+      "enrichment_leads": [
+        {
+          "cost": "metered",
+          "key": "intelx-phonebook:seed.example",
+          "run": [
+            {
+              "argv": [
+                "phonebook",
+                "seed.example"
+              ],
+              "op": "intelx"
+            }
+          ],
+          "tool": "/intelx phonebook",
+          "value": "seed.example",
+          "why": "inventory every email/subdomain/URL IntelX has seen under seed.example"
+        },
+        {
+          "cost": "free",
+          "key": "dork:seed.example",
+          "tool": "/dork-sweep --filetype --docs",
+          "value": "seed.example",
+          "why": "Google/Bing dork sweep + doc-leak hunt on seed.example"
+        },
+        {
+          "cost": "free",
+          "key": "github:seed.example",
+          "tool": "/github-osint + /secrets (github_harvest)",
+          "value": "seed.example",
+          "why": "GitHub org/repo search for seed.example → committer-identity harvest (.patch From: e-mails) + exposed-secret recon"
+        },
+        {
+          "cost": "metered (keyless dork fallback)",
+          "key": "grayhatwarfare:seed.example",
+          "tool": "/secrets",
+          "value": "seed.example",
+          "why": "open S3/Azure/GCS buckets carrying the seed label — exposure, not attribution"
+        }
+      ],
+      "enrichment_results": [],
+      "expansion_depth": 2,
+      "leaves": [],
+      "metered_leads": [],
+      "pending": [
+        "sibling.example"
+      ],
+      "related_leads": [],
+      "round": 0,
+      "subdomains": {},
+      "subdomains_pending": {},
+      "ips_pending": [],
+      "origin_ips": {}
+    }
+  },
+  "name": "CASE-cert",
+  "state": {
+    "collected": [],
+    "consumed": [],
+    "expansion_depth": 2,
+    "hops": {
+      "seed.example": 0
+    },
+    "pending": []
+  }
+}

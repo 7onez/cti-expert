@@ -33,8 +33,10 @@ from __future__ import annotations
 import argparse
 import datetime
 import glob
+import ipaddress
 import json
 import os
+import re
 import sys
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))  # tools/kb -> repo root
@@ -48,9 +50,44 @@ def _path(kb: str) -> str:
     return os.path.join(kb if os.path.isabs(kb) else os.path.join(REPO, kb), "reference.jsonl")
 
 
+_HASH_RE = re.compile(r'^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$', re.I)
+_PHONE_RE = re.compile(r'^\+?[0-9()\-\s]{6,20}$')
+_DOMAIN_RE = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$', re.I)
+
+
 def _infer_type(value: str) -> str:
-    """Type = the indicator prefix ('favicon:123' -> 'favicon'); a bare string -> 'keyword'."""
-    return value.split(":", 1)[0] if ":" in value else "keyword"
+    """Type inference for a `--type`-less check/add (#24). Order matters:
+
+    1. An IP address (v4 or v6) first — IPv6 also contains ':', so it must be checked before the
+       colon-prefix rule below or "2001:db8::1" would infer type "2001".
+    2. A colon-prefixed SYNTHETIC indicator ('favicon:123' -> 'favicon', 'ga:UA-1' -> 'ga',
+       'wallet:btc:1abc' -> 'wallet' — split on the FIRST colon only) — these are the values this
+       module and ingest_webpivot mint, so they take priority once IPv6 is ruled out.
+    3. Real-world selector shapes: email / phone / hash / domain.
+    4. Anything else -> 'keyword' (a plain watchlist string, e.g. a brand name).
+
+    `upsert`/`check` both call this only when the caller omitted --type, so a value stored with an
+    EXPLICIT --type (e.g. `add --type email --value x@example.com`) and later looked up with no
+    --type must infer the SAME type the explicit add used, or the two can never match (#24)."""
+    v = value.strip()
+    try:
+        ipaddress.ip_address(v)
+        return "ip"
+    except ValueError:
+        pass
+    if ":" in v:
+        prefix, rest = v.split(":", 1)
+        if prefix and rest:
+            return prefix
+    if "@" in v and "." in v.rsplit("@", 1)[-1]:
+        return "email"
+    if _HASH_RE.match(v):
+        return "hash"
+    if _PHONE_RE.match(v) and sum(c.isdigit() for c in v) >= 6:
+        return "phone"
+    if _DOMAIN_RE.match(v):
+        return "domain"
+    return "keyword"
 
 
 def load(kb: str) -> list[dict]:

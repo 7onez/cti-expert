@@ -4,6 +4,8 @@
     intel open     CASE  <seed-url> ...        # one Collect→Correlate→Assess round
     intel continue CASE  <seed-url> ...        # iterate to convergence (--continue)
     intel status   [CASE]                      # case state, NO LLM, NO API key
+    intel approve  CASE [--only ids|--all] [--reject ids] [--show]
+                                               # cross-type loop: approve this round's proposal
 
 `open` / `continue` are thin wrappers over `orchestrator.py` — every extra flag
 (`--hostile`, `--parallel`, `--depth N`, `--collect-conc N`, …) is passed straight
@@ -21,24 +23,149 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))            # harness/
+sys.path.insert(0, HERE)
 ROOT = os.path.dirname(HERE)                                 # repo root
 CASES = os.path.join(ROOT, "cases")
 
 
 # ---------------------------------------------------------------- open / continue
+FAILOVER_MODES = ("ask", "auto", "off")
+
+
+def _failover_mode(rest: list[str]) -> str:
+    """--failover ask|auto|off (stripped from the passthrough), else HARNESS_FAILOVER, else `ask`
+    on an interactive terminal and `off` for cron/CI (nobody to answer the prompt)."""
+    mode = os.environ.get("HARNESS_FAILOVER", "").strip().lower()
+    if "--failover" in rest:
+        i = rest.index("--failover")
+        mode = (rest[i + 1] if i + 1 < len(rest) else "").strip().lower()
+        del rest[i:i + 2]
+    if mode not in FAILOVER_MODES:
+        mode = "ask" if sys.stdin.isatty() else "off"
+    return mode
+
+
+def _confirm(question: str) -> bool:
+    try:
+        ans = input(f"{question} [Y/n] ").strip().lower()
+    except EOFError:
+        return False
+    return ans in ("", "y", "yes")
+
+
 def _run_orchestrator(passthrough: list[str], *, cont: bool) -> int:
     """Forward to orchestrator.py verbatim (inserting --continue for `continue`). cwd=ROOT so the
-    harness's .env discovery — which starts at the invocation cwd — finds the repo-root keys."""
+    harness's .env discovery — which starts at the invocation cwd — finds the repo-root keys.
+
+    FAILOVER: the orchestrator picks the backend itself (backend_select: the host agent first, then
+    claude → codex → omp → an OpenAI key, each probed with one tiny request). If that backend dies
+    MID-RUN on a login / credit / rate-limit error, the orchestrator exits FAILOVER_EXIT; this loop
+    then probes the remaining backends, asks (or not — see _failover_mode) and re-runs the SAME
+    command on the next one. The case resumes: collected pivots are cached, so nothing is re-bought."""
+    import backend_select as bs
     if not passthrough:
         sys.exit("need a CASE id and at least one seed url")
-    case, rest = passthrough[0], passthrough[1:]
+    case, rest = passthrough[0], list(passthrough[1:])
+    mode = _failover_mode(rest)
     cmd = [sys.executable, os.path.join(HERE, "orchestrator.py"), case]
     if cont:
         cmd.append("--continue")
     cmd += rest
-    return subprocess.run(cmd, cwd=ROOT).returncode
+    env = dict(os.environ)
+    failed: list[str] = []
+    fd, signal_file = tempfile.mkstemp(prefix="intel-failover-", suffix=".json")
+    os.close(fd)
+    try:
+        while True:
+            if os.path.exists(signal_file):
+                os.remove(signal_file)
+            env["HARNESS_FAILOVER_FILE"] = signal_file
+            rc = subprocess.run(cmd, cwd=ROOT, env=env).returncode
+            if rc != bs.FAILOVER_EXIT:
+                # Cross-type loop stopped at awaiting-approval: on an interactive terminal, show the
+                # proposal, record the analyst's choice and resume; headless runs keep the
+                # checkpoint for `intel approve` / the case_approve tool.
+                if rc == 0 and sys.stdin.isatty() and _tty_approve(case):
+                    if "--continue" not in cmd:
+                        cmd.insert(3, "--continue")
+                    continue
+                return rc
+            info = bs.read_failover(signal_file)
+            failed.append(info.get("backend") or env.get("HARNESS_BACKEND") or "?")
+            bs.mark_failed(failed[-1], info.get("reason") or "backend unavailable")
+            print(f"\n[failover] {failed[-1]} stopped: {info.get('reason', 'backend unavailable')}",
+                  file=sys.stderr)
+            if mode == "off":
+                print("[failover] off (non-interactive). Re-run with HARNESS_BACKEND=<other> or "
+                      "--failover auto to switch automatically.", file=sys.stderr)
+                return rc
+            print(f"[failover] checking the other backends (tried: {', '.join(failed)}) …", file=sys.stderr)
+            saved = os.environ.pop("HARNESS_BACKEND", None)
+            try:
+                nxt, why, tried = bs.resolve(exclude=failed)
+            except SystemExit as e:
+                print(f"[failover] {e}", file=sys.stderr)
+                return rc
+            finally:
+                if saved is not None:
+                    os.environ["HARNESS_BACKEND"] = saved
+            for n, ok, w in tried:
+                if not ok:
+                    print(f"[failover]   ✗ {n}: {w}", file=sys.stderr)
+            if mode == "ask" and not _confirm(f"[failover] {nxt} is usable ({why}). Resume case {case} on {nxt}?"):
+                print(f"[failover] not switching. Resume later with: HARNESS_BACKEND={nxt} "
+                      f"python3 scripts/backend/intel.py harness {'continue' if cont else 'open'} "
+                      f"{case} …", file=sys.stderr)
+                return rc
+            print(f"[failover] resuming {case} on {nxt}", file=sys.stderr)
+            env["HARNESS_BACKEND"] = nxt
+    finally:
+        if os.path.exists(signal_file):
+            os.remove(signal_file)
+
+
+# ---------------------------------------------------------------- approve (cross-type loop)
+def _tty_approve(case: str) -> bool:
+    """Interactive approval of a pending proposal. True when something was approved (resume)."""
+    import proposal as P
+    data = P.load(ROOT, case)
+    if not data or data.get("status") != "pending" or not data.get("items"):
+        return False
+    print("\n" + P.render(data), file=sys.stderr)
+    try:
+        ans = input("approve which ids? [all / id,id,… / none] ").strip().lower()
+    except EOFError:
+        return False
+    if ans in ("", "none", "n", "no"):
+        print(f"[approve] nothing approved; resume later with: intel approve {case} --only <ids>",
+              file=sys.stderr)
+        return False
+    res = (P.approve(ROOT, case, approve_all=True) if ans in ("all", "a", "y", "yes")
+           else P.approve(ROOT, case, only=[x.strip() for x in ans.replace(" ", ",").split(",") if x.strip()]))
+    if res.get("error"):
+        print(f"[approve] {res['error']}", file=sys.stderr)
+        return False
+    print(f"[approve] approved {len(res.get('approved') or [])} item(s); resuming {case}", file=sys.stderr)
+    return bool(res.get("approved"))
+
+
+def _cmd_approve(case: str, only: list[str], reject: list[str], approve_all: bool, show: bool) -> int:
+    import proposal as P
+    data = P.load(ROOT, case)
+    if show or not (only or reject or approve_all):
+        print(P.render(data or {}))
+        return 0 if data else 1
+    res = P.approve(ROOT, case, only=only, reject=reject, approve_all=approve_all)
+    if res.get("error"):
+        print(f"approve: {res['error']}", file=sys.stderr)
+        return 1
+    print(f"approved {len(res.get('approved') or [])} · rejected {len(res.get('rejected') or [])} · "
+          f"deferred {len(res.get('deferred') or [])} (deferred items come back next round) — "
+          f"resume with: intel continue {case}")
+    return 0
 
 
 # ---------------------------------------------------------------- status (no LLM)
@@ -151,6 +278,57 @@ def _cmd_status(case: str | None) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- doctor (no LLM phases)
+def _cmd_doctor(pin: str | None) -> int:
+    """Which LLM backend would `open` run on, and why each other candidate was skipped. Probes
+    auth (one tiny request per CLI backend) so a dead login is found HERE, not mid-case."""
+    import backend_select as bs
+    if pin:
+        os.environ["HARNESS_BACKEND"] = pin
+    print(f"host agent      : {bs.host_agent() or 'none detected'}")
+    print(f"euid            : {os.geteuid() if hasattr(os, 'geteuid') else 'n/a'}"
+          + ("  (root — IS_SANDBOX=1 will be set for the Claude CLI)" if bs.is_root() else ""))
+    print(f"HARNESS_BACKEND : {os.environ.get('HARNESS_BACKEND') or 'auto'}")
+    try:
+        name, why, tried = bs.resolve(deep=True)     # doctor: ONE real request each, cached for runs
+    except SystemExit as e:
+        print(str(e))
+        return 1
+    for n, ok, w in tried:
+        print(f"  {'✓' if ok else '✗'} {n:<8} {w}")
+    if not tried:
+        avail, w = bs.check(name, deep=True)
+        print(f"  {'✓' if avail else '✗'} {name:<8} {w}  (pinned)")
+        if not avail:
+            print(f"\nselected        : {name} (pinned) — but it is NOT usable: {w}")
+            return 1
+    print(f"\nselected        : {name} — {why}")
+    # What a mid-run failover could switch to (probed now, so the answer is current).
+    seen = {n for n, _ok, _w in tried} | {name}
+    backups = []
+    for n in bs.candidates():
+        if n in seen:
+            continue
+        ok, w = bs.check(n, deep=True)
+        backups.append((n, ok, w))
+    ready = [n for n, ok, _w in backups if ok]
+    for n, ok, w in backups:
+        print(f"  {'✓' if ok else '✗'} {n:<8} {w}  (fallback)")
+    print(f"fallback        : {', '.join(ready) if ready else 'none ready'}"
+          f"  (a mid-run backend failure {'offers these' if ready else 'stops the run'}; "
+          f"--failover ask|auto|off)")
+    # The per-run path, run here with the SAME interpreter and env as `harness open` — it reads the
+    # results just cached above, so this line is what an open/continue started now would use.
+    try:
+        run_name, run_why, _ = bs.resolve()
+    except SystemExit as e:
+        run_name, run_why = "none", str(e).splitlines()[0]
+    sdk = "yes" if bs.available("claude")[0] or "claude_agent_sdk" in sys.modules else "no"
+    print(f"harness open    : {run_name} — {run_why}")
+    print(f"interpreter     : {sys.executable}  (Claude SDK importable: {sdk})")
+    return 0
+
+
 # ---------------------------------------------------------------- entry
 def main() -> int:
     ap = argparse.ArgumentParser(prog="intel", description="OSINT harness console")
@@ -161,6 +339,14 @@ def main() -> int:
     c.add_argument("args", nargs=argparse.REMAINDER, help="CASE <seed-url> ... [--depth N ...]")
     st = sub.add_parser("status", help="case state (no LLM, no API key)")
     st.add_argument("case", nargs="?", help="a CASE id; omit to list every case")
+    dr = sub.add_parser("doctor", help="which LLM backend a run would use (probes auth; no phases)")
+    dr.add_argument("--backend", default=None, help="pin claude|codex|omp|openai|deepseek|kimi|local")
+    ap_ = sub.add_parser("approve", help="approve/reject the cross-type loop's pending proposal")
+    ap_.add_argument("case")
+    ap_.add_argument("--only", default="", help="comma-separated proposal ids to approve")
+    ap_.add_argument("--reject", default="", help="comma-separated proposal ids to reject")
+    ap_.add_argument("--all", action="store_true", dest="approve_all", help="approve every item")
+    ap_.add_argument("--show", action="store_true", help="print the proposal and exit")
     a = ap.parse_args()
 
     if a.cmd == "open":
@@ -169,6 +355,11 @@ def main() -> int:
         return _run_orchestrator(a.args, cont=True)
     if a.cmd == "status":
         return _cmd_status(a.case)
+    if a.cmd == "doctor":
+        return _cmd_doctor(a.backend)
+    if a.cmd == "approve":
+        split = lambda s: [x.strip() for x in (s or "").split(",") if x.strip()]  # noqa: E731
+        return _cmd_approve(a.case, split(a.only), split(a.reject), a.approve_all, a.show)
     return 2
 
 

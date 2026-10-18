@@ -4,6 +4,10 @@
 requests            # faster/robust fetching (falls back to urllib if absent)
 playwright          # rendered post-JS DOM via --render  (then: playwright install chromium)
 openpyxl            # --master with a .xlsx path (falls back to CSV if absent)
+brotli              # decode Wayback id_ captures stored with Content-Encoding: br (without it such a
+                    # capture is reported undecodable and retried next run — never read as empty)
+psycopg[binary]     # crt.sh public PostgreSQL fallback in wp_ct when the web front end is down (without
+                    # it that fallback is skipped with a status note and crt.sh reads `degraded` sooner)
 
 # NOT required: favicon mmh3 hashing uses a bundled pure-Python MurmurHash3,
 # and HTML parsing uses stdlib regex/urllib — no bs4, no mmh3 package needed.

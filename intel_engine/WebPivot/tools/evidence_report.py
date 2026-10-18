@@ -34,6 +34,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # importable from anywhere
 from wp_refs import ref_path, load_ref    # noqa: E402 — reference DATA in references/*.json
+import wp_related as WR                    # noqa: E402 — CT completeness + "Related hosts (unverified)" contract
 
 # Standardized analyst Domain Summary table (domains/status/WHOIS/attribution) —
 # auto-prepended to every assessment. Lives at the project-root tools/ dir.
@@ -439,9 +440,22 @@ def render_cia_report(result: dict,
                 L.append(f"- {label}: {w[key]}")
         hist = w.get("history") or {}
         if hist.get("registrant_emails"):
-            L.append(f"- Historical registrant email(s): {', '.join(hist['registrant_emails'][:8])}")
+            L.append(f"- Current registration — email(s) seen across history: "
+                     f"{', '.join(hist['registrant_emails'][:8])}")
         if hist.get("registrant_names"):
-            L.append(f"- Historical registrant name(s): {', '.join(hist['registrant_names'][:8])}")
+            L.append(f"- Current registration — name(s) seen across history: "
+                     f"{', '.join(hist['registrant_names'][:8])}")
+        prior = hist.get("prior_registrants") or []
+        if prior:
+            # whois_eras.py: a domain that dropped and was re-registered has every earlier
+            # registrant recorded here as a FACT, never as if it were the current operator.
+            parts = []
+            for p in prior[:8]:
+                bits = [b for b in (p.get("email"), p.get("name")) if b]
+                label = " / ".join(bits) if bits else "(no contact recorded)"
+                parts.append(f"{label} (era {p.get('created') or 'unknown date'})")
+            L.append(f"- Previous owner(s) — NOT linked to the current registrant: "
+                     f"{'; '.join(parts)}")
         L.append("")
 
     # ---- Source / collection summary ---------------------------------------
@@ -460,8 +474,16 @@ def render_cia_report(result: dict,
     L.append("")
 
     # ---- Analyst comment / next collection ---------------------------------
+    ct_sum, related = ct_and_related([result])
+    if ct_sum:
+        L += ["## Certificate Transparency — completeness", ""] + WR.ct_md(ct_sum)
+    if related:
+        L += ["## Related hosts (unverified)", ""] + WR.related_md(related)
+
     L.append("## Intelligence Gaps & Recommended Collection")
     L.append("")
+    for g in WR.ct_gap_lines(ct_sum):
+        L.append(f"- {g}")
     if high:
         L.append(f"- Run reverse lookups on the {len(high)} high-confidence artifact(s) to "
                  f"enumerate the operator's wider domain set.")
@@ -508,6 +530,22 @@ _NS_NOISE = tuple(load_ref(ref_path(__file__, "third_party_noise.json"),
                                                       "domaincontrol.com",
                                                       "registrar-servers.com")}
                            )["managed_ns_substrings"])
+
+
+def ct_and_related(results: list):
+    """({host: CT summary}, [related-host rows]) for a set of pivot_extract results — the shared
+    reporting contract (wp_related), so every renderer reads CT completeness and pivot hits alike."""
+    hosts = [_norm((r.get("meta") or {}).get("host") or "") for r in results]
+    case_hosts = {h for h in hosts if h}
+    ct, rel = {}, []
+    for h, r in zip(hosts, results):
+        if not h or (r.get("meta") or {}).get("kind") == "ip":
+            continue
+        s = WR.ct_summary(WR.ct_of(r))
+        if s:
+            ct[h] = s
+        rel += WR.related_hosts(r, case_hosts, skip=_is_infra_noise_host)
+    return ct, rel
 
 
 def _is_infra_noise_host(h: str) -> bool:
@@ -590,6 +628,45 @@ def _is_noise_value(kind: str, value: str) -> bool:
             return True
         return any(s in digits for s in _NOISE_PHONE_SUBSTR)
     return False
+
+
+def _kb_registrant_edges(case_hosts: set, kb_dir: Optional[str]) -> dict:
+    """(kind, value) -> set(hosts) for KB `registered_by` email/phone edges scoped to this
+    case's hosts — the SAME join key clusters.json partitions same-operator components on
+    (tools/kb/query.py._components / tools/intel.py._write_clusters), so the renderer's
+    registrant binding never disagrees with the case's own cluster file. Registrant NAME
+    edges are excluded (RULE 5: a common name alone must not bind a cluster — see
+    _DECISIVE_KINDS). Filtered by the renderer's OWN noise/bulk-cap checks (_is_noise_value,
+    _registrant_ok), so a registrar-privacy or reseller mailbox never creates a cluster here
+    either. Returns {} on any failure or missing kb_dir/hosts — an ENHANCEMENT that must
+    never break the render."""
+    out: dict = {}
+    if not kb_dir or not case_hosts:
+        return out
+    try:
+        _kbtools = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "tools", "kb")
+        if _kbtools not in sys.path:
+            sys.path.insert(0, _kbtools)
+        from knowledge_base import KB  # noqa: E402
+        kb = KB(kb_dir)
+        _KIND = {"email": "whois:registrant_email", "phone": "whois:registrant_phone"}
+        for e in kb.edges():
+            if e.get("rel") != "registered_by" or e.get("src_type") != "domain":
+                continue
+            kind = _KIND.get(e.get("dst_type") or "")
+            if not kind:
+                continue
+            src = _norm(e.get("src"))
+            if src not in case_hosts:
+                continue
+            val = _norm(e.get("dst"))
+            if not val or _is_noise_value(kind, val) or not _registrant_ok(val, kb_dir):
+                continue
+            out.setdefault((kind, val), set()).add(src)
+    except Exception:  # noqa: BLE001 — KB registrant merge is an ENHANCEMENT; never break render
+        return {}
+    return out
 
 
 def _cluster_confidence(n_types: int, live_corroborated: bool, decisive: bool = False) -> str:
@@ -732,6 +809,107 @@ def _origin_ip_section(results):
     return L
 
 
+_MAX_ORIGIN_PAIRS = 10   # host pairs printed per shared historical origin (overlapping first)
+
+
+def _origin_history_section(results):
+    """Markdown: every NON-CDN address the case's hosts ever resolved to (wp_origin_history — passive
+    DNS, DNS history, Validin, urlscan, Webamon, passive SSL), dated and era-classified, joined to the
+    IPPivot evidence collected on each. Offline — reads collected data only."""
+    try:
+        import wp_origin_history as OH
+    except Exception:  # noqa: BLE001
+        return []
+    per_ip, suppressed, ipdata = {}, {}, {}
+    for r in results:
+        meta = r.get("meta") or {}
+        host = _norm(meta.get("host") or "")
+        if meta.get("kind") == "ip":
+            ipdata[host] = (r.get("artifacts") or {}).get("ip_intel") or {}
+            continue
+        dp = next((p for p in r.get("pivots") or [] if p.get("kind") == "domain"), None)
+        if not dp:
+            continue
+        blk = OH.block_for(dp.get("live_results") or {}, r, host)
+        for row in blk.get("ips") or []:
+            if row.get("status") not in OH.COLLECTABLE:
+                suppressed[row.get("status")] = suppressed.get(row.get("status"), 0) + 1
+        _h, _reg, rows = OH.host_origins(r)
+        for row in rows:
+            e = per_ip.setdefault(row["ip"], {"hosts": {}, "sources": set(), "asn": row.get("asn"),
+                                              "org": row.get("org")})
+            e["hosts"][host] = row
+            e["sources"].update(row.get("sources") or ())
+    if not per_ip:
+        return []
+    L = ["## Historical Origin IPs (non-CDN hosting history)", "",
+         "Every address the case's hosts have resolved to that is **not** a CDN / WAF / DDoS-protection "
+         "edge, a parking farm or a non-routable answer — merged from passive DNS, DNS-history and "
+         "web-scan indexes. A CDN-fronted host's earlier or forgotten origin is where its real hosting "
+         "provider, abuse contact, ports and sibling sites live. `previous_owner` rows predate the "
+         "current registration and are not this operator's. Co-tenants of a `historical`/`undated` "
+         "origin may postdate our host's tenancy, and co-tenants of an `ambiguous` network (sells "
+         "DDoS proxying AND servers) may be other customers behind one edge — both are leads, never "
+         "siblings."
+         + (" Suppressed as shared edge / parking / bogon: "
+            + ", ".join(f"{n} {k}" for k, n in sorted(suppressed.items())) + "." if suppressed else ""), "",
+         "| IP | Case host(s) | Window | Era | Network | Seen by | IP intel |", "|---|---|---|---|---|---|---|"]
+    shared = []
+
+    def _rank(ip):
+        rows = per_ip[ip]["hosts"].values()
+        return (min(OH._ERA_RANK[x["era"]] for x in rows), -len(per_ip[ip]["hosts"]), ip)
+
+    for ip in sorted(per_ip, key=_rank):
+        e = per_ip[ip]
+        rows = list(e["hosts"].values())
+        first = min((x.get("first_seen") for x in rows if x.get("first_seen")), default=None)
+        last = "now" if any(x.get("live") for x in rows) else max(
+            (x.get("last_seen") for x in rows if x.get("last_seen")), default=None)
+        era = min((x["era"] for x in rows), key=lambda v: OH._ERA_RANK[v])
+        if any(x.get("status") == "ambiguous" for x in rows):
+            era += " · ambiguous"
+        ii = ipdata.get(ip) or {}
+        info = ii.get("ipinfo") or {}
+        net = " ".join(x for x in (info.get("asn") or e.get("asn"), info.get("org_name") or e.get("org"),
+                                   f"({info['country']})" if info.get("country") else None) if x) or "—"
+        bits = []
+        if ii.get("ports"):
+            bits.append("ports " + ",".join(ii["ports"][:8]))
+        if ii.get("ptr"):
+            bits.append(f"PTR `{ii['ptr']}`")
+        if (info.get("abuse") or {}).get("email"):
+            bits.append(f"abuse {info['abuse']['email']}")
+        if ii.get("co_hosted_domains"):
+            bits.append(f"{len(ii['co_hosted_domains'])} co-hosted")
+        intel = "; ".join(bits) if ii else "not collected yet"
+        L.append(f"| `{ip}` | {', '.join(sorted(e['hosts']))} | {first or '?'} → {last or '?'} | {era} | "
+                 f"{net} | {', '.join(sorted(e['sources']))} | {intel} |")
+        # a previous owner's era is not this operator's: it never makes two hosts share a box
+        mine = {h: x for h, x in e["hosts"].items() if x["era"] != "previous_owner"}
+        if len(mine) >= 2:
+            shared.append((ip, mine))
+    L.append("")
+    if shared:
+        L.append("**Shared historical origins** — two or more case hosts served from the same non-CDN box. "
+                 "A same-operator link only when their windows OVERLAP and the box is not shared hosting "
+                 "(check co-hosted count); a disjoint pair is two tenants of one address, years apart:")
+        for ip, hosts in shared:
+            names = sorted(hosts)
+            pairs = []
+            for i, a in enumerate(names):
+                for b in names[i + 1:]:
+                    verdict, detail = OH._overlap(hosts[a], hosts[b])
+                    pairs.append(f"{a} ↔ {b}: {verdict}" + (f" ({detail})" if detail else ""))
+            # one VPS serving 30 hosts would print 435 pairs: overlapping pairs first, capped
+            pairs.sort(key=lambda p: (": overlapping" not in p, p))
+            more = len(pairs) - _MAX_ORIGIN_PAIRS
+            L.append(f"- `{ip}` — " + "; ".join(pairs[:_MAX_ORIGIN_PAIRS])
+                     + (f"; +{more} more pair(s)" if more > 0 else ""))
+        L.append("")
+    return L
+
+
 def render_cluster_report(results: list,
                           case: Optional[str] = None,
                           classification: str = "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
@@ -814,6 +992,32 @@ def render_cluster_report(results: list,
                     ipclass = ",".join(sorted({c.get("provider") or c.get("kind") for c in ic}))
         per_host[host] = {"top": top_art, "ipclass": ipclass}
 
+
+    # --- 1b. fold in KB `registered_by` edges (RULE 5-safe join key) ------------
+    # clusters.json partitions THIS case's hosts using the KB's `registered_by` edges
+    # (tools/kb/query.py._components), not just this run's own pivots — a domain whose
+    # current-WHOIS parse dropped the registrant, or that was only ever confirmed via a
+    # sibling's reverse-WHOIS hit, still shows up there. Merge the same edges here so the
+    # BLUF/Key Judgments/Cluster sections never disagree with the case's own cluster file.
+    # A key with NO pivot-derived host at all is purely KB-sourced (current-era history or a
+    # cross-domain reverse-WHOIS hit, never this run's own live parse) — caveat it explicitly
+    # rather than render it as an equal-footing live artifact.
+    kb_reg = _kb_registrant_edges(case_hosts, kb_dir)
+    historical_keys = set()
+    registrant_kb_by_host: dict = {}
+    for key, kbhosts in kb_reg.items():
+        kbhosts = {h for h in kbhosts if h in case_hosts}
+        if not kbhosts:
+            continue
+        if key not in shared:
+            historical_keys.add(key)
+        shared.setdefault(key, set())
+        shared[key] |= kbhosts
+        for h in kbhosts:
+            registrant_kb_by_host.setdefault(h, []).append(key[1])
+    registrant_kb_by_host = {h: " / ".join(dict.fromkeys(vals))
+                             for h, vals in registrant_kb_by_host.items()}
+
     backbone = {k: hosts for k, hosts in shared.items() if len(hosts) >= 2}
 
     # --- 2. group hosts into sub-clusters via shared backbone ---------------
@@ -850,15 +1054,20 @@ def render_cluster_report(results: list,
     if confirmed:
         big = confirmed[0]
         _dec_only = big.get("decisive") and len(big["types"]) < 2
+        _dec_arts = [(k, v) for (k, v, _h) in big["arts"] if _is_decisive_pivot(k)]
+        _dec_hist = _dec_only and any(a in historical_keys for a in _dec_arts)
         basis = ("a decisive shared registrant identifier (registrant email/phone)"
                  if _dec_only else "two or more independent identity artifacts")
-        shared_desc = "registrant identity" if _dec_only else ", ".join(sorted(big["types"]))
+        shared_desc = (f"registrant identity `{_dec_arts[0][1]}`" if _dec_only and _dec_arts
+                      else ", ".join(sorted(big["types"])))
+        caveat = (" (registrant identifier from the knowledge base's registration records)"
+                  if _dec_hist else "")
         L.append(
             f"Collection covered {n_total} domain(s). We assess with high confidence that "
             f"{sum(len(c['hosts']) for c in confirmed)} of them resolve to common operator "
             f"control, on the basis of {len(confirmed)} sub-cluster(s) each sharing {basis}. "
             f"The strongest — {', '.join(big['hosts'])} — almost certainly share a single "
-            f"operator (shared {shared_desc}).")
+            f"operator (shared {shared_desc}){caveat}.")
     elif backbone:
         L.append(f"Collection covered {n_total} domain(s). We assess with moderate confidence "
                  f"that subsets are commonly operated, but no subset yet meets the two-independent-"
@@ -879,8 +1088,13 @@ def render_cluster_report(results: list,
         try:
             # WHOIS-history spend on the sidecar is the CALLER's decision (posture + seed/cluster
             # scope); the default reproduces the historical current-WHOIS-only behaviour.
+            # `kb`/`kb_registrant` let the Registrant column fall back to the SAME KB
+            # registered_by binding the cluster judgment above uses (caveated), instead of
+            # disagreeing with it by showing '—' for a host clusters.json already attributes.
+            _dt_kb_kwargs = {"kb": kb_dir} if kb_dir else {}
             tbl = render_domain_table(results, case=case, history_mode=whois_history,
-                                      history_for=whois_history_for, free_only=free_only)
+                                      history_for=whois_history_for, free_only=free_only,
+                                      kb_registrant=registrant_kb_by_host, **_dt_kb_kwargs)
             if tbl:
                 L += [tbl, ""]
         except Exception:
@@ -895,7 +1109,10 @@ def render_cluster_report(results: list,
             two = len(c["types"]) >= 2 or c.get("decisive")
             like = "almost certainly" if two else "likely"
             conf = _cluster_confidence(len(c["types"]), c["corr"], c.get("decisive", False))
-            arts_str = "; ".join(f"{k}=`{v}` [{len(h)} hosts]" for (k, v, h) in c["arts"][:4])
+            arts_str = "; ".join(
+                f"{k}=`{v}` [{len(h)} hosts]"
+                + (" (from KB registrant edge)" if (k, v) in historical_keys else "")
+                for (k, v, h) in c["arts"][:4])
             L.append(f"- **KJ-{i}.** {', '.join(c['hosts'])} — **{like}** one operator "
                      f"(*{conf}*); shared: {arts_str}.")
     else:
@@ -912,16 +1129,31 @@ def render_cluster_report(results: list,
             verdict = {"high confidence": "**one operator** (high)",
                        "moderate confidence": "one operator (moderate)",
                        "low confidence": "possible link (low)"}[conf]
-            arts_str = "<br>".join(f"{k}=`{v}`" for (k, v, _h) in c["arts"][:5])
+            arts_str = "<br>".join(
+                f"{k}=`{v}`"
+                + (" *(from KB registrant edge)*" if (k, v) in historical_keys else "")
+                for (k, v, _h) in c["arts"][:5])
             L.append(f"| {', '.join(c['hosts'])} | {arts_str} | {len(c['types'])} | {verdict} |")
         L.append("")
 
     # Shared-hosting (origin-IP) sub-clusters — domains on the same origin box, tenant-count gated
     L += _origin_ip_section(results)
+    # Historical origin IPs — the non-CDN hosting history of every host, with IP intel when collected
+    L += _origin_history_section(results)
+
+    # Certificate transparency — completeness per host, never "no certificates" on an outage
+    ct_sum, related = ct_and_related(results)
+    if ct_sum:
+        L += ["## Certificate Transparency — completeness", ""] + WR.ct_md(ct_sum)
+    # Pivot hits: hosts sharing a cert / favicon / tracking ID — graded, never hosting or abuse
+    if related:
+        L += ["## Related hosts (unverified)", ""] + WR.related_md(related)
 
     # Discovered infrastructure
     if discovered:
-        L += ["## Discovered Infrastructure (cross-engine reverse — not in input set)", ""]
+        L += ["## Discovered Infrastructure (cross-engine reverse — not in input set)", "",
+              "Frontier seeds. Hosts found by sharing a value with the target are graded under "
+              "*Related hosts (unverified)*; none is the target's hosting.", ""]
         for h, srcs in sorted(discovered.items()):
             L.append(f"- `{h}` — seen by {', '.join(sorted(srcs))}"
                      + (f" ({len(srcs)}\u00d7 corroborated)" if len(srcs) >= 2 else ""))
@@ -981,6 +1213,12 @@ def render_cluster_report(results: list,
     L += ["## Intelligence Gaps & Recommended Collection", ""]
     if discovered:
         L.append(f"- Pivot the {len(discovered)} discovered host(s) as new seeds.")
+    for g in WR.ct_gap_lines(ct_sum):
+        L.append(f"- {g}")
+    unconfirmed = [r for r in related if len(r["passed"]) < 2]
+    if unconfirmed:
+        L.append(f"- {len(unconfirmed)} related host(s) have fewer than two agreeing origin checks — "
+                 "do not name any as the target's origin, hosting or takedown recipient.")
     if any(len(c["types"]) < 2 for c in subclusters):
         L.append("- Corroborate single-artifact sub-clusters with a second independent artifact.")
     L.append("- Passive-source (urlscan / Wayback) any input domain that failed live collection.")

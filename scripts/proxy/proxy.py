@@ -36,9 +36,13 @@ Commands:
 # dependencies = []
 # ///
 import argparse
+import base64
 import json
 import os
+import socket
+import ssl
 import sys
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cti_proxy as cp   # shared library (config, rotation, failover, test)
@@ -53,6 +57,59 @@ def _mask(url):
     user = creds.split(":", 1)[0]
     return f"{scheme}://{user}:***@{host}"
 
+def _https_connect_probe(proxy_url, host, port=443, timeout=15):
+    """Raw HTTPS CONNECT probe through `proxy_url` to (host, port): dials the proxy directly,
+    sends CONNECT, and — only on a 200 tunnel — completes a TLS handshake through it. A plain
+    HTTP-level `cp.test_proxy` check can pass through urllib's ProxyHandler even when the
+    proxy's CONNECT tunnel itself is broken (some forward proxies serve HTTP fine but refuse or
+    mishandle a CONNECT), so this is a SEPARATE, lower-level check. Returns (ok, detail): ok is
+    None for a SOCKS proxy (needs PySocks; not probed raw here), False + a distinct message for
+    a CONNECT-tunnel failure vs a post-tunnel TLS-handshake failure, True on a full handshake."""
+    if not proxy_url:
+        return None, "no proxy configured"
+    p = urlsplit(proxy_url)
+    if p.scheme.startswith("socks"):
+        return None, "SOCKS CONNECT probe needs PySocks + a live socket monkeypatch"
+    if not p.hostname or not p.port:
+        return False, f"malformed proxy URL: {proxy_url}"
+    try:
+        sock = socket.create_connection((p.hostname, p.port), timeout=timeout)
+    except Exception as e:
+        return False, f"proxy unreachable: {type(e).__name__}: {e}"
+    try:
+        line = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+        if p.username:
+            tok = base64.b64encode(f"{p.username}:{p.password or ''}".encode()).decode()
+            line += f"Proxy-Authorization: Basic {tok}\r\n"
+        sock.sendall((line + "\r\n").encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        status = resp.split(b"\r\n", 1)[0].decode("latin1", "replace")
+        if " 200 " not in status:
+            sock.close()
+            return False, f"CONNECT refused: {status.strip() or 'no response'}"
+    except Exception as e:
+        try:
+            sock.close()
+        except OSError:
+            pass
+        return False, f"CONNECT failed: {type(e).__name__}: {e}"
+    tls = None
+    try:
+        ctx = ssl.create_default_context()
+        tls = ctx.wrap_socket(sock, server_hostname=host)
+        return True, f"CONNECT tunnel + TLS handshake ok ({host}:{port})"
+    except Exception as e:
+        return False, f"CONNECT tunnel ok, TLS handshake failed: {type(e).__name__}: {e}"
+    finally:
+        try:
+            (tls or sock).close()
+        except OSError:
+            pass
 
 def _ensure_pysocks():
     """SOCKS proxies need PySocks for urllib. Install it on demand (uv, else pip),
@@ -196,6 +253,8 @@ def cmd_test(cfg, args):
     if not pool:
         print("no proxies configured — nothing to test")
         return 1
+    test_url = args.url or cp.DEFAULT_TEST_URL
+    probe_host = urlsplit(test_url).hostname or "api.ipify.org"
     rc = 0
     file_urls = {cp.normalize_proxy(p["url"]): p for p in cfg["proxies"]}
     for p in pool:
@@ -204,6 +263,14 @@ def cmd_test(cfg, args):
         if ok and p in file_urls:
             file_urls[p]["last_ok"] = cp.now_iso()
         rc = rc or (0 if ok else 2)
+        # SEPARATE lower-level check: a broken CONNECT tunnel can hide behind a passing
+        # HTTP-level test (urllib's ProxyHandler and a raw CONNECT do not always agree), so
+        # report it as its own line rather than folding it into `ok` above.
+        cok, cdetail = _https_connect_probe(p, probe_host, 443, args.timeout)
+        clabel = "OK " if cok else ("SKIP" if cok is None else "ERR")
+        print(f"  {clabel} {_mask(p)} [https connect] -> {cdetail}")
+        if cok is False:
+            rc = rc or 2
     cp.save_store(cfg)
     return rc
 

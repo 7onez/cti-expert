@@ -105,6 +105,13 @@ def search(query, page=1, page_size=10, days=180, fields="ip,port,domain", timeo
     """Run a hunter.how query -> a dict with {query, ui, code, total, results_count,
     query_count, query_limit, hosts:[{domain,ip,port}]}; {'skipped':...} keyless; {'error':...}
     on transport failure. Never raises."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.hunterhow_key(query))
+        if _hit is not None:
+            return dict(_hit, query=query, ui=ui_url(query))
+    except Exception:  # noqa: BLE001
+        pass
     out = {"query": query, "ui": ui_url(query)}
     if page_size not in PAGE_SIZES:
         page_size = 10

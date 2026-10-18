@@ -1,0 +1,18 @@
+{
+  "_comment": "ChongLuaDao brand-label denylist search (#14) — tunables for deriving which label(s) wp_cld.cld_domain searches `GET /external/denylists/search` for, and the request shape of that search. The registrable-apex wordmark (e.g. 'brandsite' from brandsite.example) is always searched; a page-title product label is added only when the caller passes one (pivot_extract's own <title> extraction) and survives the length floor + stopword filter below — a shared wordmark like a product's brand name is sometimes only visible on the page, never in the domain itself (an apex 'brandsite.example' and an unrelated apex 'brand.example' can share the wordmark 'acme' that only the page title names). Rows are matched on a DNS-label boundary elsewhere in wp_cld.py (never here, and never a raw substring) — this file only tunes WHAT gets searched, not how a hit is classified into estate evidence vs a name-similar lead.",
+  "brand_labels": {
+    "_comment": "min_title_token_length keeps a 2-letter decoration word ('by', 'vn') out of the search; title_stopwords are page-title words that are boilerplate chrome (site name suffixes, nav labels, Vietnamese 'trang chu'/'dang nhap' for home/login), not a wordmark; max_title_labels bounds how many extra title-derived labels get their own denylist call per host, so a long, noisy title cannot turn one host into a dozen searches.",
+    "min_title_token_length": 3,
+    "max_title_labels": 2,
+    "title_stopwords": [
+      "home", "login", "welcome", "official", "site", "web", "page", "shop", "store", "app",
+      "trang", "chu", "dang", "nhap", "chinh", "thuc", "gioi", "thieu", "lien", "he",
+      "vietnam", "viet", "nam", "online"
+    ]
+  },
+  "denylist_search": {
+    "_comment": "GET /external/denylists/search request shape for the brand-label search. page/limit are deliberately small — this is a targeted brand-label lookup, not a bulk denylist crawl.",
+    "page": 1,
+    "limit": 20
+  }
+}

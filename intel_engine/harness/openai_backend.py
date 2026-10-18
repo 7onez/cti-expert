@@ -274,9 +274,12 @@ def _params_schema(input_schema: dict, optional: Optional[dict] = None) -> dict:
             # A REQUIRED param keeps its declared type but still gains the description and — the
             # part that matters — the `enum`. censys.mode is required and accepts exactly six
             # values; without the enum a model sends a seventh and the call fails for no visible
-            # reason. Required-ness itself is never changed here.
+            # reason. `"required": false` in tool_params.json marks a handler-defaulted param
+            # optional, matching mcp_server._input_schema.
             extra.pop("type", None)
             props[name].update(extra)
+            if spec.get("required") is False and name in required:
+                required.remove(name)
         else:
             props[name] = extra
     return {"type": "object", "properties": props,

@@ -29,12 +29,14 @@ from urllib.parse import urlencode
 
 from wp_common import *      # noqa  — DEFAULT_UA, _secret, uniq, strip_www, _registrable
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
-from wp_recon import fofa_search, scan_misconfig
+from wp_recon import fofa_search, scan_misconfig, reverseip_search, pdns_search
 from wp_analyze import classify_ip
 from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
 from wp_hunterhow import attach_hunterhow_queries  # Hunter.how query builder (keyless — no key needed)
 import wp_validin  # Validin reverse-IP (FREE key; runs even under --free-only)
+import wp_pssl      # CIRCL passive SSL ip -> certificates seen on the box (free account, rate-limited)
+import wp_origin_history  # which case hosts used this IP, and when (stamped as meta.origin_context)
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
@@ -89,25 +91,42 @@ def _asn_from_org(org: str):
 _IPINFO_CACHE: dict[str, dict] = {}
 
 
-def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
+def ipinfo_lookup(ip: str, timeout: int = 15, keyless: bool = False) -> dict:
     """IPinfo.io lookup — keyless (rate-limited) or richer with IPINFO_TOKEN.
 
-    Returns {ip, asn, org_name, hostname, city, region, country, abuse, is_hosting, raw}.
+    `keyless=True` never sends the token (a --free-only run must not bill the account) — the
+    answer still carries ASN/org/country/PTR. Returns {ip, asn, org_name, hostname, city, region,
+    country, abuse, is_hosting, raw}.
     `hostname` is IPinfo's PTR; `abuse` (email/contact) and `asn`/`company`/`privacy` blocks are
     only populated on token plans — parsed when present, absent-safe otherwise."""
-    if ip in _IPINFO_CACHE:
-        return _IPINFO_CACHE[ip]
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.ipinfo_key(ip))
+        if _hit is not None:
+            return _hit
+    except Exception:  # noqa: BLE001
+        pass
+    token = None if keyless else _secret("IPINFO_TOKEN", "IPINFO_API_KEY")
+    # Memo keyed by MODE: a keyless answer has no abuse / privacy / is_hosting block, so a --free-only
+    # round must never fill the slot a later token lookup reads. A keyless call may reuse a token answer.
+    mkey = ip if token else f"{ip}|keyless"
+    for k in ((mkey,) if token else (ip, mkey)):
+        if k in _IPINFO_CACHE:
+            return _IPINFO_CACHE[k]
     # per-CASE memo (wp_casememo under $WP_CASE_DIR): the same Cloudflare edge pair recurs on every
     # host and every report rebuild re-probed all of them (28 token lookups per render, measured)
     try:
         import wp_casememo
-        _cached = wp_casememo.get("ipinfo", ip)
+        _cached = None
+        for k in ((mkey,) if token else (ip, mkey)):
+            _cached = wp_casememo.get("ipinfo", k)
+            if isinstance(_cached, dict) and _cached.get("ip"):
+                break
     except Exception:  # noqa: BLE001
         wp_casememo, _cached = None, None
     if isinstance(_cached, dict) and _cached.get("ip"):
-        _IPINFO_CACHE[ip] = _cached
+        _IPINFO_CACHE[mkey] = _cached
         return _cached
-    token = _secret("IPINFO_TOKEN", "IPINFO_API_KEY")
     url = f"https://ipinfo.io/{ip}/json"
     if token:
         url += "?" + urlencode({"token": token})
@@ -122,7 +141,7 @@ def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
             api_usage.record("ipinfo", "lookup", credits=0, query=ip, ok=False)
         return {"ip": ip, "error": str(e)}
     if api_usage:
-        api_usage.record("ipinfo", "lookup", credits=1, query=ip)
+        api_usage.record("ipinfo", "lookup", credits=1 if token else 0, query=ip)
     out["raw"] = data
     asn, org_name = _asn_from_org(data.get("org", ""))
     # token plans return a structured `asn` block instead of the `org` string
@@ -150,9 +169,9 @@ def ipinfo_lookup(ip: str, timeout: int = 15) -> dict:
         # different statement entirely, and collapsing them loses that.
         out["privacy_flags"] = sorted(k for k in ("hosting", "proxy", "vpn", "tor", "relay")
                                       if priv.get(k))
-    _IPINFO_CACHE[ip] = out
+    _IPINFO_CACHE[mkey] = out
     if wp_casememo is not None and not out.get("error"):
-        wp_casememo.put("ipinfo", ip, out)
+        wp_casememo.put("ipinfo", mkey, out)
     return out
 
 
@@ -293,6 +312,13 @@ def fofa_ip(ip: str, full: bool = False) -> dict:
 def shodan_host(ip: str, timeout: int = 20) -> dict:
     """Shodan host lookup → {ports:[...], services:[...], hostnames:[...], org, asn}. Only when
     SHODAN_KEY is set (Shodan has no keyless host API). Passive index read. None without a key."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.shodan_key("ip:" + str(ip or "")))
+        if _hit is not None:
+            return _hit
+    except Exception:  # noqa: BLE001
+        pass
     key = _secret("SHODAN_KEY", "SHODAN_API_KEY")
     if not key:
         return None
@@ -322,6 +348,13 @@ def shodan_search(query: str, limit: int = 100, timeout: int = 25):
     search filters need a Membership/paid key — a free key answers 401/402 'membership' or 'upgrade').
     -> {"total","hosts":[{ip,port,hostnames[],org,asn,domains[]}],"domains":[...]} | {"skipped"|"error"}
     | None (keyless). NEVER raises; a membership refusal is a named skip, not a failure."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.shodan_key(query))
+        if _hit is not None:
+            return dict(_hit, query=query)
+    except Exception:  # noqa: BLE001
+        pass
     key = _secret("SHODAN_KEY", "SHODAN_API_KEY")
     if not key:
         return None
@@ -421,6 +454,9 @@ def is_noise_provider(classified: dict, ipinfo: dict, registry: dict, tenant_tot
     the registry (AWS/GCP/Azure/DO/OVH/…); IPinfo flags hosting/relay; OR many sites resolve to it
     (shared host / load balancer). The last check is provider-agnostic — it catches an AWS ELB or a
     shared cPanel box even when the range/ASN isn't in our lists."""
+    if classified.get("kind") == "bogon":
+        return True, ("reserved / non-routable address (loopback, private, link-local) — a parking "
+                      "or sinkhole answer, never an operator origin; nothing to reverse")
     if classified.get("cdn") is True:
         return True, "CDN/cloud edge (%s) — shared, reverse-IP returns unrelated tenants" % (
             classified.get("provider") or "shared edge")
@@ -450,6 +486,22 @@ def _distinctive_ptr(ptr: str, ip: str) -> bool:
     return True
 
 
+_CN_RE = re.compile(r"(?:^|[,/]\s*)CN\s*=\s*([^,/]+)", re.I)
+
+
+def _pssl_cert_names(pssl: dict) -> list:
+    """Hostnames from the CN of every certificate passive SSL saw on the box (wildcards reduced to
+    their base, non-hostnames dropped)."""
+    out = []
+    for subjects in ((pssl or {}).get("subjects") or {}).values():
+        for subj in subjects or []:
+            for m in _CN_RE.finditer(str(subj)):
+                name = m.group(1).strip().lower().lstrip("*.").rstrip(".")
+                if "." in name and " " not in name and not ip_mode_target(name):
+                    out.append(name)
+    return uniq(out)
+
+
 def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool = False) -> dict:
     """Run the full passive IP recon and return a WebPivot-shaped result: {meta, artifacts, pivots}.
 
@@ -465,8 +517,13 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
         pr = _registrable(p) if p else None
         return p, (mail_intel(pr) if pr else None)
 
-    jobs = {"ipinfo": lambda: ipinfo_lookup(ip), "fofa": lambda: fofa_ip(ip, full=fofa_full),
-            "shodan": lambda: shodan_host(ip), "revmail": _rev_mail}
+    # SPEND GATE: FOFA, Shodan and Censys are metered and IPinfo bills a token lookup, so --free-only
+    # (the autonomous loop's default — it now collects historical origin IPs as seeds) runs IPinfo
+    # KEYLESS and skips the other three. Keyless reverse-IP (HackerTarget) and free Validin run always.
+    jobs = {"ipinfo": lambda: ipinfo_lookup(ip, keyless=free_only),
+            "fofa": (lambda: None) if free_only else (lambda: fofa_ip(ip, full=fofa_full)),
+            "shodan": (lambda: None) if free_only else (lambda: shodan_host(ip)),
+            "revmail": _rev_mail, "hackertarget": lambda: reverseip_search(ip)}
     # Censys host lookup — 1 credit, and the ONE Censys endpoint a free plan can call. It adds the
     # forward+reverse DNS names Censys resolved for the IP (co-hosted hostnames FOFA/Shodan miss)
     # and the per-service cert fingerprints. Metered, so --free-only skips it like FOFA.
@@ -474,12 +531,22 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
         jobs["censys"] = lambda: censys_host(ip)
     if wp_validin.validin_configured() and wp_validin.ENABLED:
         jobs["validin"] = lambda: wp_validin.ip_lookup(ip)   # FREE reverse-IP -> co-hosted domains
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    # CIRCL (one account, gated like enrich_live's have_pdns/have_pssl): passive DNS names seen ON
+    # the IP, and passive SSL — every certificate the sensors saw this box present, whose CNs name
+    # the domains the operator served from it (the origin-side half of cert->IP recovery).
+    if not free_only and _secret("PDNS_USERNAME") and _secret("PDNS_PASSWORD"):
+        jobs["pdns"] = lambda: pdns_search(ip)
+    if not free_only and wp_pssl.pssl_configured() and wp_pssl.ENABLED:
+        jobs["pssl"] = lambda: wp_pssl.ip_certificates(ip)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
         futs = {k: ex.submit(fn) for k, fn in jobs.items()}
         res = {k: fu.result() for k, fu in futs.items()}
     ipinfo, fofa, shodan = res["ipinfo"], res["fofa"], res["shodan"]
     censys = res.get("censys") if isinstance(res.get("censys"), dict) else {}
     validin = res.get("validin") if isinstance(res.get("validin"), dict) else {}
+    ht = res.get("hackertarget") if isinstance(res.get("hackertarget"), dict) else {}
+    pdns = res.get("pdns") if isinstance(res.get("pdns"), dict) else {}
+    pssl = res.get("pssl") if isinstance(res.get("pssl"), dict) else {}
     # a skipped/errored Censys call is still recorded (the analyst must see WHY), but must not
     # contribute names or ports as if it had answered
     cen_ok = censys and not censys.get("error") and not censys.get("skipped")
@@ -487,8 +554,13 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
     ptr_reg = _registrable(ptr) if ptr else None
     classified = classify_ip(ip)                    # local (cached CDN ranges) — no network
     registry = asn_registry_load()
+    co_domains = uniq((fofa or {}).get("co_domains", []) + (shodan or {}).get("hostnames", [])
+                      + (censys.get("dns_names", []) if cen_ok else []) + (validin.get("domains") or [])
+                      + (ht.get("domains") or []) + (pdns.get("domains") or [])
+                      + ([] if pssl.get("shared_host") else _pssl_cert_names(pssl)))
     noise, noise_reason = is_noise_provider(classified, ipinfo, registry,
-                                            tenant_total=(fofa or {}).get("total"))
+                                            tenant_total=max((fofa or {}).get("total") or 0,
+                                                             ht.get("total") or 0) or None)
 
     f, s = fofa or {}, shodan or {}
     c = censys if cen_ok else {}
@@ -496,8 +568,6 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
                    key=lambda p: int(p) if str(p).isdigit() else 0)
     services = uniq(f.get("services", []) + s.get("services", [])
                     + [p for svc in c.get("services", []) for p in svc.get("software", [])])
-    co_domains = uniq(f.get("co_domains", []) + s.get("hostnames", []) + c.get("dns_names", [])
-                      + (validin.get("domains") or []))
 
     artifacts = {"ip_intel": {
         "ipinfo": {k: ipinfo.get(k) for k in
@@ -510,9 +580,43 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
         artifacts["ip_intel"]["censys"] = censys
     if validin:
         artifacts["ip_intel"]["validin"] = validin
-    result = {"meta": {"host": ip, "final_url": ip, "kind": "ip",
-                       "source": "IPPivot", "case": case},
-              "artifacts": artifacts, "pivots": []}
+    # the reverse indexes' OWN totals: the co-host lists above are truncated (HackerTarget 200, Validin
+    # pages), so a box answering for hundreds of sites must not read as a small VPS from its first
+    # page. FOFA's total counts host:PORT rows, so it only counts when the 200-row page was truncated.
+    _totals = [len(co_domains)]
+    for blk, floor in ((ht, 0), (validin, 0), (fofa, 200)):
+        try:
+            t = int((blk or {}).get("total") or 0)
+        except (TypeError, ValueError):
+            t = 0
+        if t > floor:
+            _totals.append(t)
+    artifacts["ip_intel"]["cohost_total"] = max(_totals)
+    # per-source co-host counts: the frontier/ingest read the union, the analyst reads where it came from
+    artifacts["ip_intel"]["cohost_sources"] = {
+        k: n for k, n in (("fofa", len((fofa or {}).get("co_domains") or [])),
+                          ("shodan", len((shodan or {}).get("hostnames") or [])),
+                          ("censys", len(censys.get("dns_names") or []) if cen_ok else 0),
+                          ("validin", len(validin.get("domains") or [])),
+                          ("hackertarget", len(ht.get("domains") or [])),
+                          ("pdns", len(pdns.get("domains") or [])),
+                          ("passive_ssl", 0 if pssl.get("shared_host") else len(_pssl_cert_names(pssl))))
+        if n}
+    if pssl:
+        artifacts["ip_intel"]["pssl"] = {k: pssl.get(k) for k in ("count", "shared_host", "note")
+                                         if pssl.get(k) is not None}
+        artifacts["ip_intel"]["pssl"]["certificates"] = list(pssl.get("certificates") or [])[:20]
+    if free_only:
+        artifacts["ip_intel"]["free_only"] = ("FOFA / Shodan / Censys / CIRCL skipped and IPinfo run "
+                                              "keyless (--free-only): ports, banners and certificates "
+                                              "on this box were NOT queried")
+    meta = {"host": ip, "final_url": ip, "kind": "ip", "source": "IPPivot", "case": case}
+    # Which case hosts resolved here, and when — the frontier and KB ingest decide from this whether
+    # today's co-tenants could have overlapped our host's tenancy (stale → leads, never seeds/edges).
+    _ctx = wp_origin_history.origin_context(os.environ.get("WP_CASE_DIR"), ip)
+    if _ctx:
+        meta["origin_context"] = _ctx
+    result = {"meta": meta, "artifacts": artifacts, "pivots": []}
     pivots = result["pivots"]
 
     def add(kind, value, confidence, queries, note="", live=None):

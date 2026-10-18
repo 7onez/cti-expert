@@ -70,6 +70,55 @@ check(p.analyse("+8613800138000")["country_code"] == "86", "longest-prefix match
 check(p.analyse("+12125551234")["country_code"] == "1", "NANP must resolve to 1")
 check(p.analyse("+1555")["valid"] is False, "a too-short NANP number must be invalid")
 check("carrier" in vn["not_determined"], "carrier must be declared not-determined, not guessed")
+# No '+' / '00': a national number — the leading digits are NOT a calling code (469… ≠ Sweden).
+_nat = p.analyse("469-555-1234")
+check(_nat["valid"] is None and not _nat.get("country_code") and not _nat.get("territory"),
+      "a number without '+' or '00' must not be assigned a country")
+check("country unknown" in _nat["reason"], "a national number must say the country is unknown")
+check(p.analyse("0046 8 123 456 78")["country_code"] == "46", "'00' must still mark a calling code")
+# The domestic trunk 0 — bare or bracketed — is not part of the international number.
+_vn0 = p.analyse("+84 0912 345 678")
+check(_vn0["valid"] is True and _vn0["national_number"] == "912345678"
+      and _vn0["e164"] == "+84912345678", "+84 0912… must drop the trunk 0 and validate")
+_uk0 = p.analyse("+44 (0)20 7183 8750")
+check(_uk0["valid"] is True and _uk0["e164"] == "+442071838750",
+      "+44 (0)20… must drop the bracketed trunk 0 and validate")
+check(p.analyse("+39 06 1234 5678")["national_number"] == "0612345678",
+      "an Italian landline keeps its leading 0 — it is part of the E.164 number")
+# Vietnamese NSN is 9 (mobile) or 10 (landline, e.g. Hanoi 24) digits.
+check(p.analyse("+84 24 3812 3456")["valid"] is True, "a 10-digit VN landline NSN is valid")
+# E.164 input with a calling code absent from the table: say so, never "supply E.164".
+for _n in ("+966 50 123 4567", "+880 1712 345678"):
+    _r = p.analyse(_n)
+    check(_r["valid"] is None and "not in this tool's table" in _r["reason"]
+          and "supply" not in _r["reason"], f"{_n}: an unlisted calling code is not a format error")
+
+# The MCP handler passes each number as ONE argv item — spaces inside a number never split it.
+import asyncio  # noqa: E402
+import subprocess  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "intel_engine" / "harness"))
+import tools as _T  # noqa: E402
+
+
+def _phone_argv(numbers):
+    seen = []
+    saved = _T._run
+    _T._run = lambda cmd, timeout=180: (seen.append(list(cmd)) or
+                                        subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr=""))
+    try:
+        asyncio.run(_T.phone_osint.handler({"numbers": numbers}))
+    finally:
+        _T._run = saved
+    argv = seen[0]
+    return argv[argv.index("--") + 1:]
+
+
+check(_phone_argv("+1 202 555 0100") == ["+1 202 555 0100"],
+      "the handler must not split one spaced number into fragments")
+check(_phone_argv("+1 202 555 0100, +44 20 7183 8750;+84 912 345 678\n+33 1 23 45 67 89")
+      == ["+1 202 555 0100", "+44 20 7183 8750", "+84 912 345 678", "+33 1 23 45 67 89"],
+      "the handler splits on commas, semicolons and newlines only")
 
 # ── username_enum: every listed platform must have a verified detection method ─────────
 u = load("username_enum")

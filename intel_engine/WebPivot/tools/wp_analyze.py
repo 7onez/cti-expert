@@ -31,6 +31,7 @@ from wp_common import *  # noqa
 from wp_hash import *  # noqa
 from wp_net import *  # noqa
 from wp_recon import *  # noqa
+from wp_ct import ct_search  # noqa: E402 — the one CT client (crt.sh → fallback chain, per-source status)
 from wp_extract import *  # noqa
 from wp_pivots import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
@@ -47,8 +48,10 @@ import wp_zoomeye         # ZoomEye: favicon-hash reverse -> hosts (metered; --n
 import wp_pssl           # CIRCL passive SSL: the historical cert->IP direction (origin recovery)
 import wp_cld            # ChongLuaDao reputation: checkurl denylist + IoC URL + .vn WHOIS (lazy cld_api)
 import wp_webamon        # Webamon scan corpus: seed report + same-kit fingerprints + hosting/feed facts (free key)
+import wp_origin_history  # every historical A/AAAA merged + CDN/parking-classified (origin sweep)
 # NOTE: wp_ippivot is imported LAZILY at its call site, not here — it imports
 # classify_ip back out of this module, so a top-level import is circular.
+import whois_eras  # stdlib era-splitting contract — see its module docstring (RULE 5)
 try:
     import whois_enrich  # WhoisXML registration pivots (optional, same tools/ dir)
     HAVE_WHOIS = True
@@ -77,9 +80,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     saas_ids = extract_saas(html)
     crypto = extract_crypto(html)
 
-    emails = [e for e in uniq(EMAIL_RE.findall(html))
-              if (el := e.lower()) and not el.endswith((".png", ".jpg", ".gif", ".svg", ".webp"))
-              and not el.split("@")[-1].endswith(BOILERPLATE_EMAIL_HOSTS)][:40]
+    emails = extract_emails(html)[:40]
 
     script_srcs = uniq(SCRIPT_SRC_RE.findall(html))
     all_hrefs = uniq(LINK_HREF_RE.findall(html))
@@ -363,6 +364,13 @@ def render_leads(result: dict) -> str:
         for b in (cap.get("reduced") or []):
             lines.append(f"> · no **{b['service']}**: {b['lost']}")
         lines.append("")
+    ctcap = cap.get("ct") or {}
+    if ctcap and ctcap.get("completeness") not in (None, "full"):
+        lines.append(f"> 📜 **CT** — {ctcap.get('completeness_line')}")
+        if ctcap.get("unqueried") or ctcap.get("failed"):
+            lines.append(f"> · unqueried: {', '.join(ctcap.get('unqueried') or []) or 'none'}"
+                         f" · failed: {', '.join(ctcap.get('failed') or []) or 'none'}")
+        lines.append("")
     chain = m.get("redirect_chain")
     if chain:
         hops = " → ".join([chain[0]["from"]] + [h["to"] for h in chain])
@@ -460,17 +468,28 @@ def render_leads(result: dict) -> str:
             elif fir.get("error"):
                 lines.append(f"  - 🔴 FOFA reverse on live IP: error — {fir['error']}")
             c = lr.get("crtsh") or {}
-            _ctsrc = "+".join(c.get("sources", ["crt.sh"]))
+            _ctsrc = "+".join(c.get("sources") or ["crt.sh"])
             if c.get("error"):
-                lines.append(f"  - 🔴 CT ({'+'.join(c.get('sources_tried', ['crt.sh']))}): error — {c['error']}")
+                lines.append(f"  - 🔴 CT ({'+'.join((c.get('ct_status') or {}) or ['crt.sh'])}): error — {c['error']}")
             elif "subdomains" in c:
-                lines.append(f"  - 🟢 CT/SSL ({_ctsrc}): {c.get('cert_count', 0)} certs, {c.get('total', 0)} subdomains"
+                _icon = "🟢" if c.get("completeness") in (None, "full") else "🟡"
+                lines.append(f"  - {_icon} CT/SSL ({_ctsrc}): {c.get('cert_count', 0)} certs, {c.get('total', 0)} subdomains"
                              + (f" → {', '.join(c['subdomains'][:12])}" if c.get("subdomains") else ""))
+            if c.get("completeness_line"):
+                lines.append(f"    Completeness: {c['completeness_line']}")
+                for _src, _st in (c.get("ct_status") or {}).items():
+                    _errs = f" — {'; '.join(_st['errors'][:2])}" if _st.get("errors") else ""
+                    lines.append(f"    · {_src}: {_st.get('status')} · {_st.get('n', 0)} certs · "
+                                 f"window {_st.get('window') or '?'}{_errs}")
+            if "subdomains" in c and not c.get("error"):
+                if c.get("truncated") or c.get("subdomains_truncated"):
+                    lines.append(f"    listing truncated: {len(c.get('certs') or [])} of {c.get('cert_total')} certs, "
+                                 f"{len(c.get('subdomains') or [])} of {c.get('subdomain_total')} names shown")
                 if c.get("wildcards"):
                     lines.append(f"    ⚠️ wildcard cert(s): {', '.join(c['wildcards'][:6])} — one cert may cover many sibling hosts")
                 for ct in (c.get("certs") or [])[:3]:
                     iss = (ct.get("issuer") or "").replace("C=US, O=", "").split(",")[0]
-                    lines.append(f"    · cert {ct.get('not_before','?')[:10]}→{ct.get('not_after','?')[:10]} [{iss}] {', '.join(ct.get('names', [])[:4])}")
+                    lines.append(f"    · cert {(ct.get('not_before') or '?')[:10]}→{(ct.get('not_after') or '?')[:10]} [{iss}] {', '.join((ct.get('names') or [])[:4])}")
             if c.get("aggregated_subdomains"):
                 _aggsrc = "+".join(c.get("aggregated_sources", ["aggregated"]))
                 lines.append(f"  - 🟡 subdomains via AGGREGATED fallback ({_aggsrc}): "
@@ -509,18 +528,30 @@ def render_leads(result: dict) -> str:
 
 @functools.lru_cache(maxsize=1)
 def _cdn_classifier():
-    """Load the cdn_ranges module + range index once. (None, None) if unavailable
-    (missing cache file or import error) so IP classification degrades gracefully."""
+    """Load the cdn_ranges module + range index once. idx is None if the range cache is
+    unavailable (missing file) so IP classification degrades gracefully; the module itself is
+    still returned when only load_ranges() failed, so classify_ip's bogon check (below) — pure
+    stdlib `ipaddress`, no cache file needed — keeps working even with no cache. (None, None)
+    only when the import itself fails."""
     try:
         import cdn_ranges
-        return cdn_ranges, cdn_ranges.load_ranges()
     except Exception:
         return None, None
+    try:
+        return cdn_ranges, cdn_ranges.load_ranges()
+    except Exception:
+        return cdn_ranges, None
 
 def classify_ip(ip: str):
-    """{'ip','cdn'(bool|None),'provider','kind'} — 'origin_candidate' when not a
-    known CDN/cloud edge, 'cdn' otherwise. Returns kind 'unknown' if ranges absent."""
+    """{'ip','cdn'(bool|None),'provider','kind'} — 'origin_candidate' when not a known CDN/cloud
+    edge, 'cdn' otherwise, 'bogon' for loopback/private/link-local/reserved/multicast/
+    unspecified addresses (e.g. a registrar-parking A record of 127.0.0.1) — checked FIRST, so
+    it holds even when the CDN-range cache is missing. A bogon is never an origin_candidate: it
+    is never reversed (DNSLytics/FOFA/Validin/ipinfo/MO-neighbours/Netlas) and never a frontier
+    seed. Returns kind 'unknown' if ranges absent and the address is not a bogon."""
     mod, idx = _cdn_classifier()
+    if mod is not None and hasattr(mod, "is_bogon") and mod.is_bogon(ip):
+        return {"ip": ip, "cdn": False, "provider": None, "kind": "bogon"}
     if idx is None:
         return {"ip": ip, "cdn": None, "provider": None, "kind": "unknown"}
     return mod.classify(ip, idx)
@@ -679,9 +710,10 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # same_registrant ever seeds the frontier; the raw block is never mined by the frontier.
     have_mo_neighbours = HAVE_WHOIS and whois_enrich.whois_configured() and not free_only
     # ChongLuaDao first-party reputation (checkurl denylist verdict + IoC URL analyzer + .vn WHOIS).
-    # METERED, so gated `and not free_only`; CLD fetches the target server-side, so it is posture-safe.
+    # UNLIMITED usage (no per-call credit / quota), so — like Validin/Webamon — it runs EVEN under
+    # --free-only; CLD fetches the target server-side, so it is posture-safe.
     # Reputation only — a verdict is an add_fact at ingest, never a same-operator edge.
-    have_cld = wp_cld.cld_configured() and not free_only
+    have_cld = wp_cld.cld_configured()
     # Webamon is FREE-keyed (no credits; the vendor's own 429 is the daily limit), so like Validin it
     # runs EVEN under --free-only. Its blocks are enrichment + leads, never seeds: `webamon` describes
     # the seed's own latest scan, `webamon_same_kit` names lures built from the same kit (a rung
@@ -732,7 +764,7 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             # All four are independent I/O, so run them concurrently — bounds latency to
             # the slowest call instead of the sum (crt.sh is often overloaded).
             jobs = {"dns": lambda: resolve_live_dns(val),
-                    "crtsh": lambda: ct_search(val),   # crt.sh + Shodan CTL merged (resilient)
+                    "crtsh": lambda: ct_search(val, free_only=free_only),   # wp_ct fallback chain + status
                     "passivedns": lambda: passivedns_search(val),
                     "urlscan": lambda: urlscan_search(f"domain:{val}", free_only=free_only)}
             if have_pdns:
@@ -789,7 +821,8 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                 # server-side — no direct contact, safe under any posture. A verdict is a
                 # reputation fact at ingest, never a same-operator edge.
                 if have_cld:
-                    _cld = wp_cld.cld_domain(val, free_only=free_only)
+                    _cld = wp_cld.cld_domain(
+                        val, page_title=((result.get("artifacts") or {}).get("title") or None))
                     if _cld:
                         lr["cld"] = _cld
                 # Same-kit siblings from the seed's OWN scan fingerprints (one call per key, depends
@@ -808,19 +841,24 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             if live_ips:
                 # Classify each live IP: a CDN/cloud edge (Cloudflare/Fastly/…) is
                 # shared noise — reverse-searching it returns thousands of unrelated
-                # tenants. Only an origin-candidate IP is worth a FOFA reverse.
+                # tenants. Only an origin-candidate IP is worth a FOFA reverse. A bogon
+                # (loopback/private/link-local/reserved/multicast/unspecified — e.g. a
+                # registrar-parking A record of 127.0.0.1) resolves to no real infrastructure
+                # at all: never an origin candidate, never IPinfo'd, never reversed, never seeded.
                 classified = [classify_ip(ip) for ip in live_ips]
                 lr["dns"]["ip_classification"] = classified
+                non_bogon_ips = [ip for ip, c in zip(live_ips, classified) if c.get("kind") != "bogon"]
                 # IPinfo on the DOMAIN path. It was previously reachable only when a bare IP was
                 # the input (IPPivot), so analysing a domain never produced a country, an ASN, an
                 # abuse contact or a hosting/VPN flag for the address it actually resolves to —
                 # the assessment fell back to keyless ip-api for an ASN string and nothing else.
                 # Memoised per process (the same CDN pair recurs on every host in a case), and
                 # skipped under --free-only like every other metered call.
-                if have_ipinfo:
+                if have_ipinfo and non_bogon_ips:
                     from wp_ippivot import ipinfo_lookup   # lazy: circular at module level
-                    lr["ipinfo"] = {ip: ipinfo_lookup(ip) for ip in live_ips}
-                origin_ips = [c["ip"] for c in classified if c.get("cdn") is False]
+                    lr["ipinfo"] = {ip: ipinfo_lookup(ip) for ip in non_bogon_ips}
+                origin_ips = [c["ip"] for c in classified
+                             if c.get("cdn") is False and c.get("kind") != "bogon"]
                 cdn_ips = [c for c in classified if c.get("cdn") is True]
                 if have_validin and origin_ips:
                     # IP reputation on the origin candidate only (bounded), corroborating exposure.
@@ -843,10 +881,12 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                         "live IP(s) are shared CDN/cloud edge (%s) — hosting IP is noise, "
                         "not an origin pivot; FOFA IP-reverse skipped for these" %
                         ", ".join(sorted({c["provider"] for c in cdn_ips if c.get("provider")})))
-                # reverse the first origin candidate; if the index is unavailable
-                # (kind 'unknown'), fall back to the old behaviour (reverse ip[0]).
+                # reverse the first origin candidate; if the index is unavailable (kind
+                # 'unknown'), fall back to the old behaviour (reverse the first NON-BOGON live
+                # IP) — but never fall back onto a bogon just because ranges are unavailable.
                 fofa_ip = origin_ips[0] if origin_ips else (
-                    live_ips[0] if classified[0].get("cdn") is None else None)
+                    non_bogon_ips[0] if non_bogon_ips
+                    and classified[live_ips.index(non_bogon_ips[0])].get("cdn") is None else None)
                 if have_fofa and fofa_ip:
                     lr["fofa_ip_reverse"] = fofa_search(f'ip="{fofa_ip}"',
                                                         fields="host,ip,domain,title,server",
@@ -884,6 +924,22 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
                     lr["dns"]["stale_passive_ips"] = stale
                     lr["dns"]["note"] = ("passive sources report IP(s) not in live DNS — "
                                          "likely a migrated/IP-hopping host; trust live DNS")
+            # HISTORICAL ORIGIN SWEEP — every address any source above saw this host on (live DNS,
+            # CIRCL/HackerTarget passive DNS, SecurityTrails history, Validin, urlscan hostname index,
+            # Webamon servers, passive-SSL, keyless urlscan scans), merged and classified CDN / WAF /
+            # parking / bogon / ORIGIN. Pure (no network). Runs whether or not the host resolves
+            # today: a CDN-fronted or dead host is exactly the case whose old origin matters. The
+            # frontier collects the `origin` rows as IP seeds (IPPivot); see wp_origin_history.
+            try:
+                lr["origin_history"] = wp_origin_history.build(lr, result, val)
+            except Exception as e:  # noqa: BLE001 — tri-state: a malformed vendor row must not abort the host
+                lr["origin_history"] = {"error": str(e), "ips": [], "origin_candidates": [], "counts": {},
+                                        "sources_read": []}
+            _oc = lr["origin_history"]["origin_candidates"]
+            if _oc:
+                print(f"[+] origin history: {len(_oc)} non-CDN address(es) for {val} "
+                      f"({', '.join(_oc[:4])}{' …' if len(_oc) > 4 else ''}) — queued as IP pivots",
+                      file=sys.stderr)
         elif kind == "mail_server" and val and have_mo_neighbours:
             # The MX host is the estate's one non-CDN origin in the common CDN-fronted-web case —
             # the audit's 87-apex mail server. Resolve it live, take the first non-CDN address and
@@ -896,7 +952,8 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             if mx_ips:
                 classified = [classify_ip(ip) for ip in mx_ips]
                 dns["ip_classification"] = classified
-                origin = next((c for c in classified if c.get("cdn") is False), None)
+                origin = next((c for c in classified
+                              if c.get("cdn") is False and c.get("kind") != "bogon"), None)
                 lr["dns"] = dns
                 if origin:
                     seed_host = (result.get("meta") or {}).get("host") or str(val)
@@ -1017,18 +1074,6 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
             piv["live_results"] = lr
     return result
 
-def _whois_registrant_vals(w: dict, hist: dict, field: str):
-    """Current + historical registrant `field` values, deduped, current first. field='phone'
-    pulls w['registrant_phone'] then hist['registrant_phones']; same shape for email/address."""
-    vals = []
-    cur = w.get(f"registrant_{field}")
-    if cur:
-        vals.append(cur)
-    for v in hist.get(f"registrant_{field}s") or []:
-        if v not in vals:
-            vals.append(v)
-    return vals
-
 def whois_enrich_result(result: dict, do_reverse: bool = False,
                         history_mode: str = "purchase", free_only: bool = False) -> dict:
     """Attach WHOIS registration data + registrant pivots to a result.
@@ -1059,9 +1104,9 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
     if _ws not in (result.get("meta", {}).get("enriched_with") or []):
         result.setdefault("meta", {}).setdefault("enriched_with", []).append(_ws)
 
-    # registrant email → same-operator pivot (reverse WHOIS)
-    hist = w.get("history") or {}
-    for em in _whois_registrant_vals(w, hist, "email"):
+    # registrant email → same-operator pivot (reverse WHOIS). Current-era values ONLY — a
+    # previous owner's contact must never become an owner link (whois_eras contract, RULE 5).
+    for em in whois_eras.owner_values(w, "email"):
         if whois_enrich.is_privacy(em):
             continue  # skip privacy-proxy / registrar-role addresses — not the owner
         piv = {
@@ -1095,12 +1140,12 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                     lr_["securitytrails_reverse_whois"] = strw
                     lr_["reverse_whois_diff"] = wp_securitytrails.reverse_whois_diff(
                         strw, [lr_.get("reverse_whois_current"), lr_.get("reverse_whois_historic")])
-        # CLD IoC on the owner's registrant e-mail — corroborates leak/abuse exposure (metered, gated).
-        # CURRENT registrant only: a prior-era address is a third party (RULE 5 — never an exposure
-        # lookup on someone who isn't the owner), same guard the SecurityTrails leg uses above.
-        if (not free_only and wp_cld.cld_configured()
+        # CLD IoC on the owner's registrant e-mail — corroborates leak/abuse exposure. CLD is
+        # unlimited, so no free-only gate (runs like Validin). CURRENT registrant only: a prior-era
+        # address is a third party (RULE 5 — never an exposure lookup on someone who isn't the owner).
+        if (wp_cld.cld_configured()
                 and em == str(w.get("registrant_email") or "").lower()):
-            _ce = wp_cld.cld_email(em, free_only=free_only)
+            _ce = wp_cld.cld_email(em)
             if _ce and not _ce.get("error"):
                 piv.setdefault("live_results", {})["cld_email"] = _ce
         result["pivots"].append(piv)
@@ -1132,10 +1177,17 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
                    (w.get("registrant_email"), w.get("registrant_org"), w.get("registrant_name"))
                    if v)
 
-    # registrant phone → reverse-WHOIS-by-phone pivot (current + historical numbers)
-    for ph in _whois_registrant_vals(w, hist, "phone"):
+    # registrant phone → reverse-WHOIS-by-phone pivot (current-era numbers only). One pivot per
+    # NUMBER: the same phone arrives as "+84.876264213" (RDAP/text) and "84876264213" (history),
+    # and two spellings would run every phone leg twice.
+    _seen_ph = set()
+    for ph in whois_eras.owner_values(w, "phone"):
         if _proxied or whois_enrich.is_privacy(ph):
             continue  # registrar/privacy-proxy phone (e.g. Dynadot's) — not the owner
+        _d = re.sub(r"\D", "", str(ph))
+        if _d in _seen_ph:
+            continue
+        _seen_ph.add(_d)
         result["pivots"].append({
             "kind": "whois:registrant_phone", "value": ph, "confidence": "medium",
             "note": "Registrant phone — reverse-WHOIS by phone finds the owner's other domains.",
@@ -1146,8 +1198,9 @@ def whois_enrich_result(result: dict, do_reverse: bool = False,
             ],
         })
 
-    # registrant address → reverse-WHOIS-by-address pivot (a distinctive address ties siblings)
-    for ad in _whois_registrant_vals(w, hist, "address"):
+    # registrant address → reverse-WHOIS-by-address pivot (current-era addresses only; a
+    # distinctive address ties siblings, but a previous owner's address is not this owner's)
+    for ad in whois_eras.owner_values(w, "address"):
         if _proxied or whois_enrich.is_privacy(ad):
             continue
         result["pivots"].append({

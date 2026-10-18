@@ -30,6 +30,13 @@ import contextlib
 import io
 import os
 import sys
+import threading
+import time
+import tempfile
+
+# Every stubbed search still LEDGERS (api_usage.record is how spend is proven) — keep those rows out
+# of the real MEMORY/api_usage.jsonl, where synthetic selectors would read as credits spent.
+os.environ["API_USAGE_LOG"] = os.path.join(tempfile.mkdtemp(prefix="intelx-test-"), "api_usage.jsonl")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
@@ -526,6 +533,7 @@ def check():
     # --- 9. the spend guards: IntelX WARNS (project decision — no skill-imposed hard limit, the
     #        vendor quota governs), ANY.RUN still BLOCKS ---------------------------------------
     saved = (ix._RUN_SPENT, ar._RUN_SPENT)
+    saved_day, saved_month = ix._DAY_SPENT, ix._MONTH_SPENT
     saved_flag = ix.SEARCH_BUDGET.get("block_when_exhausted")
     try:
         ok(ix.SEARCH_BUDGET.get("block_when_exhausted") is False,
@@ -544,12 +552,25 @@ def check():
         blocked = ix._budget_block(1, "test search")
         ok(isinstance(blocked, str) and "per-run" in blocked,
            "IntelX: with block_when_exhausted on, the same breach is a skip REASON")
+        # the DAILY cap (500/day) shares the same warn-don't-block posture as per-run
+        ix.SEARCH_BUDGET["block_when_exhausted"] = False
+        ix._RUN_SPENT, ix._DAY_SPENT = 0, ix.budget_status()["daily_searches"]
+        ix._WARNED.discard(("advisory", "test daily"))
+        errd = io.StringIO()
+        with contextlib.redirect_stderr(errd):
+            rd = ix._budget_block(1, "test daily")
+        ok(rd is None and "daily IntelX" in errd.getvalue(),
+           "IntelX: over the DAILY cap the call PROCEEDS with the advisory printed (warn, don't block)")
+        ix.SEARCH_BUDGET["block_when_exhausted"] = True
+        ok(isinstance(ix._budget_block(1, "test daily"), str) and "daily IntelX" in ix._budget_block(1, "test daily"),
+           "IntelX: with block_when_exhausted on, the daily breach is a skip REASON")
         ar._RUN_SPENT = ar.budget_status()["max_requests_per_run"]
         blocked = ar._budget_block(1, "test lookup")
         ok(isinstance(blocked, str) and "per-run" in blocked,
            "ANY.RUN: over the per-run cap returns a skip REASON, not a silent call")
     finally:
         ix._RUN_SPENT, ar._RUN_SPENT = saved
+        ix._DAY_SPENT, ix._MONTH_SPENT = saved_day, saved_month
         ix.SEARCH_BUDGET["block_when_exhausted"] = saved_flag
 
     # --- 10. the two layers never crash a keyless run -----------------------------------------
@@ -580,6 +601,79 @@ def check():
             if v is not None:
                 os.environ[k] = v
 
+
+    # --- 11. shared per-selector search cache (#10): the collector's default (logs+general) pass
+    #     and enrich/email-deep's later `--logs-only` ask must not re-buy the same selector -------
+    was_ix11 = _pop_ix_keys()
+    os.environ["INTELX_KEY"] = "test-key-not-a-real-credential"
+    saved_memo11, saved_call11 = dict(ix._MEMO), ix._call
+    ix._MEMO.clear()
+    calls11 = []
+
+    def _fake_call11(path, *, method="GET", params=None, body=None, timeout=30):
+        calls11.append(path)
+        if path.endswith("/intelligent/search"):
+            return {"id": "job-11"}, None
+        if path.endswith("/intelligent/search/result"):
+            return {"records": [{"bucket": "leaks.logs", "name": "x"}], "status": 1}, None
+        return {}, None
+
+    ix._call = _fake_call11
+    try:
+        r1 = ix.search(FAKE_EMAIL)                                       # collector's default plan
+        n_after_collector = len(calls11)
+        ok(set(p["pass"] for p in r1["passes"]) == {"logs", "general"},
+           "collector's default search runs BOTH passes")
+        r2 = ix.search(FAKE_EMAIL, logs_first=True, general_pass=False)  # enrich's --logs-only ask
+        ok(len(calls11) == n_after_collector,
+           "enrich's --logs-only ask for a selector the collector already searched makes ZERO new "
+           "HTTP calls (shared per-selector cache)")
+        ok(r2["passes"] == r1["passes"], "the reused result carries the full earlier coverage")
+    finally:
+        ix._call = saved_call11
+        ix._MEMO.clear()
+        ix._MEMO.update(saved_memo11)
+        _restore_ix_keys(was_ix11)
+
+    # --- 12. concurrent dispatch (#10): enrich_result() searches every distinct selector in the
+    #     result CONCURRENTLY, not one after another with serial poll-loop waits ------------------
+    was_ix12 = _pop_ix_keys()
+    os.environ["INTELX_KEY"] = "test-key-not-a-real-credential"
+    saved_memo12, saved_call12 = dict(ix._MEMO), ix._call
+    ix._MEMO.clear()
+    active = {"n": 0, "max": 0}
+    lock = threading.Lock()
+
+    def _fake_call12(path, *, method="GET", params=None, body=None, timeout=30):
+        if path.endswith("/intelligent/search"):
+            with lock:
+                active["n"] += 1
+                active["max"] = max(active["max"], active["n"])
+            time.sleep(0.05)
+            with lock:
+                active["n"] -= 1
+            return {"id": f"job-{time.time()}"}, None
+        if path.endswith("/intelligent/search/result"):
+            return {"records": [], "status": 1}, None
+        return {}, None
+
+    ix._call = _fake_call12
+    try:
+        result = {"meta": {"host": FAKE_DOMAIN}, "pivots": [
+            {"kind": "whois:registrant_email", "value": f"user{i}@example.com", "queries": []}
+            for i in range(6)]}
+        t0 = time.time()
+        ix.enrich_result(result, do_phonebook=False)
+        elapsed = time.time() - t0
+        ok(active["max"] >= 2, "several selectors' searches overlap in time (max concurrent > 1)")
+        ok(elapsed < 0.05 * 6, "concurrent dispatch beats the old serial sum of per-selector waits")
+        ok(len(result["intelx"]["searched"]) == 7,
+           "every distinct selector (6 pivots + the seed host) is searched")
+    finally:
+        ix._call = saved_call12
+        ix._MEMO.clear()
+        ix._MEMO.update(saved_memo12)
+        _restore_ix_keys(was_ix12)
     return passed, failed, out
 
 

@@ -1,0 +1,205 @@
+{
+  "_comment": "Ledger units for every ChongLuaDao HTTP endpoint cld_api.py calls. CLD usage is UNLIMITED, so every unit is 0: cld_api still ledgers EACH request (route legs, async starts and status polls, probe) to MEMORY/api_usage.jsonl as provider=chongluadao, action=<tier>:<action>, but with 0 billable credits — the row is a call COUNT, never spend. A rejected call is ledgered ok=false/0; a pre-flight failure sends and ledgers nothing. If this file is missing or malformed, every call falls back to 1 unit (conservative over-report). Set units when ChongLuaDao publishes per-endpoint pricing.",
+  "provider": "chongluadao",
+  "pricing": {
+    "published": false,
+    "basis": "unlimited",
+    "note": "ChongLuaDao usage is UNLIMITED (no per-call credit or account quota). Units are 0 so the ledger logs each request as a CALL with zero billable units — a usage log, not spend. Async status polls are also 0. If CLD ever introduces per-call pricing, set the affected endpoint units and default_units accordingly."
+  },
+  "tiers": {
+    "feeds": {
+      "label": "standard Feeds API (feeds.chongluadao.vn)",
+      "default_units": 0,
+      "endpoints": {
+        "/external/checkurl": {
+          "action": "checkurl",
+          "units": 0
+        },
+        "/api/v1/analyze-deep": {
+          "action": "analyze",
+          "units": 0
+        },
+        "/external/denylists/search": {
+          "action": "denylist",
+          "units": 0
+        },
+        "/external/checkphone": {
+          "action": "checkphone",
+          "units": 0
+        },
+        "/external/checkwhois": {
+          "action": "whois",
+          "units": 0
+        },
+        "/external/checkburneremail": {
+          "action": "burner",
+          "units": 0
+        }
+      }
+    },
+    "ti": {
+      "label": "premium Threat-Intel / Shield API (api-ti.chongluadao.vn)",
+      "default_units": 0,
+      "endpoints": {
+        "/api/v1/ioc/external/email": {
+          "action": "ioc/email",
+          "units": 0
+        },
+        "/api/v1/ioc/external/password": {
+          "action": "ioc/password",
+          "units": 0
+        },
+        "/api/v1/ioc/external/url": {
+          "action": "ioc/url",
+          "units": 0
+        },
+        "/api/v1/ioc/external/ip": {
+          "action": "ioc/ip",
+          "units": 0
+        },
+        "/api/v1/ioc/external/phone": {
+          "action": "ioc/phone",
+          "units": 0
+        },
+        "/api/v1/ioc/external/bank-account": {
+          "action": "ioc/bank-account",
+          "units": 0
+        },
+        "/api/v1/ioc/external/hash": {
+          "action": "ioc/hash",
+          "units": 0
+        },
+        "/api/v1/ioc/external/asn": {
+          "action": "ioc/asn",
+          "units": 0
+        },
+        "/api/v1/ioc/external/feeds/stix2": {
+          "action": "feed/stix2",
+          "units": 0
+        },
+        "/api/v1/ioc/external/feeds/misp": {
+          "action": "feed/misp",
+          "units": 0
+        },
+        "/api/v1/ioc/external/feeds/stix1": {
+          "action": "feed/stix1",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/exposure": {
+          "action": "exposure",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/search": {
+          "action": "leaks",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/breaches/search": {
+          "action": "breaches",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/machines/search": {
+          "action": "machines",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/stolen-credentials/search": {
+          "action": "stolen-credentials",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/exposed-credentials/search": {
+          "action": "exposed-credentials",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/cookies/search": {
+          "action": "cookies",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/search/start": {
+          "action": "leaked-accounts/start",
+          "units": 0,
+          "kind": "start"
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/search/poll": {
+          "action": "leaked-accounts/poll",
+          "units": 0,
+          "kind": "poll"
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/devices/search/start": {
+          "action": "devices/start",
+          "units": 0,
+          "kind": "start"
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/devices/search/poll": {
+          "action": "devices/poll",
+          "units": 0,
+          "kind": "poll"
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/devices/detail": {
+          "action": "device-detail",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/leaked-accounts/devices/credentials": {
+          "action": "device-credentials",
+          "units": 0
+        },
+        "/api/v1/data-leaks/external/full-export/start": {
+          "action": "full-export/start",
+          "units": 0,
+          "kind": "start"
+        },
+        "/api/v1/data-leaks/external/full-export/poll/{job_id}": {
+          "action": "full-export/poll",
+          "units": 0,
+          "kind": "poll"
+        },
+        "/api/v1/data-leaks/external/internal-leaks": {
+          "action": "internal-leaks",
+          "units": 0
+        },
+        "/api/v1/brand-protection/external/domains": {
+          "action": "brand-domains",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/vulnerabilities": {
+          "action": "vulns",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/vulnerabilities/{cve}": {
+          "action": "vuln",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/threat-actors": {
+          "action": "actors",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/threat-actor-usernames": {
+          "action": "actor-usernames",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/incidents": {
+          "action": "incidents",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/onion-blocklist/check": {
+          "action": "onion",
+          "units": 0
+        },
+        "/api/v1/ransomware/external/victims": {
+          "action": "ransomware",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/clickfix": {
+          "action": "clickfix",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/phaas": {
+          "action": "phaas",
+          "units": 0
+        },
+        "/api/v1/threat-feeds/external/telegram/posts": {
+          "action": "telegram",
+          "units": 0
+        }
+      }
+    }
+  }
+}

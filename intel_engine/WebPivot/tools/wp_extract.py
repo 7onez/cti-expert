@@ -40,6 +40,7 @@ _GL_FALLBACK = {
     "resource_basename_segments": ["jquery", "bootstrap"],
     "dom_skeleton_min_tags": {"tags": 12},
     "social_asset_extensions": [".png", ".jpg", ".svg", ".css", ".js"],
+    "email_asset_suffixes": [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".js", ".css"],
     "platform_default_favicon_mmh3": [342030173],
     "prose_selectors": {"trigger_keywords": ["risk", "deposit", "invest", "withdraw", "guarantee",
                         "regulat", "licen", "disclaimer", "liabilit", "terms"],
@@ -48,6 +49,9 @@ _GL_FALLBACK = {
 _GL_REF = load_ref(ref_path(__file__, "generic_labels.json"), _GL_FALLBACK)
 DOM_SKELETON_MIN_TAGS = int(_GL_REF["dom_skeleton_min_tags"]["tags"])
 SOCIAL_ASSET_EXTENSIONS = tuple(_GL_REF["social_asset_extensions"])
+# DATA: references/generic_labels.json -> email_asset_suffixes — an `x@2x.png` / `lib@3.6.0.min.js`
+# match is a retina asset or a pinned package, never a mailbox.
+EMAIL_ASSET_SUFFIXES = tuple(_GL_REF.get("email_asset_suffixes", _GL_FALLBACK["email_asset_suffixes"]))
 # DATA: references/generic_labels.json -> prose_selectors — copied-disclaimer harvesting controls.
 _PROSE_REF = _GL_REF.get("prose_selectors", _GL_FALLBACK["prose_selectors"])
 
@@ -145,8 +149,28 @@ VERIFICATION_META = {
 }
 
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+# mailto: hrefs are often percent-encoded to dodge harvesters (`mailto:%6F%70%73@…`); decoded before
+# EMAIL_RE runs, otherwise the regex starts mid-escape and emits `6F%70%73@…`.
+MAILTO_RE = re.compile(r"""(?i)\bmailto:([^"'\s<>]+)""")
+# A domain part that opens with a dotted number run (`@3.6.0.min.js`) is a package version pin.
+# Two numeric labels minimum, so a real all-digit mail domain (163.com, 126.com) still passes.
+_EMAIL_VERSION_DOMAIN_RE = re.compile(r"\d+(?:\.\d+)+\.")
 
 PHONE_RE = re.compile(r"(?<![\w.])(\+?\d[\d\s().\-]{7,16}\d)(?![\w.])")
+# Free-text runs that are punctuated like a phone but are identifiers. Matched against the raw run
+# (`_PHONE_ID_SHAPE_RE`) or the text just before it (`_PHONE_ID_PREFIX_RE`): an uppercase id prefix
+# glued by a hyphen (CVE-2024-12345, INV-…), an ISBN label, a calendar date (year-first or
+# year-last) and a year-prefixed serial (2024-000123-45).
+_PHONE_ID_PREFIX_RE = re.compile(r"(?:\b[A-Z]{2,}-|\bISBN(?:-1[03])?:?\s*)$")
+_PHONE_ID_SHAPE_RE = re.compile(
+    r"^(?:(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?!\d)"
+    r"|\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2}(?!\d)"
+    r"|(?:19|20)\d{2}[-/.]\d{5,})")
+# Dot is phone punctuation only in the all-dotted national style (0912.345.678, 06.12.34.56.78).
+_PHONE_DOTTED_RE = re.compile(r"^\+?\d{2,4}(?:\.\d{2,4}){2,}$")
+_IPV4_RE = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$")
+# …nor as a dot-grouped amount (12.500.000 ₫ — the VN/EU thousands separator): no trunk 0, 3-digit groups.
+_THOUSANDS_RE = re.compile(r"^[1-9]\d{0,2}(?:\.\d{3})+$")
 
 # <script>/<style> BODIES are not visible text. Stripping tags alone leaves their contents in the
 # scan, and a webfont's `unicode-range:U+0307-0308,U+0590-05FF,…` reads as a run of hyphen-separated
@@ -301,21 +325,32 @@ _B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
-def _b58check_ok(s: str) -> bool:
-    """True iff s is a valid base58check string (BTC/LTC legacy, TRON) — checksum verified."""
+def _b58check_payload(s: str):
+    """The checksum-verified payload (version byte first) of a base58check string, else None."""
     num = 0
     for ch in s:
         i = _B58_ALPHABET.find(ch)
         if i < 0:
-            return False
+            return None
         num = num * 58 + i
     raw = num.to_bytes((num.bit_length() + 7) // 8, "big")
     pad = len(s) - len(s.lstrip("1"))            # leading '1' → leading zero byte
     raw = b"\x00" * pad + raw
     if len(raw) < 5:
-        return False
+        return None
     payload, checksum = raw[:-4], raw[-4:]
-    return hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] == checksum
+    if hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] != checksum:
+        return None
+    return payload
+
+def _b58check_ok(s: str) -> bool:
+    """True iff s is a valid base58check string (BTC/LTC legacy, TRON) — checksum verified."""
+    return _b58check_payload(s) is not None
+
+# base58check VERSION bytes per chain. The BTC and LTC regexes overlap on '3…' (P2SH 0x05), and
+# Litecoin's legacy P2SH reused 0x05 so such an address cannot be told apart — it is BTC only.
+# LTC owns 0x30 ('L…', P2PKH) and 0x32 ('M…', P2SH).
+_B58_VERSIONS = {"btc": (0x00, 0x05), "ltc": (0x30, 0x32)}
 
 def _bech32_ok(s: str) -> bool:
     """True iff s is a valid bech32/bech32m string (segwit bc1/ltc1) — polymod verified."""
@@ -345,7 +380,11 @@ def valid_crypto_address(label: str, value: str) -> bool:
         return len(value) in (95, 106)                               # length-checked; no cheap checksum
     if value.lower().startswith(("bc1", "ltc1", "tb1")):
         return _bech32_ok(value)
-    return _b58check_ok(value)                                       # btc/ltc/tron legacy + tron T…
+    payload = _b58check_payload(value)                               # btc/ltc/tron legacy + tron T…
+    if payload is None:
+        return False
+    versions = _B58_VERSIONS.get(label)
+    return versions is None or payload[0] in versions
 
 def extract_crypto(text: str):
     found = {}
@@ -656,8 +695,11 @@ def extract_socials(hosts_hrefs):
         if TEMPLATE_PLACEHOLDER_RE.search(pr.path or ""):
             continue
         # drop STATIC ASSETS on a social host (github's octocat.png, a share icon) — the host
-        # matches the platform list but the link declares no account.
-        if (pr.path or "").lower().rstrip("/").endswith(SOCIAL_ASSET_EXTENSIONS):
+        # matches the platform list but the link declares no account. Facebook's numeric-id
+        # profile route (`/profile.php?id=…`) IS an account despite its `.php` ending.
+        path_l = (pr.path or "").lower().rstrip("/")
+        is_fb_profile = path_l == "/profile.php" and (host == "facebook.com" or host.endswith(".facebook.com"))
+        if path_l.endswith(SOCIAL_ASSET_EXTENSIONS) and not is_fb_profile:
             continue
         for shost, name in SOCIAL_HOSTS.items():
             if host == shost or host.endswith("." + shost):
@@ -678,8 +720,10 @@ def extract_meta(html: str):
 
 def _norm_phone(raw: str):
     """Normalize a phone string to '+<digits>' / '<digits>' or None if it isn't plausibly a
-    phone. Rejects too-short/too-long runs, all-same-digit sequences, and pure years."""
+    phone. Rejects too-short/too-long runs, all-same-digit sequences, and pure years. A trunk
+    `(0)` written after a country code (`+84 (0) 912…`) is dialled only domestically — dropped."""
     s = (raw or "").strip()
+    s = re.sub(r"^(\+|00)(\d{1,3})\s*\(0\)", r"\1\2", s)
     plus = s.startswith(("+", "00"))
     digits = re.sub(r"\D", "", s)
     if s.startswith("00"):
@@ -690,11 +734,31 @@ def _norm_phone(raw: str):
         return None
     return ("+" if plus else "") + digits
 
+def _isbn13_ok(digits: str) -> bool:
+    return (len(digits) == 13 and digits.startswith(("978", "979"))
+            and sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(digits)) % 10 == 0)
+
+def extract_emails(html: str):
+    """Email addresses on the page, mailto: hrefs percent-decoded first. Drops asset filenames
+    that happen to contain '@' (hero@2x.jpeg, jquery@3.6.0.min.js) and platform system mailboxes."""
+    text = MAILTO_RE.sub(lambda m: "mailto:" + unquote(m.group(1)), html or "")
+    out = []
+    for e in uniq(EMAIL_RE.findall(text)):
+        el = e.lower()
+        domain = el.split("@")[-1]
+        if (el.endswith(EMAIL_ASSET_SUFFIXES) or _EMAIL_VERSION_DOMAIN_RE.match(domain)
+                or domain.endswith(BOILERPLATE_EMAIL_HOSTS)):
+            continue
+        out.append(e)
+    return out
+
 def extract_phones(html: str):
     """Phone numbers on the page. `tel:` hrefs and schema.org JSON-LD `telephone` are trusted
     outright — both are the site DECLARING a contact number rather than us inferring one; free-text
     matches are accepted only when they carry phone punctuation or a '+' country code, so prices,
-    dates, order-ids and license numbers don't create bogus contact pivots."""
+    dates, order-ids and license numbers don't create bogus contact pivots. Identifier shapes
+    (CVE-…, ISBN, calendar dates, year-prefixed serials) are rejected; an all-dotted national
+    format (0912.345.678) counts as punctuation unless it reads as an IPv4 address."""
     out = []
     for raw in TEL_HREF_RE.findall(html):
         n = _norm_phone(unquote(raw))
@@ -709,8 +773,14 @@ def extract_phones(html: str):
     text = re.sub(r"<[^>]+>", " ", body)          # strip tags so we scan visible text
     for m in PHONE_RE.finditer(text):
         raw = m.group(1)
-        if "+" not in raw and not re.search(r"[()\-–\s]", raw):
+        dotted = (bool(_PHONE_DOTTED_RE.match(raw)) and not _IPV4_RE.match(raw)
+                  and not _THOUSANDS_RE.match(raw))
+        if "+" not in raw and not dotted and not re.search(r"[()\-–\s]", raw):
             continue                              # a bare digit run with no separators → not a phone
+        if "+" not in raw and (_PHONE_ID_SHAPE_RE.match(raw)
+                               or _PHONE_ID_PREFIX_RE.search(text[max(0, m.start() - 12):m.start()])
+                               or _isbn13_ok(re.sub(r"\D", "", raw))):
+            continue                              # an identifier punctuated like a phone
         n = _norm_phone(raw)
         if n and n not in out:
             out.append(n)
@@ -740,6 +810,9 @@ def extract_telegram(hrefs):
         path = path.strip("/").split("?")[0].split("#")[0]
         if not path:
             continue
+        segs = path.split("/")
+        if segs[0].lower() == "s" and len(segs) > 1 and segs[1]:
+            path = "/".join(segs[1:])             # t.me/s/<channel> — the channel's web preview
         first = path.split("/")[0].lower()
         if first in TG_BOILERPLATE:
             continue

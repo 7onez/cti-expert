@@ -57,6 +57,25 @@ def _premise_line(a: Assessment) -> str:
            f"Collection verdict: {verdict.replace('_', ' ') or 'inconclusive'}"
 
 
+
+def _tier_lines(a: Assessment) -> list[tuple[str, int, str]]:
+    """Non-empty tier sections as (title, count, caveat). Collecting ≠ attributing."""
+    out: list[tuple[str, int, str]] = []
+    kit = list(getattr(a, "kit_siblings", None) or [])
+    if kit:
+        out.append(("Kit siblings", len(kit),
+                    "shared kit artifact — not attribution"))
+    nbr = list(getattr(a, "neighbours", None) or [])
+    if nbr:
+        out.append(("Neighbours", len(nbr),
+                    "co-tenant / exchange flow — not attribution"))
+    men = list(getattr(a, "mentions", None) or [])
+    if men:
+        out.append(("Mentions", len(men),
+                    "corpus / news hit — not attribution"))
+    return out
+
+
 def render_terminal(a: Assessment, table_md: str = "") -> None:
     """Print a colored, scannable report to stdout."""
     if not _RICH:
@@ -102,6 +121,10 @@ def render_terminal(a: Assessment, table_md: str = "") -> None:
         for m in a.cluster:
             t.add_row(m.domain, "\n".join(f"• {s}" for s in m.shared_artifacts) or "—")
         c.print(t, "\n")
+
+    for title, count, caveat in _tier_lines(a):
+        c.print(Text(f"{title}: {count}", style="bold yellow"))
+        c.print(Text(f"  {caveat}", style="italic grey58"), "\n")
 
     alts = list(getattr(a, "alternatives", []) or [])
     if alts:
@@ -158,6 +181,12 @@ def render_markdown(a: Assessment, table_md: str = "") -> str:
         for m in a.cluster:
             arts = "<br>".join(m.shared_artifacts).replace("|", "\\|")
             out.append(f"| `{m.domain}` | {arts} |")
+        out.append("")
+    tiers = _tier_lines(a)
+    if tiers:
+        out += ["## Collected tiers (not attribution)", ""]
+        for title, count, caveat in tiers:
+            out.append(f"- **{title}:** {count} — *{caveat}*")
         out.append("")
     alts = list(getattr(a, "alternatives", []) or [])
     if alts:

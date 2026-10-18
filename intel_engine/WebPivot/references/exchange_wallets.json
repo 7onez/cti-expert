@@ -1,0 +1,32 @@
+{
+  "_comment": "Known EXCHANGE / custodian deposit-wallet LABELS for crypto counterparty grading (scripts/webpivot/crypto_balance.py --counterparties, pivot_routes crypto.counterparties, urlscan identifier wallet.*). An address listed here is rung_class wallet.exchange (neighbour) — collected, never attributed as operator-owned. RULE 1: labels and public hot-wallet addresses only; NEVER case data, NEVER victim deposit addresses discovered in an investigation. Seed labels are public exchange brand names; address keys may be added later as bare sibling keys under this file's top-level 'known_addresses' object (no empty entries/values group — the reference-layer gate forbids empty membership lists).",
+  "labels": {
+    "_comment": "Human-readable exchange/custodian labels recognised when a counterparty row carries a matching tag from an explorer (e.g. 'binance', 'coinbase'). Matching is case-insensitive substring on the label field.",
+    "values": [
+      "binance",
+      "coinbase",
+      "kraken",
+      "bitfinex",
+      "huobi",
+      "okx",
+      "okex",
+      "kucoin",
+      "gemini",
+      "bitstamp",
+      "gate.io",
+      "bybit",
+      "mexc",
+      "crypto.com",
+      "bitget",
+      "poloniex",
+      "bittrex",
+      "ftx",
+      "blockchain.com",
+      "cashapp",
+      "revolut"
+    ]
+  },
+  "known_addresses": {
+    "_comment": "Optional known exchange deposit addresses as a FLAT object: {\"bc1q…\": {\"label\": \"binance\", \"coin\": \"btc\"}, …}. Intentionally has no keys today (RULE 1 — no case data). Add only publicly documented exchange hot/cold wallets. Consumers treat missing/empty known_addresses as 'no address hits'."
+  }
+}

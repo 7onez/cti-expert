@@ -47,10 +47,7 @@ import sys
 import os
 import re
 import json
-import time
 import argparse
-import urllib.request
-import urllib.error
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -78,45 +75,10 @@ def _install_cti_proxy():
         _b = _p
 _install_cti_proxy()
 
-# Reuse the shared UA/extractors when available; stay standalone if not.
+# The shared UA + the one Wayback client (endpoint failover, retry, pacing, cooldown).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from pivot_extract import DEFAULT_UA
-except Exception:
-    DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-
-CDX = "http://web.archive.org/cdx/search/cdx"
-
-
-def _get(url, timeout=1800, retries=3, backoff=3):
-    """GET with retry+backoff — web.archive.org CDX/fetch is notoriously flaky.
-
-    `timeout` is a TOTAL wall-clock budget across ALL retries + backoff (not per
-    attempt), so the 30-min ceiling holds."""
-    last = None
-    deadline = time.monotonic() + timeout
-    for attempt in range(retries):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-            with urllib.request.urlopen(req, timeout=remaining) as r:
-                return r.read(), r.geturl()
-        except urllib.error.HTTPError as e:
-            # 429/5xx are worth retrying; 4xx (except 429) usually aren't.
-            last = e
-            if e.code not in (429, 500, 502, 503, 504):
-                break
-        except Exception as e:
-            last = e
-        if attempt < retries - 1:
-            nap = min(backoff * (attempt + 1), max(0.0, deadline - time.monotonic()))
-            if nap <= 0:
-                break
-            time.sleep(nap)
-    raise last if last else RuntimeError("request failed")
+from pivot_extract import DEFAULT_UA  # noqa: E402 (also puts WebPivot/tools on sys.path)
+import wp_wayback  # noqa: E402
 
 
 def _norm_ts(s):
@@ -131,32 +93,38 @@ def _norm_ts(s):
 
 
 def cdx_snapshots(url, year_from=None, year_to=None, status="200",
-                  mime="text/html", collapse_digest=True, limit=1000):
-    """Return [(timestamp, original, statuscode, mimetype, digest)] for a URL."""
-    q = (f"{CDX}?url={url}&output=json"
-         f"&fl=timestamp,original,statuscode,mimetype,digest&limit={limit}")
+                  mime="text/html", collapse_digest=True, limit=1000, near=None, errors=None):
+    """Return [(timestamp, original, statuscode, mimetype, digest)] for a URL, oldest → newest.
+
+    The index returns rows oldest-first, so a plain `limit` keeps the OLDEST captures. `near`
+    picks which `limit` rows come back: 'latest' → the newest (negative limit), a timestamp → the
+    ones closest to it (closest+sort=closest), None / 'earliest' → the oldest. Pass a list as
+    `errors` to tell a real 'no captures' (list stays empty) from an archive that did not answer."""
+    q = [("url", url), ("output", "json"), ("fl", "timestamp,original,statuscode,mimetype,digest")]
     if status:
-        q += f"&filter=statuscode:{status}"
+        q.append(("filter", f"statuscode:{status}"))
     if mime:
-        q += f"&filter=mimetype:{mime}"
+        q.append(("filter", f"mimetype:{mime}"))
     if collapse_digest:
-        q += "&collapse=digest"
+        q.append(("collapse", "digest"))
     if year_from:
-        q += f"&from={re.sub(r'[^0-9]', '', year_from)}"
+        q.append(("from", re.sub(r"[^0-9]", "", year_from)))
     if year_to:
-        q += f"&to={re.sub(r'[^0-9]', '', year_to)}"
-    try:
-        body, _ = _get(q, timeout=1800)
-        rows = json.loads(body.decode("utf-8", "ignore"))
-    except urllib.error.HTTPError as e:
-        print(f"  cdx HTTP {e.code} for {url}", file=sys.stderr)
+        q.append(("to", re.sub(r"[^0-9]", "", year_to)))
+    target = _norm_ts(near) if near not in (None, "latest", "earliest") else None
+    if near == "latest":
+        q.append(("limit", f"-{int(limit)}"))
+    elif target:
+        q += [("closest", target), ("sort", "closest"), ("limit", int(limit))]
+    else:
+        q.append(("limit", int(limit)))
+    rows, err = wp_wayback.index(q, ua=DEFAULT_UA)
+    if err:
+        print(f"  cdx error for {url}: {err}", file=sys.stderr)
+        if errors is not None:
+            errors.append(err)
         return []
-    except Exception as e:
-        print(f"  cdx error for {url}: {e} (after retries)", file=sys.stderr)
-        return []
-    if not rows or len(rows) < 2:
-        return []
-    return [tuple(row) for row in rows[1:]]
+    return sorted((tuple(r) for r in rows if len(r) >= 5), key=lambda s: s[0])
 
 
 def resolve_nearest(snaps, near):
@@ -180,21 +148,17 @@ def resolve_nearest(snaps, near):
 
 def raw_url(timestamp, original, mode="id_"):
     """Build the un-rewritten archive URL. mode: id_ (raw), if_ (no toolbar)."""
-    return f"https://web.archive.org/web/{timestamp}{mode}/{original}"
+    return wp_wayback.raw_url(timestamp, original, mode)
 
 
 def fetch(timestamp, original, mode="id_"):
-    """Fetch archived bytes. Returns (text, final_url) or ('', url) on failure."""
-    url = raw_url(timestamp, original, mode)
-    try:
-        body, final = _get(url, timeout=1800)
-        return body.decode("utf-8", "ignore"), final
-    except urllib.error.HTTPError as e:
-        print(f"  fetch HTTP {e.code} for {url}", file=sys.stderr)
-        return "", url
-    except Exception as e:
-        print(f"  fetch error for {url}: {e} (after retries)", file=sys.stderr)
-        return "", url
+    """Fetch archived bytes → (text, final_url, timestamp_used); ('', url, timestamp) on failure.
+    An unplayable capture falls back to its nearest playable neighbour (timestamp_used says which)."""
+    resp, used, err = wp_wayback.fetch_capture(timestamp, original, mode, ua=DEFAULT_UA)
+    if resp is None:
+        print(f"  fetch error for {raw_url(timestamp, original, mode)}: {err}", file=sys.stderr)
+        return "", raw_url(timestamp, original, mode), timestamp
+    return resp.body.decode("utf-8", "ignore"), resp.url, used
 
 
 def to_text(html):
@@ -243,8 +207,19 @@ def main():
     ap.add_argument("--json", action="store_true", help="machine-readable envelope")
     args = ap.parse_args()
 
+    errors = []
     snaps = cdx_snapshots(args.url, args.yfrom, args.yto,
-                          status=(args.status or None), mime=(args.mime or None))
+                          status=(args.status or None), mime=(args.mime or None),
+                          near=(None if args.list else args.near), errors=errors)
+
+    if errors and not snaps:
+        # the archive did not answer: NOT "never archived" — a gap to re-run
+        msg = f"Wayback did not answer for {args.url} (not a negative): {errors[0]}"
+        if args.json:
+            print(json.dumps({"url": args.url, "error": msg, "unanswered": True, "snapshots": None}))
+        else:
+            print(msg, file=sys.stderr)
+        sys.exit(3)
 
     if args.list:
         print(render_list(args.url, snaps, args.yfrom, args.yto))
@@ -266,7 +241,19 @@ def main():
         print(resolved)
         return
 
-    html, final_url = fetch(ts, original, args.mode)
+    html, final_url, used_ts = fetch(ts, original, args.mode)
+    if not html:
+        # the capture and its neighbours could not be downloaded: NOT an empty page — a gap
+        msg = (f"Wayback capture {ts} of {original} (and its nearest neighbours) could not be "
+               f"downloaded — not a negative; re-run later")
+        if args.json:
+            print(json.dumps({"url": args.url, "error": msg, "unanswered": True,
+                              "resolved_timestamp": ts, "resolved_url": resolved, "bytes": 0}))
+        else:
+            print(msg, file=sys.stderr)
+        sys.exit(3)
+    if used_ts != ts:
+        ts, resolved = used_ts, raw_url(used_ts, original, args.mode)
 
     if args.json:
         body = to_text(html) if args.text else html

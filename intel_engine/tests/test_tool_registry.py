@@ -126,6 +126,31 @@ def check():
         ok(not stale, f"prompts/{fn} mentions no renamed/removed tool"
                       + (f" (stale: {sorted(stale)})" if stale else ""))
 
+    # 6. The cross-type loop's Plan phase is READ-ONLY: PLAN_TOOLS ⊆ ANALYZE_TOOLS and holds no
+    #    tool that spends, touches a target, writes shared state, expands the case or approves.
+    #    A planner with any of those could act without the per-round approval it exists to feed.
+    plan = _allowlist(src, "PLAN_TOOLS", "analyze")
+    ok(len(plan) >= 5, f"PLAN_TOOLS is declared ({len(plan)} tools)")
+    ok(plan <= _allowlist(src, "ANALYZE_TOOLS", "analyze"),
+       "PLAN_TOOLS is a subset of ANALYZE_TOOLS (served, allowlisted)")
+    import json as _json
+    pol = _json.load(open(os.path.join(ROOT, "harness", "references", "tool_policy.json"),
+                          encoding="utf-8"))
+
+    def _vals(key):
+        v = pol.get(key) or {}
+        v = v.get("values", v.get("entries", v)) if isinstance(v, dict) else v
+        return set(v.keys() if isinstance(v, dict) else v) - {"_comment"}
+    forbidden = (_vals("metered_tools") | _vals("outbound_tools") | _vals("mutating_tools")
+                 | _vals("approval_required_tools") | _vals("proposal_gated_tools")
+                 | _vals("operator_only_tools") | _vals("route_metered_tools")
+                 | _vals("arg_metered_tools")
+                 | {"case_loop", "case_enrich", "case_reopen", "reference_add", "misp_push",
+                    "misp_publish", "reverse_whois", "case_approve"})
+    leak = sorted(plan & forbidden)
+    ok(not leak, "PLAN_TOOLS holds no metered/outbound/mutating/approval/expanding tool"
+                 + (f" (leaks: {leak})" if leak else ""))
+
     return passed, failed, out
 
 

@@ -37,7 +37,7 @@ confirm a HIGH before a report.
 | Primary | `scripts/render_confirm.py` | Pure reconcile of static + rendered evidence | none |
 | Feeds | `scripts/clickfix_detect.py` (`captured_clipboard=`) | runtime clipboard write → detector | none |
 | Feeds | `scripts/html_visibility_analysis.py` (`computed_hidden=`) | computed-style hidden set → analyzer | none |
-| Optional | Playwright / `agent-browser` | the live render + capture | `uv pip install playwright && playwright install chromium` |
+| Optional | Moli (default install) / Playwright Chromium / `agent-browser` | the live render + capture | `bash scripts/install.sh` (Moli) · `--headless` (Chromium) |
 
 Keyless core. The render step is the only non-pure part and is entirely optional.
 
@@ -49,7 +49,7 @@ Keyless core. The render step is the only non-pure part and is entirely optional
 1. Run the static ClickFix / visibility analyzers first (fast, keyless)
 2. If suspicious but low, run render_confirm:
      a. offline: feed --evidence '{"clipboard":[...],"computed_hidden":[...]}' captured elsewhere
-     b. live:    --render --url <page>  (needs Playwright/agent-browser; degrades to a note)
+     b. live:    --render --url <page>  (Moli or Chromium via wp_browser; degrades to a note)
 3. Read the reconciliation per analyzer:
      promoted_by_render  -> the win: runtime evidence confirms/raises the verdict
      agree               -> static and rendered concur
@@ -66,7 +66,7 @@ Keyless core. The render step is the only non-pure part and is entirely optional
 echo '{"clipboard":["powershell -enc AAAA"],"computed_hidden":[]}' \
   | python3 scripts/render_confirm.py page.html --evidence - --origin site.com --json
 
-# Optional live render (Playwright/agent-browser); degrades to a note if unavailable
+# Optional live render (Moli, else Chromium); degrades to a note if unavailable
 python3 scripts/render_confirm.py --url https://suspicious.example/ --render --origin suspicious.example
 ```
 
@@ -116,8 +116,10 @@ Rendered evidence is authoritative when present; absent it, the static verdict i
 
 - **Render is optional and best-effort.** Anti-automation, cloaking, and timeouts can prevent a
   capture — the module returns a note and the static verdict stands; it never fabricates evidence.
-- **The Playwright driver hooks `clipboard.writeText` / `execCommand('copy')` and reads
-  `getComputedStyle`;** deeply obfuscated interception or shadow-DOM concealment may still evade it.
+- **Both drivers install the same hook before any page script** (Playwright `add_init_script`,
+  Moli `--document-start-script`): `clipboard.writeText` / `execCommand('copy')` (reading a selected
+  field's own range when `getSelection()` is empty) and `getComputedStyle`; deeply obfuscated
+  interception or shadow-DOM concealment may still evade it.
 - **Not CI-tested against a live browser** (by design — the repo's tests are zero-dep). The pure
   reconcile logic and the detector seams are fully covered; the driver follows the optional-tool
   convention.

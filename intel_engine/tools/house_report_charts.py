@@ -27,7 +27,7 @@ SCRIPTS = os.path.join(os.path.dirname(ROOT), "scripts")
 BUILD_REPORT_DATA = os.path.join(SCRIPTS, "build_report_data.py")
 REPORT_FIGURES = os.path.join(SCRIPTS, "cti_report_figures.py")
 # Per-call ceiling for the build/figure subprocesses (env CTI_CALL_TIMEOUT → .env →
-# references/timeouts.json → 1800s); every bound below is floored to it.
+# references/timeouts.json → 5000s); every bound below is floored to it.
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 from wp_timeouts import CALL_TIMEOUT  # noqa: E402
 

@@ -22,9 +22,10 @@ Three phases; each is one `query()` call, wired so consistency comes from the sc
 
 | Phase | Skill as `system_prompt` | Tools exposed | Output |
 |---|---|---|---|
-| **Collect** | `WebPivot/SKILL.md` | `pivot_extract`, `fallback_probe`, `kb_ingest` | raw JSON in `cases/<case>/raw/`, ingested to KB |
-| **Correlate** | `IntelAnalysis/SKILL.md` | `kb_cluster`, `kb_entity`, `kb_query_shared`, `risk_signals`, `reverse_whois`, `cert_overlap`, `domain_verdict` (read-only) | in-context reasoning |
-| **Assess** | `IntelAnalysis/SKILL.md` | read-only | **schema-forced `Assessment` JSON** |
+| **Collect** | `WebPivot/SKILL.md` | collectors + `kb_ingest`, `corpus_search` (not an exhaustive roster) | raw JSON in `cases/<case>/raw/`, ingested to KB |
+| **Plan** | (cross-type loop) | read-only `PLAN_TOOLS` only | re-rank `propose()` candidates; add typed pivots |
+| **Correlate** | `IntelAnalysis/SKILL.md` | KB/timeline/reference tools (read-mostly; not an exhaustive roster) | in-context reasoning |
+| **Assess** | `IntelAnalysis/SKILL.md` | read-only | **schema-forced `Assessment` JSON** (owner `cluster` + `kit_siblings` / `neighbours` / `mentions`) |
 
 - Context carries across phases via `resume=<session_id>`.
 - The final phase uses `output_format={"type":"json_schema", ...}` → validated
@@ -147,19 +148,77 @@ invisible. Gate: `tests/test_dashboard.py`.
 
 ## Swappable reasoning backend (`HARNESS_BACKEND`)
 The orchestrator is written against the Anthropic Agent SDK, but the reasoning model is **not**
-hard-wired to Anthropic. `harness/sdk_compat.py` reads `HARNESS_BACKEND` and transparently swaps in
-`harness/openai_backend.py` — a drop-in shim over the slice of `claude_agent_sdk` the orchestrator
-uses — so the *same* Collect→Correlate→Assess driver runs against **any OpenAI-compatible
-`/chat/completions` endpoint**. The orchestrator code is untouched.
+hard-wired to Anthropic. `harness/sdk_compat.py` reads `HARNESS_BACKEND` and swaps in one of two
+drop-ins over the slice of `claude_agent_sdk` the orchestrator uses, so the *same*
+Collect→Correlate→Assess driver runs on whatever this machine can actually reach:
+
+| `HARNESS_BACKEND` | Runs on | Auth |
+|---|---|---|
+| `claude` | the Anthropic Agent SDK → Claude Code CLI | `claude /login` (subscription) or `ANTHROPIC_API_KEY` |
+| `codex` | `codex exec --json` (`harness/cli_backend.py`) | the machine's `codex login` |
+| `omp` | `omp -p --mode json` (`harness/cli_backend.py`) | the machine's omp login |
+| `openai\|deepseek\|kimi\|local` | `harness/openai_backend.py` over `/chat/completions` | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` (+ `OPENAI_BASE_URL`) |
+| unset / `auto` | **resolved once per run** by `harness/backend_select.py` | — |
+
+`auto` tries the host agent this process runs inside first (Codex → OMP → Claude Code; the
+markers are inherited, so the inner-most wins), then `claude`, `codex`, `omp`, then an OpenAI key.
+Each run decides with the CLIs' **free** login-presence checks (`claude auth status`,
+`codex login status`; omp has none) — no model request, no tokens. These only show a stored login
+exists; they do **not** prove it works (an expired OAuth session whose refresh fails can still read
+as logged in, and they never see credits). A backend that passes them but cannot answer fails the
+first phase within seconds, and that failure becomes a failover (below). `python3 scripts/backend/intel.py harness doctor
+[--backend X]` goes further: one tiny real request per backend ("Reply with exactly: OK"), which
+also catches a logged-in account with no credits left, and lists the fallbacks that are ready. Its
+answers are cached in `MEMORY/backend_probe.json` (a pass for 30 min, a failure for 10 —
+`HARNESS_PROBE_PASS_TTL` / `HARNESS_PROBE_FAIL_TTL`), so the next runs reuse them for free. No
+usable backend → the run exits naming every candidate and why, never as "✓ phase · $0.00".
+
+**Mid-run failover.** If the backend dies *during* a case on a login / credit / rate-limit error
+(not a tool or schema fault), the orchestrator exits 75 with the case intact. `harness open` /
+`continue` then probes the remaining backends and, per `--failover` (or `HARNESS_FAILOVER`):
+`ask` (default on a terminal) — "omp is usable. Resume case X on omp? [Y/n]"; `auto` — switch
+without asking; `off` (default without a terminal: cron, CI) — stop and print the command to
+resume. The resumed run reuses the cached collection, so nothing is re-bought; in `--parallel`
+mode the clusters judged before the failure are kept (`cases/<case>/failover_progress.json`) and
+only the unfinished ones are judged again. A backend that failed is skipped for 10 minutes. For unattended VPS
+runs set `HARNESS_BACKEND` / `HARNESS_FAILOVER` in the crontab line or the systemd unit's
+`Environment=` — `~/.bashrc` is not read by cron or systemd.
+
+**Egress.** Model traffic (Anthropic / OpenAI / DeepSeek / Moonshot / Google / OpenRouter API
+hosts, `references/model_hosts.json`) always goes **direct** — those hosts are added to `NO_PROXY`
+for every model CLI the harness starts. Target traffic keeps using the research proxy pool
+(`scripts/proxy`): `mcp_server.py` installs that pool itself at startup, so collectors stay proxied
+even when the server is launched by Claude Code, Codex or OMP rather than `scripts/backend/intel.py`.
+
+As **root** (a typical VPS) the Claude CLI refuses headless permissions unless
+`IS_SANDBOX=1`; the harness sets it itself, because safety never rested on that flag — every tool
+call still passes `audit.gate`.
 
 ```bash
-HARNESS_BACKEND=deepseek  python3 harness/orchestrator.py CASE-0001 https://site-a.example
-# HARNESS_BACKEND ∈ { claude (default) | openai | deepseek | kimi | local }
+python3 scripts/backend/intel.py harness doctor   # which backend, and why the others were skipped
+HARNESS_BACKEND=codex python3 scripts/backend/intel.py harness open CASE-0001 https://site-a.example
+HARNESS_BACKEND=deepseek python3 harness/orchestrator.py CASE-0001 https://site-a.example
 ```
-- Unset / `claude` → the real Anthropic SDK (schema-forced `output_format`, prompt cache, cost meter).
-- `openai|deepseek|kimi|local` → the shim, pointed at the matching base URL + `*_API_KEY`.
+
+**CLI backends are isolated by construction.** Each phase is one `codex exec` / `omp -p` process
+in a throwaway home under `cases/<case>/harness_home/` (own `CODEX_HOME` config / `.omp/mcp.json`;
+the user's login is reused, their config, skills, hooks, plugins and other MCP servers are not).
+Its only tools are this repo's `@tool`s, served by `harness/mcp_server.py` over stdio and narrowed
+to the phase's allowlist (`HARNESS_ALLOWED_TOOLS`), pre-approved, with shell / exec / browser /
+web-search / multi-agent features disabled. The phase's case, label and hostile posture travel to
+the server (`INTEL_CASE` / `HARNESS_PHASE` / `HARNESS_HOSTILE`) so `audit.gate` decides exactly as
+on the SDK path, and the JSON event stream — not the final text — is the judge: a phase **fails** if
+the host executed anything outside the `intel` server (a shell command, a built-in, another MCP
+server) or refused an MCP call at its own approval layer. Structured output (Assess) uses a
+server-side `emit_result` tool validated against the `Assessment` schema; sessions resume
+(`codex exec resume` / `omp --resume`) so Correlate → Verify → Assess share one transcript.
+`HARNESS_CLI_MODEL_MAP='{"haiku":"…","sonnet":"…"}'` maps tiers to host model ids;
+`HARNESS_CLI_TIMEOUT` (default 1800 s) bounds a phase process.
+
 - Note: some reasoning models (e.g. `deepseek-reasoner`) don't do tool-calling, so the tool-driven
   phases stay on a chat model (e.g. `deepseek-chat`). Use for cost control or air-gapped/local runs.
+- Metered-call counting is on the ledger; a per-run **denial** on count is opt-in only
+  (`HARNESS_METERED_BUDGET=<n>`) — project decision: vendor 402/429 responses are the limit.
 
 ## Reactive fan-out + adversarial verify (`--fanout`, `--no-verify`)
 Two quality levers on top of the base loop:
@@ -171,12 +230,67 @@ Two quality levers on top of the base loop:
   committed — a skeptic pass so a plausible-but-wrong cluster edge doesn't survive into the
   assessment. `HARNESS_VERIFY_MODEL` / `HARNESS_VERIFY_EFFORT` tune it.
 
+
+## Cross-type auto-pivot loop (typed nodes + Plan + proposal gate)
+Every selector type (`domain`, `email`, `phone`, `wallet`, `ip`, `hash`, `string`, `filename`,
+`telegram`) is a frontier node. Each round:
+
+1. **`case_state.propose()`** (dispatcher op `propose`) emits typed candidates from the frontier,
+   prior SDK seed sources, and corpus hints — rung-tagged via `selector_types.rung_for` /
+   `kb/references/rungs.json`.
+2. **Plan phase** (required, read-only `PLAN_TOOLS`) re-ranks and may add pivots; it cannot spend,
+   mutate shared state, or approve.
+3. **Auto vs proposal.** Free or urlscan (quota-backed) pivots with ≤ `PIVOT_AUTO_MAX_HITS` = **25**
+   hits run automatically. Metered, oversized, or unknown-count pivots land in digest-bound
+   `cases/<case>/proposal.json`. `audit.gate` denies `proposal_gated_tools` (`corpus_search`,
+   `reverse_whois`, …) while the loop is active unless the pivot id was approved for this digest.
+4. **Approve once per round** via `harness approve CASE [--only ids|--all] [--reject ids] [--show]`,
+   the MCP `case_approve` tool (ANALYZE; briefing then confirm), or a TTY prompt when a run stops
+   at awaiting-approval. Approvals bind pivot ids + state digest; a stale digest is refused.
+5. **Dispatcher op `corpus-search`** / MCP `corpus_search` runs one `pivot_map.json` route
+   (urlscan fields, Wayback collection search, FOFA, PublicWWW, …) into typed hits.
+6. **Collecting ≠ attributing.** Owner-rung hits may edge/cluster; kit and neighbour hits are
+   `add_fact` only (`ingest_typed.py`) and surface on the Assessment as `kit_siblings` /
+   `neighbours` (mentions for news/pdf/EoT/mediacloud). They never enter `cluster`: the
+   orchestrator enforces it deterministically — `_compute_components` drops every host the loop
+   reached only through kit/neighbour rows (`case_state.tier_hosts`, from `state.json` `nodes`)
+   and writes `cases/<case>/tiers.json`; `_enforce_tiers` moves any such host the judge still
+   names out of `cluster`. The legacy `clusters.json` (written by `tools/intel.py`) is not
+   changed, so it can still group such a host with the estate by a shared favicon/handle.
+7. **Seeds of any type.** `harness open CASE ops@operator.example` works: a non-domain seed becomes
+   a hop-0 typed node and is pivoted on, never collected; a filename seed (`invoice.zip`) is never
+   a host. Nodes expand to `max_typed_hops` (pivot_map.json, 6). `harness continue CASE` with no
+   seeds resumes from the case's own hosts/nodes — the step after `harness approve`.
+8. **Spend.** A `no_spend` scope drops every metered candidate, runs every count probe
+   free_only (no reverse-WHOIS preview, keyless urlscan counts), and the gate denies ANY metered
+   call on that case (pivot_extract, censys, intelx_search, … without `free_only`). A metered
+   tool with no keyless mode REFUSES `free_only=true` rather than spend (`tool_policy.json
+   free_only_capable_tools`); `reverse_whois` with `free_only` returns the preview count only.
+   **Who pays for collection (per HOST, `proposal.collect_free_only`):** the analyst's own typed
+   seeds (`cases/<case>/harness_seeds.json`) collect with the keyed layers, as before. Every other
+   host — including any an agent reaches inside round 1 — collects `--free-only`, and the gate
+   denies other metered calls (`deep_profile`, `censys`, …) while the loop runs. Keyed enrichment
+   of a found host is a metered `enrich.host` proposal item, run only after approval, and is never
+   offered for a host whose raw already carries keyed layers.
+   Approvals are single-use (one approved id → one call) and digest-bound to the raw files,
+   `pivoted` ids and typed nodes (not state.json bookkeeping); `loop_active`/`running` carry a
+   lease (`HARNESS_LOOP_LEASE`, 6 h) so a killed run neither holds the gate shut nor leaves an
+   approval open. `case_approve` is operator-only (`tool_policy.json operator_only_tools`) —
+   denied from every harness phase.
+
+`intel.py loop` and `case_state.frontier()` keep their prior behaviour; this path is the SDK
+harness / MCP deepening loop.
+
 ## Files
 - `cli.py` — the `intel` console entrypoint (`open` / `continue` / `status`); `../intel` is the shim.
 - `tools.py` — your CLI scripts wrapped as in-process `@tool`s (+ the egress guardrail).
-- `schemas.py` — the `Assessment` Pydantic model (the structured checkpoint).
+- `schemas.py` — `Assessment` (owner cluster + kit_siblings/neighbours/mentions) and Plan models.
+- `proposal.py` — digest-bound `proposal.json` split/approve/gate helpers for the cross-type loop.
+- `references/pivot_map.json` — corpus routes + `auto_max_hits` / `max_typed_hops` for `pivot_routes`.
 - `orchestrator.py` — the Collect→Correlate→Assess driver + CLI (incl. `--fanout` + adversarial verify).
-- `sdk_compat.py` — the `HARNESS_BACKEND` switch: real `claude_agent_sdk`, or the OpenAI-compat shim.
+- `sdk_compat.py` — the `HARNESS_BACKEND` switch: real `claude_agent_sdk`, the CLI backend, or the OpenAI-compat shim.
+- `backend_select.py` — `auto` resolution + auth probes (`intel.py harness doctor`); exports `HARNESS_BACKEND` for the run.
+- `cli_backend.py` — the Codex / OMP drop-in: isolated host home, MCP-only tools, event-stream judge, `emit_result`.
 - `openai_backend.py` — the drop-in shim that runs the driver on any `/chat/completions` endpoint.
 - `prompts/` — the per-phase **task** prompts (`collect.md` / `correlate.md` / `assess.md`), the
   single editable source of truth for what each phase instructs. `orchestrator._prompt(name, **kw)`
@@ -229,8 +343,9 @@ survive a dead front page:
   contract is runnable queries, so it hands them back);
 - **local KB** — is any part of the domain already known/attributed? (a hit = show the prior verdict).
 
-It always returns a **VERDICT** — `PIVOTABLE` (surviving leads, ranked) or `NO-PIVOT-YET` (genuinely
-cold, with explicit next steps) — so the analyst gets a verdict, not silence. Standalone too:
+It always returns a **VERDICT** — `PIVOTABLE` (surviving leads, ranked), `NO-PIVOT-YET` (genuinely
+cold, with explicit next steps) or `INCONCLUSIVE-CT-DEGRADED` (cold, but crt.sh was unreachable so the
+CT corner was not really swept — re-run) — so the analyst gets a verdict, not silence. Standalone too:
 `python3 tools/fallback_probe.py <domain> --kb knowledge`.
 
 ## Don't re-investigate what's already known
@@ -240,8 +355,9 @@ Before collecting, the harness prints a **prior-knowledge** line per seed (alrea
 By default the harness runs one Collect→Correlate→Assess round. With `--continue` it loops:
 after each round it snapshots convergence (`tools/kb/convergence.py`), discovers the next frontier —
 uncollected KB cluster-peers of the case's domains — and re-runs, stopping when the case CONVERGES
-(the last `--stale` rounds added no new host/indicator), the `--depth` cap is hit, or nothing new is
-found. Each round writes its own immutable assessment snapshot (r1, r2, …).
+(the last `--stale` rounds added no new host/indicator **and none of them had a host fail to
+collect** — a round that collected 0/N is a retry, never convergence), the `--depth` cap is hit, or
+nothing new is found. Each round writes its own immutable assessment snapshot (r1, r2, …).
 
 ```bash
 python3 orchestrator.py CASE-0001 --continue --depth 4 --stale 2 --max-new 8 https://site-a.example
@@ -268,8 +384,22 @@ judgment:
    work is the **cluster, not the domain**, so judgment cost scales with cluster count (a handful),
    not domain count.
 
-Each cluster gets its own immutable assessment snapshot (`assessments/<UTC>_c<i>.{md,json}`) and the
-case `SUMMARY.md` becomes a roll-up listing every cluster.
+Each cluster gets its own immutable assessment snapshot (`assessments/<UTC>_c<i>.{md,json}`, where
+`<i>` is always the cluster's own index) and the case `SUMMARY.md` becomes a roll-up listing every
+cluster. The case **head** (`assessment.json` + `assessment.md`, what `house-report` and
+`build_report_data.py` read) is refreshed from the judged cluster holding the most seeds, with
+every cluster's verdict/failure indexed under `clusters` (`_generator: harness-parallel`); an
+analyst-authored head is never overwritten. The judged partition IS `clusters.json` (the pipeline's
+own `intel.py clusters`, written every run), and every host a round collects gets a hop in
+`state.json` (a subdomain inherits its apex's hop), so the loop and the harness agree on members and
+leaves. `--depth N` counts collection ROUNDS: the last round's discoveries stay pending. Each judge is told its exact member list and its `cluster` must stay inside it: a judge
+that assesses other hosts (e.g. a neighbouring estate it found in the KB) is re-prompted once and
+otherwise refused. A cluster whose judge fails is listed as **JUDGMENT FAILED** with its reason (also under
+`failover_progress.json` → `__failed__`) while the others still persist; the run exits non-zero and
+a re-run re-judges only the failed clusters. With a CLI backend (`codex`/`omp`) each cluster's
+judge chain runs in its own host-config slot (`harness_home/<backend>_runs/<uuid>`), so concurrent
+judges cannot swap results; a resumed phase (correlate → verify → assess) restarts in the slot that
+created its session, because the host CLIs bind a session to its starting directory.
 ```bash
 python3 orchestrator.py CASE-0001 --parallel --collect-conc 8 --judge-conc 3 seed1.example seed2.example …
 python3 orchestrator.py CASE-0001 --parallel --continue --depth 4 seed1.example …   # expand to convergence, then judge
@@ -354,11 +484,13 @@ routed through the playwright python); `HARNESS_NO_ARCHIVE=1` disables Wayback+l
 (smoke) skips all of it.
 
 ## TLS cert / SAN-overlap as a correlation signal
-The Correlate phase has a **`cert_overlap`** tool (`tools/cert_overlap.py`, keyless, dual-source
-crt.sh + Shodan CTL). Two domains sharing a TLS certificate — or one domain's cert SAN list naming
-another — is near-decisive same-operator proof, because the SAN list is chosen by whoever controls
-the cert. It returns `SHARED-CERT` / SAN cross-cover (decisive), `SIBLING-OVERLAP` (certs carry a
-common third domain = strong), or `NO-CT-OVERLAP` (a clean negative you can also weigh). The
+The Correlate phase has a **`cert_overlap`** tool (`tools/cert_overlap.py`, keyless, through the
+shared `wp_ct` client: crt.sh, then Shodan CTL + CertSpotter when crt.sh is down). Two domains sharing
+a TLS certificate — or one domain's cert SAN list naming another — is near-decisive same-operator
+proof, because the SAN list is chosen by whoever controls the cert. It returns `SHARED-CERT` / SAN
+cross-cover (decisive), `SIBLING-OVERLAP` (certs carry a common third domain = strong),
+`NO-CT-OVERLAP` (a clean negative you can also weigh — only when crt.sh answered for every input) or
+`INCONCLUSIVE-CT-DEGRADED` (crt.sh unreachable: backups hold ~1 year, so this is NOT a negative). The
 correlate prompt now **requires** it whenever there are 2+ candidate same-operator domains.
 Standalone: `python3 tools/cert_overlap.py <domain-a> <domain-b> [<domain-c> …]`.
 
@@ -388,7 +520,7 @@ The judgment phase also has a **`reverse_whois`** tool that returns only high-va
 
 Every run prints/saves the standard **Domain Summary table** (`tools/domain_table.py`) — Domain · Status · Registered · Expires · Registrar · Nameservers · Registrant · IP·ASN · Attribution · Context — for the domains collected this run, above the assessment.
 
-New env knobs: `HARNESS_FLARESOLVERR` (CF solver URL) · `HARNESS_RENDER_PY` (playwright python, default `WebPivot/.venv`).
+New env knobs: `HARNESS_FLARESOLVERR` (CF solver URL) · `HARNESS_RENDER_PY` (Playwright/Chromium python for screenshots and the CF retry, default `WebPivot/.venv`; plain DOM renders use Moli and need no Playwright) · `CTI_BROWSER` (`auto`|`moli`|`chromium`, see `WebPivot/tools/wp_browser.py`).
 
 ## One typed tool surface for both front-ends (`mcp_server.py` + `.mcp.json`)
 The SDK driver already gets clean, typed MCP tools (built-ins stripped, no shell-flailing). The

@@ -82,21 +82,22 @@ curl -s "https://www.virustotal.com/api/v3/domains/<domain>" \
 # Returns: {malicious: N, suspicious: N, harmless: N, undetected: N}
 ```
 
-**URL — URLhaus:**
+**URL — URLhaus** (`Auth-Key` required; `ABUSE_CH_API_KEY`. No key → do not call, do not score clean):
 ```bash
-curl -s -d "url=<URL>" "https://urlhaus-api.abuse.ch/v1/url/" | jq '{query_status, threat, tags}'
+curl -s -H "Auth-Key: $ABUSE_CH_API_KEY" -d "url=<URL>" "https://urlhaus-api.abuse.ch/v1/url/" | jq '{query_status, threat, tags}'
 # Returns: query_status (is_listed/not_listed), threat type, tags
 ```
 
-**Domain — ThreatFox:**
+**Domain — ThreatFox** (`Auth-Key` header, same key):
 ```bash
-curl -s -d '{"query":"search_ioc","search_term":"<domain>"}' \
+curl -s -H "Auth-Key: $ABUSE_CH_API_KEY" -H "Content-Type: application/json" \
+  -d '{"query":"search_ioc","search_term":"<domain>","exact_match":true}' \
   "https://threatfox-api.abuse.ch/api/v1/" | jq '.data[0] | {ioc_type, malware, confidence_level}'
 ```
 
-**Hash — MalwareBazaar:**
+**Hash — MalwareBazaar** (same `Auth-Key`):
 ```bash
-curl -s -d "query=get_info&hash=<sha256>" "https://mb-api.abuse.ch/api/v1/" | \
+curl -s -H "Auth-Key: $ABUSE_CH_API_KEY" -d "query=get_info&hash=<sha256>" "https://mb-api.abuse.ch/api/v1/" | \
   jq '.data[0] | {file_name, file_type, tags, vendor_intel}'
 # Returns: file metadata, AV detections, malware family tags
 ```

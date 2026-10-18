@@ -25,8 +25,14 @@ names scrubbed; the landing-page step is the only egress — proxy-gated, `--no-
 `--no-archive-fallback` to forbid the stand-ins):
 
 ```bash
-python3 scripts/backend/intel.py house-report <CASE-ID>          # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}
+python3 scripts/backend/intel.py house-report <CASE-ID>          # → cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,house.md}
 ```
+The house markdown is written as `.house.md` so it never overwrites the base bundle's analyst `.md`.
+Two optional analyst files in the case dir steer what a shareable report shows:
+`report_keep.json` — a JSON list of the operator's OWN identifiers that are not in WHOIS (tax id,
+support e-mail/phone) to keep in clear; `report_exclude.json` — values that must never become an
+IOC (e.g. an unverified "marketing partner" named on the page). Everything else outside the
+current-registration WHOIS identity is masked.
 
 **Raw render** (when you have hand-authored house-rules markdown yourself):
 

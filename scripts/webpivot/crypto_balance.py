@@ -587,6 +587,208 @@ def check_wallet(address, subtype, price_usd=None):
     out["error"] = f"unsupported subtype: {subtype}"
     return out
 
+# ---------------------------------------------------------------------------
+# Counterparties — top-N peers by transferred value (BTC esplora / ETH blockscout / TRON)
+# ---------------------------------------------------------------------------
+
+def _load_exchange_wallets():
+    """Load exchange label list + address map from WebPivot/references/exchange_wallets.json.
+
+    Returns (labels_lower:set, addresses_lower:dict). Missing file → empty (never raises)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.normpath(os.path.join(here, "..", "..", "intel_engine", "WebPivot", "references",
+                                      "exchange_wallets.json")),
+        os.path.normpath(os.path.join(here, "..", "WebPivot", "references", "exchange_wallets.json")),
+    ]
+    for p in candidates:
+        try:
+            with open(p, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        labels = set()
+        lab = doc.get("labels") or {}
+        vals = lab.get("values") if isinstance(lab, dict) else lab
+        if isinstance(vals, list):
+            labels = {str(x).strip().lower() for x in vals if x}
+        addrs = {}
+        for key in ("known_addresses", "addresses"):
+            entries = doc.get(key) or {}
+            if not isinstance(entries, dict):
+                continue
+            if "entries" in entries and isinstance(entries.get("entries"), dict):
+                entries = entries["entries"]
+            for k, v in entries.items():
+                if str(k).startswith("_") or k in ("values", "entries"):
+                    continue
+                addrs[str(k).strip().lower()] = v if isinstance(v, dict) else {"label": str(v)}
+        return labels, addrs
+    return set(), {}
+
+
+_EXCHANGE_LABELS, _EXCHANGE_ADDRS = _load_exchange_wallets()
+
+
+def is_exchange_wallet(address: str, label: str = "") -> bool:
+    """True when the address or an explorer label matches a known exchange."""
+    a = (address or "").strip().lower()
+    if a and a in _EXCHANGE_ADDRS:
+        return True
+    lab = (label or "").strip().lower()
+    if not lab:
+        return False
+    for ex in _EXCHANGE_LABELS:
+        if ex and ex in lab:
+            return True
+    return False
+
+
+def _counterparty_row(address, value=None, label="", coin=""):
+    return {
+        "address": address,
+        "value": value,
+        "label": label or "",
+        "coin": coin or "",
+        "exchange": is_exchange_wallet(address, label),
+    }
+
+
+def _counterparties_esplora(address, subtype, limit):
+    """BTC/LTC Esplora: walk recent txs, sum vin/vout peer amounts."""
+    api_base, _web, _chain, unit = _ESPLORA[subtype]
+    status, data, err = _request(f"{api_base}/address/{address}/txs")
+    if err:
+        return {"error": err}
+    if status != 200 or not isinstance(data, list):
+        return {"error": f"http_{status}" if status != 200 else "unexpected txs shape"}
+    seed = address.strip()
+    totals = {}  # peer -> value (sats)
+    labels = {}
+    for tx in data[:50]:
+        if not isinstance(tx, dict):
+            continue
+        # Collect outputs paid TO others and inputs FROM others.
+        for vout in tx.get("vout") or []:
+            if not isinstance(vout, dict):
+                continue
+            peer = (vout.get("scriptpubkey_address") or "").strip()
+            if not peer or peer == seed:
+                continue
+            val = int(vout.get("value") or 0)
+            totals[peer] = totals.get(peer, 0) + val
+        for vin in tx.get("vin") or []:
+            if not isinstance(vin, dict):
+                continue
+            prev = vin.get("prevout") if isinstance(vin.get("prevout"), dict) else {}
+            peer = (prev.get("scriptpubkey_address") or "").strip()
+            if not peer or peer == seed:
+                continue
+            val = int(prev.get("value") or 0)
+            totals[peer] = totals.get(peer, 0) + val
+    ranked = sorted(totals.items(), key=lambda kv: -kv[1])[: max(1, int(limit))]
+    rows = [_counterparty_row(a, value=round(v / 1e8, 8), coin=unit) for a, v in ranked]
+    return {"counterparties": rows, "provider": "esplora", "coin": unit}
+
+
+def _counterparties_eth(address, limit):
+    """ETH Blockscout: recent txs, sum by counterparty."""
+    status, data, err = _request(
+        f"https://eth.blockscout.com/api/v2/addresses/{address}/transactions")
+    if err:
+        return {"error": err}
+    if status == 404:
+        return {"counterparties": [], "provider": "blockscout", "coin": "ETH"}
+    if status != 200 or not isinstance(data, dict):
+        return {"error": f"http_{status}" if status != 200 else "unexpected txs shape"}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    seed = address.strip().lower()
+    totals = {}
+    for tx in items[:50]:
+        if not isinstance(tx, dict):
+            continue
+        frm = ((tx.get("from") or {}).get("hash") if isinstance(tx.get("from"), dict)
+               else tx.get("from")) or ""
+        to = ((tx.get("to") or {}).get("hash") if isinstance(tx.get("to"), dict)
+              else tx.get("to")) or ""
+        frm, to = str(frm).strip(), str(to).strip()
+        peer = to if frm.lower() == seed else (frm if to.lower() == seed else "")
+        if not peer:
+            # neither side matches cleanly — pick the non-seed side if any
+            if frm.lower() != seed and frm:
+                peer = frm
+            elif to.lower() != seed and to:
+                peer = to
+            else:
+                continue
+        if peer.lower() == seed:
+            continue
+        val = _to_float(tx.get("value")) or 0.0
+        totals[peer] = totals.get(peer, 0.0) + float(val)
+    ranked = sorted(totals.items(), key=lambda kv: -kv[1])[: max(1, int(limit))]
+    rows = [_counterparty_row(a, value=round(v / 1e18, 8), coin="ETH") for a, v in ranked]
+    return {"counterparties": rows, "provider": "blockscout", "coin": "ETH"}
+
+
+def _counterparties_tron(address, limit):
+    """TRON Tronscan: TRX transfers involving the address."""
+    status, data, err = _request(
+        "https://apilist.tronscanapi.com/api/transfer",
+        params={"address": address, "limit": 50, "start": 0})
+    if err:
+        return {"error": err}
+    if status != 200 or not isinstance(data, dict):
+        return {"error": f"http_{status}" if status != 200 else "unexpected transfer shape"}
+    items = data.get("data") if isinstance(data.get("data"), list) else []
+    seed = address.strip()
+    totals = {}
+    for tx in items:
+        if not isinstance(tx, dict):
+            continue
+        frm = str(tx.get("transferFromAddress") or tx.get("from") or "").strip()
+        to = str(tx.get("transferToAddress") or tx.get("to") or "").strip()
+        peer = to if frm == seed else (frm if to == seed else "")
+        if not peer or peer == seed:
+            continue
+        val = _to_float(tx.get("amount") or tx.get("quant")) or 0.0
+        # Tronscan amounts are often already in sun (1e6)
+        totals[peer] = totals.get(peer, 0.0) + float(val)
+    ranked = sorted(totals.items(), key=lambda kv: -kv[1])[: max(1, int(limit))]
+    rows = [_counterparty_row(a, value=round(v / 1e6, 6), coin="TRX") for a, v in ranked]
+    return {"counterparties": rows, "provider": "tronscan", "coin": "TRX"}
+
+
+def counterparties(address, coin_hint=None, limit=10):
+    """Top-N counterparties by transferred value for one wallet.
+
+    Supported: BTC (esplora), ETH (blockscout), TRON. Others →
+    {"skipped": "counterparties unsupported for <coin>"}. Never raises.
+    Each row carries exchange: bool from exchange_wallets.json labels/addresses.
+    """
+    addr = (address or "").strip()
+    if not addr:
+        return {"error": "empty address"}
+    subtype = resolve_hint(coin_hint, addr) if coin_hint else detect_subtype(addr)
+    if subtype is None:
+        return {"error": "could not detect coin/chain from address format (pass --coin)"}
+    lim = max(1, int(limit or 10))
+    if subtype in _ESPLORA:
+        out = _counterparties_esplora(addr, subtype, lim)
+    elif subtype == "ethereum":
+        out = _counterparties_eth(addr, lim)
+    elif subtype == "tron":
+        out = _counterparties_tron(addr, lim)
+    else:
+        coin = symbol_for(subtype) or subtype
+        return {"skipped": f"counterparties unsupported for {coin}",
+                "address": addr, "coin": coin, "subtype": subtype}
+    if isinstance(out, dict):
+        out.setdefault("address", addr)
+        out.setdefault("subtype", subtype)
+        out.setdefault("limit", lim)
+    return out
+
+
 
 def enrich_wallets(addresses, coin_hint=None):
     """Resolve + look up many addresses, batching the price lookup.
@@ -648,6 +850,9 @@ def main():
     ap.add_argument("--stdin", action="store_true", help="read addresses (one per line) from stdin")
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON (indent=2)")
     ap.add_argument("-o", "--out", help="write JSON to FILE instead of stdout")
+    ap.add_argument("--counterparties", type=int, metavar="N",
+                    help="instead of balance, return top-N counterparties by value "
+                         "(BTC esplora / ETH blockscout / TRON; other chains skipped)")
     args = ap.parse_args()
 
     addresses = list(args.addresses)
@@ -658,6 +863,26 @@ def main():
                 addresses.append(line)
     if not addresses:
         ap.error("provide one or more addresses (positional) or --stdin")
+
+    if args.counterparties is not None:
+        results = []
+        for addr in addresses:
+            results.append(counterparties(addr, coin_hint=args.coin, limit=args.counterparties))
+        payload = {"results": results, "mode": "counterparties",
+                   "limit": int(args.counterparties)}
+        text = json.dumps(payload, indent=2 if args.pretty else None, ensure_ascii=False)
+        if args.out:
+            try:
+                with open(args.out, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            except Exception as exc:
+                print(f"[!] could not write {args.out}: {exc}", file=sys.stderr)
+                print(text)
+        else:
+            print(text)
+        n_ok = sum(1 for r in results if isinstance(r, dict) and r.get("counterparties") is not None)
+        print(f"counterparties for {len(results)} address(es), {n_ok} supported", file=sys.stderr)
+        return
 
     results, summary = enrich_wallets(addresses, coin_hint=args.coin)
     payload = {"results": results, "summary": summary}

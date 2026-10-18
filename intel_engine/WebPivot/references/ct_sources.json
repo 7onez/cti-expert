@@ -1,0 +1,80 @@
+{
+  "_comment": "wp_ct — the ONE certificate-transparency client. Tunables for every CT source it asks: the observation window each source can honestly claim (printed next to its status so a ~1-year mirror is never read as full history), crt.sh's retry/backoff/wall-clock budgets and PostgreSQL fallback, the keyless backups' paging, and the listing caps (a cap always records the true total + a truncated flag — never a silent cut). Budgets are WALL-CLOCK seconds for the whole step, enforced around it, not per socket read.",
+  "windows": {
+    "_comment": "Observation window per source, shown beside its status in every collection and report. crt.sh is the only full public CT history; every backup is a partial mirror. Measured 2026-10: Shodan CTL / CertSpotter / CertIndex / CertKit hold about one year; Netlas reaches back years but sparsely; Censys answers a capped sample of its own global index (CT plus scanning).",
+    "entries": {
+      "crt.sh": "full CT history",
+      "shodan-ctl": "~1 year",
+      "certspotter": "~1 year (thin free tier)",
+      "certkit": "~1 year, expired included",
+      "certindex": "~1 year, currently valid certificates only",
+      "netlas": "multi-year, sparse",
+      "censys": "capped sample of a global certificate index",
+      "crt.name(aggregated)": "names only, not CT-attributable",
+      "agniops(aggregated)": "names only, not CT-attributable, undisclosed provenance"
+    }
+  },
+  "crtsh": {
+    "_comment": "crt.sh web front end: q= then identity= per attempt, backoff step x attempt capped at backoff_cap, inside web_budget_seconds for the whole sub-query; one attempt never waits longer than attempt_timeout. After the web budget is exhausted the per-process breaker stays open for breaker_cooldown_seconds so later seeds in the same run go straight to PostgreSQL instead of paying the web budget again. PostgreSQL (guest@crt.sh:5432/certwatch, no password, ~1 min/query) needs the optional psycopg package; pg_row_limit rows back means the listing was capped, not complete.",
+    "web_budget_seconds": 180,
+    "attempt_timeout_seconds": 60,
+    "backoff_step_seconds": 3,
+    "backoff_cap_seconds": 30,
+    "breaker_cooldown_seconds": 900,
+    "pg_host": "crt.sh",
+    "pg_port": 5432,
+    "pg_database": "certwatch",
+    "pg_user": "guest",
+    "pg_connect_timeout_seconds": 20,
+    "pg_budget_seconds": 180,
+    "pg_row_limit": 10000
+  },
+  "backups": {
+    "_comment": "Keyless CT backups that run ONLY when crt.sh is degraded or empty (strict fallback). request_timeout_seconds bounds each HTTP request; certspotter_max_pages bounds the after=<id> page walk — reaching it records status `capped`, a later page failing records `partial`, the first page failing records `failed` (HTTP 429 there = `skipped-quota`).",
+    "request_timeout_seconds": 60,
+    "certspotter_max_pages": 10
+  },
+  "aggregated": {
+    "_comment": "Keyless AGGREGATED name indexes (crt.name, agniops) — CT unioned with crawl/zone/feed data, so a hit is NOT CT-log evidence and discloses the apex to a third party. Asked LAST, only when every CT source (keyed ones and Censys included) left no name at all; names land in aggregated_subdomains, never in subdomains, and never count toward completeness.",
+    "timeout_seconds": 25,
+    "max_names": 200
+  },
+  "certkit": {
+    "_comment": "CertKit Discovery (app.certkit.io) — no API, so wp_certkit logs in with CERTKIT_EMAIL / CERTKIT_PASSWORD and downloads the Discovery CSV export. ~1 year, expired included, day-only dates, real x509 serials. The session (cookies + collection id) is cached in MEMORY/certkit_session.json (0600) for session_ttl_seconds so per-host collectors do not log in once each. Breaks when MFA is on or the login form changes — reported as `failed` with the reason.",
+    "base_url": "https://app.certkit.io",
+    "login_path": "/login",
+    "request_timeout_seconds": 60,
+    "session_ttl_seconds": 3600
+  },
+  "certindex": {
+    "_comment": "CertIndex (api.ctindex.io, X-API-Key CERTINDEX_API_KEY). FREE TIER IS PERSONAL / NON-COMMERCIAL ONLY. Currently valid certificates only (~1 year). full_domain lookups are 10/hour ACCOUNT-WIDE and each page is one lookup, so wp_certindex reads the free /v1/usage first and never waits on a quota: none left → `skipped-quota`. max_pages bounds one domain's share of the hour (reaching it = `capped`). page_size above 100 drops issuer and not_after. A first query of a new domain is partial while CertIndex backfills (coverage.basis not `domain_backfill_completed…`, or total_is_lower_bound) → `partial`, asked again on a later call.",
+    "base_url": "https://api.ctindex.io",
+    "page_size": 100,
+    "max_pages": 3,
+    "request_timeout_seconds": 60
+  },
+  "netlas": {
+    "_comment": "Netlas certificates index (NETLAS_API_KEY, metered) — the only backup with multi-year history, asked ONLY when crt.sh is degraded (never on an authoritative empty) and never under --free-only. Query certificate.names:<d> (subject_dn misses most; names:*. and subject.common_name time out). Token matching returns look-alikes, so only <d> and *.<d> names survive the filter. A cold first download can be short: certs_count is compared and a short download is `partial`. hard_limit_seconds is enforced around the WHOLE count + download, not per socket read.",
+    "download_size": 10000,
+    "hard_limit_seconds": 600
+  },
+  "censys": {
+    "_comment": "Censys certificate search — LAST RESORT, only when every other CT source left no certificate, never under --free-only. Spends credits through wp_censys's own budget (5 per page). Exact-match cert.names=\"<d>\" / \"*.<d>\" (the tokenised `:` form matches millions of unrelated certificates; regex `=~` is rejected). A global index (CT plus Censys's own scanning), so it can hold self-signed / private-CA certificates that never reached CT. Page walk: complete / capped are final even when empty; partial (budget or a later page failed) is asked again; first-page failure is `failed`, never 'none'.",
+    "max_pages": 2,
+    "page_size": 100
+  },
+  "related_hosts": {
+    "_comment": "Pivot hits — hosts sharing a certificate fingerprint, favicon or tracking ID with the target — are RELATED HOSTS (unverified), never the target's server, origin or hosting/abuse contact by themselves. Each is graded by how many origin checks agree: (1) the IP serves the target's content for Host: <target> (same body hash; an active request — `not run` unless /cert-pivot ran it live, through the egress proxy; an unreachable IP stays `not run`, never a `fail`), (2) the shared certificate is the target's own non-CDN leaf whose SANs include the target, (3) the target's own passive DNS / passive SSL / DNS history shows it on that IP, (4) the IP is outside CDN / WAF / parking / bogon ranges. rungs[n] is the label for n agreeing checks; an address that FAILS check (4) gets edge_rung whatever else agrees, because an edge serves the target's content and certificate by design. cdn_cert_issuer_markers mark a CDN-managed certificate (check 2 fails on it). max_rows bounds the rendered table (the full list stays in the JSON); probe_max_ips / probe_timeout_seconds bound /cert-pivot's Host-header probe.",
+    "rungs": ["related (unverified)", "lead (LOW)", "probable origin (MEDIUM)", "origin (HIGH)", "origin (HIGH)"],
+    "edge_rung": "edge / non-routable address (CDN, WAF, parking, bogon) — not an origin",
+    "cdn_cert_issuer_markers": ["cloudflare", "amazon", "akamai", "fastly", "sucuri", "imperva", "incapsula", "stackpath", "edgecast", "bunny"],
+    "max_rows": 40,
+    "probe_max_ips": 10,
+    "probe_timeout_seconds": 15
+  },
+  "listing": {
+    "_comment": "How many certificates / subdomains a merged CT result lists inline. The full counts are always recorded (cert_total, subdomain_total) with a truncated flag, so a capped listing is never read as the whole history; the frontier treats names beyond the examined certificates as unexamined.",
+    "max_certs": 40,
+    "max_subdomains": 80
+  }
+}

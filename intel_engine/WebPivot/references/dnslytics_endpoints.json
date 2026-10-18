@@ -13,6 +13,6 @@
   },
   "budget": {
     "_comment": "per-run guard rails: call ceiling and the min balance to keep before degrading to a note.",
-    "max_calls_per_run": 15, "min_remaining": 5
+    "max_calls_per_run": 30, "min_remaining": 5
   }
 }

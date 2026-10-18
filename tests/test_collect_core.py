@@ -47,6 +47,9 @@ if "--help" in a:
           " [--whois-reverse] [--no-enrich] [--no-whois] [--fofa-full]")
     sys.exit(0)
 out = a[a.index("-o") + 1] if "-o" in a else None
+import os
+if "://" not in a[0] and not os.path.exists(a[0]):   # pivot_extract's own source contract
+    sys.exit("error: source must be a URL, an existing file, or '-'")
 host = a[0].split("://", 1)[-1].split("/", 1)[0]
 if out:
     json.dump({"meta": {"host": host}, "artifacts": {}, "pivots": [{"kind": "x", "value": "1"}]},
@@ -93,6 +96,15 @@ def _run_checks():
         r = C.collect_host("https://example.com", "CASE-0002", root=root, py=sys.executable,
                            collector=stub, no_archive=True, force=True)
         check("force re-collects (not reused)", not r["reused"])
+
+        # 4b) BARE HOSTNAME — the harness frontier hands back "sub.example", not a URL; the
+        # collector refuses a scheme-less source, so it must be normalised before the call (a
+        # whole harness round once read "collected 0/8 in 1s" because of this).
+        r = C.collect_host("bare.example", "CASE-0002", root=root, py=sys.executable,
+                           collector=stub, no_archive=True)
+        check("bare hostname is collected (normalised to a URL)", r["ok"] and r["host"] == "bare.example")
+        check("bare hostname raw lands under the host name", os.path.exists(
+            os.path.join(root, "cases", "CASE-0002", "raw", "bare.example.json")))
 
         # 5) collect_many — fan-out + on_result + mixed cache/egress. Fresh hostile names (never
         # collected above) so they exercise the egress gate, not the cache.

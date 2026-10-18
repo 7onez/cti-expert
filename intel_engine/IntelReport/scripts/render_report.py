@@ -55,16 +55,16 @@ if HERE not in sys.path:                       # importable however the script w
 from ir_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in references/*.json
 
 # Per-call ceiling for pandoc/xelatex (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
-# 1800s). The engine's resolver is a stdlib sibling; standalone falls back to the exported env value.
+# 5000s). The engine's resolver is a stdlib sibling; standalone falls back to the exported env value.
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
     from wp_timeouts import CALL_TIMEOUT  # noqa: E402
 except Exception:  # noqa: BLE001
     try:
-        CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+        CALL_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
     except ValueError:
-        CALL_TIMEOUT = 1800
-    CALL_TIMEOUT = CALL_TIMEOUT if CALL_TIMEOUT > 0 else 1800
+        CALL_TIMEOUT = 5000
+    CALL_TIMEOUT = CALL_TIMEOUT if CALL_TIMEOUT > 0 else 5000
 
 # --- reference DATA (RULE 3): the report's LANGUAGE. Everything the renderer prints that the
 #     analyst did not write — cover labels, TOC title, "Appendix", figure/table captions — is

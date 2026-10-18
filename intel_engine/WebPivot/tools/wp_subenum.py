@@ -11,7 +11,8 @@ that file from the skill's .env — filling ONLY providers whose entry is empty,
 key the analyst set by hand, never printing a value. Mapping (subfinder id ← env names):
 
     shodan ← SHODAN_KEY / SHODAN_API_KEY          securitytrails ← SECURITYTRAILS_API_KEY
-    censys ← CENSYS_API_ID:CENSYS_API_SECRET       whoisxmlapi    ← WHOISXML_API_KEY
+    censys ← CENSYS_PAT / CENSYS_API_KEY / CENSYS_TOKEN [:CENSYS_ORG_ID]  (Platform PAT; org optional)
+    whoisxmlapi ← WHOISXML_API_KEY
     fofa   ← FOFA_EMAIL:FOFA_KEY                   certspotter    ← CERTSPOTTER_API_KEY
     intelx ← INTELX_HOST:INTELX_KEY (host default 2.intelx.io)   github ← GITHUB_TOKEN
     netlas ← NETLAS_API_KEY                         virustotal    ← VIRUSTOTAL_API_KEY / VT_API_KEY
@@ -39,7 +40,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))            # intel_engine
 SKILL = os.path.abspath(os.path.join(ROOT, ".."))                 # skill root (holds .env)
 
 # Per-call ceiling for the subfinder/amass enumeration subprocess — ONE resolver (wp_timeouts:
-# env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 1800s / 30 min).
+# env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 5000s / ~83 min).
 sys.path.insert(0, HERE)
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 
@@ -71,7 +72,7 @@ _PROVIDER_ENV = {
     "digitalyama": (("DIGITALYAMA_API_KEY",), None),
     "dnsrepo": (("DNSREPO_API_KEY",), None),
     # composite credentials
-    "censys": (("CENSYS_API_ID", "CENSYS_API_SECRET"), ":"),
+    "censys": (("CENSYS_PAT", "CENSYS_API_KEY", "CENSYS_TOKEN"), "censys"),
     "fofa": (("FOFA_EMAIL", "FOFA_KEY"), ":"),
     "intelx": (("INTELX_HOST", "INTELX_KEY", "INTELX_API_KEY"), "intelx"),
 }
@@ -111,6 +112,14 @@ def _provider_value(pid, env):
         if not key:
             return None
         return f"{env.get('INTELX_HOST') or '2.intelx.io'}:{key}"
+    if joiner == "censys":
+        # subfinder >= v2.12 talks to the Censys Platform API: "PAT:ORG_ID", or a bare PAT for a
+        # Free account. The legacy Search v2 "API_ID:SECRET" pair no longer authenticates.
+        pat = next((env[n] for n in names if env.get(n)), None)
+        if not pat:
+            return None
+        org = env.get("CENSYS_ORG_ID") or env.get("CENSYS_ORGANIZATION_ID")
+        return f"{pat}:{org}" if org else pat
     parts = [env.get(n) for n in names]
     return joiner.join(parts) if all(parts) else None
 

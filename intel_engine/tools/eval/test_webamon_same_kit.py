@@ -64,9 +64,12 @@ def _hit(domain, fp, title="Lure"):
     return {"resolved_domain": domain, "page_title": title, "fingerprint": fp}
 
 
-def _domain_pivot(**live):
-    return {"meta": {"host": SEED},
-            "pivots": [{"kind": "domain", "value": SEED, "live_results": live}]}
+def _domain_pivot(registered_on=None, **live):
+    obj = {"meta": {"host": SEED},
+           "pivots": [{"kind": "domain", "value": SEED, "live_results": live}]}
+    if registered_on:
+        obj["artifacts"] = {"whois": {"created": registered_on}}
+    return obj
 
 
 def _mine(obj):
@@ -76,6 +79,14 @@ def _mine(obj):
 
 
 def check():
+    """Every vendor call below is mocked at the urlopen seam, but wp_webamon still ledgers it — and
+    run_eval's metered-spend guard reads any ledger growth as real spend. Mocked suites must not
+    ledger at all, so the client's recorder is stubbed for the whole run."""
+    with patched(W, _record=lambda *a, **k: None):
+        return _check()
+
+
+def _check():
     out, passed, failed = [], 0, 0
 
     def ok(cond, label):
@@ -280,8 +291,11 @@ def check():
     ok(all(not CS._owner_linked(v["sources"]) for v in cands.values()),
        "frontier: a same-kit-only candidate is NOT owner-linked (-> related_leads, never pending)")
     ok("webamon_same_kit" in CS._NON_OWNER_SOURCES, "case_state lists webamon_same_kit among the non-owner sources")
-    narrow = {"certs": [{"id": 1, "issuer": "CA", "names": [SEED, "kit-a.example"]}], "subdomains": []}
-    cands = _mine(_domain_pivot(webamon_same_kit=kit, crtsh=narrow))
+    # cert must postdate the seed's WHOIS registration (case_state's crt.sh date gate — see
+    # test_crtsh_seed_guard.py) for the co-SAN to seed at all.
+    narrow = {"certs": [{"id": 1, "issuer": "CA", "names": [SEED, "kit-a.example"],
+                         "not_before": "2024-06-01T00:00:00"}], "subdomains": []}
+    cands = _mine(_domain_pivot(webamon_same_kit=kit, crtsh=narrow, registered_on="2024-01-01"))
     ok(CS._owner_linked(cands["kit-a.example"]["sources"]) and not CS._owner_linked(cands["kit-b.example"]["sources"]),
        "frontier: a sibling ALSO on the seed's narrow cert seeds; the kit-only one stays a lead")
     boiler = {"domains": [], "total": 900, "boilerplate": True}

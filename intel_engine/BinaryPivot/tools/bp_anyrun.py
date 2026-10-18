@@ -27,14 +27,13 @@ sample and does not un-notify the operator. Concretely:
     funnels serve to datacenter IPs. `info` is not exoneration.
   - **third-party data handling** — the sample may carry victim PII or client data.
 
-So this module **never submits without explicit, per-submission confirmation**. `submit()` refuses
-unless `confirm=True` is passed and returns `submit_preflight()` — the risk briefing plus the
-cheaper alternatives — instead. Nothing in the collector path can reach it: `analyze_artifact` does
-static extraction and lookups only. Privacy defaults to `owner`, `public` is refused outright, and
-a free-plan submission is refused rather than silently downgraded to a public one. The policy is
-DATA (`references/anyrun.json -> submission_policy`), so an analyst can tighten it without touching
-code — but `require_explicit_confirmation` is enforced in the function signature, not read from the
-file, because a config edit must not be able to turn the gate off.
+The direct `submit()` API still refuses unless `confirm=True` is passed and returns
+`submit_preflight()` otherwise. A spending case pipeline with `ANYRUN_API_KEY` uses
+`tools/binary_auto.py` to download and statically inspect discovered binaries, then calls
+`submit(confirm=True)` under its standing key-configured authorization. Manual CLI/MCP calls
+retain per-submission confirmation. Privacy defaults to `owner`, public needs separate
+authorization, and a free-plan submission is refused rather than silently downgraded.
+`submission_policy` in reference data can tighten the manual gate, not switch it off.
 
 WHAT THE LOOKUP SIDE ADDS THAT STATIC ANALYSIS CANNOT
 ------------------------------------------------------
@@ -75,10 +74,9 @@ must never read as "this sample is unknown to the sandbox world".
 
 REQUESTS ARE METERED
 --------------------
-A TI Lookup trial is tens of requests, not thousands. Spend is counted from the shared
-`MEMORY/api_usage.jsonl` ledger and capped before the call, per run and per month; thresholds are
-DATA (`references/anyrun.json -> request_budget`), overridable with `ANYRUN_MAX_REQUESTS_PER_RUN` /
-`ANYRUN_MONTHLY_REQUESTS`.
+The TI Lookup allowance is counted from `MEMORY/api_usage.jsonl` and bounded before lookup.
+Sandbox submissions are logged separately with zero TI Lookup credits: a different licence
+and a different quota. Limits live in `references/anyrun.json -> request_budget`.
 
 Auth: `ANYRUN_API_KEY`, sent as `Authorization: API-KEY <key>` (a bare key is fine — the prefix is
 added). TI Lookup is a SEPARATE licence from the sandbox: a sandbox-only key answers 401/403 on
@@ -158,7 +156,7 @@ _ANYRUN_FALLBACK = {
     "plan_capabilities": {"none": {"ti_lookup": False, "sandbox_api": False}},
     # Deliberately the CONSERVATIVE minimum: a broken data file must never unlock a bigger spend.
     "request_budget": {"monthly_requests": 50, "max_requests_per_run": 10, "warn_at_remaining": 10,
-                       "lookup_costs": 1, "block_when_exhausted": True},
+                       "lookup_costs": 1, "submit_costs": 0, "block_when_exhausted": True},
     "result_limits": {"max_tasks": 25, "max_related_indicators": 100, "lookup_days": 180},
     "ui_templates": {"lookup_ui": "https://intelligence.any.run/analysis/lookup",
                      "public_task": "https://app.any.run/tasks/{id}",
@@ -888,7 +886,7 @@ def submit(target: str, kind: str = "file", *, confirm: bool = False, privacy: s
         _record("submit", 0, f"{kind}:{target}", ok=False)
         return dict(err, target=target, kind=kind)
     uuid = ((data or {}).get("data") or {}).get("taskid") or (data or {}).get("taskid")
-    _record("submit", int(REQUEST_BUDGET.get("submit_costs", 1)), f"{kind}:{target}", results=1)
+    _record("submit", int(REQUEST_BUDGET.get("submit_costs", 0)), f"{kind}:{target}", results=1)
     out = {"submitted": True, "task_uuid": uuid, "task_url": task_url(uuid or ""),
            "privacy": privacy,
            "note": ("Submitted. The target now knows it was fetched by a sandbox if this was a "

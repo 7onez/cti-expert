@@ -108,7 +108,9 @@ def check():
     # metered credits: when a tool grows a new provider, add its entry to this list.
     saved = {n: getattr(ip, n) for n in ("ipinfo_lookup", "classify_ip", "asn_registry_load",
              "asn_registry_upsert", "fofa_ip", "shodan_host", "reverse_dns", "mail_intel",
-             "censys_configured", "censys_host")}
+             "censys_configured", "censys_host", "reverseip_search", "pdns_search", "_secret")}
+    # pSSL (CIRCL ip -> certificates) joined IPPivot with the historical origin sweep: stub its gate.
+    saved_pssl = (ip.wp_pssl.pssl_configured, ip.wp_pssl.ip_certificates)
     # Validin was folded into IPPivot (reverse-IP on the origin) AFTER this list was written, so
     # each gate run made two REAL ip_dns_history calls against the documentation IPs. Stub the
     # module-level gate + call the same way the Censys pair is stubbed.
@@ -116,11 +118,17 @@ def check():
     try:
         ip.wp_validin.validin_configured = lambda: False      # metered/quota'd: never reached from the gate
         ip.wp_validin.ip_lookup = lambda x, **k: {"skipped": "stubbed in test"}
+        ip.wp_pssl.pssl_configured = lambda: False
+        ip.wp_pssl.ip_certificates = lambda x: {"skipped": "stubbed in test"}
+        ip._secret = lambda *names: None                      # no PDNS/IPinfo/Shodan creds in the gate
+        ip.pdns_search = lambda x, **k: None
+        ip.reverseip_search = lambda x, **k: {"query": x, "total": 2,
+                                              "domains": ["site-b.example", "site-c.example"]}
         ip.ipinfo_lookup = lambda x, **k: {"ip": x, "asn": "AS4242", "org_name": "AcmeHost",
             "hostname": "mail.op.example", "abuse": {"email": "abuse@acme.example"}, "is_hosting": False}
         ip.asn_registry_load = lambda p=None: {"asns": {}}
         ip.fofa_ip = lambda x, full=False: {"ports": ["80", "443"], "services": ["http/nginx"],
-                                            "co_domains": ["site-a.example"]}
+                                            "co_domains": ["site-a.example"], "total": 15}
         ip.shodan_host = lambda x: None
         ip.censys_configured = lambda: False      # metered: never reached from the gate
         ip.censys_host = lambda x, **k: {"skipped": "stubbed in test"}
@@ -138,6 +146,25 @@ def check():
         ok(any(p["kind"] == "ip" and p.get("live_results", {}).get("co_hosted_domains")
                for p in r["pivots"]), "origin ip pivot carries co-hosted domains")
         ok({"ip:ports", "ip:asn", "ip:ptr", "ip:mx"} <= ko, "ports/asn/ptr/mx surfaced")
+        ok({"site-a.example", "site-b.example"} <= set(r["artifacts"]["ip_intel"]["co_hosted_domains"])
+           and r["artifacts"]["ip_intel"]["cohost_sources"].get("hackertarget") == 2,
+           "keyless reverse-IP co-hosts join the union, with per-source counts")
+        ok(r["artifacts"]["ip_intel"]["cohost_total"] == 3,
+           "FOFA total 15 (host:port ROWS, page not truncated) is not a tenant count: cohost_total = 3 sites")
+
+        # --free-only (the loop now collects historical origin IPs): metered layers are NEVER called
+        _metered = []
+        ip.fofa_ip = lambda x, full=False: _metered.append("fofa") or {}
+        ip.shodan_host = lambda x: _metered.append("shodan") or None
+        _ipinfo_kw = []
+        ip.ipinfo_lookup = lambda x, **k: _ipinfo_kw.append(k) or {"ip": x, "asn": "AS4242"}
+        r3 = ip.build_ip_result("203.0.113.8", free_only=True)
+        ok(not _metered, "--free-only IPPivot never calls FOFA or Shodan")
+        ok(_ipinfo_kw and _ipinfo_kw[-1].get("keyless") is True, "--free-only IPPivot runs IPinfo keyless")
+        ok("free_only" in r3["artifacts"]["ip_intel"], "--free-only result states which layers were skipped")
+        ok("site-b.example" in r3["artifacts"]["ip_intel"]["co_hosted_domains"],
+           "keyless reverse-IP still runs under --free-only")
+        ip.ipinfo_lookup = lambda x, **k: {"ip": x, "asn": "AS4242", "org_name": "AcmeHost"}
 
         ip.classify_ip = lambda x: {"ip": x, "cdn": True, "provider": "CF", "kind": "cdn"}
         r2 = ip.build_ip_result("198.51.100.9")
@@ -149,6 +176,12 @@ def check():
         for n, fn in saved.items():
             setattr(ip, n, fn)
         ip.wp_validin.validin_configured, ip.wp_validin.ip_lookup = saved_validin
+        ip.wp_pssl.pssl_configured, ip.wp_pssl.ip_certificates = saved_pssl
+
+    # pSSL certificate subjects -> hostnames the box served (CN parse; wildcard reduced; IPs dropped)
+    names = ip._pssl_cert_names({"subjects": {"a" * 40: ["C=US, CN=*.op.example", "CN=203.0.113.7"],
+                                              "b" * 40: ["/O=x/CN=panel.op.example"]}})
+    ok(names == ["op.example", "panel.op.example"], f"pSSL CN parse → hostnames ({names})")
 
     # --- IPinfo reaches the DOMAIN path, is memoised, and keeps the flags apart -------------
     # IPinfo used to be reachable ONLY when a bare IP was the input, so analysing a domain never

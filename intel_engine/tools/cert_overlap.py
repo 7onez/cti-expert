@@ -5,12 +5,15 @@ same-operator links there is: a SAN list is chosen by whoever controls the cert,
 cert whose SAN names cover two otherwise-unrelated domains binds them to one owner (near-decisive),
 and two domains whose certs both carry a third common domain is a strong shared-infra tell.
 
-Keyless, dual-source CT (Shodan CTL mirror + crt.sh). For each domain it pulls every logged
-cert (identity = sha256 fingerprint from Shodan / crt.sh id) plus that cert's SAN names, then:
+Keyless CT through the shared client (wp_ct: crt.sh → PostgreSQL → Shodan CTL + CertSpotter). For
+each domain it pulls every logged cert (deduplicated across sources by serial / sha256 / precert
+twin) plus that cert's SAN names, then:
   - SHARED CERT      one certificate's SAN list covers >= 2 of the input domains  -> decisive
   - SAN CROSS-COVER  domain B's apex appears in a cert returned for domain A       -> decisive
   - SIBLING OVERLAP  two inputs' certs both carry the SAME third registrable domain -> strong
-  - NO CT OVERLAP    none of the above
+  - NO CT OVERLAP    none of the above, and crt.sh answered for every input        -> clean negative
+  - INCONCLUSIVE-CT-DEGRADED  none of the above, but crt.sh was unreachable for an input — its
+                     backups hold ~1 year, so an older shared cert would be invisible: NOT a negative
 
 Usage:
   python3 tools/cert_overlap.py site-a.example site-b.example [--json]
@@ -20,11 +23,13 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import sys
 import urllib.parse
-import urllib.request
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "WebPivot", "tools"))
+import wp_ct  # noqa: E402 — the one CT client
 
 
 def _host(s: str) -> str:
@@ -39,68 +44,24 @@ def _reg(name: str) -> str:
     return ".".join(name.lstrip("*.").split(".")[-2:])
 
 
-def _get(url: str, timeout: int = 20) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "ignore")
-
-
-def certs_for(domain: str) -> list[dict]:
-    """Every logged cert for `domain`, as [{id, issuer, sans:set, not_before}], merged from
-    Shodan CTL (sha256 fingerprint id) and crt.sh (crt.sh id). Each source is best-effort."""
-    out, seen = [], set()
-
-    # Shodan CTL — cert objects with a sha256 fingerprint (the cross-domain-stable identity)
-    try:
-        for row in json.loads(_get(
-                f"https://ctl.shodan.io/api/v1/domain/{urllib.parse.quote(domain)}")):
-            cid = "sha256:" + str(row.get("hash", ""))
-            if cid in seen or not row.get("hash"):
-                continue
-            seen.add(cid)
-            sans = {str(n).strip().lower().lstrip("*.")
-                    for n in (row.get("san_dns_names") or []) if n}
-            cn = str(row.get("subject_cn", "")).strip().lower().lstrip("*.")
-            if cn:
-                sans.add(cn)
-            out.append({"id": cid, "issuer": row.get("issuer_cn"), "sans": sans,
-                        "not_before": row.get("not_before")})
-    except Exception:
-        pass
-
-    # crt.sh — supplement (its own row id; ?identity= is the steadier form)
-    try:
-        rows = []
-        for param in ("q", "identity"):
-            try:
-                data = json.loads(_get("https://crt.sh/?" + urllib.parse.urlencode(
-                    {param: domain, "output": "json"})))
-                if isinstance(data, list):
-                    rows = data
-                    break
-            except Exception:
-                continue
-        for row in rows:
-            cid = "crtsh:" + str(row.get("id", ""))
-            if cid in seen or not row.get("id"):
-                continue
-            seen.add(cid)
-            sans = {n.strip().lower().lstrip("*.")
-                    for n in str(row.get("name_value", "")).splitlines() if n and "@" not in n}
-            cn = str(row.get("common_name", "")).strip().lower().lstrip("*.")
-            if cn:
-                sans.add(cn)
-            out.append({"id": cid, "issuer": row.get("issuer_name"), "sans": sans,
-                        "not_before": row.get("not_before")})
-    except Exception:
-        pass
-    return out
+def certs_for(domain: str) -> dict:
+    """Every logged cert for `domain` through wp_ct, as {'certs': [{id, issuer, sans:set,
+    not_before}], 'crtsh': ok|empty|degraded, 'completeness_line'}. Uncapped: an overlap hidden
+    behind a listing cap would read as a negative."""
+    r = wp_ct.ct_search(domain, max_certs=None, max_subdomains=None)
+    certs = [{"id": c.get("id"), "issuer": c.get("issuer_cn") or c.get("issuer"),
+              "sans": {n.lstrip("*.") for n in c.get("names") or []},
+              "not_before": c.get("not_before")} for c in r.get("certs") or []]
+    return {"certs": certs, "crtsh": (r.get("ct_status") or {}).get("crt.sh", {}).get("status"),
+            "completeness_line": r.get("completeness_line")}
 
 
 def analyze(domains: list[str]) -> dict:
     domains = [_host(d) for d in domains]
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(domains) or 1)) as ex:
-        certs = dict(zip(domains, ex.map(certs_for, domains)))
+        ct = dict(zip(domains, ex.map(certs_for, domains)))
+    certs = {d: ct[d]["certs"] for d in domains}
+    degraded = [d for d in domains if ct[d]["crtsh"] == "degraded"]
 
     shared_certs, cross_cover, sibling_overlap = [], [], []
     # every registrable domain each input's certs carry
@@ -129,6 +90,11 @@ def analyze(domains: list[str]) -> dict:
         verdict, why = "SIBLING-OVERLAP", (
             "Input domains' certs carry a common third registrable domain — strong shared-infra "
             "signal; confirm the third domain isn't a shared CDN/SaaS host before clustering.")
+    elif degraded:
+        verdict, why = "INCONCLUSIVE-CT-DEGRADED", (
+            f"No shared cert, SAN cross-cover or common sibling in what was collected, but crt.sh was "
+            f"unreachable for {', '.join(degraded)} — its backups cover ~1 year, so an older shared "
+            "certificate would not be visible. This is NOT a negative: re-run when crt.sh answers.")
     else:
         verdict, why = "NO-CT-OVERLAP", (
             "No shared cert, no SAN cross-cover, no common sibling domain across these certs. "
@@ -136,6 +102,7 @@ def analyze(domains: list[str]) -> dict:
 
     return {"domains": domains, "verdict": verdict, "rationale": why,
             "cert_counts": {d: len(certs[d]) for d in domains},
+            "ct_completeness": {d: ct[d]["completeness_line"] for d in domains},
             "shared_certs": shared_certs, "cross_cover": cross_cover,
             "sibling_overlap": sibling_overlap[:20]}
 
@@ -144,6 +111,8 @@ def _human(r: dict) -> str:
     out = [f"CERT/SAN OVERLAP · {', '.join(r['domains'])} · VERDICT: {r['verdict']}",
            f"  {r['rationale']}",
            "  certs seen: " + ", ".join(f"{d}={n}" for d, n in r["cert_counts"].items())]
+    for d, line in (r.get("ct_completeness") or {}).items():
+        out.append(f"  CT {d}: {line}")
     for s in r["shared_certs"]:
         out.append(f"  🔗 SHARED CERT {s['a']} ⇄ {s['b']}  [{s['issuer']}]  cert={s['cert']}")
         out.append(f"       SANs: {', '.join(s['sans_sample'])}")

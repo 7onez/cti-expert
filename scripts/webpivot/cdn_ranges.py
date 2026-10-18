@@ -65,7 +65,26 @@ UA = "Mozilla/5.0 (cdn-ranges OSINT tooling)"
 # --- published range sources. Each returns list[(cidr, provider, kind)]. ---------
 
 
-def _get(url, timeout=1800):
+def _ceiling():
+    """Per-call ceiling via cti_timeouts (env CTI_CALL_TIMEOUT → skill-root .env →
+    references/timeouts.json → 5000), so a standalone run still honours the analyst's setting."""
+    import os as _o, sys as _s
+    _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))  # -> scripts/
+    try:
+        from cti_timeouts import CALL_TIMEOUT
+        return int(CALL_TIMEOUT)
+    except Exception:
+        try:
+            v = int(_o.environ.get("CTI_CALL_TIMEOUT") or 0)
+        except ValueError:
+            v = 0
+        return v if v > 0 else 5000
+
+
+_CALL_TIMEOUT = _ceiling()
+
+
+def _get(url, timeout=_CALL_TIMEOUT):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
@@ -203,12 +222,32 @@ def load_ranges(path=CACHE):
     return idx
 
 
+def is_bogon(ip) -> bool:
+    """True for loopback/private/link-local/reserved/multicast/unspecified addresses (RFC
+    1918/3927/5735/4291 etc, via the stdlib `ipaddress` flags) — a bogon resolves to no real
+    internet-routable infrastructure (e.g. a registrar-parking A record of 127.0.0.1) and must
+    never be treated as a CDN edge OR an origin candidate: never reversed (DNSLytics reverseip,
+    FOFA ip=, Validin IP reputation, ipinfo, MO-neighbours fan-out, Netlas), never a frontier
+    seed. False (not None) on an unparseable value — callers gate on classify()'s own 'invalid'
+    kind for that."""
+    try:
+        addr = ipaddress.ip_address(str(ip).strip())
+    except ValueError:
+        return False
+    return (addr.is_loopback or addr.is_private or addr.is_link_local
+            or addr.is_multicast or addr.is_unspecified or addr.is_reserved)
+
+
 def classify(ip, idx):
-    """{'ip', 'cdn'(bool), 'provider', 'kind'}. cdn=False => candidate origin."""
+    """{'ip', 'cdn'(bool), 'provider', 'kind'}. cdn=False => candidate origin ('origin_candidate')
+    UNLESS the address is a bogon (kind 'bogon' — see is_bogon): a bogon is never an origin
+    candidate, whatever the CDN-range index says."""
     try:
         addr = ipaddress.ip_address(ip.strip())
     except ValueError:
         return {"ip": ip, "cdn": None, "provider": None, "kind": "invalid"}
+    if is_bogon(ip):
+        return {"ip": ip, "cdn": False, "provider": None, "kind": "bogon"}
     for net, prov, kind in idx["v6" if addr.version == 6 else "v4"]:
         if addr in net:
             return {"ip": ip, "cdn": True, "provider": prov, "kind": kind}

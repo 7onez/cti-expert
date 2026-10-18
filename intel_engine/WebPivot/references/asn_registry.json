@@ -32,7 +32,7 @@
         "abuse@amazonaws.com"
       ],
       "noise": true,
-      "kind": "cloud"
+      "kind": "origin_candidate"
     },
     "AS14618": {
       "asn": "AS14618",
@@ -75,7 +75,7 @@
       "name": "Twitter Inc.",
       "abuse_contacts": [],
       "noise": true,
-      "kind": "cloud"
+      "kind": "origin_candidate"
     },
     "AS396982": {
       "asn": "AS396982",
@@ -120,7 +120,7 @@
         "abuse@linode.com"
       ],
       "noise": true,
-      "kind": "hosting"
+      "kind": "origin_candidate"
     },
     "AS20473": {
       "asn": "AS20473",
@@ -134,6 +134,12 @@
     "AS63760": {
       "asn": "AS63760",
       "name": "AZDIGI Corporation",
+      "kind": "origin_candidate",
+      "noise": true
+    },
+    "AS47846": {
+      "asn": "AS47846",
+      "name": "SEDO GmbH",
       "kind": "origin_candidate",
       "noise": true
     }

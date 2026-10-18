@@ -7,10 +7,16 @@ Yandex / DuckDuckGo / Bing / Brave). Four kinds, auto-detected: `domain`, `handl
 adds dox/staff/market dork context plus DIRECT Telegram profile + analytics-mirror URLs that expose
 a channel's bio/admin list), `discord_id` (a numeric snowflake — decodes the account-creation date
 locally and emits the user-lookup mirrors) and `keyword` (anything else). It emits READY-TO-OPEN,
-URL-encoded result URLs plus the raw queries —
-it deliberately does NOT scrape SERPs (bot-walled + fragile); the analyst, or Claude Code's own
-WebSearch / WebFetch, fires them. This is the same "runnable pivot query" contract as the rest of
-WebPivot.
+URL-encoded result URLs plus the raw queries. By default it does NOT fetch SERPs; the analyst, or
+the agent's own WebSearch / WebFetch, fires them. This is the same "runnable pivot query" contract
+as the rest of WebPivot.
+
+`--run` EXECUTES the dorks, free first: each query goes to the DuckDuckGo HTML endpoint, and only
+when that path does not work for THAT query — a bot challenge (DDG answers 202 + an "anomaly" page;
+it challenges per query, typically operator dorks), an HTTP or network error, or an unparseable
+page — is it re-run through SerpApi Google (`wp_serp.web_search`, 1 metered search, ledgered and
+budgeted). `related:` is never bought: Google retired it, so the row is reported NOT ANSWERED.
+`--free-only` (or no SERPAPI_KEY) keeps it to DDG and says which queries went unanswered.
 
 Why multiple engines: they index DIFFERENT corners — Google for dork operators, Yandex for
 Cyrillic / reverse-image / RU-CIS infra, DuckDuckGo for a fetch-friendly HTML endpoint (the one an
@@ -21,6 +27,7 @@ which only see served HTML — never index.
 CLI:
     python3 tools/search_pivot.py "<indicator>" [--engines google,yandex,duckduckgo,bing,brave]
                                     [--kind domain|keyword|handle|discord_id] [--json]
+                                    [--run [--free-only] [--max-queries N] [--num N]]
 """
 from __future__ import annotations
 
@@ -273,6 +280,159 @@ def search_pivot(indicator: str, engines: list[str] | None = None,
     return out
 
 
+# ---------------------------------------------------------------- execution (--run)
+_DDG_RESULT = re.compile(r'<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S | re.I)
+_DDG_SNIPPET = re.compile(r'class="result__snippet"[^>]*>(.*?)</a>', re.S | re.I)
+_DDG_CHALLENGE = ("anomaly-modal", "anomaly.js", "bots use duckduckgo too", "challenge-form")
+_DDG_NO_RESULTS = ("no-results", "no results.")
+# Operators the DDG HTML endpoint ignores (fx-dork-sweep.md operator matrix: intext ❌, after/before ❌)
+_DDG_WEAK_OP = re.compile(r"\b(?:intext|after|before):", re.I)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def _strip(html_text: str) -> str:
+    import html as _html
+    return re.sub(r"\s+", " ", _html.unescape(_TAG.sub("", html_text or ""))).strip()
+
+
+def _ddg_link(href: str) -> str:
+    """DDG wraps every result as //duckduckgo.com/l/?uddg=<target>; unwrap to the real URL."""
+    import html as _html
+    href = _html.unescape(href or "")
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+    if qs.get("uddg"):
+        return qs["uddg"][0]
+    return ("https:" + href) if href.startswith("//") else href
+
+
+def parse_ddg(status: int, body: str) -> dict:
+    """One DDG HTML response -> {ok, results, reason}. ok=False means the FREE path did not work
+    (challenge / HTTP error / unrecognisable page) — not that the web holds nothing."""
+    low = (body or "").lower()
+    if any(m in low for m in _DDG_CHALLENGE):
+        return {"ok": False, "challenge": True, "results": [],
+                "reason": f"DuckDuckGo bot challenge (HTTP {status})"}
+    if status != 200:
+        return {"ok": False, "results": [], "reason": f"DuckDuckGo HTTP {status}"}
+    matches = list(_DDG_RESULT.finditer(body))
+    results = []
+    for i, m in enumerate(matches):
+        link = _ddg_link(m.group(1))
+        if not link.startswith("http") or "duckduckgo.com/y.js" in link:   # sponsored redirects
+            continue
+        # the snippet lives in the same result block: between this anchor and the next one
+        seg = body[m.end(): matches[i + 1].start() if i + 1 < len(matches) else len(body)]
+        sn = _DDG_SNIPPET.search(seg)
+        results.append({"position": len(results) + 1, "title": _strip(m.group(2)), "link": link,
+                        "host": _host(urllib.parse.urlparse(link).netloc).removeprefix("www."),
+                        "snippet": _strip(sn.group(1)) if sn else ""})
+    if results or any(m in low for m in _DDG_NO_RESULTS):
+        return {"ok": True, "results": results, "reason": None}
+    return {"ok": False, "results": [], "reason": "DuckDuckGo page had neither results nor a "
+                                                  "no-results marker (layout change or soft block)"}
+
+
+def _ddg_fetch(url: str, timeout: int = 20):
+    """(status, body_text) via WebPivot's shared browser-profile fetch, stdlib as a fallback."""
+    try:
+        import wp_net                                            # noqa: E402 — on sys.path via _WP
+        _f, status, _h, body = wp_net.fetch(url, timeout=timeout)
+    except ImportError:
+        import urllib.request
+        import urllib.error
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14)"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                status, body = r.status, r.read()
+        except urllib.error.HTTPError as e:
+            status, body = e.code, e.read()
+    return status, (body or b"").decode("utf-8", "replace")
+
+
+def run_queries(result: dict, free_only: bool = False, max_queries: int | None = None,
+                num: int = 10, fetch=None, serp=None, delay: float = 1.5) -> dict:
+    """Execute `result['queries']` free-first. Adds `executed` (per query: via / results / why the
+    free path failed / SerpApi outcome) and `found_hosts` to `result` and returns it.
+
+    `fetch(url) -> (status, body)` and `serp(query, num) -> dict` are injectable seams; by default
+    DDG via wp_net and SerpApi via wp_serp.web_search. SerpApi is never called under free_only."""
+    import time
+    if fetch is None:
+        fetch = _ddg_fetch
+    if serp is None:
+        serp = None if free_only else _serp_fn()
+    queries = result.get("queries") or []
+    if max_queries:
+        queries = queries[:max_queries]
+    executed, hosts, spent = [], [], 0
+    for i, q in enumerate(queries):
+        row = {"label": q["label"], "q": q["q"], "via": None, "results": []}
+        if q.get("google_only_operator"):
+            # `related:` — Google retired it in 2023; a SerpApi search for it is billed and comes
+            # back empty, so it is neither fetched free nor bought. The URL above stays for by-hand use.
+            row["free_failed"] = "Google-only operator — DuckDuckGo cannot answer it"
+            row["serpapi"] = "skipped: Google retired related: (2023) — a billed search returns nothing"
+            row["note"] = "NOT ANSWERED — this establishes nothing about what the web holds"
+            executed.append(row)
+            continue
+        # DDG challenges PER QUERY (measured: operator dorks like site:/-site: get the 202 anomaly
+        # page while plain-string queries from the same IP in the same minute return results), so
+        # every query gets its own free attempt — one challenge never writes off the rest.
+        if i and delay:
+            time.sleep(delay)
+        try:
+            status, body = fetch(_url("duckduckgo", q["q"]))
+            parsed = parse_ddg(status, body)
+        except Exception as e:                                       # noqa: BLE001
+            parsed = {"ok": False, "results": [], "reason": f"DuckDuckGo fetch failed: {e}"}
+        if parsed["ok"] and not parsed["results"] and _DDG_WEAK_OP.search(q["q"]):
+            # 0 hits on an operator DDG does not honour (fx-dork-sweep.md operator matrix) is the
+            # operator failing, not the web being empty — let the paid tier answer it
+            parsed = {"ok": False, "results": [],
+                      "reason": "DuckDuckGo returned 0 on an operator it does not honour "
+                                f"({_DDG_WEAK_OP.search(q['q']).group(0)})"}
+        if parsed["ok"]:
+            row.update(via="duckduckgo", results=parsed["results"][:num])
+        else:
+            row["free_failed"] = parsed["reason"]
+        if row["via"] is None:
+            if serp is None:
+                row["serpapi"] = ("skipped: --free-only" if free_only
+                                  else "skipped: no SERPAPI_KEY configured")
+                row["note"] = "NOT ANSWERED — this establishes nothing about what the web holds"
+            else:
+                s = serp(q["q"], num) or {}
+                if s.get("skipped") or s.get("error"):
+                    row["serpapi"] = s.get("skipped") or s.get("error")
+                    row["note"] = "NOT ANSWERED — this establishes nothing about what the web holds"
+                else:
+                    spent += 1                       # a 200 is billed even when empty (wp_serp._call)
+                    row.update(via="serpapi", results=(s.get("results") or [])[:num])
+                    if s.get("empty"):
+                        row["serpapi"] = f"empty: {s['empty']}"
+        hosts += [r["host"] for r in row["results"] if r.get("host")]
+        executed.append(row)
+    result["executed"] = executed
+    result["found_hosts"] = sorted(set(hosts))
+    result["execution_summary"] = {
+        "queries": len(executed),
+        "via_duckduckgo": sum(1 for r in executed if r["via"] == "duckduckgo"),
+        "via_serpapi": sum(1 for r in executed if r["via"] == "serpapi"),
+        "unanswered": sum(1 for r in executed if r["via"] is None),
+        "serpapi_searches_spent": spent,
+    }
+    return result
+
+
+def _serp_fn():
+    """wp_serp.web_search when a SerpApi key is configured, else None (free path only)."""
+    try:
+        import wp_serp                                           # noqa: E402 — on sys.path via _WP
+    except Exception:                                            # noqa: BLE001
+        return None
+    return wp_serp.web_search if wp_serp.serpapi_configured() else None
+
+
 def _human(r: dict) -> str:
     out = [f"search_pivot · {r['kind']}: {r['indicator']} · engines: {', '.join(r['engines'])}"]
     if r.get("discord_account_created"):
@@ -290,6 +450,20 @@ def _human(r: dict) -> str:
                    + " | ".join(r["fetch_friendly"].values()))
     out.append("  notes:")
     out += [f"    - {n}" for n in r["notes"]]
+    if "executed" in r:
+        s = r["execution_summary"]
+        out.append(f"  executed: {s['queries']} quer(ies) — {s['via_duckduckgo']} via DuckDuckGo (free), "
+                   f"{s['via_serpapi']} via SerpApi ({s['serpapi_searches_spent']} search(es) spent), "
+                   f"{s['unanswered']} unanswered")
+        for row in r["executed"]:
+            out.append(f"  [{row['label']}] via {row['via'] or 'NONE'}: {len(row['results'])} result(s)"
+                       + (f"  (free failed: {row['free_failed']})" if row.get("free_failed") else "")
+                       + (f"  (serpapi: {row['serpapi']})" if row.get("serpapi") else ""))
+            for res in row["results"][:10]:
+                out.append(f"      {res['link']}")
+        if r["found_hosts"]:
+            out.append("  hosts seen in results (feed NEW ones to pivot_extract): "
+                       + ", ".join(r["found_hosts"]))
     return "\n".join(out)
 
 
@@ -301,8 +475,17 @@ def _main() -> None:
     ap.add_argument("--kind", choices=["domain", "keyword", "handle", "discord_id"], default=None,
                     help="override auto-detection (handle = username; discord_id = numeric snowflake)")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of the human view")
+    ap.add_argument("--run", action="store_true",
+                    help="EXECUTE the dorks: DuckDuckGo HTML (free) first, SerpApi Google (metered, "
+                         "1 search per query) only for queries the free path could not answer")
+    ap.add_argument("--free-only", action="store_true", dest="free_only",
+                    help="with --run: never fall back to SerpApi")
+    ap.add_argument("--max-queries", type=int, default=None, help="with --run: execute only the first N")
+    ap.add_argument("--num", type=int, default=10, help="with --run: results kept per query (default 10)")
     a = ap.parse_args()
     r = search_pivot(a.indicator, [e.strip() for e in a.engines.split(",") if e.strip()], a.kind)
+    if a.run:
+        r = run_queries(r, free_only=a.free_only, max_queries=a.max_queries, num=a.num)
     print(json.dumps(r, ensure_ascii=False, indent=2) if a.json else _human(r))
 
 

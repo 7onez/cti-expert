@@ -40,6 +40,14 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from en_refs import load_ref, ref_path  # noqa: E402
+# Chromium availability + the shared proxy translation live beside the collectors. Engage ships
+# standalone, so a missing engine degrades to the old inline launch rather than failing import.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "WebPivot", "tools"))
+    import wp_browser  # noqa: E402
+except Exception:  # noqa: BLE001
+    wp_browser = None
 
 _FALLBACK_POLICY = {
     "require_explicit_confirmation": True, "synthetic_identity_only": True,
@@ -187,21 +195,19 @@ def engage(url: str, persona: dict, detection: dict = None, *, confirm: bool = F
                             "en_inbox fetches the link; SMS/authenticator OTP the tool never bypasses."),
                 "blockers": blockers, "plan": plan}
 
-    # try Playwright; fall back to a manual runbook
-    try:
-        import playwright  # noqa: F401
-        have_pw = True
-    except ImportError:
-        have_pw = False
+    # Engagement drives a real Chromium (Playwright); fall back to a manual runbook without it.
+    # Moli is never used here: the flow clicks, fills and screenshots, and the captures are evidence.
+    have_pw = bool(wp_browser and wp_browser.chromium_available())
 
     if not have_pw:
         _record(case, url, {"event": "manual_runbook", "persona": persona.get("username")})
         return {
             "mode": "manual-runbook",
-            "note": ("Playwright not installed — returning a fill-by-hand runbook instead of "
-                     "driving the browser. `pip install playwright && playwright install chromium` "
-                     "to automate. Do the signup from research egress; capture the members area."),
-            "egress": proxy or "DIRECT (accepted)",
+            "note": ("Chromium (Playwright) not installed — returning a fill-by-hand runbook instead "
+                     "of driving the browser. Rerun the installer with --headless to automate. Do "
+                     "the signup from research egress; capture the members area."),
+            "egress": ((wp_browser.resolve_proxy(proxy) if wp_browser else None) or proxy
+                       or "DIRECT (accepted)"),
             "plan": plan,
             "steps": [
                 "1. Register with the persona values above (from research egress).",
@@ -278,9 +284,8 @@ def _drive_playwright(url, persona, plan, detection, proxy, case, do_login,
                       "session_" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
     os.makedirs(ev, exist_ok=True)
     shots, captured = [], {}
-    launch = {"headless": True}
-    if proxy:
-        launch["proxy"] = {"server": proxy}
+    launch = (wp_browser.chromium_launch_kwargs(proxy) if wp_browser
+              else {"headless": True, **({"proxy": {"server": proxy}} if proxy else {})})
     api_bodies = []
 
     def _on_resp(r):

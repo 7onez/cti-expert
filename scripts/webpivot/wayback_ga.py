@@ -66,8 +66,8 @@ _install_cti_proxy()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pivot_extract import (extract_trackers, VERIFICATION_META, extract_meta,
                            DEFAULT_UA, shodan_favicon_hash)  # reuse the harness
-
-CDX = "http://web.archive.org/cdx/search/cdx"
+import wp_wayback  # noqa: E402 (WebPivot/tools now on sys.path via the pivot_extract shim)
+import wp_wayback_guard  # noqa: E402
 
 
 # mimetypes worth harvesting: HTML plus the JS/JSON where selectors (GA/GTM IDs, wallet
@@ -87,31 +87,39 @@ def _cdx_host(domain):
     return d[4:] if d.startswith("www.") else d
 
 
-def _cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to):
-    """One CDX call for a single mimetype group → list of (timestamp, original). [] on error."""
-    q = (f"{CDX}?url={host}&output=json&fl=timestamp,original,statuscode,digest,mimetype"
-         f"&filter=statuscode:200&collapse={collapse}&limit={limit_scan}"
-         f"&filter=mimetype:{mime_re}")
+def _cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to, report=None,
+               newest=False):
+    """One index query for a single mimetype group → list of (timestamp, original). [] when the
+    archive holds nothing OR did not answer; in the latter case the reason is printed and
+    appended to report["errors"] (wp_wayback already retried every index endpoint). A result that
+    fills `limit_scan` sets report["truncated"]. `newest` asks for the LAST `limit_scan` rows."""
+    q = [("url", host), ("output", "json"), ("fl", "timestamp,original,statuscode,digest,mimetype"),
+         ("filter", "statuscode:200"), ("collapse", collapse),
+         ("limit", f"-{int(limit_scan)}" if newest else limit_scan),
+         ("filter", f"mimetype:{mime_re}")]
     if not root_only:
-        q += "&matchType=domain"        # widen url=host to *.host + every path
+        q.append(("matchType", "domain"))   # widen url=host to *.host + every path
     if year_from:
-        q += f"&from={year_from}"
+        q.append(("from", year_from))
     if year_to:
-        q += f"&to={year_to}"
-    try:
-        req = urllib.request.Request(q, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            rows = json.load(r)
-    except Exception as e:
-        print(f"  cdx error for {host}: {e}", file=sys.stderr)
+        q.append(("to", year_to))
+    rows, err = wp_wayback.index(q, ua=DEFAULT_UA, timeout=120)
+    if err:
+        print(f"  cdx error for {host}: {err}", file=sys.stderr)
+        if report is not None:
+            report.setdefault("errors", []).append(err)
         return []
-    if not rows or len(rows) < 2:
-        return []
-    return [(row[0], row[1]) for row in rows[1:] if len(row) >= 2]
+    if report is not None and not newest and len(rows) >= int(limit_scan):
+        report["truncated"] = True
+    return [(row[0], row[1]) for row in rows if len(row) >= 2]
+
+
+# rows of the apex's own newest captures merged in when a whole-domain query hits its row cap
+_TOPUP_ROWS = wp_wayback.TOPUP_ROWS
 
 
 def cdx_snapshots(domain, year_from=None, year_to=None, limit_scan=2000,
-                  root_only=False, include_assets=True, collapse="digest"):
+                  root_only=False, include_assets=True, collapse="digest", report=None):
     """Archived 200 captures for a domain -> [(timestamp, original_url)], time-sorted.
 
     By default this covers the WHOLE registrable domain — every subdomain and subpath
@@ -120,18 +128,31 @@ def cdx_snapshots(domain, year_from=None, year_to=None, limit_scan=2000,
     queries and merged, so an HTML-saturated domain (whose html rows would fill the row cap
     ahead of assets in SURT order) never crowds the JS/JSON out. Deduped by `collapse`
     (digest = distinct content; urlkey = one row per URL). Pass root_only=True for the legacy
-    exact-apex behaviour, or include_assets=False to restrict to text/html."""
+    exact-apex behaviour, or include_assets=False to restrict to text/html.
+
+    The index returns a whole-domain query in URL order, oldest first per URL, so a query that
+    fills `limit_scan` silently loses later URLs and recent years (measured: iana.org's 2000 html
+    rows end in 2020 though captures run to 2026). When that happens the apex's own newest html
+    captures are merged in (one extra query) and report["truncated"] is set — the span is then
+    NOT the whole history. Pass a dict as `report` to also learn whether an empty result is a real
+    'no captures' (no "errors" key) or an archive that did not answer (report["errors"])."""
     host = _cdx_host(domain)
     groups = [_CDX_HTML_RE] + ([_CDX_ASSET_RE] if include_assets else [])
+    report = report if report is not None else {}
     seen = set()
     snaps = []
+
+    def _add(pairs):
+        for key in pairs:
+            if key not in seen:
+                seen.add(key)
+                snaps.append(key)
+
     for mime_re in groups:
-        for ts, orig in _cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to):
-            key = (ts, orig)
-            if key in seen:
-                continue
-            seen.add(key)
-            snaps.append(key)
+        _add(_cdx_fetch(host, mime_re, limit_scan, root_only, collapse, year_from, year_to, report))
+    if report.get("truncated") and not root_only:
+        _add(_cdx_fetch(host, _CDX_HTML_RE, min(_TOPUP_ROWS, int(limit_scan)), True, collapse,
+                        year_from, year_to, report, newest=True))
     # matchType=domain returns rows grouped by URL, so sort chronologically to keep
     # sample_evenly's "spread across time, keep first & last".
     snaps.sort(key=lambda t: t[0])
@@ -149,20 +170,33 @@ def sample_evenly(snaps, n):
 
 
 def fetch_raw(timestamp, original, ua=DEFAULT_UA, timeout=45):
-    """Fetch the un-rewritten archived HTML via the id_ modifier."""
-    url = f"https://web.archive.org/web/{timestamp}id_/{original}"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read().decode("utf-8", "ignore")
-    except Exception:
+    """Fetch the un-rewritten archived HTML via the id_ modifier ('' when not fetched)."""
+    resp, _err = wp_wayback.fetch(timestamp, original, ua=ua, timeout=timeout)
+    if resp is None or resp.status != 200:
         return ""
+    return resp.body.decode("utf-8", "ignore")
 
 
 def analyze_domain(domain, max_snaps=12, year_from=None, year_to=None,
                    root_only=False, include_assets=True, limit_scan=2000):
+    _breaker = wp_wayback_guard.blocked() if wp_wayback_guard is not None else None
+    if _breaker:
+        return {
+            "domain": domain, "snapshots_total": 0, "snapshots_scanned": 0, "span": None,
+            "historical_ids": [], "pivots": [],
+            "skipped": _breaker, "skipped_kind": "breaker",
+        }
+    cdx_report = {}
     snaps = cdx_snapshots(domain, year_from, year_to, limit_scan=limit_scan,
-                          root_only=root_only, include_assets=include_assets)
+                          root_only=root_only, include_assets=include_assets, report=cdx_report)
+    cdx_errors = cdx_report.get("errors") or []
+    if cdx_errors and not snaps:
+        # the archive never answered: a GAP (nothing queried), never "no history"
+        return {
+            "domain": domain, "snapshots_total": 0, "snapshots_scanned": 0, "span": None,
+            "historical_ids": [], "pivots": [],
+            "skipped": cdx_errors[0], "skipped_kind": "breaker",
+        }
     picked = sample_evenly(snaps, max_snaps)
     # id -> {"kind":..., "first":ts, "last":ts, "hits":n, "seen":[ts,...]}
     ids = {}
@@ -199,6 +233,8 @@ def analyze_domain(domain, max_snaps=12, year_from=None, year_to=None,
         "snapshots_total": len(snaps),
         "snapshots_scanned": scanned,
         "span": [snaps[0][0], snaps[-1][0]] if snaps else None,
+        # the index row cap was hit: the span/sample is NOT the whole history (see cdx_snapshots)
+        "truncated": bool(cdx_report.get("truncated")),
         "historical_ids": records,
         "pivots": build_pivots(records),
     }
@@ -230,6 +266,14 @@ def render_timeline(res):
              f"({res['snapshots_scanned']} of {res['snapshots_total']} snapshots scanned"
              + (f", {_fmt_ts(res['span'][0])} → {_fmt_ts(res['span'][1])})" if res['span'] else ")"),
              ""]
+    if res.get("skipped"):
+        lines.append(f"_Archive NOT queried — {res['skipped']}. This is a gap, not an empty "
+                     f"history: re-run later._")
+        return "\n".join(lines)
+    if res.get("truncated"):
+        lines.append("_Index row cap hit — this is NOT the whole capture history (the apex's newest "
+                     "captures were merged in). Narrow with --from/--to per era for full coverage._")
+        lines.append("")
     if not res["historical_ids"]:
         lines.append("_No tracker/verification IDs found in sampled snapshots._")
         return "\n".join(lines)

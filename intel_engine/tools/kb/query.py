@@ -11,6 +11,7 @@ IntelAnalysis skill and the reporter read from instead of re-querying the world.
   python3 query.py --kb knowledge --type person
 """
 import os
+import re
 import sys
 import argparse
 from collections import Counter
@@ -95,6 +96,31 @@ def is_registrant_noise(dst_type, value):
             or any(m in v for m in _PLACEHOLDER_PERSON))
 
 
+_SCHEME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9+.\-]*://')
+
+
+def _normalize_entity_value(raw):
+    """Best-effort normalisation for an `--entity` lookup: lowercase, strip a URL scheme/path and
+    a trailing dot. KB entity values for domains are stored bare-lowercase by ingest_webpivot, so
+    `https://WWW.Example.com/path.` missed every time before this (#25)."""
+    v = (raw or "").strip()
+    v = _SCHEME_RE.sub("", v)
+    v = v.split("/", 1)[0].split("?", 1)[0]
+    return v.rstrip(".").lower()
+
+
+def _entity_variants(raw):
+    """Candidate KB values to try for an --entity lookup, in order: the normalised value, then its
+    www./bare-apex counterpart (a case may hold the entity under either form)."""
+    norm = _normalize_entity_value(raw)
+    out = [norm]
+    if norm.startswith("www."):
+        out.append(norm[4:])
+    elif norm:
+        out.append("www." + norm)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Query the OSINT knowledge base.")
     ap.add_argument("--kb", required=True)
@@ -164,8 +190,20 @@ def main():
                 print(f"  {e['value']}   ({len(e['facts'])} facts)")
 
     if args.entity:
-        # find it across types
-        found = [e for e in kb.all_entities() if e["value"] == args.entity]
+        # find it across types; exact match first, then normalised (lowercase/scheme/trailing dot)
+        # and www./bare-apex variants (#25) — a KB entity is stored bare-lowercase by ingest, so
+        # `--entity https://WWW.Example.com/` missed silently and printed nothing before this.
+        all_ents = list(kb.all_entities())
+        found = [e for e in all_ents if e["value"] == args.entity]
+        if not found:
+            for cand in _entity_variants(args.entity):
+                if cand == args.entity:
+                    continue
+                found = [e for e in all_ents if e["value"] == cand]
+                if found:
+                    break
+        if not found:
+            print(f"not in KB: {args.entity} (KB has {len(all_ents)} entities)")
         for e in found:
             print(f"\n# {e['type']}: {e['value']}   (first {e.get('first_seen')} … last {e.get('last_seen')})")
             for f in e["facts"]:
@@ -226,13 +264,14 @@ def main():
             print(f"COMPONENT {i}\t{', '.join(sorted(doms))}")
 
 
-def _components(kb, kb_dir, max_prevalence, restrict, noise_ips=frozenset()):
+def _components(kb, kb_dir, max_prevalence, restrict, noise_ips=frozenset(), allow_edge=None):
     """Union-find over domains that share a STRONG indicator (drop boilerplate rels, reference-
     benign values, and indicators shared by > max_prevalence domains). `restrict` limits clustering
     to a domain set (a case); domains in it with no strong edge come back as singletons.
     `noise_ips`: IPs the CASE's own collection showed to be shared/bulk hosting or CDN edges — a
     `hosted_on` edge to one is co-tenancy, never a binder, even when the KB itself has only seen two
-    tenants there (the collector saw the IP answer with 2,500)."""
+    tenants there (the collector saw the IP answer with 2,500). `allow_edge(src, dst)`: the analyst
+    approved THAT edge (case_state.approved_edge_allow) — it binds; every other edge to the IP doesn't."""
     NOISE_RELS = BOILERPLATE_RELS
     noise_ips = {f"ip:{ip}" for ip in (noise_ips or ())}
     prevalence: dict = {}
@@ -248,14 +287,17 @@ def _components(kb, kb_dir, max_prevalence, restrict, noise_ips=frozenset()):
     for e in kb.edges():
         if e["src_type"] != "domain" or e["rel"] in NOISE_RELS or e["dst"] in benign:
             continue
-        if e["rel"] == "hosted_on" and e["dst"] in noise_ips:
+        # an edge the analyst APPROVED (case_state.approved_edge_allow) binds past both the landlord
+        # rule and the prevalence cap below; every other edge to that IP keeps both
+        approved = e["rel"] == "hosted_on" and bool(allow_edge) and allow_edge(e["src"], e["dst"])
+        if e["rel"] == "hosted_on" and e["dst"] in noise_ips and not approved:
             continue                              # landlord IP — co-tenancy is not ownership
         is_reg = e["rel"] in REGISTRANT_RELS
         prev = len(prevalence.get((e["dst_type"], e["dst"]), ()))
         if is_reg:
             if is_registrant_noise(e["dst_type"], e["dst"]) or is_bulk_registrant(prev):
                 continue                          # placeholder/privacy or bulk-reseller registrant
-        elif prev > max_prevalence:
+        elif prev > max_prevalence and not approved:
             continue
         if restrict is not None and e["src"] not in restrict:
             continue

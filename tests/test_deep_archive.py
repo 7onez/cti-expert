@@ -21,6 +21,14 @@ import gzip
 import io
 import json
 import os
+import tempfile as _tempfile
+
+# Never touch the real Wayback breaker / egress-pacer state (intel_engine/MEMORY/…), and do not
+# space stubbed requests: nothing here reaches the network.
+_WB_TMP = _tempfile.mkdtemp(prefix="wb-guard-")
+os.environ.setdefault("WAYBACK_GUARD_STATE", os.path.join(_WB_TMP, "wayback_breaker.json"))
+os.environ.setdefault("WAYBACK_PACE_STATE", os.path.join(_WB_TMP, "wayback_pace.json"))
+os.environ.setdefault("WAYBACK_MIN_INTERVAL", "0")
 import sys
 import tempfile
 import urllib.request

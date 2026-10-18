@@ -51,33 +51,39 @@ tracker / description / footer / SaaS id) and takes analyst keywords via `--fofa
 
 **Unique subdomain label** (e.g. `svc-a.site-a.example`) — a distinctive, non-generic leftmost label is
 an operator naming convention. Reverse it across other apexes: FOFA `host="<label>."`, crt.sh
-`<label>.%`, Shodan `ssl.cert.subject.CN:"<label>"` / `hostname:"<label>"`, Censys
-`host.dns.names:"<label>"` (tokenised `:`, **not** `=` — the value is a label, not a whole
-hostname). `pivot_extract` emits this as a `subdomain` pivot automatically.
+`<label>.%`, Censys `host.dns.names:"<label>"` (tokenised `:`, **not** `=` — the value is a label, not
+a whole hostname). `pivot_extract` emits this as a `subdomain` pivot automatically. Shodan host search
+(`ssl.cert.subject.cn:` / `hostname:`) is **not** a CT source — it indexes certificates presented by
+scanned hosts and token-matches (measured: 0 hits on small domains, an unrelated company's private-CA
+fleet on a large one); keep Shodan for `ssl.cert.fingerprint:` / `http.favicon.hash:` / `http.html:`.
 
 ## 4. Certificate Transparency
 | Service | Query | Cost | API |
 |---|---|---|---|
-| **crt.sh** | `%.domain`, cert hash | Free | JSON `?output=json`, no key ⚠️ often overloaded/down |
-| **Shodan CTL** ⭐ | domain | Free | **keyless mirror of the crt.sh DB — steadier when crt.sh 502s** |
-| **Certspotter** (SSLMate) | domain | Free tier + paid | REST, free key (low quota) |
-| **Censys** ⭐ | `cert.fingerprint_sha256=<sha256>` (search, Starter+) — **or the certificate LOOKUP, which works on the FREE plan and returns the cert's own `names` list** | Free (1 credit/lookup, 100/month) | Platform API, PAT · `wp_censys.py cert <sha256>` |
+| **crt.sh** | `%.domain`, cert hash | Free | JSON `?output=json`, no key ⚠️ often overloaded/down — retried with backoff, then its public PostgreSQL (`guest@crt.sh/certwatch`, optional `psycopg`) |
+| **Shodan CTL** ⭐ | domain | Free | keyless CT mirror, **~1 year** — first backup when crt.sh is degraded/empty |
+| **Certspotter** (SSLMate) | domain | Free tier + paid | REST, free key (low quota), **~1 year** — merged with Shodan CTL |
+| **CertKit Discovery** | domain | Free account | no API: web-login CSV export (`CERTKIT_EMAIL`/`CERTKIT_PASSWORD`), ~1 year incl. expired, day-only dates; breaks on MFA |
+| **CertIndex** | domain | Free tier, **non-commercial only** | `CERTINDEX_API_KEY`, ~1 year (valid certs), 10 domain lookups/hour account-wide — quota read free via `/v1/usage` |
+| **Netlas** | `certificate.names:<d>` | Metered | only when crt.sh **failed**; multi-year but sparse; token-matches look-alikes (name-filtered) |
+| **Censys** ⭐ | `cert.fingerprint_sha256=<sha256>` (search, Starter+) — **or the certificate LOOKUP, which works on the FREE plan and returns the cert's own `names` list**; as a CT backup `cert.names="<d>"` is the last resort | Free (1 credit/lookup, 100/month) | Platform API, PAT · `wp_censys.py cert <sha256>` |
 | **Cloudflare Merkle Town / Azul** | dashboard | Free | limited |
-| **crt.name** (aggregated index) | `apex=<eTLD+1>` | Free | `/v1/search`, no token, 100/IP/day — **text one-per-line by default; add `&format=json`**; **fallback below crt.sh only** |
-| **agniops** (aggregated index) | `domain=<apex>` | Free | `/v1/search`, no token — **text one-per-line**; same posture as crt.name — **fallback below crt.sh only** |
+| **crt.name** (aggregated index) | `apex=<eTLD+1>` | Free | `/v1/search`, no token, 100/IP/day — **text one-per-line by default; add `&format=json`**; **fallback below every CT source** |
+| **agniops** (aggregated index) | `domain=<apex>` | Free | `/v1/search`, no token — **text one-per-line**; same posture as crt.name — **fallback below every CT source** |
 
-**Shodan CTL (keyless, no Shodan account needed)** — a second CT index that reads the same
-crt.sh database from a steadier host, so it covers crt.sh's frequent outages. Two endpoints:
+**Shodan CTL (keyless, no Shodan account needed)** — a CT mirror holding about one year, so it covers
+crt.sh's outages for recent certificates but never replaces crt.sh's full history. Two endpoints:
 ```
-https://ctl.shodan.io/api/v1/domain/<domain>            # cert objects: subject_cn, issuer_cn,
-                                                         #   not_before/after (unix epoch), san_dns_names
+https://ctl.shodan.io/api/v1/domain/<domain>            # cert objects: hash (sha256), subject_cn,
+                                                         #   issuer_cn, not_before/after (epoch), san_dns_names
 https://ctl.shodan.io/api/v1/domain/<domain>/hostnames  # flat JSON array of every hostname → subdomains
 ```
-Use it to **enumerate a target's subdomains** and to read each cert's `san_dns_names` — a cert
-whose SAN list covers a *different registrable domain* is a strong same-operator link. `pivot_extract`
-now queries crt.sh **and** Shodan CTL concurrently and unions them (`ct_search`), so a run survives
-either source being down and gets fuller subdomain coverage; `tools/fallback_probe.py` does the same
-on cold seeds.
+Every CT lookup goes through `WebPivot/tools/wp_ct.py`: crt.sh first (web, then PostgreSQL); **only
+when crt.sh is degraded or empty** the backups above run (keyless first), each reported with its own
+status and window, and one completeness line ("Full CT history" only when crt.sh answered). Rows are
+deduplicated across sources by serial / sha256 / precert-final twin. A cert whose SAN list covers a
+*different registrable domain* is a strong same-operator link. See
+`../../../techniques/fx-dns-cert-history.md` §3 for the full chain and status contract.
 
 > **crt.name / agniops are fallbacks, not peers of crt.sh.** Both are **aggregated** subdomain
 > indexes (crt.name = CT logs **plus** Common Crawl, ICANN CZDS, ProjectDiscovery Chaos, HaGeZi;
@@ -86,9 +92,10 @@ on cold seeds.
 > `source:agniops(aggregated)`, and validate before any such name enters a report.
 > **OPSEC:** querying either discloses the target apex to an unknown third-party operator — crt.sh and
 > CertSpotter are established CT operators; these are not.
-> **Auto-wiring:** `wp_recon.ct_search()` calls both — but **only as a fallback** when crt.sh *and*
-> Shodan CTL return no subdomains, and their names land in a **separate** `aggregated_subdomains` /
-> `aggregated_sources` channel, never merged into the CT-attributable `subdomains`. crt.name's remote
+> **Auto-wiring:** `wp_ct.ct_search()` calls both — but **only as the last fallback** when every CT
+> source (keyed ones and Censys included) left no name, and their names land in a **separate**
+> `aggregated_subdomains` / `aggregated_sources` channel, never merged into the CT-attributable
+> `subdomains`, never counted toward completeness. crt.name's remote
 > `/mcp` endpoint stays deliberately **not** wired in — an unvetted remote MCP server is exactly the
 > supply-chain / prompt-injection surface `../../../techniques/prompt-injection-audit.md` warns against.
 
@@ -102,7 +109,7 @@ Automated by [`cert_pivot.py`](../../../scripts/webpivot/cert_pivot.py) (`intel.
 | Engine | Query field | Hash algo | Notes |
 |---|---|---|---|
 | **Shodan** | `ssl.cert.fingerprint:<hash>` | **SHA-256** (SHA-1 alt) | key → live hosts; web link keyless |
-| **Censys** | `services.tls.certificates.leaf_data.fingerprint_sha256="<hex>"` | **SHA-256** | `CENSYS_API_ID`+`_API_SECRET` |
+| **Censys** | `web.cert.fingerprint_sha256=<hex>` / `host.services.cert.fingerprint_sha256=<hex>` (Platform CenQL; `cert.` = the cert record, no hosts) | **SHA-256** | `CENSYS_PAT`/`CENSYS_API_KEY` (+`CENSYS_ORG_ID`) |
 | **FOFA** | `cert="<sha256>"` | **SHA-256** | base64-wrapped web query |
 | **crt.sh** | `?id=<n>` / `?serial=<hex>` / `?q=<sha256>` | — | keyless; SANs = sibling domains |
 

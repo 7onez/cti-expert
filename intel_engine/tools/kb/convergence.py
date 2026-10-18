@@ -15,7 +15,8 @@ HOW IT MEASURES
 ---------------
 A "round" is a snapshot of the case's `raw/*.json`. Each snapshot records the set of
 hosts and the set of high-signal, NOISE-FILTERED indicators (favicon, trackers, wallets,
-SaaS tokens, verifications, QR payloads, registrant emails) present in the case. Round
+SaaS tokens, verifications, QR payloads, registrant emails, mail infrastructure — M365
+tenant, custom MX, SPF single-host IPs) present in the case. Round
 over round it reports how many were newly added. Noise indicators (managed-DNS NS,
 parking favicon, registrar/privacy emails, malformed GA4) are excluded via noise_filters,
 so a round that only pulled in junk correctly reads as "no real growth."
@@ -92,6 +93,19 @@ def _indicators_from_raw(obj):
     for em in (art.get("emails") or []):
         if em and not is_noise_email(em):
             inds.add(f"email:{em.lower()}")
+    # mail infrastructure (wp_recon.detect_mail_provider): M365 tenant, custom MX, SPF single hosts
+    mail = art.get("mail") or {}
+    if mail.get("m365_tenant"):
+        inds.add(f"mail:m365:{str(mail['m365_tenant']).strip().lower()}")
+    for ex in (mail.get("custom_mx_hosts") or []):
+        ind = f"mail:mx:{str(ex).strip().lower().rstrip('.')}"
+        if not is_noise_indicator(ind):
+            inds.add(ind)
+    spf = mail.get("spf") or {}
+    for sip in (spf.get("ip4") or []) + (spf.get("ip6") or []):
+        sip = str(sip).strip()
+        if sip and ("/" not in sip or sip.split("/")[-1] in ("32", "128")):
+            inds.add(f"mail:spf_ip:{sip.split('/')[0]}")
     return inds
 
 
@@ -115,6 +129,24 @@ def _rounds_path(case_dir):
     return os.path.join(case_dir, "rounds.jsonl")
 
 
+def zero_growth(row):
+    """A round counts as zero-growth only when nothing NEW showed up AND every host in the round
+    was actually reachable. A round where a host errored (403/SSL/timeout/etc — recorded via
+    `snapshot --failed`) must never read as convergence just because it also produced no new
+    hosts/indicators; that is collection failure, not exhaustion of the estate. Rows written
+    before `failed` existed have no such key at all — treat a missing key the same as an empty
+    list so old rounds.jsonl files keep converging exactly as they always have."""
+    return row.get("new_hosts", 0) == 0 and row.get("new_indicators", 0) == 0 and not row.get("failed")
+
+
+def is_converged(rounds, stale):
+    """CONVERGED = the last `stale` consecutive rounds are all zero_growth. Single source of
+    truth: cmd_status here, case_state.convergence_verdict, and the harness orchestrator's
+    _is_converged all call this instead of re-deriving the rule, so a failed-round exemption
+    added in one place can never silently drift from the others."""
+    return len(rounds) >= stale and all(zero_growth(r) for r in rounds[-stale:])
+
+
 def _load_rounds(case_dir):
     p = _rounds_path(case_dir)
     if not os.path.exists(p):
@@ -134,10 +166,11 @@ def cmd_snapshot(args):
     prev_inds = set(rounds[-1]["ind_set"]) if rounds else set()
     new_hosts = sorted(hosts - prev_hosts)
     new_inds = sorted(inds - prev_inds)
+    failed_hosts = sorted({h.strip() for h in (getattr(args, "failed", "") or "").split(",") if h.strip()})
     snap = {"ts": _now(), "round": len(rounds) + 1,
             "hosts": len(hosts), "indicators": len(inds),
             "new_hosts": len(new_hosts), "new_indicators": len(new_inds),
-            "host_set": sorted(hosts), "ind_set": sorted(inds)}
+            "host_set": sorted(hosts), "ind_set": sorted(inds), "failed": failed_hosts}
     with open(_rounds_path(cdir), "a") as fh:
         fh.write(json.dumps(snap, ensure_ascii=False) + "\n")
     print(f"round {snap['round']}: {snap['hosts']} hosts, {snap['indicators']} indicators "
@@ -146,6 +179,9 @@ def cmd_snapshot(args):
         print(f"  new hosts: {', '.join(new_hosts[:12])}{' …' if len(new_hosts) > 12 else ''}")
     if new_inds:
         print(f"  new indicators: {', '.join(new_inds[:8])}{' …' if len(new_inds) > 8 else ''}")
+    if failed_hosts:
+        print(f"  failed to collect: {', '.join(failed_hosts[:12])}{' …' if len(failed_hosts) > 12 else ''}"
+              f" — this round cannot read as convergence")
     return 0
 
 
@@ -162,8 +198,8 @@ def cmd_status(args):
               f"{r['new_indicators']:>6}   {r['ts']}")
     stale = args.stale
     recent = rounds[-stale:]
-    converged = (len(rounds) >= stale and
-                 all(r["new_hosts"] == 0 and r["new_indicators"] == 0 for r in recent))
+    converged = is_converged(rounds, stale)
+    recent_failed = sorted({h for r in recent for h in (r.get("failed") or [])})
     print()
     if converged:
         print(f"VERDICT: \033[32mCONVERGED\033[0m — last {stale} rounds added nothing new. "
@@ -171,6 +207,10 @@ def cmd_status(args):
     elif len(rounds) < stale:
         print(f"VERDICT: \033[33mEXPANDING\033[0m — only {len(rounds)} round(s) so far; "
               f"need {stale} consecutive zero-growth rounds to call convergence.")
+    elif recent_failed:
+        print(f"VERDICT: \033[33mEXPANDING\033[0m — {len(recent_failed)} host(s) failed to "
+              f"collect; retry before calling convergence "
+              f"({', '.join(recent_failed[:8])}{' …' if len(recent_failed) > 8 else ''}).")
     else:
         win_h = sum(r["new_hosts"] for r in recent)
         win_i = sum(r["new_indicators"] for r in recent)
@@ -183,19 +223,29 @@ def cmd_status(args):
     return 0
 
 
-def main():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    # `convergence <CASE>` (documented, dispatched by scripts/backend/intel.py) omits the
+    # snapshot|status subcommand entirely — default it to `status` so a bare case id still works,
+    # while `convergence snapshot <CASE>` / `convergence status <CASE>` keep working unchanged.
+    if argv and argv[0] not in ("snapshot", "status", "-h", "--help"):
+        argv = ["status", *argv]
     ap = argparse.ArgumentParser(description="Investigation stop-condition / convergence tracker")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("snapshot", help="record a round and report new growth")
     s.add_argument("case")
+    s.add_argument("--failed", default="",
+                   help="comma-separated hosts that FAILED to collect this round (live fetch "
+                        "errored and no archive recovered it) — keeps the round from reading as "
+                        "convergence even if it also added no new hosts/indicators")
     s.set_defaults(fn=cmd_snapshot)
-    st = sub.add_parser("status", help="history + CONVERGED/EXPANDING verdict")
+    st = sub.add_parser("status", help="history + CONVERGED/EXPANDING verdict (default subcommand)")
     st.add_argument("case")
     st.add_argument("--stale", type=int, default=2,
                     help="# of consecutive zero-growth rounds that means converged (default 2)")
     st.add_argument("--budget-hosts", type=int, default=0, help="warn when host count hits this")
     st.set_defaults(fn=cmd_status)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     return args.fn(args)
 
 

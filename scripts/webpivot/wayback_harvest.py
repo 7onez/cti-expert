@@ -55,6 +55,10 @@ from pivot_extract import (  # noqa: E402
     VERIFICATION_META, extract_trackers, extract_meta, extract_saas,
     extract_crypto, extract_socials, extract_phones, uniq,
 )
+try:
+    import wp_wayback_guard  # noqa: E402 (WebPivot/tools now on sys.path via the pivot_extract shim)
+except Exception:  # noqa: BLE001
+    wp_wayback_guard = None
 
 try:
     from pivot_extract import urlscan_intel  # optional; needs URLSCAN_API_KEY
@@ -125,8 +129,24 @@ def harvest_html(html):
 def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urlscan=False,
                    root_only=False, include_assets=True, limit_scan=2000, urlscan_pages=3,
                    deadline=None, fetch_budget=None):
+    _breaker = wp_wayback_guard.blocked() if wp_wayback_guard is not None else None
+    if _breaker:
+        return {
+            "domain": domain, "snapshots_total": 0, "snapshots_scanned": 0, "span": None,
+            "records": [], "indicators": [],
+            "skipped": _breaker, "skipped_kind": "breaker",
+        }
+    cdx_report = {}
     snaps = cdx_snapshots(domain, year_from, year_to, limit_scan=limit_scan,
-                          root_only=root_only, include_assets=include_assets)
+                          root_only=root_only, include_assets=include_assets, report=cdx_report)
+    cdx_errors = cdx_report.get("errors") or []
+    if cdx_errors and not snaps:
+        # the archive never answered: a GAP (nothing queried), never "no history"
+        return {
+            "domain": domain, "snapshots_total": 0, "snapshots_scanned": 0, "span": None,
+            "records": [], "indicators": [],
+            "skipped": cdx_errors[0], "skipped_kind": "breaker",
+        }
     picked = sample_evenly(snaps, max_snaps)
     # `fetch_budget` (seconds) bounds only the snapshot-FETCH loop, started AFTER the CDX
     # enumeration above returns — so a slow enumeration on a heavily-archived domain cannot
@@ -174,6 +194,8 @@ def analyze_domain(domain, max_snaps=15, year_from=None, year_to=None, with_urls
         "snapshots_total": len(snaps),
         "snapshots_scanned": scanned,
         "span": [snaps[0][0], snaps[-1][0]] if snaps else None,
+        # the index row cap was hit: the span/sample is NOT the whole history (see cdx_snapshots)
+        "truncated": bool(cdx_report.get("truncated")),
         "records": records,
     }
 
@@ -259,6 +281,14 @@ def render_timeline(res):
              f"({res['snapshots_scanned']} of {res['snapshots_total']} snapshots scanned"
              + (f", {_fmt_ts(span[0])} → {_fmt_ts(span[1])})" if span else ")"),
              ""]
+    if res.get("skipped"):
+        lines.append(f"_Archive NOT queried — {res['skipped']}. This is a gap, not an empty "
+                     f"history: re-run later._")
+        return "\n".join(lines)
+    if res.get("truncated"):
+        lines.append("_Index row cap hit — this is NOT the whole capture history (the apex's newest "
+                     "captures were merged in). Narrow with --from/--to per era for full coverage._")
+        lines.append("")
     recs = [r for r in res["records"] if r["kind"] != "title"]
     if not recs:
         lines.append("_No selectors/IOCs found in sampled snapshots._")
@@ -312,6 +342,15 @@ def main():
                     help="max urlscan search pages to paginate (size 100 each)")
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("-o", "--out", help="write JSON output to file")
+    ap.add_argument("--all", dest="exhaustive", action="store_true",
+                    help="EXHAUSTIVE: download EVERY distinct capture (not a sample) across parallel "
+                         "exits, resumably (wp_wayback_exhaust). Hours for a big estate; --state to "
+                         "resume. Ignores --max; honours --from/--to/--html-only.")
+    ap.add_argument("--state", help="with --all: resumable state-file path")
+    ap.add_argument("--exits", help="with --all: comma list direct,pool,socks5h://host:port")
+    ap.add_argument("--case", help="with --all: case id (state under cases/<case>/deep-archive/)")
+    ap.add_argument("--no-urlscan", action="store_true",
+                    help="with --all: skip the urlscan scan/DOM pass (Wayback captures only)")
     args = ap.parse_args()
 
     if args.file:
@@ -321,6 +360,29 @@ def main():
         domains = [args.domain]
     else:
         ap.error("provide a domain or -f file")
+
+    if getattr(args, "exhaustive", False):
+        import wp_wayback_exhaust as WE
+        if len(domains) > 1:
+            ap.error("--all sweeps ONE domain (each is a multi-hour resumable job); run one per host")
+        sp = os.path.abspath(args.state or WE._default_state_path(WE._norm_host(domains[0]),
+                                                                  args.case, args.out))
+        if not WE._acquire_lock(sp):
+            print(json.dumps({"error": "another job owns this state file", **WE.job_status(sp)}))
+            raise SystemExit(3)
+        try:
+            res = WE.exhaust(domains[0], case=args.case, out=args.out, state_path=sp,
+                             include_assets=not args.html_only, year_from=args.yfrom,
+                             year_to=args.yto, exits_spec=args.exits,
+                             urlscan=not getattr(args, "no_urlscan", False),
+                             max_seconds=WE.DEFAULT_MAX_HOURS * 3600)
+        finally:
+            WE._release_lock(sp)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                json.dump(res, fh, ensure_ascii=False, indent=2 if args.pretty else None)
+        print(json.dumps(res, ensure_ascii=False, indent=2 if args.pretty else None))
+        return
 
     results = [analyze_domain(d, args.max, args.yfrom, args.yto, args.urlscan,
                               root_only=args.root_only, include_assets=not args.html_only,

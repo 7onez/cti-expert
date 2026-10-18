@@ -6,11 +6,11 @@ cld_api.py — one stdlib client for both ChongLuaDao premium APIs:
 
   • Feeds API   (https://feeds.chongluadao.vn)   — URL/phone/whois/burner checks,
     denylist search, and the deep AI URL analyzer.
-  • Threat-Intel API (https://api-ti.chongluadao.vn) — IoC analyzers (email,
-    password, url, ip, phone, bank-account, hash, asn), the full Data-Leaks module
-    (machines, stolen/exposed credentials, cookies, breaches, leaked-accounts +
-    device inventory, exposure, full-export — with async job start→poll), Brand-
-    Protection lookalikes, Threat-Feeds (CVE/KEV, actors, onion) and STIX/MISP feeds.
+  • Threat-Intel / Shield API (https://api-ti.chongluadao.vn) — IoC analyzers,
+    Data-Leaks (including internal-document leaks), Brand-Protection, ransomware
+    victims, ClickFix / PhaaS / Telegram, Threat-Feeds and STIX/MISP feeds.
+    Same key as Feeds. `route` calls both hosts so a miss on one is covered by
+    the other.
 
 EGRESS / OPSEC — your client connects ONLY to ChongLuaDao (feeds./api-ti.), never
 to the target. For `checkurl`, `analyze`, and `ioc url/ip`, CLD performs any target
@@ -22,17 +22,24 @@ Auth: the key rides ONLY in the `X-API-Key` header and is never logged or printe
 Resolution: env var  >  skill-root .env  >  keyless (fails with exit 3).
 Env vars (first hit wins): CHONGLUADAO_API_KEY, CLD_API_KEY, CHONGLUADAO_KEY, BURNER_API_KEY.
 
-Timeouts: harness the data to the fullest — the default per-call ceiling is 1800s
-(30 min) and async jobs poll up to that budget. A 403/404 returns immediately and is
+Timeouts: harness the data to the fullest — the default per-call ceiling is 5000s
+(~83 min) and async jobs poll up to that budget. A 403/404 returns immediately and is
 treated as SKIP (exit 0), so a batch/pivot continues instead of hard-failing.
 
 Output: a single JSON envelope on stdout —
   {"tool":"chongluadao","op":..,"input":..,"ok":bool,"status":int|null,
-   "skipped":bool,"result":<raw response>,"error":str|null}
+   "skipped":bool,"result":<raw response>,"error":str|null,"usage":{..}}
 Exit codes: 0 ok OR skipped(403/404/unsupported) · 2 other error · 3 no key.
 
+Usage ledger: the CLI (and the MCP `cld` tool, which runs this CLI) records EVERY actual HTTP
+request — each `route` leg, each async start AND status poll — to the shared api_usage ledger
+(provider=chongluadao, action=<feeds|ti>:<endpoint>). Units per endpoint come from cld_usage.json
+(an ESTIMATE: CLD publishes no pricing); a missing/broken file ledgers every call at 1 unit. No key
+or a failed pre-flight sends nothing and ledgers nothing. Importers (wp_cld, reputation_check)
+call `_request` directly and keep their own accounting: the ledger is off until `enable_ledger()`.
+
 Usage (see `--help` on any subcommand):
-  uv run cld_api.py route  https://scam-site.top          # auto-detect + best call
+  uv run cld_api.py route  https://scam-site.top          # Feeds + Shield together
   uv run cld_api.py leaked-accounts user@example.com --type email   # async start→poll
   uv run cld_api.py full-export example.com               # async bulk export
   uv run cld_api.py feed stix2 --observed-after 2026-01-01
@@ -81,7 +88,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FEEDS = "https://feeds.chongluadao.vn"
 TI = "https://api-ti.chongluadao.vn"
 UA = "cti-expert-cld/1.1"
-DEFAULT_TIMEOUT = 1800          # 30-min ceiling per call (harness all the data)
+DEFAULT_TIMEOUT = 5000          # ~83-min ceiling per call (harness all the data)
 STEP_TIMEOUT = 180              # per HTTP round-trip inside an async poll loop
 POLL_INTERVAL = 5               # seconds between async polls
 IOC_TYPES = ("email", "password", "url", "ip", "phone", "bank-account", "hash", "asn")
@@ -121,9 +128,104 @@ def _api_key():
     return None
 
 
+# ───────────────────────────────────────────────────────── usage ledger
+_USAGE_REF = os.path.join(HERE, "references", "cld_usage.json")
+_FALLBACK_UNITS = 1              # conservative: an unpriced call is never ledgered as free
+_TIER_OF = {FEEDS: "feeds", TI: "ti"}
+_LEDGER = None                   # None → off (library import); enable_ledger() turns it on
+
+
+def _units(value, default=_FALLBACK_UNITS):
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+    return value if ok else default
+
+
+def _load_usage():
+    """cld_usage.json, or a fallback that prices every call at _FALLBACK_UNITS (with a warning)."""
+    try:
+        with open(_USAGE_REF, "r", encoding="utf-8") as f:
+            ref = json.load(f)
+        if not isinstance(ref, dict) or not isinstance(ref.get("tiers"), dict):
+            raise ValueError("missing 'tiers' object")
+        return ref
+    except Exception as e:
+        print(f"[cld_api] WARNING: {os.path.basename(_USAGE_REF)} unusable ({type(e).__name__}: "
+              f"{e}); ledgering every ChongLuaDao call at {_FALLBACK_UNITS} unit.", file=sys.stderr)
+        return {"pricing": {"published": False, "basis": "estimate"}, "tiers": {}}
+
+
+def _path_matches(template, path):
+    want, got = template.strip("/").split("/"), path.strip("/").split("/")
+    return len(want) == len(got) and all(
+        w == g or (w.startswith("{") and w.endswith("}") and g) for w, g in zip(want, got))
+
+
+def _price(ref, base, path):
+    """(tier, action, units, kind) for one request, from the usage reference."""
+    tier = _TIER_OF.get(base, "unknown")
+    spec_tier = ref["tiers"].get(tier)
+    spec_tier = spec_tier if isinstance(spec_tier, dict) else {}
+    default = _units(spec_tier.get("default_units"))
+    endpoints = spec_tier.get("endpoints")
+    for template, spec in (endpoints.items() if isinstance(endpoints, dict) else ()):
+        if _path_matches(template, path):
+            spec = spec if isinstance(spec, dict) else {}
+            return (tier, str(spec.get("action") or template), _units(spec.get("units"), default),
+                    str(spec.get("kind") or "request"))
+    return tier, path, default, "request"
+
+
+def enable_ledger(sink, query=None):
+    """Ledger every subsequent `_request` of this process. `sink` is the api_usage module (or any
+    object with its `record` signature); None still counts calls for the envelope `usage` block."""
+    global _LEDGER
+    _LEDGER = {"sink": sink, "query": query, "ref": _load_usage(),
+               "calls": 0, "polls": 0, "units": 0, "by_tier": {}}
+
+
+def usage_summary():
+    """The envelope `usage` block: what this process actually sent. None while the ledger is off."""
+    if _LEDGER is None:
+        return None
+    pricing = _LEDGER["ref"].get("pricing") or {}
+    return {"calls": _LEDGER["calls"], "polls": _LEDGER["polls"],
+            "billable_units": _LEDGER["units"], "by_tier": _LEDGER["by_tier"],
+            "basis": pricing.get("basis") or "estimate",
+            "published_pricing": bool(pricing.get("published")),
+            "ledgered": _LEDGER["sink"] is not None}
+
+
+def _ledger(base, path, status, error):
+    if _LEDGER is None:
+        return
+    tier, action, units, kind = _price(_LEDGER["ref"], base, path)
+    ok = error is None and isinstance(status, int) and 200 <= status < 300
+    billed = units if ok else 0
+    _LEDGER["calls"] += 1
+    _LEDGER["polls"] += 1 if kind == "poll" else 0
+    _LEDGER["units"] += billed
+    row = _LEDGER["by_tier"].setdefault(tier, {"calls": 0, "billable_units": 0})
+    row["calls"] += 1
+    row["billable_units"] += billed
+    if _LEDGER["sink"] is not None:
+        try:
+            _LEDGER["sink"].record("chongluadao", f"{tier}:{action}", credits=units,
+                                   query=_LEDGER["query"], ok=ok)
+        except Exception as e:  # a ledger fault must never lose the vendor answer
+            print(f"[cld_api] WARNING: usage ledger write failed ({type(e).__name__})",
+                  file=sys.stderr)
+
+
 # ───────────────────────────────────────────────────────── HTTP core
 def _request(method, base, path, api_key, params=None, body=None, timeout=DEFAULT_TIMEOUT):
-    """Return (status, parsed_json_or_text, error). Key only in the header."""
+    """Return (status, parsed_json_or_text, error). Key only in the header. With the ledger on,
+    every attempted request is ledgered exactly once (a rejected one with ok=false, 0 credits)."""
+    status, result, error = _http(method, base, path, api_key, params, body, timeout)
+    _ledger(base, path, status, error)
+    return status, result, error
+
+
+def _http(method, base, path, api_key, params, body, timeout):
     url = base + path
     if params:
         clean = {k: v for k, v in params.items() if v is not None}
@@ -189,11 +291,13 @@ def _skipped(status):
     return status in (403, 404)
 
 
-def _emit(op, inp, status, result, error, pretty, skipped=False, raw=False):
+def _emit(op, inp, status, result, error, pretty, skipped=False, raw=False, usage=None):
     skipped = skipped or _skipped(status)
     ok = (not skipped) and error is None and status is not None and 200 <= status < 300
     env = {"tool": "chongluadao", "op": op, "input": inp, "ok": ok,
            "status": status, "skipped": skipped, "result": result, "error": error}
+    if usage is not None:
+        env["usage"] = usage
     if raw:
         # emit ONLY the provider body (loadable STIX/MISP/JSON) on success; on
         # skip/error write nothing to stdout so a `> file` redirect stays empty.
@@ -232,8 +336,118 @@ def _classify_local(v):
     return "unknown"
 
 
+def _host_of(value):
+    v = str(value or "").strip().lower()
+    v = v.split("://", 1)[-1].split("/")[0].split(":")[0].rstrip(".")
+    if v.startswith("www."):
+        v = v[4:]
+    return v
+
+
+def filter_host_hits(result, host):
+    """Keep only rows whose website/domain/url host is the target or its subdomain.
+    A free-text `q` hit is not a verdict. Returns (filtered, matched_count)."""
+    if not isinstance(result, dict):
+        return result, 0
+    want = _host_of(host)
+    key = next((k for k in ("items", "data", "results", "victims")
+                if isinstance(result.get(k), list)), None)
+    if not key or not want:
+        out = dict(result)
+        out["matched"] = 0
+        return out, 0
+    matched = []
+    for row in result[key]:
+        if not isinstance(row, dict):
+            continue
+        hosts = [_host_of(row.get(k)) for k in ("website", "domain", "url", "host", "hostname")]
+        if any(h == want or h.endswith("." + want) for h in hosts if h):
+            matched.append(row)
+    out = dict(result)
+    out[key] = matched
+    out["count"] = len(matched)
+    out["total"] = len(matched)
+    out["matched"] = len(matched)
+    out["unfiltered"] = len(result[key])
+    return out, len(matched)
+
+
+_WHOIS_SIGNAL_KEY_RE = re.compile(
+    r"registrar|registrant|regist(?:ered|ration)|creat(?:ed|ion)|expir|updat(?:ed)?|"
+    r"organi[sz]ation|\bowner\b|name.?server|\bns\d*\b|domain.?status", re.I)
+
+
+def _collect_whois_signal_values(node, out):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, (dict, list)):
+                _collect_whois_signal_values(v, out)
+            elif _WHOIS_SIGNAL_KEY_RE.search(str(k)):
+                out.append(v)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_whois_signal_values(item, out)
+
+
+def whois_has_signal(body) -> bool:
+    """True when a CLD checkwhois body carries at least one non-empty registrar/date/owner/name-
+    server field, anywhere in the structure. False only for an ALL-NULL body (registrar, dates,
+    owner and name servers all empty) — that is a MISS, not an answer, and the caller (wp_cld,
+    whois_enrich's `.vn` fallback chain) must treat it as such and fall back to RDAP/port-43 WHOIS.
+    An unrecognised shape (no signal-named key found at all, e.g. the API changed its field names)
+    returns True — this never GUESSES a miss out of a shape it has not seen before."""
+    if not isinstance(body, dict) or body.get("error"):
+        return True
+    values = []
+    _collect_whois_signal_values(body, values)
+    if not values:
+        return True
+    return any(v not in (None, "", [], {}) for v in values)
+
+
+def _side(status, result, error, host=None):
+    side = {"status": status,
+            "ok": error is None and isinstance(status, int) and 200 <= status < 300,
+            "result": result, "error": error, "hit": False, "matched": 0}
+    if host and side["ok"]:
+        filtered, n = filter_host_hits(result, host)
+        side["result"] = filtered
+        side["matched"] = n
+        side["hit"] = n > 0
+    return side
+
+
+def _search_side(status, result, error):
+    """A search-scoped list. The row url is where the document was found, not the target."""
+    side = _side(status, result, error)
+    if side["ok"] and isinstance(result, dict):
+        n = next((len(result[k]) for k in ("items", "data", "results")
+                  if isinstance(result.get(k), list)), 0)
+        side["matched"] = n
+        side["hit"] = n > 0
+        if isinstance(side["result"], dict):
+            side["result"] = dict(side["result"])
+            side["result"]["matched"] = n
+    return side
+
+
+def _telegram_handle(value):
+    m = re.search(r"(?:t\.me/|telegram\.me/)([A-Za-z0-9_]{4,})", value, re.I)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"@[A-Za-z0-9_]{4,}", value):
+        return value[1:]
+    return None
+
+
 def op_route(k, a):
+    """One indicator, both APIs, only the endpoints that match its type.
+    A list endpoint is a hit only when a row's host is the target, not a substring."""
     t = a.target.strip()
+    handle = _telegram_handle(t)
+    if handle:
+        a.handle = handle
+        return ("telegram", op_telegram(k, a))
     if re.fullmatch(r"(?i)cve-\d{4}-\d{4,}", t):
         a.cve = t
         return ("cve", op_vuln(k, a))
@@ -242,14 +456,37 @@ def op_route(k, a):
         return ("onion", op_onion(k, a))
     kind = (_classify(t) if _classify else _classify_local(t))
     ioc = CLASS_TO_IOC.get(kind)
-    if not ioc:
-        # no CLD IoC endpoint for this type — skip, never a blind metered ioc/url
+    sides = {}
+    if kind in ("url", "domain"):
+        a.url = t if "://" in t else "https://" + t
+        host = t.split("://", 1)[-1].split("/")[0]
+        sides["feeds_checkurl"] = _side(*op_checkurl(k, a))
+        a.q = host
+        a.search = host
+        sides["shield_ransomware"] = _side(*op_ransomware(k, a), host=host)
+        sides["shield_clickfix"] = _side(*op_clickfix(k, a), host=host)
+        sides["shield_phaas"] = _side(*op_phaas(k, a), host=host)
+        sides["shield_internal_leaks"] = _search_side(*op_internal_leaks(k, a))
+    elif kind == "email":
+        a.q = t.split("@", 1)[-1]
+        sides["feeds_burner"] = _side(*op_burner(k, a))
+    elif kind == "phone":
+        a.q = t
+        sides["feeds_checkphone"] = _side(*op_checkphone(k, a))
+    if ioc:
+        a.type, a.value = ioc, t
+        a.ai = getattr(a, "ai", False)
+        sides["shield_ioc"] = _side(*op_ioc(k, a))
+    if not sides:
         return (f"route/{kind}", (None, None,
-                f"'{kind}' has no ChongLuaDao IoC endpoint — skipped (no metered call). "
-                f"Use an explicit subcommand if this really is a checkable indicator.", True))
-    a.type, a.value = ioc, t
-    a.ai = getattr(a, "ai", False)
-    return (f"ioc/{ioc}", op_ioc(k, a))
+                f"'{kind}' has no ChongLuaDao endpoint on either API — skipped "
+                f"(no metered call).", True))
+    ok = any(s["ok"] for s in sides.values())
+    statuses = [s["status"] for s in sides.values() if s["status"] is not None]
+    status = 200 if ok else (statuses[0] if statuses else None)
+    err = None if ok else "; ".join(s["error"] for s in sides.values() if s["error"]) or None
+    skipped = (not ok) and bool(statuses) and all(_skipped(s) for s in statuses)
+    return (f"route/{kind}", (status, {"kind": kind, "sides": sides}, err, skipped))
 
 
 # ───────────────────────────────────────────────────────── Feeds ops
@@ -390,6 +627,37 @@ def op_onion(k, a):
                     params={"hostname": a.hostname}, timeout=a.timeout)
 
 
+def op_ransomware(k, a):
+    p = {"q": getattr(a, "q", None), "group": getattr(a, "group", None),
+         "country": getattr(a, "country", None),
+         "limit": getattr(a, "limit", 50), "offset": getattr(a, "offset", 0)}
+    return _request("GET", TI, "/api/v1/ransomware/external/victims", k, params=p,
+                    timeout=a.timeout)
+
+
+def op_internal_leaks(k, a):
+    p = {"search": getattr(a, "search", None) or getattr(a, "q", None),
+         "severity": getattr(a, "severity", None),
+         "limit": getattr(a, "limit", 50), "offset": getattr(a, "offset", 0)}
+    return _request("GET", TI, DL + "/internal-leaks", k, params=p, timeout=a.timeout)
+
+
+def op_clickfix(k, a):
+    return _request("GET", TI, "/api/v1/threat-feeds/external/clickfix", k,
+                    params={"q": getattr(a, "q", None)}, timeout=a.timeout)
+
+
+def op_phaas(k, a):
+    return _request("GET", TI, "/api/v1/threat-feeds/external/phaas", k,
+                    params={"q": getattr(a, "q", None)}, timeout=a.timeout)
+
+
+def op_telegram(k, a):
+    return _request("GET", TI, "/api/v1/threat-feeds/external/telegram/posts", k,
+                    params={"q": getattr(a, "q", None), "handle": getattr(a, "handle", None)},
+                    timeout=a.timeout)
+
+
 def op_actor_usernames(k, a):
     # map a handle (a committer login, a Telegram/forum alias) to a tracked threat actor
     p = {"q": a.q, "limit": a.limit, "offset": a.offset}
@@ -427,7 +695,7 @@ def build_parser():
                                  "Global flags --pretty/--timeout go AFTER the subcommand.")
     sub = ap.add_subparsers(dest="op", required=True)
 
-    p = sub.add_parser("route", help="auto-detect indicator type and run the best call")
+    p = sub.add_parser("route", help="both APIs: Feeds check + Shield IoC (and ransomware/ClickFix for a domain)")
     p.add_argument("target"); p.add_argument("--ai", action="store_true")
 
     p = sub.add_parser("checkurl", help="Feeds: URL verdict vs CLD denylist/allowlist")
@@ -502,6 +770,18 @@ def build_parser():
     p.add_argument("--q"); p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
     p = sub.add_parser("onion", help="TI: check an .onion against the abuse blocklist")
     p.add_argument("hostname")
+    p = sub.add_parser("ransomware", help="Shield: ransomware victims by name, domain, or group")
+    p.add_argument("q"); p.add_argument("--group"); p.add_argument("--country")
+    p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
+    p = sub.add_parser("internal-leaks", help="Shield: leaked internal documents")
+    p.add_argument("search"); p.add_argument("--severity")
+    p.add_argument("--limit", type=int, default=50); p.add_argument("--offset", type=int, default=0)
+    p = sub.add_parser("clickfix", help="Shield: ClickFix lure sites")
+    p.add_argument("--q")
+    p = sub.add_parser("phaas", help="Shield: phishing-as-a-service kits")
+    p.add_argument("--q")
+    p = sub.add_parser("telegram", help="Shield: intercepted Telegram threat posts")
+    p.add_argument("--q"); p.add_argument("--handle")
     p = sub.add_parser("feed", help="TI: download indicator feed (STIX/MISP)")
     p.add_argument("format", choices=["stix2", "misp", "stix1"])
     p.add_argument("--limit", type=int, default=1000); p.add_argument("--type")
@@ -513,7 +793,7 @@ def build_parser():
         spx.add_argument("--raw", action="store_true",
                          help="emit only the provider body (loadable STIX/MISP/JSON), no envelope")
         spx.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                         help="per-call / async-budget ceiling in seconds (default 1800 = 30 min)")
+                         help="per-call / async-budget ceiling in seconds (default 5000 ≈ 83 min)")
     return ap
 
 
@@ -529,6 +809,8 @@ DISPATCH = {
     "vulns": op_vulns, "vuln": op_vuln, "actors": op_actors,
     "actor-usernames": op_actor_usernames, "incidents": op_incidents, "onion": op_onion,
     "feed": op_feed, "probe": op_probe,
+    "ransomware": op_ransomware, "internal-leaks": op_internal_leaks,
+    "clickfix": op_clickfix, "phaas": op_phaas, "telegram": op_telegram,
 }
 
 
@@ -539,8 +821,25 @@ def _input_label(a):
     return None
 
 
-def main():
-    a = build_parser().parse_args()
+def _usage_sink():
+    """The shared api_usage module, case-tagged from $WP_CASE_DIR; None (with a warning) if absent."""
+    tools = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import api_usage  # type: ignore
+    except Exception as e:
+        print(f"[cld_api] WARNING: api_usage ledger unavailable ({type(e).__name__}); "
+              "calls are counted in the envelope only.", file=sys.stderr)
+        return None
+    case_dir = os.environ.get("WP_CASE_DIR")
+    api_usage.set_context(case=os.path.basename(os.path.normpath(case_dir)) if case_dir else None,
+                          skill="cld")
+    return api_usage
+
+
+def main(argv=None):
+    a = build_parser().parse_args(argv)
     key = _api_key()
     if not key:
         print(json.dumps({"tool": "chongluadao", "op": a.op, "ok": False, "status": None,
@@ -548,13 +847,25 @@ def main():
                           "(set CHONGLUADAO_API_KEY / CLD_API_KEY, or run /apikeys set chongluadao)"},
                          ensure_ascii=False))
         return 3
+    if a.op in ("clickfix", "phaas") and not getattr(a, "q", None):
+        print(json.dumps({"tool": "chongluadao", "op": a.op, "ok": False,
+                          "error": "requires --q (a host). An unfiltered list is not a lookup."}))
+        return 2
+    if a.op == "telegram" and not (getattr(a, "q", None) or getattr(a, "handle", None)):
+        print(json.dumps({"tool": "chongluadao", "op": a.op, "ok": False,
+                          "error": "requires --q or --handle. An unfiltered list is not a lookup."}))
+        return 2
+    # pre-flight passed: from here every HTTP request this process sends is ledgered
+    enable_ledger(_usage_sink(), query=_input_label(a))
     if a.op == "route":
         op_name, tup = op_route(key, a)
         status, result, error = tup[0], tup[1], tup[2]
         skipped = tup[3] if len(tup) > 3 else False
-        return _emit(op_name, a.target, status, result, error, a.pretty, skipped, a.raw)
+        return _emit(op_name, a.target, status, result, error, a.pretty, skipped, a.raw,
+                     usage=usage_summary())
     status, result, error = DISPATCH[a.op](key, a)
-    return _emit(a.op, _input_label(a), status, result, error, a.pretty, raw=a.raw)
+    return _emit(a.op, _input_label(a), status, result, error, a.pretty, raw=a.raw,
+                 usage=usage_summary())
 
 
 if __name__ == "__main__":

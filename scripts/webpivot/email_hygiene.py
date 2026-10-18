@@ -153,7 +153,8 @@ ROLE_LOCALPARTS = frozenset({
     "office365", "google", "microsoft", "aws", "azure",
 })
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})$")
+# TLD: letters, or a punycode IDN TLD (`xn--p1ai` = .рф) — DNS returns IDN ccTLDs in that form.
+_EMAIL_RE = re.compile(r"^[^@\s]+@([A-Za-z0-9.-]+\.(?:[A-Za-z]{2,}|xn--[A-Za-z0-9-]+))$")
 
 
 # ── disposable signal ─────────────────────────────────────────────────────────

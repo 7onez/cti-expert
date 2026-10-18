@@ -8,10 +8,11 @@ the map, and the rules that keep the two from drifting.
 
 **cti-expert's own** (the collector + presentation + docs):
 - `SKILL.md` — the single skill entrypoint (there is exactly one SKILL.md in the repo)
-- `scripts/` — collectors (`scripts/webpivot/`), the backend dispatcher (`scripts/backend/`), report generators
+- `scripts/` — collectors (`scripts/webpivot/`), the backend dispatcher (`scripts/backend/`), report generators,
+  `register.sh` (Claude Code) + `register_agents.py` (`/cti` for every other coding agent)
 - `techniques/`, `handbook/`, `connectors/`, `analysis/`, `validation/`, `experience/`, `guides/`,
   `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
-  `assets/`, `codex/`, `output/`
+  `assets/`, `output/`
 - `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
   indicator classification + the shared collector core (`collect_core`)
 - `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports,
@@ -41,11 +42,15 @@ the map, and the rules that keep the two from drifting.
 **Vendored engine — one subtree** (`intel_engine/`, copied one-way from the `intel_engine`
 archive; that archive is **read-only**, cti-expert never writes back to it):
 - `intel_engine/harness/` — the pipeline brain (`cli.py`, `orchestrator.py`, `mcp_server.py`),
-  plus `audit.py` (what the model actually called), `case_scope.py` (intake + egress gate),
+  plus `audit.py` (what the model actually called; proposal digest gate), `case_scope.py` (intake +
+  egress gate), `proposal.py` (digest-bound approval), `schemas.py` (Assessment tiers + Plan),
   `sdk_compat.py` / `openai_backend.py` (run the loop on an open-weight backend) and
   `dashboard/` (loopback-only run inspector)
-- `intel_engine/tools/` — `intel.py` (deterministic pipeline), `case_state.py` (frontier/reopen),
-  `kb/*` (KB + correlation), `cert_overlap`, `case_store`, …
+- `intel_engine/tools/` — `intel.py` (deterministic pipeline), `case_state.py` (frontier/reopen +
+  `propose`; `ips_pending` = historical origin IPs from `WebPivot/tools/wp_origin_history.py`),
+  `selector_types.py`, `pivot_routes.py` (`corpus-search` dispatcher op),
+  `kb/*` (KB + correlation + `ingest_typed.py` + `references/rungs.json`), `cert_overlap`,
+  `case_store`, …
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
 - `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness|IntelShare/` —
   render, analysis, engagement and dissemination skills (their `SKILL.reference.md` are docs, not skill entrypoints —

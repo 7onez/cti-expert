@@ -98,6 +98,7 @@ CLI:
 """
 import argparse
 import copy
+import concurrent.futures
 import datetime
 import json
 import os
@@ -148,10 +149,12 @@ _INTELX_FALLBACK = {
     "plan_capabilities": {"none": {"search": False, "phonebook": False, "file_read": False}},
     # Deliberately the CONSERVATIVE minimum: a broken data file must not silently unlock a bigger
     # spend than the analyst signed up for.
-    "search_budget": {"monthly_searches": 500, "max_searches_per_run": 25, "warn_at_remaining": 50,
-                      "phonebook_costs": 5, "search_costs": 1, "block_when_exhausted": True},
+    "search_budget": {"daily_searches": 500, "monthly_searches": 500, "max_searches_per_run": 25,
+                      "warn_at_remaining": 50, "phonebook_costs": 5, "search_costs": 1,
+                      "block_when_exhausted": True},
     "result_limits": {"max_records": 200, "max_selectors": 500, "poll_attempts": 8,
-                      "poll_sleep_seconds": 1, "search_timeout_seconds": 5, "preview_lines": 8},
+                      "poll_sleep_seconds": 1, "search_timeout_seconds": 5, "preview_lines": 8,
+                      "max_concurrent_searches": 4, "http_timeout_seconds": 30},
     "ui_templates": {"search": "https://intelx.io/?s={term}", "phonebook": "https://phonebook.cz/?q={term}",
                      "signup": "https://intelx.io/signup"},
     # Fails CLOSED: with no readable policy the module clusters on nothing, which costs leads but
@@ -272,6 +275,7 @@ def _record(action: str, credits: int, query: str, results=None, ok: bool = True
 # `block_when_exhausted: true` makes the same thresholds strict.
 _RUN_SPENT = 0
 _MONTH_SPENT = None          # summed from the ledger once per process
+_DAY_SPENT = None            # summed from the ledger once per process (this UTC day)
 _WARNED = set()
 _BUDGET_LOCK = threading.Lock()
 
@@ -329,24 +333,65 @@ def month_spent(refresh: bool = False) -> int:
     return total
 
 
+def day_spent(refresh: bool = False) -> int:
+    """IntelX search units spent so far this UTC DAY, read from the shared api_usage ledger — every
+    tool and case, since the allowance is per ACCOUNT. Unreadable ledger -> 0 (never block work
+    because a log is missing)."""
+    global _DAY_SPENT
+    with _BUDGET_LOCK:
+        if _DAY_SPENT is not None and not refresh:
+            return _DAY_SPENT
+    day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    total = 0
+    try:
+        with open(_ledger_path(), encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or '"intelx"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("provider") == "intelx" and (rec.get("ts") or "").startswith(day):
+                    total += rec.get("credits") or 0
+    except FileNotFoundError:
+        total = 0
+    except Exception as exc:
+        print(f"[intelx] WARNING: could not read the usage ledger ({exc}); the daily guard is "
+              f"running on this process's spend only.", file=sys.stderr)
+        total = 0
+    with _BUDGET_LOCK:
+        _DAY_SPENT = total
+    return total
+
+
 def _spend(units: int) -> None:
-    global _RUN_SPENT, _MONTH_SPENT
+    global _RUN_SPENT, _MONTH_SPENT, _DAY_SPENT
     with _BUDGET_LOCK:
         _RUN_SPENT += units
         if _MONTH_SPENT is not None:
             _MONTH_SPENT += units
+        if _DAY_SPENT is not None:
+            _DAY_SPENT += units
 
 
 def budget_status() -> dict:
-    """Where the month's IntelX search allowance stands — the number to quote when reporting cost."""
-    limit = _budget("monthly_searches", "INTELX_MONTHLY_SEARCHES", 500)
-    run_cap = _budget("max_searches_per_run", "INTELX_MAX_SEARCHES_PER_RUN", 25)
+    """Where the IntelX search allowance stands — the numbers to quote when reporting cost."""
+    limit = _budget("monthly_searches", "INTELX_MONTHLY_SEARCHES", 15500)
+    day_limit = _budget("daily_searches", "INTELX_DAILY_SEARCHES", 500)
+    run_cap = _budget("max_searches_per_run", "INTELX_MAX_SEARCHES_PER_RUN", 50)
     spent = month_spent()
+    d_spent = day_spent()
+    now = datetime.datetime.now(datetime.timezone.utc)
     return {"monthly_searches": limit, "spent_this_month": spent,
             "remaining_this_month": max(0, limit - spent),
+            "daily_searches": day_limit, "spent_today": d_spent,
+            "remaining_today": max(0, day_limit - d_spent),
             "spent_this_run": _RUN_SPENT, "max_searches_per_run": run_cap,
             "ledger": _ledger_path(),
-            "month": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m")}
+            "day": now.strftime("%Y-%m-%d"),
+            "month": now.strftime("%Y-%m")}
 
 
 def _budget_block(cost: int, action: str):
@@ -357,16 +402,21 @@ def _budget_block(cost: int, action: str):
     but a cap that would have refused the call is printed once as an advisory and the call proceeds:
     the vendor's own 402/429 (already tri-state) becomes the real limit."""
     b = budget_status()
-    if b["remaining_this_month"] <= _budget("warn_at_remaining", default=50) and action not in _WARNED:
+    if (b["remaining_today"] <= _budget("warn_at_remaining", default=50)
+            or b["remaining_this_month"] <= _budget("warn_at_remaining", default=50)) and action not in _WARNED:
         _WARNED.add(action)
-        print(f"[intelx] ⚠ {b['remaining_this_month']} of {b['monthly_searches']} monthly search "
-              f"units left ({b['spent_this_month']} spent in {b['month']}). Spending {cost} on "
-              f"{action}.", file=sys.stderr)
+        print(f"[intelx] ⚠ {b['remaining_today']} of {b['daily_searches']} daily "
+              f"(+{b['remaining_this_month']} of {b['monthly_searches']} monthly) search units left "
+              f"({b['spent_today']} spent {b['day']}). Spending {cost} on {action}.", file=sys.stderr)
     reason = None
     if b["spent_this_run"] + cost > b["max_searches_per_run"]:
         reason = (f"per-run IntelX cap reached ({b['spent_this_run']}/{b['max_searches_per_run']} "
                   f"units spent this run; {action} needs {cost}). Raise INTELX_MAX_SEARCHES_PER_RUN "
                   f"for a run that genuinely needs it, or run the emitted selector in the web UI.")
+    elif cost > b["remaining_today"]:
+        reason = (f"daily IntelX allowance exhausted ({b['spent_today']}/"
+                  f"{b['daily_searches']} units on {b['day']}; {action} needs {cost}). Raise "
+                  f"INTELX_DAILY_SEARCHES if your plan is larger.")
     elif cost > b["remaining_this_month"]:
         reason = (f"monthly IntelX allowance exhausted ({b['spent_this_month']}/"
                   f"{b['monthly_searches']} units in {b['month']}; {action} needs {cost}). Raise "
@@ -383,31 +433,55 @@ def _budget_block(cost: int, action: str):
     return None
 
 
+def _store_memo(kind: str, ident: str, val) -> None:
+    """Write `val` into both the process cache and the on-disk per-CASE memo (wp_casememo)."""
+    with _MEMO_LOCK:
+        _MEMO[(kind, ident)] = val
+    try:
+        import wp_casememo
+        wp_casememo.put("intelx", f"{kind}|{ident}", val)      # errors are never memoised (put refuses)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _cache_get(kind: str, ident: str):
+    """The cached value for (kind, ident) — process cache first, then the on-disk per-CASE memo.
+    None when neither has it yet."""
+    with _MEMO_LOCK:
+        if (kind, ident) in _MEMO:
+            return copy.deepcopy(_MEMO[(kind, ident)])
+    try:
+        import wp_casememo
+        return wp_casememo.get("intelx", f"{kind}|{ident}")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _covers(cached, want_passes) -> bool:
+    """True when an already-cached SEARCH result already ran every pass THIS call needs — so a
+    narrower earlier ask (e.g. email-deep's `--logs-only`) never hides the general pass from a
+    later, broader one, and a broader earlier ask (the collector's default logs+general) always
+    satisfies a later narrower one."""
+    if not isinstance(cached, dict):
+        return False
+    if cached.get("skipped"):
+        return True    # authoritative: no key / soft selector / budget exhausted — asking again
+                        # hits the exact same wall, so the skip IS the cached answer
+    ran = {p.get("pass") for p in (cached.get("passes") or []) if p.get("ran")}
+    return set(want_passes) <= ran
+
+
 def _memoised(kind: str, ident: str, fn):
     """Run `fn()` once per (kind, ident) per process — AND once per CASE across the per-host collector
     subprocesses (wp_casememo under $WP_CASE_DIR): the estate's 25 hosts share one registrant e-mail,
     so without the on-disk half every host would buy the same search (and 5-credit phonebook) again.
     Hands back a private copy."""
-    key = (kind, ident)
-    with _MEMO_LOCK:
-        if key in _MEMO:
-            return copy.deepcopy(_MEMO[key])
-    try:
-        import wp_casememo
-        cached = wp_casememo.get("intelx", f"{kind}|{ident}")
-    except Exception:  # noqa: BLE001
-        cached = None
+    cached = _cache_get(kind, ident)
     if cached is not None:
-        with _MEMO_LOCK:
-            _MEMO[key] = cached
+        _store_memo(kind, ident, cached)     # promote a disk hit into the process cache too
         return copy.deepcopy(cached)
     val = fn()
-    with _MEMO_LOCK:
-        _MEMO[key] = val
-    try:
-        wp_casememo.put("intelx", f"{kind}|{ident}", val)      # errors are never memoised (put refuses)
-    except Exception:  # noqa: BLE001
-        pass
+    _store_memo(kind, ident, val)
     return copy.deepcopy(val)
 
 
@@ -617,12 +691,16 @@ STEALER_LOG_NOTE = (
     "item's metadata, never paste secrets into the case file.")
 
 
-def _plan_passes(buckets, logs_first=None):
+def _plan_passes(buckets, logs_first=None, general_pass=None):
     """The bucket-scoped passes to run for one selector, in order.
 
     An explicit `buckets` from the analyst is honoured verbatim — one pass, exactly what was asked
-    for. Otherwise the plan from `references/intelx.json -> search_plan` applies: the stealer logs
-    are queried in their OWN pass before the general one.
+    for, and (by design) kept OUT of the shared per-selector cache `search()` uses for the named
+    plan, since a one-off custom corpus must never downgrade a broader cached result. Otherwise the
+    plan from `references/intelx.json -> search_plan` applies: the stealer logs are queried in
+    their OWN pass before the general one. `logs_first`/`general_pass` override the plan's own
+    flags per call (this is how `--logs-only`/`--no-logs-first` reach it) while staying part of the
+    NAMED (shareable) plan — unlike an explicit `buckets` override.
 
     This is not cosmetic ordering. IntelX returns a bounded page, so on a long-exposed selector the
     recycled combolist rows fill it and the single infostealer-log record is truncated away before
@@ -633,10 +711,11 @@ def _plan_passes(buckets, logs_first=None):
         return [{"pass": "explicit", "buckets": list(buckets)}]
     first = [str(b) for b in (SEARCH_PLAN.get("first_pass_buckets") or []) if b]
     want_logs = SEARCH_PLAN.get("logs_first", True) if logs_first is None else bool(logs_first)
+    want_general = SEARCH_PLAN.get("general_pass", True) if general_pass is None else bool(general_pass)
     passes = []
     if want_logs and first:
         passes.append({"pass": "logs", "buckets": first})
-    if not passes or SEARCH_PLAN.get("general_pass", True):
+    if not passes or want_general:
         passes.append({"pass": "general", "buckets": []})
     return passes
 
@@ -667,7 +746,8 @@ def _search_once(norm, buckets, limit, media, datefrom, dateto, timeout):
 
 
 def search(term: str, maxresults: int = None, buckets: list = None, media: int = 0,
-           datefrom: str = "", dateto: str = "", timeout: int = 30, logs_first: bool = None):
+           datefrom: str = "", dateto: str = "", timeout: int = None, logs_first: bool = None,
+           general_pass: bool = None):
     """Search IntelX for one strong selector -> {'term','selector','records':[…],'by_bucket':{…}}.
 
     Runs the STEALER LOGS in their own pass first (see `_plan_passes`), then the general pass, and
@@ -676,11 +756,16 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
     empty `read_these` a real negative rather than a budget artefact. Pass `buckets` to override
     the plan, or `logs_first=False` for a single general pass.
 
+    Memoised ONCE PER SELECTOR PER CASE regardless of which pass-plan the caller wants (shared
+    between the collector's own enrich_result call and a later enrich/email-deep ask) — see
+    `_covers`. An explicit `buckets` override is the one exception and is never cached this way.
+
     Returns None with no key. `{"skipped": …}` when the selector is soft, the budget is spent, or
     the account is not entitled — in every one of those cases the emitted UI URL is still the
     deliverable, and the caller MUST NOT read the absence of records as an absence of hits."""
     if not intelx_configured():
         return None
+    timeout = int(timeout) if timeout is not None else int(RESULT_LIMITS.get("http_timeout_seconds", 30))
     cls, norm = classify_selector(term)
     ui = intelx_url(norm)
     if not cls:
@@ -689,7 +774,7 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
                 "term": term, "ui_url": ui}
     limit = int(maxresults or RESULT_LIMITS.get("max_records", 200))
     cost = int(SEARCH_BUDGET.get("search_costs", 1))
-    plan = _plan_passes(buckets, logs_first)
+    plan = _plan_passes(buckets, logs_first, general_pass)
 
     def run():
         out = {"term": norm, "selector": cls, "ui_url": ui, "passes": [],
@@ -759,8 +844,26 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
         if not recs:
             out["note"] = "IntelX ran the search and returned no records for this selector."
         return out
-    return _memoised("search", f"{norm}|{','.join(buckets or [])}|{limit}|"
-                               f"{'+'.join(p['pass'] for p in plan)}", run)
+    named_plan = not buckets   # an explicit analyst `--buckets` override is a one-off query, never
+                                # part of the shared per-selector cache (it must not downgrade a
+                                # broader collector/enrich result already cached for this selector)
+    if not named_plan:
+        return _memoised("search", f"{norm}|explicit|{','.join(buckets)}|{limit}", run)
+    # One search per SELECTOR per case — shared between the collector's own default (logs+general)
+    # pass and enrich/email-deep's later ask (often `--logs-only`), regardless of which bucket/pass
+    # plan each caller wants: keyed by the selector ALONE (not buckets/limit/passes), so a narrower
+    # later ask reuses the earlier broader result instead of re-buying it. A cached entry that ran
+    # FEWER passes than THIS call needs is not reused as-is — it is recomputed and the cache is
+    # upgraded, so the ordering can never go the other way and hide the general pass from a later,
+    # broader caller.
+    want = {p["pass"] for p in plan}
+    cached = _cache_get("search", norm)
+    if _covers(cached, want):
+        _store_memo("search", norm, cached)
+        return copy.deepcopy(cached)
+    val = run()
+    _store_memo("search", norm, val)
+    return copy.deepcopy(val)
 
 
 def phonebook(domain: str, target: str = "all", maxresults: int = None, timeout: int = 30):
@@ -940,6 +1043,9 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
     counts UNITS, so a cap of 10 buys 5 fully-searched selectors — or 10 log-only ones with
     `search_plan.general_pass` set false.
 
+    Every target is searched CONCURRENTLY (bounded by `result_limits.max_concurrent_searches`) —
+    one selector's poll loop no longer blocks every other selector in this same result behind it.
+
     Keyless / --free-only: nothing is queried and `result['intelx']` carries the capability
     statement instead, so the case file records that these indexes were NOT consulted."""
     cap = capability(free_only=free_only)
@@ -969,17 +1075,32 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
                                      "urls": pb.get("urls", [])[:50]}
             limit = max(0, limit)
 
-    for cls, value, piv in targets:
-        if limit <= 0:
-            out["skipped_for_budget"].append(value)
-            continue
-        before = budget_status()["spent_this_run"]
-        hits = search(value)
+    # Every distinct selector in this result is searched CONCURRENTLY, bounded by
+    # `result_limits.max_concurrent_searches` (reference DATA, never a spend cap) — one selector's
+    # 1-2 pass poll loop no longer blocks every OTHER selector in the same result behind it, which
+    # is what turned a handful of selectors into serial waits tens of seconds apart on a real run.
+    # `limit` still bounds how many of the (already priority-ordered) targets are dispatched at
+    # all — as a target COUNT now, not the old adaptive per-unit one, because concurrent dispatch
+    # cannot observe one target's actual spend before deciding the next; the per-run/day/month unit
+    # ledger is still enforced inside `search()` itself, thread-safely, at the point of spend.
+    to_run = targets if limit >= len(targets) else targets[:max(0, limit)]
+    out["skipped_for_budget"].extend(value for _cls, value, _piv in targets[len(to_run):])
+    workers = max(1, int(RESULT_LIMITS.get("max_concurrent_searches", 4)))
+    hits_by_value = {}
+    if to_run:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(to_run))) as ex:
+            futures = {ex.submit(search, value): value for _cls, value, _piv in to_run}
+            for fut in concurrent.futures.as_completed(futures):
+                value = futures[fut]
+                try:
+                    hits_by_value[value] = fut.result()
+                except Exception as e:  # noqa: BLE001 — a search thread must never take the run down
+                    hits_by_value[value] = {"error": str(e)[:200]}
+
+    for cls, value, piv in to_run:
+        hits = hits_by_value.get(value)
         if not isinstance(hits, dict):
             continue
-        # Charge what was ACTUALLY spent (a selector is normally two passes), so `limit` stays a
-        # unit budget and `skipped_for_budget` stays truthful about what was left unsearched.
-        limit -= max(1, budget_status()["spent_this_run"] - before)
         if piv is not None:
             piv.setdefault("live_results", {})["intelx"] = hits
         out["searched"].append({"selector": cls, "value": value,
@@ -1144,10 +1265,10 @@ def main():
         return 2
     elif args.cmd == "search":
         bk = [b.strip() for b in args.buckets.split(",") if b.strip()]
-        if args.logs_only and not bk:
-            bk = [str(b) for b in (SEARCH_PLAN.get("first_pass_buckets") or ["leaks.logs"])]
+        logs_only = bool(args.logs_only and not bk)
         out = search(args.term, maxresults=args.max, buckets=bk,
-                     logs_first=args.logs_first,
+                     logs_first=(True if logs_only else args.logs_first),
+                     general_pass=(False if logs_only else None),
                      datefrom=args.datefrom, dateto=args.dateto)
     elif args.cmd == "phonebook":
         out = phonebook(args.domain, target=args.target, maxresults=args.max)
@@ -1159,6 +1280,7 @@ def main():
     if args.cmd not in ("query", "budget"):
         b = budget_status()
         print(f"[intelx] spent {b['spent_this_run']} unit(s) this run · "
+              f"{b['remaining_today']}/{b['daily_searches']} left today · "
               f"{b['remaining_this_month']}/{b['monthly_searches']} left for {b['month']}",
               file=sys.stderr)
     if api_usage:

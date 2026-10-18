@@ -40,7 +40,7 @@ CC = {
     "60": ("Malaysia", (9, 10)), "61": ("Australia", (9, 9)), "62": ("Indonesia", (9, 12)),
     "63": ("Philippines", (10, 10)), "64": ("New Zealand", (8, 10)), "65": ("Singapore", (8, 8)),
     "66": ("Thailand", (9, 9)), "81": ("Japan", (10, 10)), "82": ("South Korea", (9, 10)),
-    "84": ("Vietnam", (9, 9)), "86": ("China", (11, 11)), "90": ("Turkey", (10, 10)),
+    "84": ("Vietnam", (9, 10)), "86": ("China", (11, 11)), "90": ("Turkey", (10, 10)),
     "91": ("India", (10, 10)), "92": ("Pakistan", (10, 10)), "95": ("Myanmar", (8, 10)),
     "212": ("Morocco", (9, 9)), "234": ("Nigeria", (10, 10)), "254": ("Kenya", (9, 9)),
     "351": ("Portugal", (9, 9)), "352": ("Luxembourg", (9, 9)), "353": ("Ireland", (9, 9)),
@@ -51,6 +51,11 @@ CC = {
     "855": ("Cambodia", (8, 9)), "856": ("Laos", (9, 10)), "886": ("Taiwan", (9, 9)),
     "971": ("UAE", (9, 9)), "972": ("Israel", (9, 9)), "977": ("Nepal", (10, 10)),
 }
+
+# Calling codes whose leading 0 is PART of the national number (Italian landlines keep it in
+# E.164: +39 06 …). Everywhere else in the table a leading 0 after the code is the domestic trunk
+# prefix written by habit (+84 0912 …, +44 (0)20 …) and is dropped.
+KEEPS_LEADING_ZERO = {"39"}
 
 
 def split_cc(digits):
@@ -69,15 +74,28 @@ def analyse(raw):
         return {"input": raw, "valid": False, "reason": "no digits"}
     if digits.startswith("00"):
         digits, had_plus = digits[2:], True
+    if not had_plus:
+        # No '+' or '00': the leading digits are a national number, not a calling code — reading
+        # `469-555-1234` as +46 (Sweden) is a guess that misattributes the number.
+        return {"input": raw, "e164": None, "digits": digits, "had_plus": False,
+                "national_number": digits, "valid": None,
+                "reason": "national number, country unknown — supply it in E.164 (+CC…) or "
+                          "with the 00 international prefix"}
 
     cc, (territory, rng) = split_cc(digits)
     out = {"input": raw, "e164": "+" + digits, "digits": digits, "had_plus": had_plus}
     if not cc:
-        out.update(valid=False,
-                   reason="no recognised country calling code — supply the number in E.164 (+CC…)")
+        out.update(valid=None,
+                   reason="calling code not in this tool's table — territory and length "
+                          "unchecked, not necessarily invalid")
         return out
 
     nsn = digits[len(cc):]
+    if nsn.startswith("0") and cc not in KEEPS_LEADING_ZERO:
+        # One trunk 0 — whether written bare (+84 0912 …) or bracketed (+44 (0)20 …).
+        nsn = nsn[1:]
+        digits = cc + nsn
+        out.update(e164="+" + digits, digits=digits, trunk_prefix_stripped=True)
     lo, hi = rng
     length_ok = lo <= len(nsn) <= hi
     out.update(country_code=cc, territory=territory, national_number=nsn,
@@ -129,8 +147,10 @@ def main():
         if r.get("valid"):
             print(f"{r['e164']}: {r['territory']} — NSN {r['national_number']} "
                   f"({r['national_length']} digits)", file=sys.stderr)
+        elif r.get("valid") is None:
+            print(f"{r.get('e164') or r['input']}: UNVERIFIED — {r.get('reason')}", file=sys.stderr)
         else:
-            print(f"{r.get('e164', r['input'])}: INVALID — {r.get('reason')}", file=sys.stderr)
+            print(f"{r.get('e164') or r['input']}: INVALID — {r.get('reason')}", file=sys.stderr)
     print("  carrier / line type NOT determined (needs a metered lookup) — see not_determined",
           file=sys.stderr)
     txt = json.dumps(out, indent=2 if a.pretty else None, ensure_ascii=False)

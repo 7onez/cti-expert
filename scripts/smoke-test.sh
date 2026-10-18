@@ -62,6 +62,30 @@ else
 fi
 command -v dot >/dev/null 2>&1 && ok "graphviz dot (cloud architecture figure)" || info "graphviz not installed (cloud figure auto-skips)"
 
+echo "▶ Moli DOM renderer (default install): binary resolves and executes page JavaScript"
+# The engine's own driver (wp_moli.fetch_dom) against a loopback page whose content exists only
+# after its script runs — proves the binary, the argv and the JSON contract, not just --version.
+moli_out="$(python3 - "$SKILL_DIR/intel_engine/WebPivot/tools" <<'PY' 2>&1
+import http.server, sys, threading
+sys.path.insert(0, sys.argv[1])
+import wp_moli
+if not wp_moli.moli_configured():
+    print("MISSING moli binary (install.sh default step; set MOLI_BIN if installed elsewhere)"); sys.exit(1)
+page = (b"<html><body><div id=a>static</div><script>document.getElementById('a').textContent="
+        b"'rendered-'+(6*7)</script>" + b"<p>" + b"pad " * 60 + b"</p></body></html>")
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(page))); self.end_headers(); self.wfile.write(page)
+    def log_message(self, *a): pass
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+d = wp_moli.fetch_dom(f"http://127.0.0.1:{srv.server_address[1]}/")
+print(d["renderer"] if d["status"] == 200 and "rendered-42" in d["html"] else f"NO-JS status={d['status']}")
+PY
+)"
+if echo "$moli_out" | grep -q "^moli "; then ok "$moli_out renders post-JS DOM"; else bad "Moli DOM render: $(echo "$moli_out" | tail -1)"; fi
+
 echo "▶ IBAN validator: accepts a known-good account, rejects a mutated checksum"
 if uv run "$S/iban_analyze.py" GB29NWBK60161331926819 2>/dev/null | grep -q "VALID" \
    && uv run "$S/iban_analyze.py" GB29NWBK60161331926818 2>/dev/null | grep -q "INVALID"; then

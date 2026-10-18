@@ -81,7 +81,7 @@
 | [**Netlas**](https://netlas.io) | Independent internet-asset index — DNS, scan responses, WHOIS and certificate collections behind one key; `domains a:<origin-ip>` reverses a non-CDN origin to every apex with dates | `/webpivot` MO-neighbour source · `intel.py netlas` · entitlement probe |
 
 > [!IMPORTANT]
-> **ANY.RUN lookups are read-only; detonation is gated.** `anyrun_lookup` queries TI Lookup for hashes that have *already* been detonated. `anyrun_submit` can detonate a file or URL, but only behind a per-submission analyst confirmation (a briefing-then-`confirm=true` two-step), private-by-default privacy with `public` refused, a fail-closed plan check (the account's own `/user` private quota — zero is denied outright — else a prior private task, else an explicit analyst attestation to a paid plan), a post-submit privacy read-back that withdraws and flags a task that still landed public, and a harness deny unless `HARNESS_ALLOW_SUBMIT=1`. A public sandbox task is world-readable and irreversible; the gate is enforced by a regression test ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), not just by convention.
+> **ANY.RUN lookups are read-only; case binary submissions are automatic when keyed.** `/cti` downloads APK/installer links to `cases/<case>/bin/`, runs static analysis and, when `ANYRUN_API_KEY` is set in a spending run, submits each complete file through the private-by-default sandbox client. `--free-only`, case `no_spend`, default `loop` (unless `--full`) and hostile/no-direct-contact posture block submission; plan checks and privacy read-back still apply. A public-only account is refused unless `ANYRUN_ALLOW_PUBLIC=1`; public tasks are world-readable and irreversible. Direct `anyrun_submit` remains ask-first and requires `HARNESS_ALLOW_SUBMIT=1`. See [`SKILL.md`](SKILL.md) and [`tests/test_binary_auto.py`](tests/test_binary_auto.py).
 
 <sub>Listing here reflects support for the project and does <b>not</b> imply affiliation, endorsement, or any verification of this tool by the organisations named. Integrations marked above are optional and key-gated — <b>every core technique still runs with zero API keys</b>. Always respect each provider's terms of service. The full list of open-source projects and free public-interest services this skill depends on is in <a href="#-acknowledgments--credits">Acknowledgments &amp; Credits</a>.</sub>
 
@@ -166,6 +166,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 | Category | What's New | Details |
 |----------|-----------|---------|
+| **Cross-type auto-pivot loop** | Every selector type is a frontier node; metered spend stays behind one digest-bound approval | Typed nodes (`selector_types` + `rungs.json` owner/kit/neighbour) → `case_state.propose` → required Plan phase (`PLAN_TOOLS`, read-only) → auto free/urlscan pivots with ≤ **N=25** hits, else `proposal.json` gated in `audit.gate` (`harness approve` · `case_approve` · TTY). Dispatcher ops `propose` + `corpus-search` (`corpus_search` tool). Assessment gains additive `kit_siblings` / `neighbours` / `mentions` — collected, never attributed. Rail: collecting ≠ attributing |
 | **MO-neighbour pivot** | Reverse a non-CDN origin to its co-tenants — and only ever seed on a registrant join key | `wp_mo_neighbours.discover` reverses the estate's non-CDN origin IP (also the MX origin) through **Netlas · Validin · urlscan**, WHOIS-verifies each candidate apex, and classifies it `same_registrant` (current registrant e-mail/phone join key only — a proxied record contributes **no** phone) / `same_mo` (reference-data policy) / `unrelated` / `unverifiable`. **Only `same_registrant` seeds the frontier**; same-MO personas render as a rung-10 *Related personas* table in the report (`--mask-personas` to aggregate). A bulk-hosting guard fires *before* any spend; per-origin lock + disk cache + a per-run WhoisXML ledger hold across collector subprocesses, so an origin is bought once per case. RULE 5 rails intact: facts-only KB ingest, never an edge, never an `operator_lead` |
 | **WHOIS eras · urlscan Pro lifecycle** | The timeline now knows who held the name *before* this operator | WHOIS history is an explicit `--whois-history purchase` scoped to seeds and cluster members (the render path never buys it); the house report renders a **Registrant eras** table (same-day flaps folded, registrar placeholders classed) and uses the current era's start as the archive-capture cutoff. urlscan **Pro** supplies the hostname lifecycle index — A/NS eras, CT and zonefile firsts, left-censored on a truncated walk — feeding the temporal view; verdict rows appear only on signal, and the API key is sent to urlscan.io only |
 | **Entitlement measured, not assumed** | A key measured *free* skips the calls that would 403 | `wp_capabilities.discover_plans` probes each vendor's **free account endpoint** (urlscan quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`, Validin `/api/paths`) once per case into `cases/<id>/capability_plans.json`; `enrich_live` reads the store and gates **only on a positive `free`** verdict — unknown keeps the productive call as the probe. Censys search records its own verdict. A failed probe is reported this run and never frozen, so the next process re-measures |
@@ -177,6 +178,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 | **ChongLuaDao in the pipeline · subdomains · one timeout ceiling** | The first-party feeds grade every host, live subdomains join the case, and no call hangs a run | `wp_cld.py` runs per collected host inside `enrich_live` — denylist verdict + IoC analysis land as **reputation facts** (never a cluster edge) and CLD WHOIS is the **primary source for `.vn`** names. `subdomain_enum` unions subfinder (auto-keyed from `.env`), amass, assetfinder and findomain, DNS-verifies the names into `cases/<id>/subenum/<apex>.json`, and the frontier queues the **live** ones for the next round (hoster plumbing is a fact, not a seed). A single per-call ceiling — `CTI_CALL_TIMEOUT`, default **1800 s** from `WebPivot/references/timeouts.json` — floors every fetch, vendor call, collector and renderer subprocess; raw DNS/TLS probes keep their fail-fast bounds, and a running MCP server keeps its value until restarted |
 | **Registrable apexes · landlord IPs · kit binders** | The frontier and the KB agree on what an apex is and which IP is a landlord | A vendored **Public Suffix List** (`public_suffix_list.json`, `wp_psl_update.py`) drives one `_registrable()` reducer, so `shop.id.vn` and `panel.co.uk` fold to the right apex everywhere — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) is the **one** number that marks an IP as shared/bulk hosting: its `hosted_on` edges become facts, the cluster partition ignores them, and co-tenants are held back as leads. Expansion depth is anchored: a host owner-linked to a *previous hop* is `related_hosts`, never a member. Scraped social links resolve to the **account** — per-network reserved paths, second-segment routers and library/vendor credit accounts are reference data, and a bare platform apex (`t.me`, `facebook.com`) is never a handle |
 | **Blueprint folds to apex level** | A hundred-host estate no longer silently drops the HTML report's architecture tab | Archify's architecture type draws ≤ 12 nodes · 18 edges, so [`cti_archify.py`](scripts/cti_archify.py) now **collapses hosts under their registrable apex** (`Estate · N hosts`), folds the long tail into `+N more apexes`, ranks finding-bearing apexes first and places the operator hub mid-row with spokes above and below. `CTI_ARCHIFY=1` (auto: full graph if it fits, else the fold) · `force` (the widest 25-node grid) · `0`; `--plan` prints both outcomes offline, and every HTML export now confirms the Blueprint mode first (Step C — `--yolo` keeps Auto). Locked by [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
+| **`/cti` on every coding agent** | One registration step wires the commands into every agent on the machine, not only Claude Code | [`scripts/register_agents.py`](scripts/register_agents.py) (run by `register.sh`) registers the 9 commands with **omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf** and installs `/cti` as the shared `~/.agents/skills/cti` skill for **Cursor · Copilot CLI** (`/cti`), **Codex** (`$cti` — Codex removed custom prompts in 0.117, so the old `codex/cti-expert.md` is gone) and the **ChatGPT desktop app** (`@cti`). Every file is a pointer stub to this clone, so a `git pull` updates all agents at once. Install and `--uninstall` touch only what they wrote — marked stubs, and `~/.claude` symlinks that resolve into this repo — never a same-named command or skill of yours. Locked by [`tests/test_register_agents.py`](tests/test_register_agents.py) |
 
 <details>
 <summary><b>What's New in v2.11</b></summary>
@@ -504,19 +506,21 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 ---
 
-### Step 3 &mdash; Register the commands with Claude Code
+### Step 3 &mdash; Register the commands with Claude Code and every other agent
 
-`install.sh` installs the OSINT *tools*. This one-time step wires the **skill, the 9 `/cti*` slash commands, and the MCP tools** into Claude Code so they work from a cold prompt in any project — it symlinks `commands/*.md` into `~/.claude/commands/` and writes the per-machine `.mcp.json`. It's idempotent, so it's safe to re-run after a `git pull`.
+`install.sh` installs the OSINT *tools*. This one-time step wires the **skill, the 9 `/cti*` slash commands, and the MCP tools** into Claude Code so they work from a cold prompt in any project — it symlinks `commands/*.md` into `~/.claude/commands/` and writes the per-machine `.mcp.json`. It then registers `/cti` with every other coding agent it detects on the machine (see [Use in other agents](#use-in-other-agents-codex--chatgpt--cursor--gemini--omp--pi-)). It's idempotent, so it's safe to re-run after a `git pull`.
 
 ```bash
-# Register the skill + 9 commands + write the per-machine .mcp.json
+# Register the skill + 9 commands + write the per-machine .mcp.json + other detected agents
 bash ~/.claude/skills/cti-expert/scripts/register.sh
 
 # Recommended: install the built-in deep-pipeline (intel_engine) deps once
 cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
 ```
 
-> **Windows (native PowerShell):** run `register.sh` from **Git Bash or WSL** — it uses symlinks. Then, on every platform, **restart Claude Code** so the skill and commands load at startup.
+> **Windows (native PowerShell):** run `register.sh` from **Git Bash** — its `~` is `%USERPROFILE%`, where Windows-native Claude Code, Codex, Cursor, Gemini … read their config. **Not WSL:** inside WSL `~` is the Linux home, so a WSL run registers only agents that themselves run inside WSL. Git Bash's `ln -s` silently copies by default, so `register.sh` asks for real Windows symlinks (they need **Developer Mode** or an admin shell) and, when Windows refuses, writes pointer stubs instead — either way the commands follow `git pull`; enable Developer Mode and re-run to upgrade stubs to links. Stubs and the other agents need Python 3.10+ — the repo `.venv` (`.venv\Scripts\python.exe`), `python3`, `python` or the `py` launcher, tried in that order; if none runs, `register.sh` prints **Registration INCOMPLETE** and exits 1 instead of claiming success. The other-agent step alone also runs natively with `py scripts\register_agents.py`. Then, on every platform, **restart each agent** so the skill and commands load at startup.
+
+> **Uninstall:** `bash scripts/register.sh --uninstall` removes the Claude Code links that point into this clone and every stub `register_agents.py` wrote. A same-named command or skill you wrote yourself is never touched — on install or on uninstall.
 
 <details>
 <summary><b>Alternative — install as a Claude Code plugin (skill + commands + MCP + safety hooks in one unit)</b></summary>
@@ -552,26 +556,38 @@ claude              # open Claude Code CLI, then type:
 /cti example.com    # …or just start investigating
 ```
 
-> `/cti-status` confirms the backend, MCP tools, and API-credit balances in one shot. If the `/cti*` commands aren't recognized, re-run **Step 3** (`register.sh`) and restart Claude Code. You can also type `/cti-expert` to load the skill directly, then describe your goal in plain English.
+> `/cti-status` confirms the backend, MCP tools, and API-credit balances in one shot. If the `/cti*` commands aren't recognized, re-run **Step 3** (`register.sh`) and restart the agent; `python3 scripts/register_agents.py --list` shows which agents were detected and where each command lives. In Codex the command is `$cti`. You can also type `/cti-expert` (Claude Code) to load the skill directly, then describe your goal in plain English.
 
 ---
 
-### Use in ChatGPT / Codex (cross-agent)
+### Use in other agents (Codex · ChatGPT · Cursor · Gemini · omp · pi …)
 
-CTI Expert is portable: the analyst logic is plain Markdown and the scripts are OS-detecting Python/shell, so it runs in **OpenAI Codex** (and other [`AGENTS.md`](AGENTS.md)-aware agents), not just Claude Code.
+CTI Expert is portable: the analyst logic is plain Markdown and the scripts are OS-detecting Python/shell, so it runs in any [`AGENTS.md`](AGENTS.md)-aware coding agent, not just Claude Code. [`scripts/register_agents.py`](scripts/register_agents.py) (run by `register.sh`) registers `/cti` with every agent it detects:
+
+| Agent | Registered as | Invoke |
+|---|---|---|
+| oh-my-pi (omp) | `~/.omp/agent/commands/cti*.md` | `/cti example.com` |
+| pi | `~/.pi/agent/prompts/cti*.md` | `/cti example.com` |
+| OpenCode | `~/.config/opencode/commands/cti*.md` | `/cti example.com` |
+| Gemini CLI | `~/.gemini/commands/cti*.toml` | `/cti example.com` |
+| Qwen Code | `~/.qwen/commands/cti*.md` | `/cti example.com` |
+| Factory droid | `~/.factory/commands/cti*.md` | `/cti example.com` |
+| Windsurf | `~/.codeium/windsurf/global_workflows/cti*.md` | `/cti example.com` |
+| Cursor · GitHub Copilot CLI | agent skill `~/.agents/skills/cti/` | `/cti example.com` |
+| OpenAI Codex (CLI / IDE) | the same agent skill | `$cti example.com` — Codex removed custom prompts in 0.117 and invokes skills with `$`, never `/` |
+| ChatGPT desktop app | the same agent skill | `@cti example.com` |
 
 ```bash
-# 1. Clone the skill anywhere
-git clone https://github.com/7onez/cti-expert.git
-
-# 2a. In-repo: open Codex inside the clone — it auto-loads AGENTS.md. Then ask it to follow SKILL.md.
-# 2b. Slash command: copy the bundled Codex prompt so /cti-expert works in the Codex CLI/IDE
-cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: copy to %USERPROFILE%\.codex\prompts\
+python3 scripts/register_agents.py --list            # which agents are detected, and where each stub goes
+python3 scripts/register_agents.py --host all        # register for every agent, installed or not
+python3 scripts/register_agents.py --host gemini,pi  # just these
+python3 scripts/register_agents.py --uninstall       # remove every stub this script wrote
 ```
 
+- Command-file agents get all 9 commands; the shared-skill agents get `/cti` (its single entry point). Each stub is a short pointer to this clone's `commands/<cmd>.md` and `SKILL.md` by absolute path, so a `git pull` updates every agent at once — re-run only after moving the clone or adding a command. A same-named file you wrote yourself is never overwritten or removed.
 - **[`AGENTS.md`](AGENTS.md)** is the cross-agent runtime contract (OS detection, uv, paths). Codex auto-concatenates it from the repo root; you can also reference it from `~/.codex/AGENTS.md`.
-- **`codex/cti-expert.md`** is a ready-to-copy custom prompt → gives Codex a `/cti-expert <target>` slash command.
-- **Plain ChatGPT (no code execution):** the reasoning, query generation, and report drafting all work (load `SKILL.md`/`AGENTS.md` as instructions or Custom-GPT knowledge); only local steps (DOCX build, CLI tool runs) need a code-capable harness like Codex or Claude Code.
+- **MCP tools** for Codex and omp: `python3 scripts/backend/intel.py mcp --host codex|omp|all --write`. Without them every command still runs through the CLI dispatcher (Tier 2).
+- **Plain ChatGPT on the web (no code execution):** there is no slash-command registry; the reasoning, query generation, and report drafting all work (load `SKILL.md`/`AGENTS.md` as instructions or Custom-GPT knowledge); only local steps (DOCX build, CLI tool runs) need a code-capable harness.
 
 > Paths are resolved relative to the skill directory (the folder containing `SKILL.md`), so nothing assumes the Claude-specific `~/.claude/skills/` location.
 
@@ -598,13 +614,14 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
    ```bash
    bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT tools
-   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 9 commands + MCP
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 9 commands + MCP + other agents
    ```
 
-   Or on Windows PowerShell (Python deps only; run `register.sh` from Git Bash/WSL):
+   Or on Windows PowerShell (Python deps + the other agents; run `register.sh` from Git Bash — not WSL — for the Claude Code links):
 
    ```powershell
    pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   py "$env:USERPROFILE\.claude\skills\cti-expert\scripts\register_agents.py"   # /cti for the other agents
    ```
 
 5. **Restart Claude Code Desktop** &mdash; Close and reopen the app
@@ -641,9 +658,9 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 # 1 — install the tools (Linux/macOS): Python + ffmpeg + Node + all OSINT tools
 git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
 bash ~/.claude/skills/cti-expert/scripts/install.sh
-# 2 — register the skill + 9 /cti* commands + MCP with Claude Code, then RESTART Claude Code
+# 2 — register the skill + 9 /cti* commands + MCP with Claude Code and every other agent found, then RESTART them
 bash ~/.claude/skills/cti-expert/scripts/register.sh
-#     (Windows: run register.sh from Git Bash / WSL — it uses symlinks. Restart Claude Code after.)
+#     (Windows: run register.sh from Git Bash, not WSL — WSL's ~ is the Linux home. Codex: the command is $cti.)
 # 3 — investigate anything (keyless, runs to closure):
 /cti example.com
 # 4 — optional: unlock reverse pivots + image vision
@@ -651,13 +668,13 @@ bash ~/.claude/skills/cti-expert/scripts/register.sh
 /apikeys set gemini <KEY>     # image OCR, sign/landmark read, A-V transcription
 ```
 
-Windows, `--all`, and Codex variants: see [Installation](#installation).
+Windows, `--all`, and other-agent variants (Codex · ChatGPT · Cursor · Gemini · omp · pi …): see [Installation](#installation).
 
 ### How commands work — read this first
 
 There is **one command to remember: `/cti <target>`.** It looks at what you gave it — a domain, IP, email, username, phone, wallet, hash, or APK — and runs the right chain automatically. That's usually all you need.
 
-Under it sit **9 registered commands** that Claude Code recognizes from a cold prompt in any project (no need to load the skill first):
+Under it sit **9 registered commands** that Claude Code and every command-file agent `register.sh` wired (omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf) recognize from a cold prompt in any project, with no need to load the skill first. Cursor, Copilot CLI, Codex (`$cti`) and the ChatGPT desktop app (`@cti`) get the entry point `/cti` itself:
 
 | Command | What it does |
 |---------|--------------|
@@ -1301,7 +1318,7 @@ cti-expert/
 ├── SKILL.md                    The single skill entrypoint — commands & tradecraft
 ├── README.md                   This file  ·  README.vi.md · README.zh-CN.md
 ├── STRUCTURE.md                Authoritative layout + anti-drift rules
-├── AGENTS.md                   Cross-agent runtime contract (Claude Code + Codex)
+├── AGENTS.md                   Cross-agent runtime contract (every AGENTS.md-aware coding agent)
 ├── CLAUDE.md                   Contributor rules (loads only when building the repo)
 │
 ├── commands/                   9 registered slash commands — work from a cold prompt
@@ -1319,6 +1336,7 @@ cti-expert/
 │   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
 │   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF (charts, diagrams, cover page)
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
+│   ├── register.sh · register_agents.py   /cti for Claude Code · every other coding agent
 │   ├── install.sh · install.ps1      All-in-one cross-platform installer
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
@@ -1333,7 +1351,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (79 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (87 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
@@ -1461,7 +1479,7 @@ CTI Expert stands on the shoulders of the open-source community and free, public
 | Category | Projects & free services we're grateful to |
 |----------|---------------------------------------------|
 | **Agents & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) |
-| **Browser & web collection** | [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
+| **Browser & web collection** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
 | **Username, people & social** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
 | **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
 | **Domains, DNS, certificates & infrastructure** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) |

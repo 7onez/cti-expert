@@ -23,5 +23,66 @@
     "_comment": "Result `labels` that describe page STRUCTURE / hosting class, not a finding (measured on a benign example.com result: domain.apexdomain, content.rootdir, hosting.cdn). A verdict row for the evidence ledger is emitted only on SIGNAL — malicious (overall or engines), overall score > 0, a brand match, or a label outside this set — so a benign estate host never fills Appendix B with non-evidence. Add a label here when it shows up on benign scans; never remove a `visual.*`/`threat.*`-class label.",
     "structural_labels": ["domain.apexdomain", "domain.subdomain", "content.rootdir", "content.index",
                           "hosting.cdn", "hosting.cloud", "hosting.shared", "tls.valid", "http.redirect"]
+  },
+  "dom_assets": {
+    "_comment": "Bounds for wp_net.urlscan_dom_assets: when a page is recovered from a urlscan DOM capture (the live site is unreachable), fetch that SAME scan's own stored JS/CSS responses (data.requests[].response.hash -> /responses/<sha256>/) so the asset layer (extract_api_endpoints / extract_app_downloads) still has bundle text to read instead of the empty result a failed same-origin fetch would otherwise leave. max_resources bounds the /responses/ fetch count (each is a licensed call under an API key); extensions/mime_prefixes select which of the scan's requests are worth fetching.",
+    "max_resources": 20,
+    "extensions": [".js", ".mjs", ".css"],
+    "mime_prefixes": ["javascript", "css", "json"]
+  },
+  "field_search": {
+    "_comment": "Pro content-index FIELDS the cross-type auto-pivot loop may query via wp_recon.urlscan_field_query. `fields` maps a pivot_map route short-name (or the corpus field itself) to the Lucene field key urlscan accepts. page.title / filename / files.filename / hash are free-or-Pro; text.content, content.identifiers.*, links.domains, frames.domains, websockets.domains, dom.hash, text.hash need Pro. TRON wallets are NOT an identifier type — they go through text.content. Edit here when urlscan adds a field; never hardcode field names in the proposer.",
+    "fields": {
+      "page.title": "page.title",
+      "title": "page.title",
+      "text.content": "text.content",
+      "text_content": "text.content",
+      "filename": "filename",
+      "files.filename": "files.filename",
+      "files": "files.filename",
+      "hash": "hash",
+      "dom.hash": "dom.hash",
+      "text.hash": "text.hash",
+      "content.identifiers": "content.identifiers",
+      "identifiers": "content.identifiers",
+      "links.domains": "links.domains",
+      "links": "links.domains",
+      "frames.domains": "frames.domains",
+      "websockets.domains": "websockets.domains"
+    },
+    "host_rung_class": {
+      "_comment": "Default rung_class applied to HOST hits from a non-identifier field search. string/filename/title/hash are kit (collecting ≠ attributing). Identifier searches override via identifier_rungs.",
+      "page.title": "title",
+      "text.content": "string",
+      "filename": "filename",
+      "files.filename": "filename",
+      "hash": "hash",
+      "dom.hash": "hash",
+      "text.hash": "hash",
+      "links.domains": "string",
+      "frames.domains": "string",
+      "websockets.domains": "string"
+    }
+  },
+  "identifier_rungs": {
+    "_comment": "content.identifiers:{type} → rung_class. google.* analytics IDs, telegram bot-tokens and discord webhooks are OWNER (may edge). wallet.* is wallet.operator unless the address is labelled exchange in exchange_wallets.json (neighbour). telegram.username / html-id / generic API tokens are kit. Unknown identifier types fall through to token.other (kit). TRON is absent on purpose — route through text.content.",
+    "entries": {
+      "google.ua-id": "analytics.ga",
+      "google.gtm-id": "analytics.gtm",
+      "google.gtag-id": "analytics.gtag",
+      "telegram.bot-token": "token.telegram_bot",
+      "telegram.bot-token-base64": "token.telegram_bot",
+      "discord.webhook": "token.discord_webhook",
+      "wallet.bitcoin": "wallet.operator",
+      "wallet.ethereum": "wallet.operator",
+      "wallet.litecoin": "wallet.operator",
+      "telegram.username": "telegram.username",
+      "html-id": "html_id",
+      "authorization.api": "token.other",
+      "google.api": "token.other",
+      "json.jwt": "token.other",
+      "mailgun.api-key": "token.other",
+      "square.access-token": "token.other"
+    }
   }
 }

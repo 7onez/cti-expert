@@ -55,8 +55,8 @@ What the key changes: with it, `pivot_extract --intelx` **runs** the selector se
 phonebook inventory; without it, every pivot still carries its IntelX selector and a click-to-run
 `intelx.io` / `phonebook.cz` URL — **about half the layer**, since composing the query is free but
 executing it is not. **`/phonebook/search` is PAID-only**: a free key gets HTTP 402 and the UI link.
-Spend is capped per run and per month (`references/intelx.json → search_budget`, or
-`INTELX_MAX_SEARCHES_PER_RUN` / `INTELX_MONTHLY_SEARCHES` for a single run). `--free-only` skips it.
+Spend is capped per run, per day and per month (`references/intelx.json → search_budget`, or
+`INTELX_MAX_SEARCHES_PER_RUN` / `INTELX_DAILY_SEARCHES` / `INTELX_MONTHLY_SEARCHES` for a single run). `--free-only` skips it.
 
 ### `SERPAPI_KEY` — Google Ads Transparency Center + SERP ads (the advertising layer)
 
@@ -202,8 +202,8 @@ python3 WebPivot/tools/wp_censys.py budget      # offline, free: this month's ba
 
 | Guard | Default | What it stops |
 |---|---|---|
-| `monthly_credits` | 100 | spending past the month's grant — summed from `MEMORY/api_usage.jsonl` across **every** case, not just this run |
-| `max_credits_per_run` | 20 | one batch of 200 domains quietly spending the whole month |
+| `monthly_credits` | 2000 (free plan grants 100) | spending past the month's grant — summed from `MEMORY/api_usage.jsonl` across **every** case, not just this run |
+| `max_credits_per_run` | 50 | one batch of 200 domains quietly spending the whole budget |
 | `reserve_for_lookups` | 10 | a 5-credit search eating the last credits and leaving the 1-credit **cert lookup** — the free plan's highest-value call — unaffordable |
 | `warn_at_remaining` | 30 | running out without warning: below this every call prints the balance |
 

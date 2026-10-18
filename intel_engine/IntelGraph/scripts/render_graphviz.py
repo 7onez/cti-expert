@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 
-# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 1800s). The engine's
+# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 5000s). The engine's
 # resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -22,10 +22,10 @@ try:
 except Exception:  # noqa: BLE001
     def _floor(t):
         try:
-            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
         except ValueError:
-            c = 1800
-        c = c if c > 0 else 1800
+            c = 5000
+        c = c if c > 0 else 5000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 

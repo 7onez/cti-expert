@@ -190,14 +190,32 @@ def _entry(h: str, e: dict) -> dict:
 # at two public archives. Both are third parties, not the target, so they are fetched through the
 # research proxy when one is configured and directly otherwise — the egress policy guards the
 # analyst's IP against the OPERATOR's infrastructure, not against archive.org.
-_ARCHIVE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+_ARCHIVE_UA_CACHE: str | None = None
+
+
+def _archive_ua() -> str:
+    """Android-Chrome User-Agent for third-party archive fetches (urlscan, archive.today) — read
+    from the SAME reference data wp_common/wp_net use (references/fetch_profile.json -> ua_pool,
+    project decision), never a hardcoded literal here. archive.org itself gets wp_wayback_guard's
+    honest client UA instead (see _http_get). Falls back to wp_common's own conservative fallback
+    string only if the module cannot be imported (never raises)."""
+    global _ARCHIVE_UA_CACHE
+    if _ARCHIVE_UA_CACHE is None:
+        try:
+            sys.path.insert(0, WP_TOOLS)
+            import wp_common  # noqa: E402
+            _ARCHIVE_UA_CACHE = wp_common.UA_POOL[0]
+        except Exception:  # noqa: BLE001 — never let a UA lookup break an archive fetch
+            _ARCHIVE_UA_CACHE = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
+                                "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
+    return _ARCHIVE_UA_CACHE
 
 
 def _http_get(url: str, proxy: str | None, timeout: int = 30) -> bytes:
     import urllib.request
     handlers = [urllib.request.ProxyHandler({"http": proxy, "https": proxy})] if proxy else []
     opener = urllib.request.build_opener(*handlers)
-    headers = {"User-Agent": _ARCHIVE_UA}
+    headers = {}
     from urllib.parse import urlparse
     if (urlparse(url).hostname or "").lower() == "urlscan.io":
         # urlscan tightened auth on /screenshots/ and /dom/ (2026-05): send the key when we hold one;
@@ -211,6 +229,12 @@ def _http_get(url: str, proxy: str | None, timeout: int = 30) -> bytes:
         except Exception:  # noqa: BLE001 — never let the header lookup break a fetch
             pass
     req = urllib.request.Request(url, headers=headers)
+    try:
+        sys.path.insert(0, WP_TOOLS)
+        import wp_wayback_guard  # noqa: E402
+        wp_wayback_guard.scope_ua(req, _archive_ua())   # archive.org UA re-scoped per redirect hop
+    except Exception:  # noqa: BLE001 — never let a UA lookup break an archive fetch
+        req.add_header("User-Agent", _archive_ua())
     with opener.open(req, timeout=timeout) as r:
         return r.read()
 
@@ -313,41 +337,42 @@ class _Transient(Exception):
 
 
 def _wayback_after(h: str, created: str | None) -> tuple:
-    """(snapshot_ts, note). The newest 200-OK snapshot on/after the registration date via the CDX API;
-    else the nearest snapshot of any date (the previous owner's page, flagged by the caller)."""
-    import wp_net  # noqa: E402
+    """(snapshot_ts, note). The newest 200-OK snapshot on/after the registration date via the
+    Wayback index; else the nearest snapshot of any date (the previous owner's page, flagged by the
+    caller). A non-empty note = the archive did not answer (the negative is not definitive)."""
+    sys.path.insert(0, WP_TOOLS)
+    import wp_wayback  # noqa: E402
     cut = re.sub(r"\D", "", (created or "")[:10])
     if cut:
-        import urllib.request
-        cdx = (f"http://web.archive.org/cdx/search/cdx?url={h}&output=json&filter=statuscode:200"
-               f"&from={cut}&limit=-1")
-        try:
-            req = urllib.request.Request(cdx, headers={"User-Agent": _ARCHIVE_UA})
-            with urllib.request.urlopen(req, timeout=30) as r:
-                rows = json.load(r)
-            if rows and len(rows) > 1:
-                return rows[-1][1], ""
-        except Exception as ex:  # noqa: BLE001
-            if "429" in str(ex):
-                return None, "rate-limited"
-    snap, ts = wp_net.wayback_closest(f"https://{h}/")
-    if not snap:
-        time.sleep(6)                     # archive.org throttles bursts (HTTP 429): one spaced retry
-        snap, ts = wp_net.wayback_closest(f"https://{h}/")
+        rows, err = wp_wayback.index([("url", h), ("output", "json"), ("fl", "timestamp"),
+                                      ("filter", "statuscode:200"), ("from", cut),
+                                      ("limit", "-1")], ua=_archive_ua())
+        if rows:
+            return rows[-1][0], ""
+        if err:
+            return None, err
+    snap, ts, err = wp_wayback.closest(f"https://{h}/", ua=_archive_ua())
+    if err:
+        return None, err
     if not snap or not ts:
         return None, ""
-    m = re.search(r"/web/(\d{14})", snap)
-    return (m.group(1) if m else str(ts)), ""
+    return str(ts), ""
 
 
 def _wayback_capture(h: str, case: str, root: str, proxy: str | None, timeout: int, created: str | None = None) -> dict | None:
     """Render a web-archive snapshot of the host (toolbar-free `if_` view) in Chromium."""
     import wp_screenshot  # noqa: E402
+    import wp_wayback_guard  # noqa: E402
     ts, note = _wayback_after(h, created)
     if not ts:
         if note:
             raise _Transient(f"web archive {note}")
         return None
+    # a browser render pulls the page's archived sub-resources too: take one paced playback slot
+    # and honour an active cooldown before it, so the render never lands on a firewalled archive
+    reason = wp_wayback_guard.admit("web.archive.org", "playback")
+    if reason:
+        raise _Transient(f"web archive {reason}")
     render_url = f"https://web.archive.org/web/{ts}if_/https://{h}/"
     archived_at = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"
     e = wp_screenshot.capture_screenshot(render_url, case=case, root=root, proxy=proxy, timeout=timeout,
@@ -435,15 +460,14 @@ def capture_missing(case_dir: str, hosts: list, existing: dict, *, max_hosts: in
     if not todo and not empties:
         return {}, skipped
     _held = "live render near-empty (server state, not the page) — held provisional; re-render pending"
-    try:
-        import playwright  # noqa: F401
-    except Exception:  # noqa: BLE001
-        return {}, (skipped + [(h, "no browser runtime (playwright) in this interpreter") for h in todo]
-                    + [(h, _held) for h in empties])
+    sys.path.insert(0, WP_TOOLS)
+    import wp_browser  # noqa: E402
+    if not wp_browser.chromium_available():
+        _why = wp_browser.chromium_missing_note("landing-page captures")
+        return {}, (skipped + [(h, _why) for h in todo] + [(h, _held) for h in empties])
     pol = egress_policy()
     if pol["mode"] == "blocked":
         return {}, skipped + [(h, pol["why"]) for h in todo] + [(h, _held) for h in empties]
-    sys.path.insert(0, WP_TOOLS)
     import wp_screenshot  # noqa: E402
     case = os.path.basename(case_dir.rstrip("/"))
     root = os.path.dirname(os.path.dirname(case_dir.rstrip("/")))

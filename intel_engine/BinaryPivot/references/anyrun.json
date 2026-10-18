@@ -35,7 +35,7 @@
   },
 
   "submission_policy": {
-    "_comment": "THE CONFIRMATION GATE. A submission is not a lookup: it takes the analyst's case material and hands it to a third party, then reaches out and TOUCHES the target from a fingerprintable sandbox. Both halves can burn an investigation, and neither is reversible — deleting the task afterwards does not un-send the sample and does not un-notify the operator. So the rule is absolute: the code NEVER submits without the analyst saying yes to THIS submission, and the model must put the risks in front of the user and ask, not infer consent from 'analyze this sample'. `preflight_checks` is what to try FIRST — most triage questions are answered without detonating anything at all. `never_send` is RULE 1 crossing an API boundary: case identifiers must not travel in `user_tags` or a filename.",
+    "_comment": "SANDBOX SUBMISSION POLICY. A submission hands case material to a third party and can touch a target from identifiable sandbox egress. Manual CLI/MCP calls require a per-submission risk briefing and explicit confirmation; the case pipeline uses a configured ANYRUN_API_KEY as standing authorization only after a complete local download, static analysis, and spend/egress checks. Neither path bypasses private-plan proof, public-authorization checks or post-submit privacy read-back. Never send a case identifier or client name in filename, tags or metadata. Deleting a public task cannot undo disclosure.",
     "require_explicit_confirmation": true,
     "default_privacy": "owner",
     "forbidden_privacy": ["public"],
@@ -138,6 +138,7 @@
     "max_requests_per_run": 10,
     "warn_at_remaining": 10,
     "lookup_costs": 1,
+    "submit_costs": 0,
     "block_when_exhausted": true
   },
 

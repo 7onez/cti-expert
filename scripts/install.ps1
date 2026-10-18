@@ -1,7 +1,9 @@
 <#
 CTI Expert - all-in-one PowerShell tool installer
 Usage: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 [-Headless] [-Go] [-All]
-  -Headless  Auto-install Scrapling headless browser (downloads ~200MB Chromium)
+  -Headless  Auto-install the Chromium stack: Scrapling headless, agent-browser, and Playwright +
+             Chromium (~200MB) for evidence screenshots, engage and the Cloudflare-escalation
+             render. DOM renders use Moli, installed by default ($env:NO_MOLI=1 opts out).
   -Go        Install Go-based tools (requires Go 1.21+)
   -All       Install everything including headless + Go tools
 
@@ -757,9 +759,49 @@ else {
     Write-Host "  --  agent-browser not requested (add -Headless; installs CLI + Chrome)" -ForegroundColor Yellow
 }
 
-Write-Section "Playwright (render / screenshot / engage)"
-# Post-JS DOM render (/webpivot --render), full-page screenshot evidence, and Engage's
-# synthetic-persona automation use Playwright — a browser, so it rides with -Headless.
+Write-Section "Moli (DOM render)"
+# Post-JS DOM render (/webpivot --render, --render-extract, render_confirm) runs on Moli. The
+# pinned release + sha256 are read from intel_engine\WebPivot\references\moli.json (RULE 3); the
+# archive is verified before install and never piped to a shell. Best-effort: a miss degrades
+# DOM renders to Chromium (if -Headless) or to the raw-fetch/archive path.
+if ($env:NO_MOLI -eq "1") {
+    Write-Host "  --  Moli skipped (NO_MOLI=1)" -ForegroundColor Yellow
+}
+else {
+    Invoke-Step "moli" {
+        $ref = Get-Content -Raw (Join-Path $SkillDir "intel_engine\WebPivot\references\moli.json") | ConvertFrom-Json
+        $arch = if ((Get-OSArchitecture) -match "Arm64") { "aarch64" } else { "x86_64" }
+        $prop = $ref.assets.entries.PSObject.Properties["windows-$arch"]
+        $asset = if ($prop) { $prop.Value } else { $null }
+        if (-not $asset) { Log-Skip "moli (no pinned build for windows-$arch in moli.json)"; return }
+        $ver = $ref.release.version
+        $dir = Join-Path $env:LOCALAPPDATA "Moli\bin"
+        $exe = Join-Path $dir "moli.exe"
+        $have = if (Test-Path $exe) { ((& $exe --version) -split " ")[-1] } else { "" }
+        if ($have -eq $ver) { Log-Ok "moli $ver (already installed at $exe)"; return }
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("moli-" + [guid]::NewGuid())
+        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        try {
+            $zip = Join-Path $tmp $asset.name
+            Invoke-WebRequest -UseBasicParsing -Uri ($ref.release.base_url + "/" + $asset.name) -OutFile $zip
+            $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+            if ($got -ne $asset.sha256) { throw "sha256 mismatch for $($asset.name) (got $got) - NOT installed" }
+            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            $src = Get-ChildItem -Path $tmp -Recurse -Filter "moli.exe" | Select-Object -First 1
+            if (-not $src) { throw "archive has no moli.exe" }
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item $src.FullName $exe -Force
+            & $exe --version *> $null
+            if ($LASTEXITCODE -ne 0) { throw "installed moli.exe does not run" }
+            Log-Ok "moli $ver -> $exe (sha256 verified)"
+        }
+        finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
+    } | Out-Null
+}
+
+Write-Section "Playwright + Chromium (screenshots / engage / CF escalation)"
+# Evidence screenshots, Engage's synthetic-persona automation and the Cloudflare-escalation render
+# need real Chromium pixels/behaviour, so they stay on Playwright and ride with -Headless.
 if ($Headless) {
     Invoke-Step "playwright" {
         Invoke-VenvPip --quiet --upgrade playwright

@@ -444,6 +444,8 @@ def summarise_certificate(res: dict) -> dict:
         return {}
     parsed = res.get("parsed") or {}
     subj, iss = parsed.get("subject") or {}, parsed.get("issuer") or {}
+    validity = parsed.get("validity_period") or {}
+    iss_cn = iss.get("common_name")
     out = {
         "fingerprint_sha256": res.get("fingerprint_sha256"),
         "fingerprint_sha1": res.get("fingerprint_sha1"),
@@ -452,6 +454,9 @@ def summarise_certificate(res: dict) -> dict:
         else (subj.get("common_name") or [None])[0] if isinstance(subj.get("common_name"), list) else None,
         "subject_org": subj.get("organization"),
         "issuer_org": iss.get("organization"),
+        "issuer_cn": iss_cn if isinstance(iss_cn, str) else (iss_cn or [None])[0],
+        "serial_number_hex": parsed.get("serial_number_hex"),
+        "not_before": validity.get("not_before"), "not_after": validity.get("not_after"),
         "added_at": res.get("added_at"), "validated_at": res.get("validated_at"),
         "ever_seen_in_scan": res.get("ever_seen_in_scan"),
         "validation_level": res.get("validation_level"),
@@ -505,6 +510,13 @@ def webproperty_id(host: str, port: int = 443) -> str:
 def censys_webproperty(host: str, port: int = 443, timeout: int = 30):
     """Censys web-property lookup for `hostname:port` -> cert, favicons, body hash, software,
     labels, threats. 1 credit. Available on the FREE plan."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.censys_webproperty_key(webproperty_id(host, port)))
+        if _hit is not None:
+            return _hit
+    except Exception:  # noqa: BLE001
+        pass
     if not censys_configured():
         return None
     return _lookup("webproperty", webproperty_id(host, port),
@@ -516,6 +528,13 @@ def censys_certificate(sha256: str, timeout: int = 30):
     """Censys certificate lookup by leaf SHA-256 -> its full `names` list (every hostname on that
     exact cert). 1 credit. Available on the FREE plan. The strongest cross-brand link Censys gives
     a free account, because it needs no search entitlement."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.censys_cert_key(sha256))
+        if _hit is not None:
+            return _hit
+    except Exception:  # noqa: BLE001
+        pass
     if not censys_configured():
         return None
     return _lookup("certificate", (sha256 or "").strip().lower(),
@@ -611,7 +630,7 @@ def censys_search(query: str, page_size: int = 100, pages: int = 1, timeout: int
     if blocked:
         return {"skipped": blocked, "query": q, "ui_url": censys_ui_url(q),
                 "budget": budget_status()}
-    hits, token, spent, total = [], None, 0, None
+    hits, token, spent, total, page_error = [], None, 0, None, None
     for _ in range(max(1, pages)):
         body = {"query": q, "page_size": max(1, min(100, page_size))}
         if token:
@@ -619,12 +638,13 @@ def censys_search(query: str, page_size: int = 100, pages: int = 1, timeout: int
         data, err = _call(ENDPOINTS.get("search_query", "/v3/global/search/query"),
                           method="POST", body=body, timeout=timeout)
         if err:
-            _record("search", spent, q, results=len(hits), ok=bool(hits))
             if err.get("http") == 403 and not hits:
                 _plans.record("censys", "free", why="search/query answered 403 (Free plan: lookups only)")
                 err = dict(err, plan="free")
             if hits:
-                break                                   # keep the pages already paid for
+                page_error = err                        # keep the pages already paid for
+                break                                   # (recorded once, after the loop)
+            _record("search", spent, q, results=0, ok=False)
             return dict(err, query=q, ui_url=censys_ui_url(q))
         if spent == 0 and _plans.get("censys") != "paid":
             _plans.record("censys", "paid", why="search/query answered 200 (Starter or above)")
@@ -636,12 +656,16 @@ def censys_search(query: str, page_size: int = 100, pages: int = 1, timeout: int
         if not token:
             break
     _record("search", spent, q, results=len(hits))
-    return {"query": q, "ui_url": censys_ui_url(q),
-            "total": total if total is not None else len(hits),
-            "hits": hits,
-            "hostnames": uniq([h.get("hostname") for h in hits if h.get("hostname")]
-                              + [n for h in hits for n in (h.get("names") or h.get("dns_names") or [])]),
-            "ips": uniq([h.get("ip") for h in hits if h.get("ip")])}
+    out = {"query": q, "ui_url": censys_ui_url(q),
+           "total": total if total is not None else len(hits),
+           "hits": hits,
+           "more_pages": bool(token),                  # walk stopped at `pages` with hits left
+           "hostnames": uniq([h.get("hostname") for h in hits if h.get("hostname")]
+                             + [n for h in hits for n in (h.get("names") or h.get("dns_names") or [])]),
+           "ips": uniq([h.get("ip") for h in hits if h.get("ip")])}
+    if page_error:
+        out["page_error"] = page_error                 # a later page failed: the walk is partial
+    return out
 
 
 # --------------------------------------------------------------------------- query BUILDER (keyless)

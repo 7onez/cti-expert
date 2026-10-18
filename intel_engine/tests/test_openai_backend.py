@@ -72,6 +72,32 @@ def _call(name, args, cid="c1"):
 
 
 def check():
+    """The shim drives real gate calls, and audit.gate() ledgers each one to <ROOT>/MEMORY or
+    <ROOT>/cases/<case>/tool_calls.jsonl — this test used to append a phantom allow + DENY to the
+    REAL interactive ledger on every run. Point the gate at a scratch root for the whole run."""
+    import shutil
+    import tempfile
+    import audit  # noqa: E402
+    real_ledger = os.path.join(audit.ROOT, "MEMORY", "tool_calls.jsonl")
+    before = os.path.getsize(real_ledger) if os.path.exists(real_ledger) else None
+    saved_root, scratch = audit.ROOT, tempfile.mkdtemp()
+    audit.ROOT = scratch
+    try:
+        passed, failed, out = _check()
+    finally:
+        audit.ROOT = saved_root
+        shutil.rmtree(scratch, ignore_errors=True)
+    after = os.path.getsize(real_ledger) if os.path.exists(real_ledger) else None
+    if before == after:
+        passed += 1
+        out.append(("ok", "the test's gate calls never reach the real MEMORY/tool_calls.jsonl"))
+    else:
+        failed += 1
+        out.append(("FAIL", f"the real tool-call ledger changed during the test ({before} -> {after} bytes)"))
+    return passed, failed, out
+
+
+def _check():
     passed = failed = 0
     out = []
 

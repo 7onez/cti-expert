@@ -10,7 +10,8 @@ GOAL: the case exists to UNMASK THE OPERATOR behind the infrastructure. Favicon/
 
 Do exactly this for your seed:
 1. call pivot_extract on it.
-2. EMPTY-RESULT RULE: if pivot_extract returns zero/near-zero pivots or a parked / empty-favicon / NXDOMAIN page (WHOIS+FOFA+urlscan all cold), you MUST call fallback_probe(seed) before finishing — never end on a silent 'nothing found'. Report its VERDICT (PIVOTABLE with the surviving leads, or NO-PIVOT-YET with next steps).
+2. EMPTY-RESULT RULE: if pivot_extract returns zero/near-zero pivots or a parked / empty-favicon / NXDOMAIN page (WHOIS+FOFA+urlscan all cold), you MUST call fallback_probe(seed) before finishing — never end on a silent 'nothing found'. Report its VERDICT (PIVOTABLE with the surviving leads, NO-PIVOT-YET with next steps, or INCONCLUSIVE-CT-DEGRADED — crt.sh was unreachable, so the CT corner was not swept and the seed is not yet cold).
+3. ORIGIN-IP SEED: a bare IP address is a historical NON-CDN origin of a case host (CDN / WAF / parking / bogon addresses were already dropped). pivot_extract runs IP recon on it — report its ASN + abuse contact, open ports/banners, distinctive PTR, self-hosted mail domain and the certificates seen on it as infrastructure IOCs. Its co-hosted domains are NEIGHBOURS (co-tenancy), never the operator's by default; name one a sibling only when an identity-bearing artifact independently ties it to the estate. Skip fallback_probe for an IP.
 
 Do NOT call kb_ingest — the harness ingests every collector's raw output once, after all collectors finish, to avoid a concurrent-write race on the KB.
 {{hostile_note}}Your seed:

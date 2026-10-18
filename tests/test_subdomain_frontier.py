@@ -106,11 +106,21 @@ def test_provider_sync_fills_only_empty_entries_and_keeps_hand_set_keys():
         assert se.sync_subfinder_providers(config_path=cfg, env=env)["filled"] == []
 
 
+def test_censys_provider_uses_platform_pat_not_legacy_pair():
+    # subfinder's censys source is Platform-only ("PAT:ORG_ID" or bare PAT); a legacy
+    # API_ID:SECRET pair would be written but rejected, silently emptying that source
+    pat = {"CENSYS_API_KEY": "censys_pat", "CENSYS_ORG_ID": "00000000-0000-0000-0000-000000000001"}
+    assert se._provider_value("censys", pat) == "censys_pat:00000000-0000-0000-0000-000000000001"
+    assert se._provider_value("censys", {"CENSYS_PAT": "censys_pat"}) == "censys_pat"
+    assert se._provider_value("censys", {"CENSYS_API_ID": "id", "CENSYS_API_SECRET": "secret"}) is None
+
+
 _TESTS = [
     test_seed_subdomains_go_to_their_own_bucket_with_guards,
     test_subdomain_and_apex_share_the_registration_indicator,
     test_saas_tenants_never_join_on_the_platform_apex,
     test_provider_sync_fills_only_empty_entries_and_keeps_hand_set_keys,
+    test_censys_provider_uses_platform_pat_not_legacy_pair,
 ]
 
 

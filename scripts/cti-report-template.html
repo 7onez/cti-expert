@@ -403,6 +403,7 @@ var GAPS=Array.isArray(DATA.intelligence_gaps)?DATA.intelligence_gaps:[];
 var RECS=Array.isArray(DATA.recommendations)?DATA.recommendations:[];
 var VIS=DATA.visitor_stats||null;
 var CAVEATS=Array.isArray(DATA.caveats)?DATA.caveats:[];
+var RELATED=Array.isArray(DATA.related_hosts)?DATA.related_hosts:[];
 var EVID=Array.isArray(DATA.evidence_images)?DATA.evidence_images:[];
 var ARCHIFY=(DATA.archify_diagram_html&&typeof DATA.archify_diagram_html==='string')?DATA.archify_diagram_html:'';
 var ED_ENTITY=(DATA.editorial_entity_svg&&typeof DATA.editorial_entity_svg==='string')?DATA.editorial_entity_svg:'';
@@ -1005,6 +1006,14 @@ function renderSources(){
   var cav=CAVEATS.length?CAVEATS:['Based exclusively on publicly available information (OSINT).','No active exploitation or intrusion was performed.'];
   html+='<ul class="ulist">'+cav.map(function(c){return '<li><span class="n">§</span><span>'+esc(c)+'</span></li>';}).join('')+'</ul></div>';
   html+='</div>';
+  // related hosts (pivot hits) — their own card, never hosting, never a takedown recipient
+  if(RELATED.length){
+    html+='<div class="card" style="margin-top:16px"><h3>Related hosts (unverified) ('+RELATED.length+')</h3>';
+    html+='<div class="empty" style="text-align:left">Hosts sharing a certificate, favicon or tracking ID with the estate. A shared value makes a host related, not the estate\'s server, origin, hosting or takedown recipient; only agreeing origin checks promote one.</div>';
+    html+='<table><thead><tr><th>Host</th><th>IP</th><th>Shares with</th><th>Shared value</th><th>Engine</th><th>Scan date</th><th>Origin checks</th><th>Rung</th></tr></thead><tbody>';
+    html+=RELATED.slice(0,60).map(function(r){return '<tr><td>'+esc(r.host||'—')+'</td><td>'+esc(r.ip||'—')+'</td><td>'+esc(r.target||'—')+'</td><td>'+esc((r.shared_kind||'')+' '+String(r.shared_value||'').slice(0,24))+'</td><td>'+esc((r.engines||[]).join(', '))+'</td><td>'+esc(r.scan_date||'undated')+'</td><td>'+esc((r.passed||[]).join(', ')||'none')+'</td><td>'+esc(r.rung||'')+'</td></tr>';}).join('');
+    html+='</tbody></table></div>';
+  }
   v.innerHTML=html;
 }
 

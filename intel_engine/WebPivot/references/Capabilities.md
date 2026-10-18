@@ -293,7 +293,7 @@ traps worth naming:
 
 So the spend is **budgeted, not just logged**. `wp_censys` sums this month's Censys credits from
 `MEMORY/api_usage.jsonl` (across every case) and refuses to exceed `credit_budget` in
-`references/censys_queries.json`: `monthly_credits` (100), `max_credits_per_run` (20 — blast radius
+`references/censys_queries.json`: `monthly_credits` (2000; free plan grants 100), `max_credits_per_run` (50 — blast radius
 for one batch), `reserve_for_lookups` (10 — a 5-credit search may not consume the last credits and
 strand the cheap cert lookup), `warn_at_remaining` (30 — below this every call prints the balance).
 Over budget → `{"skipped": reason, "budget": {...}, "ui_url": …}`, the same degradation shape as a
@@ -383,24 +383,27 @@ The same pass also reads the domain's **SPF** (apex TXT) and **DMARC** (`_dmarc.
   and a domain with SPF but **no DMARC** is flagged as spoofable.
 The provider / tenant / custom-MX / SPF / DMARC verdict shows as a banner in `--leads`; pivots rank inline.
 
-## CT / SSL search — two indexes merged, resilient, wildcard-aware
+## CT / SSL search — one client, per-source status, wildcard-aware
 
-Live enrichment runs a certificate-transparency search on the base domain via `ct_search()`, which
-queries **both crt.sh and Shodan's keyless CTL mirror** (`ctl.shodan.io/api/v1/domain/<d>` +
-`/hostnames`) concurrently and unions the results. crt.sh queries **both** `%.<domain>` (subdomains)
-**and** the apex `identity`, and — because crt.sh's `?q=` endpoint frequently returns nginx **502s**
-— falls back to the more stable `?identity=` form (`_crtsh_fetch`); when crt.sh is down entirely,
-Shodan CTL still returns the subdomains + certs, so a CT lookup no longer silently fails. Shodan's
-`/hostnames` endpoint enumerates every logged hostname directly and each cert's `san_dns_names`
-exposes **SAN-sibling domains** (a different registrable domain on the same cert = strong same-owner
-link). The result carries, per logged certificate, the **issuer + validity window + serial**, and
-flags any **wildcard cert** (`*.<domain>`) separately (`wildcards` field) — one wildcard cert can
-cover many sibling hosts, so it's a broad-scope-reuse signal worth pivoting. **When both CT peers
-return no subdomains**, `ct_search` falls back to the keyless AGGREGATED indexes crt.name + agniops
-(CT unioned with Common Crawl/CZDS/Chaos/HaGeZi [crt.name] and feeds of undisclosed provenance [agniops]) — their names are attached
-SEPARATELY under `aggregated_subdomains`/`aggregated_sources`, never merged into the CT-attributable
-`subdomains`, because an aggregated hit is not CT-log evidence and must be validated before it enters
-a report. Shown inline in
+Live enrichment runs a certificate-transparency search on the base domain through `wp_ct.ct_search()`,
+the one CT client. crt.sh is asked first — `%.<domain>` and the apex, `q=` then `identity=`, with
+retry + backoff inside a wall-clock budget and a per-process breaker, then crt.sh's public PostgreSQL
+(optional `psycopg`). **Only when crt.sh is degraded or empty** do the backups run: keyless Shodan CTL
+and CertSpotter (merged), CertKit and CertIndex when keyed, Netlas only when crt.sh failed, Censys only
+when everything else returned nothing (both metered; skipped under `--free-only`). Every source reports
+a status (`ok`/`empty`/`degraded` for crt.sh; `complete`/`capped`/`partial`/`failed`/`skipped-*` for
+the rest) and its observation window, and the result carries one completeness line — "Full CT history"
+only when crt.sh answered; a degraded crt.sh is never "no certificates". The same status is copied to
+`meta.capability.ct`. Certificates are deduplicated across sources (serial / sha256 / precert-final
+twin) and graded HIGH (crt.sh or 2+ sources) or MEDIUM (one backup); listings are capped with
+`cert_total` + `truncated` recorded. Each cert carries **issuer + validity window + serial/sha256**, and
+any **wildcard cert** (`*.<domain>`) is flagged separately (`wildcards` field) — one wildcard cert can
+cover many sibling hosts, so it's a broad-scope-reuse signal worth pivoting. **When no CT source yields
+a name**, the keyless AGGREGATED indexes crt.name + agniops (CT unioned with Common Crawl/CZDS/Chaos/
+HaGeZi [crt.name] and feeds of undisclosed provenance [agniops]) are asked last — their names are
+attached SEPARATELY under `aggregated_subdomains`/`aggregated_sources`, never merged into the
+CT-attributable `subdomains`, because an aggregated hit is not CT-log evidence and must be validated
+before it enters a report. Shown inline in
 `--leads` (cert timeline + wildcard note). A per-domain Let's Encrypt cert with only `apex`+`www`
 SANs (common on Hostinger/shared auto-SSL) is **not** a shared-operator pivot — read the issuer +
 SAN scope before treating a cert as a link.
@@ -576,6 +579,6 @@ See `Workflows/NetworkGraph.md` for the full extract → build → render pipeli
 ## Notes on artifact reliability (2025-2026)
 
 - **GA `UA-` IDs are historical** (Universal Analytics shut down Jul 2023). Live analytics artifacts are GA4 `G-` and `GTM-`.
-- **crt.sh is frequently overloaded** — `ct_search` auto-covers it with the keyless **Shodan CTL** mirror (`ctl.shodan.io`); Certspotter / Censys remain further CT fallbacks.
+- **crt.sh is frequently overloaded** — `wp_ct` retries it, falls back to its public PostgreSQL, and only then to the ~1-year mirrors (Shodan CTL, CertSpotter, CertKit, CertIndex) and Netlas/Censys; the run states which ones answered and that history is incomplete.
 - **Validin** is the standout free/low-cost infra-pivot engine (DNS + certs + favicon + response-body hashes in one graph) — **now scripted** via `wp_validin.py` (auto-runs in enrich_live: passive DNS + subdomains + cert/favicon reverse; quota-governed, runs even under `--free-only`).
 - **Chainabuse** (absorbed Bitcoinabuse) is the primary free crypto-scam reporting DB with a real public API.

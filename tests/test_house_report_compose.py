@@ -40,7 +40,9 @@ def _synthetic_case(tmp):
                             "E2 [B2] Page is a link farm — see evidence/cld-analyze.json [cld]"],
                "alternatives": ["Genuine brand property — REJECTED: registered via personal mailbox",
                                 "Nominee registrant — CANNOT RULE OUT: no KYC corroboration"],
-               "gaps": ["No residential vantage"], "next_pivots": ["Watch renewals"]},
+               "gaps": ["No residential vantage"], "next_pivots": ["Watch renewals"],
+               "cluster": [{"domain": "seed-brand.example.com",
+                            "shared_artifacts": ["registrant_email:persona@example.com"]}]},
               open(os.path.join(case, "assessment.json"), "w"))
     open(os.path.join(case, "assessment.md"), "w", encoding="utf-8").write(
         "# Analyst Assessment (ICD-203) — synthetic\n\n## BLUF\n\ntext\n\n## Key judgments\n\n"
@@ -107,16 +109,17 @@ def test_prevalent_indicator_is_marked_excluded_and_sidecar_not_enumerated():
     assert "harvest.indicators" not in md.split("# Cluster enumeration")[1]
 
 
-def test_third_parties_are_masked_but_operator_join_key_is_kept():
+def test_third_parties_shown_in_plain_text():
+    """Masking is disabled: third-party emails, phones and case ids appear in clear."""
     with tempfile.TemporaryDirectory() as tmp:
         case = _synthetic_case(tmp)
         json.dump(["Some Third Party"], open(os.path.join(case, "report_mask.json"), "w"))
         _, md = _compose(case)
-    assert "thirdparty@example.org" not in md and "t***@example.org" in md
-    assert "0987654321" not in md and "09********" in md
-    assert "CASE-0002" not in md and "a related case" in md
-    assert "persona@example.com" in md          # operator join key stays in clear
-    assert "CASE-0001" in md                     # this case's own id is not masked
+    assert "thirdparty@example.org" in md           # email in clear, not t***@example.org
+    assert "0987654321" in md                        # phone in clear, not 09********
+    assert "CASE-0002" in md                         # foreign case id in clear, not "a related case"
+    assert "persona@example.com" in md               # operator join key still in clear
+    assert "CASE-0001" in md                         # this case's own id still in clear
 
 
 def test_composer_degrades_without_assessment_json():
@@ -453,12 +456,14 @@ def test_near_empty_live_capture_is_held_provisional_then_rerendered_next_build(
         fake_ws = types.SimpleNamespace(capture_screenshot=lambda url, **k: (renders.append(url), {
             "url": url, "path": os.path.join(shots, "a_fresh.png"), "host": "a.example.com",
             "captured_at": "2026-09-03T00:00:00Z", "sha256": "f" * 64})[1])
-        saved = (sys.modules.get("wp_screenshot"), sys.modules.get("playwright"), hre.egress_policy,
+        sys.path.insert(0, hre.WP_TOOLS)
+        import wp_browser
+        saved = (sys.modules.get("wp_screenshot"), wp_browser.chromium_available, hre.egress_policy,
                  hre._near_empty, hre._archive_copy, hre._entry)
         archive_calls = []
         try:
             sys.modules["wp_screenshot"] = fake_ws
-            sys.modules.setdefault("playwright", types.ModuleType("playwright"))
+            wp_browser.chromium_available = lambda: True
             hre.egress_policy = lambda: {"mode": "direct", "pool": [None], "why": ""}
             hre._near_empty = lambda p: p.endswith("a_live.png")          # only the old render is empty
             hre._archive_copy = lambda *a, **k: (archive_calls.append(a[0]), None)[1]
@@ -491,13 +496,12 @@ def test_near_empty_live_capture_is_held_provisional_then_rerendered_next_build(
             assert any(h == "a.example.com" and "archive stand-ins disabled" in why for h, why in skipped), skipped
             assert hre.load_provisional(case)["a.example.com"]["builds"] == 3
         finally:
-            (ws, pw, hre.egress_policy, hre._near_empty, hre._archive_copy, hre._entry) = saved
+            (ws, wp_browser.chromium_available, hre.egress_policy, hre._near_empty, hre._archive_copy,
+             hre._entry) = saved
             if ws is not None:
                 sys.modules["wp_screenshot"] = ws
             else:
                 sys.modules.pop("wp_screenshot", None)
-            if pw is None:
-                sys.modules.pop("playwright", None)
 
 
 def test_urlscan_screenshot_fetch_sends_the_key_when_present():
@@ -607,8 +611,9 @@ def test_registrant_eras_table_lists_only_hosts_that_changed_hands():
     assert "| `sibling-a.example.com` | 2026-05-21 | 2027-05-21 |" in sec
     assert "reactivation" in sec                                     # the current era took over a used name
     assert "seed-brand.example.com" not in sec                      # single-era host is not a signal
-    # the PREVIOUS registrant is a third party → masked; the operator's join key (>= 2 hosts) stays
-    assert "privacy@proxy.invalid" not in sec and "p***@proxy.invalid" in sec
+    # masking is disabled: previous registrant and operator join key both appear in plain text
+    assert "privacy@proxy.invalid" in sec                # previous registrant in clear
+    assert "persona@example.com" in sec
     assert "persona@example.com" in sec
     # no era data at all → the section is simply absent (Rule 19 handled by the timeline block)
     with tempfile.TemporaryDirectory() as tmp:
@@ -703,6 +708,204 @@ def test_expansion_leaves_are_bounding_hosts_not_estate():
     assert leaf not in prof, "no dossier for a bounding host"
     assert md.count(leaf) == 0, "a leaf host name never appears (the bounding table keys on the apex)"
 
+
+def test_collected_origin_ip_is_infrastructure_not_estate_and_renders_hosting_row():
+    """A historical origin IP the loop collected (an IPPivot raw named after the address) is never an
+    estate host, dossier or WHOIS row; it renders once in 'Historical origin hosting' with the network,
+    the abuse contact in plain text (a provider role address, never masked) and a COUNT of other sites."""
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        seed = "seed-brand.example.com"
+        ip = "198.51.100.40"
+        oh = {"ips": [{"ip": ip, "status": "origin", "sources": ["live_dns", "securitytrails_dns_history"],
+                       "first_seen": "2025-02-01", "last_seen": None, "live": True, "asn": None, "org": None},
+                      {"ip": "198.51.100.77", "status": "origin", "sources": ["securitytrails_dns_history"],
+                       "first_seen": "2019-01-01", "last_seen": "2020-01-01", "live": False},
+                      {"ip": "192.0.2.30", "status": "cdn", "sources": ["live_dns"], "live": True}]}
+        json.dump({"meta": {"host": seed, "fetched_with": "urllib"},
+                   "artifacts": {"whois": {"created": "2025-01-05"}},
+                   "pivots": [{"kind": "domain", "value": seed, "live_results": {"origin_history": oh}}]},
+                  open(os.path.join(case, "raw", seed + ".json"), "w"))
+        json.dump({"meta": {"host": ip, "kind": "ip", "source": "IPPivot"}, "pivots": [],
+                   "artifacts": {"ip_intel": {
+                       "ipinfo": {"asn": "AS64500", "org_name": "Example VPS Ltd", "country": "SG",
+                                  "abuse": {"email": "abuse@vps-host.example"}},
+                       "co_hosted_domains": [seed, "other-tenant.example.org"]}}},
+                  open(os.path.join(case, "raw", ip + ".json"), "w"))
+        c, md = _compose(case)
+        sys.path.insert(0, os.path.join(ROOT, "intel_engine", "WebPivot", "tools"))
+        import wp_origin_history as OH
+        _h, _reg, rows = OH.host_origins(json.load(open(os.path.join(case, "raw", seed + ".json"))))
+    assert any(r["ip"] == "198.51.100.77" and r["era"] == "previous_owner" for r in rows), \
+        "the .77 row IS in the history and IS classified previous_owner — so its absence below is the rule"
+    assert ip not in c["hosts"] and ip in c["ip_raw"], "an origin IP raw is infrastructure, not an estate host"
+    prof = md.split("# Domain and infrastructure profiles")[1].split("# Cluster enumeration")[0]
+    assert f"`{ip}`" not in prof, "no domain dossier for an IP"
+    sec = md.split("## Historical origin hosting")[1].split("\n## ")[0].split("\n# ")[0]
+    row = next(l for l in sec.splitlines() if l.startswith(f"| `{ip}`"))
+    assert "AS64500 Example VPS Ltd (SG)" in row and "abuse@vps-host.example" in row
+    assert "198.51.100.77" not in sec, "a previous owner's era (before the current registration) is left out"
+    assert "| 1 |" in row, "other sites are counted (estate host excluded), never named"
+    assert "other-tenant.example.org" not in sec
+    assert "192.0.2.30" not in sec, "a CDN edge is never listed as origin hosting"
+
+
+_DROPCAUGHT_WHOIS = {
+    "registrant_name": "Current Owner", "registrant_org": None,
+    "registrant_email": "owner@personalmail.example", "registrant_phone": "+1.2025550111",
+    "registrar": "Example Registrar LLC", "created": "2025-09-09 00:00:00 UTC",
+    "expires": "2026-09-09 00:00:00 UTC", "name_servers": ["ns1.example.net"],
+    "history": {"records": [
+        {"created": "2010-05-17", "name": "Prior Stranger", "email": "stranger@priorowner.example",
+         "phone": "+1.2025550000", "registrar": "Old Registrar Inc"},
+        {"created": "2025-09-09", "name": "Current Owner", "email": "owner@personalmail.example",
+         "phone": "+1.2025550111", "registrar": "Example Registrar LLC"},
+    ]},
+}
+
+
+def _dropcaught_case(tmp):
+    """A drop-caught apex + 3 subdomains that each carry an IDENTICAL copy of the apex's WHOIS
+    history (the real defect: api./wss./uo. each got their own WHOIS purchase back). Every host is
+    live_error (the proxy refused); the assessment carries a nominee/front alternative it could not
+    rule out."""
+    case = os.path.join(tmp, "CASE-0001")
+    for d in ("raw", "whois"):
+        os.makedirs(os.path.join(case, d))
+    hosts = ["cutrate.example", "api.cutrate.example", "wss.cutrate.example", "uo.cutrate.example"]
+    for h in hosts:
+        json.dump({"meta": {"host": h, "fetched_with": "urllib", "live_error": "proxy CONNECT refused"},
+                  "artifacts": {}, "pivots": []},
+                  open(os.path.join(case, "raw", h + ".json"), "w"))
+        json.dump(_DROPCAUGHT_WHOIS, open(os.path.join(case, "whois", h + ".json"), "w"))
+    json.dump({"claim": "cutrate.example impersonates Example Brand", "brand": "Example Brand",
+               "target_class": "suspected_scam", "purpose": "attribution"},
+              open(os.path.join(case, "scope.json"), "w"))
+    json.dump({"bluf": "cutrate.example and its subdomains form one estate.",
+               "attribution_level": "same-operator estate (rung 1)", "confidence": "moderate",
+               "evidence": ["E1 [A1] Registrant e-mail owner@personalmail.example recurs across "
+                            "the estate — WhoisXML lookup"],
+               "alternatives": ["Nominee registrant — CANNOT RULE OUT: no KYC corroboration"],
+               "cluster": [{"domain": "cutrate.example",
+                            "shared_artifacts": ["registrant_email:owner@personalmail.example"]}],
+               "gaps": [], "next_pivots": []},
+              open(os.path.join(case, "assessment.json"), "w"))
+    open(os.path.join(case, "assessment.md"), "w", encoding="utf-8").write(
+        "# Analyst Assessment (ICD-203) — synthetic\n\n## BLUF\n\ntext\n\n"
+        "## Excluded\n\n"
+        "- Prior Stranger (stranger@priorowner.example, era 2010) is an unrelated previous "
+        "registrant — not operator.\n"
+        "- Tax code 0312345678 and owner@personalmail.example are the operator's own registered "
+        "identifiers, not third-party.\n\n"
+        "## Recommendation\n\n1. Refer for takedown.\n\n## Collection gaps\n\n- none\n")
+    json.dump(["0312345678"], open(os.path.join(case, "report_keep.json"), "w"))
+    return case, hosts
+
+
+def test_era_aware_join_key_prior_owner_shown_in_plain_text():
+    """Masking is disabled: prior owners appear in clear; operator selectors also in clear."""
+    with tempfile.TemporaryDirectory() as tmp:
+        case, hosts = _dropcaught_case(tmp)
+        c, md = _compose(case)
+    # the 4 hosts are all subdomains of ONE apex: the pre-fix host-counted logic would have seen
+    # "Prior Stranger" recur on all 4 (>=2) and left it in clear — the exact subdomain-inflation
+    # bug. Apex-grouping collapses them to ONE apex, below the threshold.
+    assert len(hosts) >= 2 and len({hr._registrable_apex(h) for h in hosts}) == 1
+    assert "owner@personalmail.example" in hr._KEEP and "0312345678" in hr._KEEP
+    # masking disabled: prior owner and their email appear in plain text
+    assert "stranger@priorowner.example" in md
+    assert "Prior Stranger" in md
+    excl = md.split("## Tested and excluded")[1].split("\n# ")[0]
+    assert "owner@personalmail.example" in excl        # operator's own cluster-selector: in clear
+    assert "0312345678" in excl                        # keep-file tax id: in clear
+    assert "## The registrant" in md and "## The operator" not in md   # nominee cannot-rule-out
+    assert "operator is not asserted" in md
+    assert 'basis: "Passive OSINT (archived captures)"' in md   # every host live_error, none live
+
+
+def _angle_case(tmp):
+    case = _synthetic_case(tmp)
+    a = json.load(open(os.path.join(case, "assessment.json")))
+    a["bluf"] = "The kit shows Sign in to <Acme Bank> on every host."
+    a["decision_supported"] = "Supports blocking <Acme Bank> lookalikes."
+    json.dump(a, open(os.path.join(case, "assessment.json"), "w"))
+    sc = json.load(open(os.path.join(case, "scope.json")))
+    sc["brand"] = "Acme <Bank>"
+    json.dump(sc, open(os.path.join(case, "scope.json"), "w"))
+    for h in os.listdir(os.path.join(case, "whois")):
+        json.dump(dict(_WHOIS, registrant_name="Test <script>"), open(os.path.join(case, "whois", h), "w"))
+    open(os.path.join(case, "assessment.md"), "w", encoding="utf-8").write(
+        "# Analyst Assessment (ICD-203) — synthetic\n\n## BLUF\n\ntext\n\n## Key judgments\n\n"
+        "1. **Kit renders <Acme Bank> login — assessed / high.** The form posts `<form action=x>` to "
+        "<Collector Panel> (A2)\n\n"
+        "## Recommendation\n\n1. Report <Acme Bank> lookalikes.\n\n## Collection gaps\n\n- <None> left\n")
+    return case
+
+
+def test_angle_bracket_text_is_escaped_not_swallowed_by_pandoc():
+    """`<Acme Bank>` is raw HTML to pandoc and silently vanishes from the PDF/DOCX; every analyst/
+    attacker string written into the house markdown must arrive entity-escaped (code spans literal)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _, md = _compose(_angle_case(tmp))
+    body = md.split("\n---\n", 1)[1]
+    for raw in ("<Acme Bank>", "<Bank>", "<script>", "<Collector Panel>", "<None>"):
+        assert raw not in body, f"raw tag survives into the markdown: {raw}"
+    for esc in ("Sign in to &lt;Acme Bank>", "blocking &lt;Acme Bank>", "Acme &lt;Bank&gt;",
+                "Test &lt;script&gt;", "## Kit renders &lt;Acme Bank> login", "&lt;Collector Panel>",
+                "Report &lt;Acme Bank> lookalikes", "&lt;None> left"):
+        assert esc in body, f"escaped text missing: {esc}"
+    assert "`<form action=x>`" in body, "a code span stays literal (no entity inside backticks)"
+    import shutil
+    import subprocess
+    if shutil.which("pandoc"):
+        plain = subprocess.run(["pandoc", "-f", "markdown", "-t", "plain", "--wrap=none"], input=body,
+                               capture_output=True, text=True, timeout=60).stdout
+        for seen in ("Sign in to <Acme Bank>", "Test <script>", "<Collector Panel>", "Report <Acme Bank>"):
+            assert seen in plain, f"pandoc dropped: {seen}"
+
+
+def test_rule12_scrubs_vendor_names_install_paths_and_timeline_keys():
+    line = ("Reverse-WHOIS via WhoisXML = 3; VirusTotal clean; AnyRun none; ANY.RUN none; Spamhaus listed; "
+            "AbuseIPDB 0; OTX pulse; crt.sh SANs; HackerTarget pdns; CIRCL pssl; Netlas; subfinder; RDAP via "
+            "rdap.org; leak hit on intelx.io; see /root/.claude/skills/cti-expert/intel_engine/cases/"
+            "CASE-0001/raw/x.json; hosts otx.example and virustotal-login.example and ops@netlas.example")
+    out = hr.scrub(line)
+    low = out.lower()
+    for vendor in ("whoisxml", "virustotal ", "anyrun", "any.run", "spamhaus", "abuseipdb", "otx pulse",
+                   "crt.sh", "hackertarget", "circl", "netlas;", "subfinder", "rdap.org", "intelx",
+                   "/root/", "intel_engine", ".claude"):
+        assert vendor not in low, f"Rule 12 leak: {vendor!r} in {out!r}"
+    for value in ("otx.example", "virustotal-login.example", "ops@netlas.example"):
+        assert value in out, f"Rule 12a: indicator value altered: {value}"
+    # evidence-ledger source column: the vendor AND its domain collapse to one public class
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        a = json.load(open(os.path.join(case, "assessment.json")))
+        a["evidence"].append("E3 [B2] Registrar record — WhoisXML lookup via whoisxmlapi.com")
+        json.dump(a, open(os.path.join(case, "assessment.json"), "w"))
+        _, md = _compose(case)
+    ledger = md.split("# Evidence ledger")[1].split("\n# ")[0]
+    row = next(l for l in ledger.splitlines() if "Registrar record" in l)
+    assert row.rstrip().endswith("| registration-data service lookup |"), row
+    # dated observations: case_timeline's internal source keys print as public classes
+    tl = ("| When (UTC) | Host | What | Source (Admiralty) | Evidence link |\n|---|---|---|---|---|\n"
+          "| 2025-01-05 | `seed-brand.example.com` | registered | whois_registrar (B2) | x |\n"
+          "| 2025-02-01 | `seed-brand.example.com` | cert issued | certificate_transparency (A1) | x |\n")
+    _, dated = hr.condense_timeline_ledger(hr.scrub(tl))
+    assert "whois_registrar" not in dated and "certificate_transparency" not in dated, dated
+    assert "| registrar WHOIS (B2) |" in dated and "| certificate transparency (A1) |" in dated, dated
+
+
+def test_case_id_title_becomes_assessment_of_the_seed():
+    with tempfile.TemporaryDirectory() as tmp:
+        case = _synthetic_case(tmp)
+        md_path = os.path.join(case, "assessment.md")
+        txt = open(md_path, encoding="utf-8").read().replace("— synthetic", "— CASE-0001", 1)
+        open(md_path, "w", encoding="utf-8").write(txt)
+        _, md = _compose(case)
+    assert 'title: "Assessment — seed-brand.example.com"' in md, md.splitlines()[1]
+
+
 _TESTS = [
     test_structure_is_the_house_order_with_appendix_marker,
     test_seed_comes_from_scope_claim_not_alphabetical_order,
@@ -710,7 +913,7 @@ _TESTS = [
     test_prevalent_indicator_is_marked_excluded_and_sidecar_not_enumerated,
     test_alternatives_table_parses_status_with_digits_and_words,
     test_sector_typology_from_domain_tokens,
-    test_third_parties_are_masked_but_operator_join_key_is_kept,
+    test_third_parties_shown_in_plain_text,
     test_composer_degrades_without_assessment_json,
     test_glossary_lists_only_terms_the_report_uses,
     test_domain_dossiers_are_one_field_value_table_per_domain,
@@ -732,6 +935,11 @@ _TESTS = [
     test_urlscan_screenshot_fetch_sends_the_key_when_present,
     test_urlscan_verdict_rows_parse_as_b2_evidence_in_the_ledger,
     test_expansion_leaves_are_bounding_hosts_not_estate,
+    test_collected_origin_ip_is_infrastructure_not_estate_and_renders_hosting_row,
+    test_era_aware_join_key_prior_owner_shown_in_plain_text,
+    test_angle_bracket_text_is_escaped_not_swallowed_by_pandoc,
+    test_rule12_scrubs_vendor_names_install_paths_and_timeline_keys,
+    test_case_id_title_becomes_assessment_of_the_seed,
 ]
 
 

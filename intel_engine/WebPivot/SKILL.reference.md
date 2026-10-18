@@ -135,7 +135,7 @@ line — it is more surface on which the operator may have slipped.
 
 ## The harness
 
-`tools/pivot_extract.py` is the AI-controllable engine. **Zero required dependencies** — the core runs on the Python 3 stdlib, and the Shodan-style favicon `mmh3` hash is computed with a bundled pure-Python MurmurHash3. Optional accelerators: `requests` (fetch), `playwright` (rendered post-JS DOM via `--render`).
+`tools/pivot_extract.py` is the AI-controllable engine. **Zero required dependencies** — the core runs on the Python 3 stdlib, and the Shodan-style favicon `mmh3` hash is computed with a bundled pure-Python MurmurHash3. Optional accelerators: `requests` (fetch) and a browser for the rendered post-JS DOM via `--render` — **Moli** (DOM-first, default install) or Playwright/Chromium, chosen by `tools/wp_browser.py` (`CTI_BROWSER=auto|moli|chromium`). Screenshots and the Cloudflare escalation always render on Chromium.
 
 ```bash
 # Analyze a live page → full artifact + pivot JSON, SAVED to the case (the deliverable, not stdout)
@@ -144,7 +144,7 @@ python3 "$WP/tools/pivot_extract.py" https://suspicious-site.example --pretty -o
 # Just the ranked pivot leads (markdown, high→low confidence) — a quick view
 python3 "$WP/tools/pivot_extract.py" https://suspicious-site.example --leads
 
-# Render JS-heavy SPA before extraction (needs: pip install playwright && playwright install chromium)
+# Render JS-heavy SPA before extraction (Moli from the default install, else Playwright/Chromium)
 python3 "$WP/tools/pivot_extract.py" https://spa.example --render --leads
 
 # Offline: analyze saved HTML, or pipe from stdin / another scraper
@@ -162,7 +162,8 @@ is unchanged whether or not you read it). **Exhaust both pivot modes.**
 |---|---|---|
 | **Capability check (run it first)** | `tools/wp_capabilities.py` · `capability_check` MCP tool · auto-banner on every run | which keys are configured and, for each absent one, **the evidence class that is unavailable** + the free path that substitutes. Recorded in `meta.capability` and printed at the top of `--leads`. **Read it before reporting any "nothing found"** — see the keyless disclosure rule above |
 | **domainPivot** | URL / host / HTML (default) | favicon mmh3, trackers, wallets, emails, WHOIS, TLS, CT, 3rd-party, SaaS tokens |
-| **IPPivot** | a **bare IP** as input | passive IP recon: IPinfo ASN, FOFA `ip=`, Shodan, `dig` PTR/MX/NS/TXT; a shared CDN IP → `ip:information`, not a pivot |
+| **IPPivot** | a **bare IP** as input | passive IP recon: IPinfo ASN, FOFA `ip=`, Shodan, Censys host, Validin + keyless HackerTarget reverse-IP, CIRCL passive DNS + passive-SSL certificates seen on the box, `dig` PTR/MX/NS/TXT; a shared CDN IP → `ip:information`, not a pivot. `--free-only` runs IPinfo keyless and skips FOFA/Shodan/Censys/CIRCL. In a case it stamps `meta.origin_context` (which hosts used the IP, when, and whether that tenancy is stale) |
+| **Historical origin sweep** | (auto on every domain/subdomain pivot) · `tools/wp_origin_history.py` · `references/origin_history.json` → `live_results.origin_history` | **every address the host has EVER resolved to**, merged from live DNS, CIRCL/HackerTarget passive DNS, SecurityTrails history, Validin, urlscan's hostname index, Webamon servers, passive-SSL cert→IP and keyless urlscan scans, dated (`first_seen`/`last_seen`) and classified `origin` / `cdn` (CIDR index **plus** the ASN/org the source named — Akamai, Imperva, Sucuri, DDoS-Guard, Edgecast …) / `parking` / `bogon`. Offline join, no extra request. The loop and harness collect each `origin` row as an IPPivot seed (`frontier().ips_pending`), so a CDN-fronted or dead host still gets its old box's ASN, abuse contact, ports, PTR, certificates and co-tenants. A row last seen before the current registration is the previous owner's — a lead, never collected. `python3 tools/wp_origin_history.py <raw.json>` prints one host's history |
 | **IP identity — country · ASN · abuse · privacy flags** | (auto on the DOMAIN path too) · `tools/wp_ippivot.py` · `ip_info` MCP tool | **where an address is and whose it is**, for every IP a case surfaces — the live A record, an origin candidate from pDNS/pSSL, an SPF sender. Answers three things nothing else here does cleanly: whether the address is a PIVOT AT ALL (a shared CDN edge is other people's tenants; a small hosting ASN is real co-tenancy), the JURISDICTION and **abuse contact** a takedown actually goes to (a property of the ADDRESS — a privacy-masked WHOIS gives you nothing), and WHAT KIND of address it is: `hosting` on a scam server is ordinary, but `vpn`/`proxy`/`tor` on an address an operator connected FROM is a different statement — the flags stay separate, never collapsed to one boolean. Runs KEYLESS (rate-limited, still country + org); `IPINFO_TOKEN` adds the structured ASN block, abuse contact and privacy flags. **Memoised per process** — a case re-resolves the same CDN pair on every host and IPinfo bills per lookup. Skipped under `--free-only` |
 | **Misconfig triage — internal-IP leak + anonymous FTP** | (auto in IPPivot from the FOFA `banner`) · `wp_recon.scan_misconfig` · `references/misconfig_signals.json` → the `ip:misconfig` pivot | reads the tell that a box is **operator-run and sloppy**, not hardened/CDN infrastructure — PASSIVELY, from an index that already holds the banner (no packet sent). Two signals. (1) **Internal-IP leak**: an RFC1918 / loopback / link-local address surfacing in a public result's `ip`/`host`/**banner** (a redirect `Location`, a self-signed cert SAN, a config echo) means the box is **dual-homed and exposing its internal topology** — pivot the leaked host/redirect for the real origin or the internal service map, and a CDN edge never does this. (2) **Anonymous FTP**: a `230` anon-login banner is a HIGH-value triage lead — the kit itself, uploaded **victim logs**, builder configs, sometimes the operator's own files. 🚫 **This layer FLAGS only; it never auto-connects.** Actually opening the box's FTP is ACTIVE + attributable (it tells the operator they are watched) and victim data carries handling/legal implications — a human decides that step. Base-rate safe: the row's own public IP is never a leak, and CGNAT (`100.64/10`) is off by default. IPPivot **fuses FOFA + Shodan + Censys** for the port/service/co-tenant view this reads over, so combining the three widens the historical window on the artifact |
 | **ImpersonationHunt** | `<domain> --hunt-impersonation` | hunt lookalikes of a seed: typosquat perms + TLD sweep + crt.sh keyword hunt, existence-checked by live DNS → `impersonation:candidate` pivots + a monitoring watchlist. FREE (crt.sh+DNS); `--hunt-fofa`/`--hunt-urlscan` opt-in. Never live-fetches the lookalike infra |
@@ -176,7 +177,7 @@ is unchanged whether or not you read it). **Exhaust both pivot modes.**
 | Redirect & affiliate codes | (auto) | records `meta.redirect_chain` + affid/ref/utm codes (base64-decoded) as pivots |
 | Reverse WHOIS (name+email) | `--whois-reverse` | current + historic reverse-WHOIS siblings (name links sites sharing no tech artifact) |
 | Passive recovery | (auto) · `--no-fallback` | dead/blocked target → urlscan DOM → Wayback → still records the host + passive intel |
-| Cloudflare solve | `--solve-cf` (+ `--flaresolverr`) | detects managed challenge; FlareSolverr/Playwright *collect* it (a UA swap won't) |
+| Cloudflare solve | `--solve-cf` (+ `--flaresolverr`) | detects managed challenge; FlareSolverr/Chromium *collect* it (a UA swap won't; a Moli render of the interstitial is recorded as the challenge, never as the page) |
 | Create archive | `--archive-missing` | Save-Page-Now snapshot when none exists yet |
 | Save DOM + archive | `--save-dom` · `--submit` | store raw/post-JS DOM; push to Wayback + urlscan for a permanent capture |
 | Historical analytics | `tools/wayback_ga.py` | every GA/GTM/verification ID across full Wayback history (Bellingcat) |
@@ -567,7 +568,67 @@ different class than the one stated, **stop, say so, restate the posture**, and 
 
 0. **Intake — scope it and test the claim (§0 above, `Workflows/Intake.md`).** Establish target class + purpose before the first request; they decide the fetch posture, which layers run, and **whose artifacts the page's are**. Never blocks: no context → `unknown`, passive-first, and say so. The requester's stated class sets the posture, never the finding.
 1. **Acquire** — fetch (or `--render` for SPAs; or feed saved HTML / a urlscan DOM). Prefer passive capture for hostile targets.
-1b. **Always check the web archive** — on *every* target, even one that loads live. Pull the Wayback CDX timeline (`http://web.archive.org/cdx/search/cdx?url=<host>*&output=json&collapse=digest`) and read the status codes: a parked/dead site today may have hosted a live scam funnel in an earlier snapshot (mine that archived DOM for real artifacts), and a `created` WHOIS date inside the capture history means a prior owner. Never conclude "parked / nothing to pivot on" from the live page alone. Then run `wayback_ga.py` for the full analytics history. See `Workflows/AnalyzePage.md` step 2c.
+1b. **Always check the web archive** — on *every* target, even one that loads live. Pull the Wayback capture timeline (`wayback_fetch.py <host> --list`, or by hand `https://web.archive.org/web/timemap/json?url=<host>&matchType=domain&output=json&collapse=digest` — the same index as `/cdx/search/cdx`, which intermittently answers 503) and read the status codes: a parked/dead site today may have hosted a live scam funnel in an earlier snapshot (mine that archived DOM for real artifacts), and a `created` WHOIS date inside the capture history means a prior owner. Never conclude "parked / nothing to pivot on" from the live page alone. Then run `wayback_ga.py` for the full analytics history. See `Workflows/AnalyzePage.md` step 2c.
+1c. **One Wayback client, one guard.** Every Wayback/archive.org call site — `wayback_closest`/`wayback_save`,
+    `pivot_extract`'s archive recovery and `--archive-missing`, `wayback_fetch.py`/`wayback_ga.py`/`wayback_harvest.py`,
+    `wp_deep_archive.py`, `fallback_probe.wayback`, the house-report archive capture — goes through
+    `WebPivot/tools/wp_wayback.py` (index queries fail over `web/timemap/json` → `cdx/search/cdx` with
+    retry; the nearest capture comes from the `/web/<ts>id_/<url>` redirect, then the index
+    (the availability API is not used: 429 on every paced request from every exit); `references/wayback_endpoints.json`) and `WebPivot/tools/wp_wayback_guard.py`:
+    - **Run breaker** — after 20 CONSECUTIVE failures in one run (network error, timeout, proxy CONNECT
+      failure, 429, 5xx — never a valid "no capture" answer) every further Wayback call this run returns
+      its normal skip WITHOUT making a request. A fresh `INTEL_RUN_ID` starts a clean counter.
+    - **Egress pacer** — requests to one archive host+lane are spaced machine-wide (playback 4s, index
+      1.5s; `references/wayback_guard.json → pace`, `WAYBACK_MIN_INTERVAL` overrides). A burst of ~17
+      playback fetches in ~40s got this egress IP firewalled (every TCP connection refused) for ~8 min;
+      pacing is spacing, never a cap on how many calls run.
+    - **Cooldown** — an HTTP 429 or an archive-side refusal pauses THAT host on THAT exit (direct,
+      or the proxy set in use) for every process (Retry-After, else 60s / 300s, doubled per repeat
+      offence, max 1h); retrying into the archive's firewall block is what extends it. A dead proxy
+      exit or a 407 is the proxy's failure, never a cooldown.
+    - **Unplayable captures** — some indexed captures answer 503 on every fetch; `fetch_capture`
+      falls back to the nearest playable neighbour (pivot_extract recovery, `wayback_fetch.py`).
+    - **Row cap** — a whole-domain index query is URL-ordered and oldest-first, so one that fills
+      `--limit-scan` loses recent years; `wayback_ga`/`wayback_harvest` then merge in the apex's
+      newest captures and report `truncated: true` (the span is not the whole history).
+    - **Exits** — paced, direct / WARP (`socks5h://127.0.0.1:40000`) / Tor (`socks5h://127.0.0.1:9050`)
+      / the `CTI_PROXIES` HTTP pool all reach the archive equally and return byte-identical snapshots
+      (sha256, measured 2026-09-28); sampled tools use whatever `cti_proxy` installs, the exhaustive
+      job (1d) spreads across all of them via `wp_exits`.
+    - **Compression** — id_ playback replays the capture's original `Content-Encoding` (often gzip);
+      `wp_wayback` decompresses centrally, so extractors never see gzip bytes as junk.
+    Any skip or non-answer reads as a collection GAP (not queried) — `wayback_fetch.py` exits 3,
+    harvests return `skipped` — never as "no snapshots".
+1d. **Exhaustive archive sweep** (`wp_wayback_exhaust.py`, op `wayback-exhaust`, tool
+    `wayback_exhaust`, or `wayback_harvest.py --all`). When a time sample is not enough, download
+    EVERY distinct capture (content-hash deduped across all subdomains + paths, HTML + JS/JSON) via
+    the paged index (`index_pages`, resumeKey — no row cap), plus urlscan: the scan listing is
+    paged here with the `search_after` cursor saved per page, and every listed scan's cached DOM is
+    fetched with each billed uuid written to a crash-safe sidecar (`<state>.urlscan_done.jsonl`), so
+    a kill never re-pays. The urlscan key is spent even on a free-only run ONLY via this job; with
+    no key (or `--urlscan-no-spend`) the listing is one anonymous page and no DOM is fetched. The
+    listing is bounded by urlscan itself: the summary reports `urlscan_scans` of
+    `urlscan_vendor_total` within `urlscan_plan_window` — when listed == window < total, the vendor
+    will not page further. Fetches run across all working exits in parallel and the run is
+    RESUMABLE (state under `$INTEL_HOME/cases/<case>/deep-archive/<host>.exhaust.json`, else
+    `MEMORY/exhaust/`). **Budget:** 7 h by default (`references/wayback_endpoints.json → exhaust.
+    default_max_hours`; `--max-hours`, 0 = unbounded); at the budget it stops cleanly with the gap
+    recorded — re-run to continue. **Detached:** the MCP tool never runs the sweep inside the call
+    (the host kills a call at ~30 min) — it starts it in the background (`--detach`: own session,
+    `<state>.log`, one job per state file via `<state>.lock`) and returns at once; `status: true`
+    (`--status`) reads progress from the state file. **Dates:** a selector's first/last seen span the
+    WHOLE capture range of every content version it appears in (every URL, every run —
+    `collapse=digest` `endtimestamp`/`groupcount`), not the one capture downloaded. **Eras (RULE
+    5):** records are split at the current registration's `created` (explicit `--created`, else the
+    case `whois/<host>.json` sidecar, else keyless WHOIS/RDAP) into `current`, `spans_registration`
+    and `prior_era` in `<state>.eras.json`; `prior_era` selectors — seen only before registration,
+    most likely an EARLIER owner's — are historical facts only, never indicators, pivots or frontier
+    seeds (`indicators()` excludes them). No date found → every record is `undated` and the split
+    is not claimed. **Brotli:** `br` captures decode via the optional `brotli` package
+    (`WebPivot/requirements.txt`); without it they are counted `undecodable` and retried next run,
+    never read as empty. Only HARD-broken exits (407 credential, dead port, SOCKS failure) are
+    dropped at the probe; a throttled (429) exit is kept and paced by its cooldown. The sampled
+    `wayback-harvest` stays the default fast pass.
 2. **Extract** — run `pivot_extract.py`; get structured artifacts + ranked pivots.
 3. **Pivot** — run the emitted queries against the services in `references/PivotServices.md`. Work the **`references/PivotMatrix.md`** checklist: harvest *every* dimension on *every* seed and rank attribution by its same-owner strength tiers (Tier A owner-verified tokens — GSC `verifications`, own GA4/GTM, TLS leaf-fingerprint — before Tier D falsifiable WHOIS). Don't pivot opportunistically off whichever artifact you happened to notice.
 4. **Corroborate** — a single shared artifact is a lead, not proof. Confirm a cluster with ≥2 independent artifacts (e.g. same favicon **and** same GA4 ID) before asserting common ownership.

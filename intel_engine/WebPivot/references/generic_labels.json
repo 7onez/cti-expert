@@ -183,6 +183,42 @@
       ".aspx"
     ]
   },
+  "email_asset_suffixes": {
+    "_comment": "Endings that mark an EMAIL_RE match as an ASSET FILENAME rather than a mailbox — a retina image (hero@2x.jpeg), a pinned package (jquery@3.6.0.min.js), a font or icon. Consumed by wp_extract.extract_emails, matched against the lowercased end of the whole match. Never add an extension that is also a real TLD (.zip, .mov): a mailbox at such a domain would be silently dropped.",
+    "values": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".gif",
+      ".svg",
+      ".webp",
+      ".avif",
+      ".bmp",
+      ".ico",
+      ".tif",
+      ".tiff",
+      ".heic",
+      ".js",
+      ".mjs",
+      ".cjs",
+      ".css",
+      ".scss",
+      ".map",
+      ".json",
+      ".woff",
+      ".woff2",
+      ".ttf",
+      ".otf",
+      ".eot",
+      ".mp4",
+      ".webm",
+      ".mp3",
+      ".pdf",
+      ".html",
+      ".htm",
+      ".php"
+    ]
+  },
   "multi_part_tlds": {
     "_comment": "Two-part public suffixes, so the registrable apex keeps three labels: bbc.co.uk is one site, not a subdomain of co.uk. Getting this wrong merges every unrelated domain under a country's commercial suffix into one 'apex'. Add a suffix the moment a case touches a ccTLD that uses one.",
     "values": [

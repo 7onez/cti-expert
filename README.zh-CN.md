@@ -81,7 +81,7 @@
 | [**Netlas**](https://netlas.io) | 独立的互联网资产索引——一把密钥背后的 DNS、扫描响应、WHOIS 与证书四个集合；`domains a:<origin-ip>` 可把一个未经 CDN 的源站反查到每个 apex 并附带日期 | `/webpivot` MO-neighbour 数据源 · `intel.py netlas` · 套餐权益探测 |
 
 > [!IMPORTANT]
-> **ANY.RUN 查询为只读；引爆受到严格门控。** `anyrun_lookup` 只查询 TI Lookup 中**已经**被引爆过的哈希。`anyrun_submit` 可以引爆文件或 URL，但必须通过以下门控：每次提交都需分析员确认（先返回风险简报，再以 `confirm=true` 重新调用）、默认私有且拒绝 `public`、失败即关闭的套餐检查（读取账户自身 `/user` 的私有配额——为 0 时直接拒绝，分析员声明也无法覆盖；否则需有先前的私有任务，或分析员明确声明使用付费套餐）、提交后回读实际隐私设置并在任务仍被公开时立即撤回并标记，以及 harness 在未设置 `HARNESS_ALLOW_SUBMIT=1` 时直接拒绝。公开沙箱任务全网可读且不可撤回；该门控由一项回归测试强制保障（[`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)），而非仅靠约定。
+> **ANY.RUN：查询只读；配置密钥后的案件运行会自动提交文件。** `/cti` 将发现的 APK/安装包下载到 `cases/<case>/bin/` 并进行静态分析；若已设置 `ANYRUN_API_KEY` 且本次运行允许花费配额，则向沙箱提交完整文件（默认私有）。`--free-only`、`no_spend`、默认的 `loop`（除非使用 `--full`）及禁止直接接触目标的模式均不会提交。没有私有任务配额时，除非另设 `ANYRUN_ALLOW_PUBLIC=1`，否则拒绝提交；公开任务全球可见且不可撤销。直接调用 `anyrun_submit` 仍须逐次确认及设置 `HARNESS_ALLOW_SUBMIT=1`。详见 [`SKILL.md`](SKILL.md)。
 
 <sub>此处列出仅表示对本项目的支持，<b>不</b>意味着上述机构与本工具存在任何隶属、背书或认证关系。上表标注的集成均为可选且需要 API 密钥——<b>所有核心技术在零密钥情况下依然可用</b>。请始终遵守各提供方的服务条款。本技能所依赖的开源项目与免费公益服务的完整清单见<a href="#-致谢与鸣谢">致谢与鸣谢</a>。</sub>
 
@@ -166,6 +166,7 @@
 
 | 类别 | 新增内容 | 详情 |
 |------|---------|------|
+| **跨类型自动枢轴循环** | 每种选择器都是 frontier 节点；计费花费仍须一次 digest 绑定的批准 | 类型化节点（`selector_types` + `rungs.json` 的 owner/kit/neighbour）→ `case_state.propose` → 必选 Plan 阶段（只读 `PLAN_TOOLS`）→ 免费/urlscan 且 ≤ **N=25** 命中的枢轴自动跑，否则写入 `proposal.json` 由 `audit.gate` 门控（`harness approve` · `case_approve` · TTY）。调度 op `propose` + `corpus-search`（`corpus_search` 工具）。Assessment 增加可加字段 `kit_siblings` / `neighbours` / `mentions`——可采集、绝不归因。护栏：采集 ≠ 归因 |
 | **MO-neighbour 枢轴** | 把未经 CDN 的源站反查到同址租户——且只在拿到注册人连接键时才播种 | `wp_mo_neighbours.discover` 通过 **Netlas · Validin · urlscan** 反查该资产群未经 CDN 的源站 IP（含 MX 源站），对每个候选 apex 做 WHOIS 核验，并分类为 `same_registrant`（仅限当前注册人邮箱/电话连接键——代理隐私记录**不**贡献电话）/ `same_mo`（参考数据策略）/ `unrelated` / `unverifiable`。**只有 `same_registrant` 才进入前沿播种**；同一 MO 的人设在报告中呈现为第 10 级的 *Related personas* 表（`--mask-personas` 可聚合）。批量托管守卫在任何花费*之前*触发；按源站加锁 + 磁盘缓存 + 按运行记账的 WhoisXML 账本跨采集器子进程生效，因此一个源站每案件只买一次。RULE 5 护栏完好：知识库只以 fact 写入，绝不成 edge，绝不成 `operator_lead` |
 | **WHOIS 纪元 · urlscan Pro 生命周期** | 时间线现在知道在这个运营者*之前*是谁持有该域名 | WHOIS 历史是显式的 `--whois-history purchase`，限定于种子与聚类成员（渲染路径绝不购买）；house 报告渲染 **Registrant eras** 表（同日抖动折叠、注册商占位记录归类），并以当前纪元起点作为归档截图的截止点。urlscan **Pro** 提供主机名生命周期索引——A/NS 纪元、CT 与 zonefile 首见、遍历被截断时做左截尾——喂入时间视图；verdict 行仅在有信号时出现，API 密钥只发送给 urlscan.io |
 | **套餐权益靠测量，不靠假设** | 测得为 *free* 的密钥会跳过那些注定 403 的调用 | `wp_capabilities.discover_plans` 每案件一次探测各厂商的**免费账户端点**（urlscan 配额、Netlas 套餐、SecurityTrails/DNSLytics 用量、IntelX `/authenticate/info`、Validin `/api/paths`），写入 `cases/<id>/capability_plans.json`；`enrich_live` 读取该存储，**仅在明确测得 `free` 时**才做门控——未知则保留那次有产出的调用作为探测本身。Censys 搜索自行记录其 verdict。探测失败只在本次运行报告、绝不冻结，下一进程会重新测量 |
@@ -177,6 +178,7 @@
 | **ChongLuaDao 进入流水线 · 子域名 · 统一超时上限** | 自有 feed 给每台主机打分，存活子域名加入案件，且没有任何调用会拖死一次运行 | `wp_cld.py` 在 `enrich_live` 内对每个已采集主机运行——黑名单裁决 + IoC 分析以**信誉事实**落地（绝不成聚类边），且 CLD WHOIS 是 **`.vn` 域名的主来源**。`subdomain_enum` 合并 subfinder（从 `.env` 自动取密钥）、amass、assetfinder 与 findomain，DNS 核验名称写入 `cases/<id>/subenum/<apex>.json`，前沿把**存活**的排入下一轮队列（主机商管线是事实，不是种子）。统一的每次调用上限——`CTI_CALL_TIMEOUT`，默认 **1800 s**，来自 `WebPivot/references/timeouts.json`——托住每一次 fetch、厂商调用、采集器与渲染器子进程；原始 DNS/TLS 探测保留其快速失败边界，正在运行的 MCP server 在重启前保持其取值 |
 | **可注册 apex · 房东 IP · 套件绑定器** | 前沿与知识库就何为 apex、哪类 IP 是房东达成一致 | 内置的 **Public Suffix List**（`public_suffix_list.json`，`wp_psl_update.py`）驱动单一 `_registrable()` 归约器，因此 `shop.id.vn` 与 `panel.co.uk` 在各处——前沿、入库、报告、Blueprint——都折叠到正确的 apex。`shared_hosting_max_cohosts`（12）是标记 IP 为共享/批量托管的**唯一**数字：其 `hosted_on` 边变为事实，聚类分区忽略它们，同址租户仅作为线索保留。扩展深度被锚定：与*上一跳*所有者链接的主机是 `related_hosts`，绝不成成员。抓取到的社交链接解析到**账号**——按网络的保留路径、第二段路由器以及库/厂商署名账号属于参考数据，裸平台 apex（`t.me`，`facebook.com`）绝不是 handle |
 | **Blueprint 折叠到 apex 级** | 上百主机的资产群不再悄无声息地丢掉 HTML 报告的架构页 | Archify 的架构类型最多画 ≤ 12 个节点 · 18 条边，因此 [`cti_archify.py`](scripts/cti_archify.py) 现在**把主机折叠到其可注册 apex 之下**（`Estate · N hosts`），把长尾折进 `+N more apexes`，优先排列带发现的 apex，并把运营者枢纽放在中行、辐条上下分布。`CTI_ARCHIFY=1`（自动：能放下就全图，否则折叠）· `force`（最宽的 25 节点网格）· `0`；`--plan` 离线打印两种结果，每次 HTML 导出现在先确认 Blueprint 模式（步骤 C——`--yolo` 保持 Auto）。由 [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) 锁定 |
+| **`/cti` 覆盖所有编码代理** | 一步注册，把命令接入本机所有代理，而不只是 Claude Code | [`scripts/register_agents.py`](scripts/register_agents.py)（由 `register.sh` 调用）把 9 条命令注册到 **omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf**，并把 `/cti` 安装为共享技能 `~/.agents/skills/cti`，供 **Cursor · Copilot CLI**（`/cti`）、**Codex**（`$cti` —— Codex 自 0.117 起移除了自定义提示词，因此旧的 `codex/cti-expert.md` 已删除）与 **ChatGPT 桌面应用**（`@cti`）使用。每个文件都是指向本克隆的指针存根，一次 `git pull` 即可同时更新所有代理。安装与 `--uninstall` 只触碰自己写入的内容 —— 带标记的存根，以及解析到本仓库的 `~/.claude` 符号链接 —— 绝不触碰你自己的同名命令或技能。由 [`tests/test_register_agents.py`](tests/test_register_agents.py) 锁定 |
 
 <details>
 <summary><b>v2.11 新功能</b></summary>
@@ -504,19 +506,21 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + �
 
 ---
 
-### 第三步 &mdash; 把命令注册到 Claude Code
+### 第三步 &mdash; 把命令注册到 Claude Code 及其他所有代理
 
-`install.sh` 安装的是 OSINT **工具**。这一步只需做一次，它把**技能、9 条 `/cti*` 斜杠命令以及 MCP 工具**接入 Claude Code，使它们在任意项目的冷启动提示符下都能用 —— 它会把 `commands/*.md` 软链接进 `~/.claude/commands/`，并写出这台机器专属的 `.mcp.json`。该步骤是幂等的，`git pull` 之后重跑也安全。
+`install.sh` 安装的是 OSINT **工具**。这一步只需做一次，它把**技能、9 条 `/cti*` 斜杠命令以及 MCP 工具**接入 Claude Code，使它们在任意项目的冷启动提示符下都能用 —— 它会把 `commands/*.md` 软链接进 `~/.claude/commands/`，并写出这台机器专属的 `.mcp.json`。随后它会把 `/cti` 注册到本机检测到的其他所有编码代理（见下文「在其他代理中使用」）。该步骤是幂等的，`git pull` 之后重跑也安全。
 
 ```bash
-# 注册技能 + 9 条命令 + 写出本机专属的 .mcp.json
+# 注册技能 + 9 条命令 + 写出本机专属的 .mcp.json + 检测到的其他代理
 bash ~/.claude/skills/cti-expert/scripts/register.sh
 
 # 推荐：把内置深度流水线（intel_engine）的依赖安装一次
 cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
 ```
 
-> **Windows（原生 PowerShell）：** 请从 **Git Bash 或 WSL** 运行 `register.sh` —— 它使用了软链接。之后，在所有平台上都要**重启 Claude Code**，让技能与命令在启动时加载。
+> **Windows（原生 PowerShell）：** 请从 **Git Bash** 运行 `register.sh` —— Git Bash 的 `~` 就是 `%USERPROFILE%`，即 Windows 原生代理（Claude Code、Codex、Cursor、Gemini …）读取配置的位置。**不要用 WSL：** 在 WSL 中 `~` 是 Linux 家目录，因此在 WSL 里运行只会为同样运行在 WSL 内的代理注册。Git Bash 的 `ln -s` 默认会悄悄复制文件，因此 `register.sh` 会请求真正的 Windows 符号链接（需要**开发者模式**或管理员 shell），若 Windows 拒绝，则改写指针存根 —— 两种方式下命令都会随 `git pull` 更新；开启开发者模式后重跑即可把存根升级为链接。存根与其他代理需要 Python 3.10+ —— 依次尝试仓库 `.venv`（`.venv\Scripts\python.exe`）、`python3`、`python` 与 `py` 启动器；若都无法运行，`register.sh` 会打印 **Registration INCOMPLETE** 并以退出码 1 结束，而不是报告成功。单独注册其他代理这一步也可直接用 `py scripts\register_agents.py` 原生运行。之后，在所有平台上都要**重启每个代理**，让技能与命令在启动时加载。
+
+> **卸载：** `bash scripts/register.sh --uninstall` 会移除指向本克隆的 Claude Code 链接，以及 `register_agents.py` 写入的所有存根。你自己写的同名命令或技能永远不会被触碰 —— 安装时如此，卸载时也一样。
 
 ---
 
@@ -528,26 +532,38 @@ claude              # 打开 Claude Code CLI，然后输入：
 /cti example.com    # ……或者直接开始调查
 ```
 
-> `/cti-status` 一次性确认后端、MCP 工具与 API 额度余额。如果 `/cti*` 命令没有被识别，请重跑**第三步**（`register.sh`）并重启 Claude Code。你也可以输入 `/cti-expert` 直接加载技能，然后用自然语言描述你的目标。
+> `/cti-status` 一次性确认后端、MCP 工具与 API 额度余额。如果 `/cti*` 命令没有被识别，请重跑**第三步**（`register.sh`）并重启对应代理；`python3 scripts/register_agents.py --list` 会列出检测到的代理以及每个代理的命令存放位置。在 Codex 中命令是 `$cti`。你也可以输入 `/cti-expert`（Claude Code）直接加载技能，然后用自然语言描述你的目标。
 
 ---
 
-### 在 ChatGPT / Codex 中使用（跨代理）
+### 在其他代理中使用（Codex · ChatGPT · Cursor · Gemini · omp · pi …）
 
-CTI Expert 是可移植的：分析逻辑是纯 Markdown，脚本是自带操作系统检测的 Python/shell，因此它不仅能在 Claude Code 中运行，也能在 **OpenAI Codex**（以及其他支持 [`AGENTS.md`](AGENTS.md) 的代理）中运行。
+CTI Expert 是可移植的：分析逻辑是纯 Markdown，脚本是自带操作系统检测的 Python/shell，因此它能在任何支持 [`AGENTS.md`](AGENTS.md) 的编码代理中运行，而不只是 Claude Code。[`scripts/register_agents.py`](scripts/register_agents.py)（由 `register.sh` 调用）会把 `/cti` 注册到它检测到的每个代理：
+
+| 代理 | 注册形式 | 调用 |
+|---|---|---|
+| oh-my-pi (omp) | `~/.omp/agent/commands/cti*.md` | `/cti example.com` |
+| pi | `~/.pi/agent/prompts/cti*.md` | `/cti example.com` |
+| OpenCode | `~/.config/opencode/commands/cti*.md` | `/cti example.com` |
+| Gemini CLI | `~/.gemini/commands/cti*.toml` | `/cti example.com` |
+| Qwen Code | `~/.qwen/commands/cti*.md` | `/cti example.com` |
+| Factory droid | `~/.factory/commands/cti*.md` | `/cti example.com` |
+| Windsurf | `~/.codeium/windsurf/global_workflows/cti*.md` | `/cti example.com` |
+| Cursor · GitHub Copilot CLI | agent skill `~/.agents/skills/cti/` | `/cti example.com` |
+| OpenAI Codex（CLI / IDE） | 同一个 agent skill | `$cti example.com` —— Codex 自 0.117 起移除了自定义提示词，技能只能用 `$` 调用，不能用 `/` |
+| ChatGPT 桌面应用 | 同一个 agent skill | `@cti example.com` |
 
 ```bash
-# 1. 把技能克隆到任意位置
-git clone https://github.com/7onez/cti-expert.git
-
-# 2a. 仓库内：在克隆目录中打开 Codex —— 它会自动加载 AGENTS.md。然后让它遵循 SKILL.md。
-# 2b. 斜杠命令：复制内置的 Codex 提示词，使 /cti-expert 在 Codex CLI/IDE 中可用
-cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：复制到 %USERPROFILE%\.codex\prompts\
+python3 scripts/register_agents.py --list            # 检测到哪些代理，以及各自的存根写到哪里
+python3 scripts/register_agents.py --host all        # 为所有代理注册，无论是否已安装
+python3 scripts/register_agents.py --host gemini,pi  # 只注册这些
+python3 scripts/register_agents.py --uninstall       # 移除本脚本写入的全部存根
 ```
 
+- 使用命令文件的代理获得全部 9 条命令；使用共享技能的代理获得 `/cti`（唯一入口）。每个存根只是一个短指针，按绝对路径指向本克隆的 `commands/<cmd>.md` 与 `SKILL.md`，因此一次 `git pull` 就能同时更新所有代理 —— 只有在移动克隆目录或新增命令后才需要重跑。你自己写的同名文件永远不会被覆盖或删除。
 - **[`AGENTS.md`](AGENTS.md)** 是跨代理的运行时契约（操作系统检测、uv、路径）。Codex 会从仓库根目录自动拼接它；你也可以从 `~/.codex/AGENTS.md` 引用它。
-- **`codex/cti-expert.md`** 是一份可直接复制的自定义提示词 → 让 Codex 拥有 `/cti-expert <target>` 斜杠命令。
-- **纯 ChatGPT（无代码执行）：** 推理、查询生成与报告起草都能工作（把 `SKILL.md`/`AGENTS.md` 作为指令或 Custom-GPT 知识加载）；只有本地步骤（DOCX 构建、CLI 工具运行）需要 Codex 或 Claude Code 这类具备代码能力的运行环境。
+- Codex 与 omp 的 **MCP 工具**：`python3 scripts/backend/intel.py mcp --host codex|omp|all --write`。没有它们时，所有命令仍通过 CLI 调度器（Tier 2）运行。
+- **网页版 ChatGPT（无代码执行）：** 没有斜杠命令注册机制；推理、查询生成与报告起草都能工作（把 `SKILL.md`/`AGENTS.md` 作为指令或 Custom-GPT 知识加载）；只有本地步骤（DOCX 构建、CLI 工具运行）需要具备代码能力的运行环境。
 
 > 路径都相对技能目录（包含 `SKILL.md` 的那个文件夹）解析，因此没有任何地方假定 Claude 专属的 `~/.claude/skills/` 位置。
 
@@ -574,13 +590,14 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 
    ```bash
    bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT 工具
-   bash ~/.claude/skills/cti-expert/scripts/register.sh     # 技能 + 9 条命令 + MCP
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # 技能 + 9 条命令 + MCP + 其他代理
    ```
 
-   或在 Windows PowerShell 上（仅 Python 依赖；`register.sh` 请从 Git Bash/WSL 运行）：
+   或在 Windows PowerShell 上（Python 依赖 + 其他代理；Claude Code 链接请从 Git Bash（而非 WSL）运行 `register.sh`）：
 
    ```powershell
    pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   py "$env:USERPROFILE\.claude\skills\cti-expert\scripts\register_agents.py"   # 为其他代理注册 /cti
    ```
 
 5. **重启 Claude Code 桌面版** &mdash; 关闭并重新打开应用
@@ -617,9 +634,9 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows：�
 # 1 — 安装工具（Linux/macOS）：Python + ffmpeg + Node + 全部 OSINT 工具
 git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
 bash ~/.claude/skills/cti-expert/scripts/install.sh
-# 2 — 向 Claude Code 注册技能 + 9 个 /cti* 命令 + MCP，然后重启 Claude Code
+# 2 — 向 Claude Code 及找到的其他所有代理注册技能 + 9 个 /cti* 命令 + MCP，然后重启它们
 bash ~/.claude/skills/cti-expert/scripts/register.sh
-#     （Windows：在 Git Bash / WSL 中运行 register.sh —— 它使用符号链接。之后重启 Claude Code。）
+#     （Windows：在 Git Bash 而非 WSL 中运行 register.sh —— WSL 的 ~ 是 Linux 家目录。Codex 中命令是 $cti。）
 # 3 — 调查任何东西（无密钥，运行至闭合）：
 /cti example.com
 # 4 — 可选：解锁反向枢轴 + 图像视觉（已带无密钥回退）
@@ -627,13 +644,13 @@ bash ~/.claude/skills/cti-expert/scripts/register.sh
 /apikeys set gemini <KEY>     # 图像 OCR、招牌/地标识读、音视频转写
 ```
 
-Windows、`--all` 和 Codex 变体：见[安装](#安装)。
+Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp · pi …）的变体：见[安装](#安装)。
 
 ### 命令是怎么工作的 —— 请先读这段
 
 **只需要记住一条命令：`/cti <目标>`。** 它会看你给了什么 —— 域名、IP、邮箱、用户名、电话、钱包、哈希或 APK —— 并自动运行相应的调查链。通常这就够了。
 
-它之下还有 **9 条已注册命令**，Claude Code 在任意项目的冷启动提示符下都能识别（无需先加载技能）：
+它之下还有 **9 条已注册命令**，Claude Code 以及 `register.sh` 接入的所有命令文件型代理（omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf）在任意项目的冷启动提示符下都能识别，无需先加载技能。Cursor、Copilot CLI、Codex（`$cti`）与 ChatGPT 桌面应用（`@cti`）获得的是入口命令 `/cti` 本身：
 
 | 命令 | 作用 |
 |---------|--------------|
@@ -1275,7 +1292,7 @@ cti-expert/
 ├── SKILL.md                    技能的唯一入口 —— 命令与技艺
 ├── README.md                   本文件  ·  README.vi.md · README.zh-CN.md
 ├── STRUCTURE.md                权威布局 + 防漂移规则
-├── AGENTS.md                   跨代理运行时契约（Claude Code + Codex）
+├── AGENTS.md                   跨代理运行时契约（所有支持 AGENTS.md 的编码代理）
 ├── CLAUDE.md                   贡献者规则（仅在构建本仓库时加载）
 │
 ├── commands/                   9 条已注册斜杠命令 —— 冷启动即可用
@@ -1293,6 +1310,7 @@ cti-expert/
 │   ├── generate-cti-iocs.py    IOC／选择子导出（STIX 2.1 · 扁平 · CSV · JSONL）
 │   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF（图表、示意图、封面）
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
+│   ├── register.sh · register_agents.py   为 Claude Code 及其他所有编码代理注册 /cti
 │   ├── install.sh · install.ps1      一体化跨平台安装脚本
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   漂移 · 泄露 · 预提交门禁
 │
@@ -1307,7 +1325,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（79 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（87 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
     ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）

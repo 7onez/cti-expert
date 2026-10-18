@@ -175,16 +175,31 @@ def _chmod_600(path):
 
 
 # ─────────────────────────────────────────────────────────────────────── probe
-def probe(svc, key):
+def probe(svc, key, file_env=None):
     """Live-validate a key using the registry test spec. Returns (state, detail).
-    state ∈ {'valid','invalid','error','no-test'}."""
+    state ∈ {'valid','invalid','error','no-test'}. `{key}` and `{<EXTRA_VAR>}` placeholders (a
+    service's `extra` companions, e.g. CENSYS_ORG_ID) are filled from env, then the .env file."""
     spec = svc.get("test")
     if not spec:
         return "no-test", "no automated probe — run a real query to confirm"
-    url = spec["url"].replace("{key}", key)
+    subs = {"{key}": key}
+    for var in svc.get("extra") or []:
+        val, _src = resolve(var, file_env or {})
+        if val:
+            subs["{" + var + "}"] = val
+
+    def fill(s):
+        for ph, v in subs.items():
+            s = s.replace(ph, v)
+        return s
+
+    url = fill(spec["url"])
     headers = {"User-Agent": UA}
     for hk, hv in (spec.get("header") or {}).items():
-        headers[hk] = hv.replace("{key}", key)
+        headers[hk] = fill(hv)
+    missing = [v for v in (svc.get("extra") or []) if "{" + v + "}" in url + "".join(headers.values())]
+    if missing:
+        return "no-test", f"set {', '.join(missing)} to probe"
     if spec.get("bearer"):
         headers["Authorization"] = f"Bearer {key}"
     try:
@@ -305,7 +320,7 @@ def cmd_test(services, file_env, args):
             if args.service:
                 print(f"⚪ {s['id']}: no key set")
             continue
-        state, detail = probe(s, val)
+        state, detail = probe(s, val, file_env)
         any_tested = True
         print(f"{icons[state]} {s['id']:<15} {state:<8} {detail}   [{src}]")
     if not any_tested and not args.service:

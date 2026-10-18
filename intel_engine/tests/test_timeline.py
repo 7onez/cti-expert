@@ -190,14 +190,20 @@ def check():
        and ct.link_name("https://web.archive.org/web/1/x") == "Wayback",
        "link_name labels a citation by the service it points at")
 
-    # --- 9. registrant eras from WHOIS history (the drop-catch record) ------------------------
+    # --- 9. registrant eras from WHOIS history (one continuous registration, contact changed
+    #        three times — NOT a drop-catch: every record shares the domain's own `created` date,
+    #        so whois_eras.py buckets them all into the CURRENT era and none are masked) --------
     whois_hist = {"domain": "recycled.example", "registrar": "Example Registrar",
                   "created": "2015-03-01", "expires": "2027-05-21",
                   "history": {"count": 4, "mode": "purchase", "records": [
-                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar", "updated": "2015-03-01"},
-                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar", "updated": "2018-03-01"},
-                      {"email": "privacy@proxy.invalid", "registrar": "Mid Registrar", "updated": "2021-11-02"},
-                      {"email": "operator@synthetic.invalid", "registrar": "Example Registrar", "updated": "2026-05-21"},
+                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar",
+                       "created": "2015-03-01", "updated": "2015-03-01"},
+                      {"email": "first@synthetic.invalid", "registrar": "Old Registrar",
+                       "created": "2015-03-01", "updated": "2018-03-01"},
+                      {"email": "privacy@proxy.invalid", "registrar": "Mid Registrar",
+                       "created": "2015-03-01", "updated": "2021-11-02"},
+                      {"email": "operator@synthetic.invalid", "registrar": "Example Registrar",
+                       "created": "2015-03-01", "updated": "2026-05-21"},
                   ]}}
     eras_out = []
     ct.whois_events("recycled.example", whois_hist, eras_out)

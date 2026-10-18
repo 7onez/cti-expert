@@ -48,12 +48,17 @@ TOOL_LOOKUPS = {
     "SECURITYTRAILS_API_KEY": ["SECURITYTRAILS_API_KEY", "SECURITYTRAILS_API_KEY_FALLBACK"],
     "DNSLYTICS_API_KEY": ["DNSLYTICS_API_KEY", "DNSLYTICS_API_KEY_FALLBACK"],
     "CERTSPOTTER_API_KEY": ["CERTSPOTTER_API_KEY"],
+    "CERTINDEX_API_KEY": ["CERTINDEX_API_KEY", "CTINDEX_API_KEY"],
+    "CERTKIT_PASSWORD": ["CERTKIT_PASSWORD"],
     "NETLAS_API_KEY": ["NETLAS_API_KEY", "NETLAS_KEY"],
     "WEBAMON_API_KEY": ["WEBAMON_API_KEY", "WEBAMON_KEY"],
+    "PUBLICWWW_API_KEY": ["PUBLICWWW_API_KEY", "PUBLICWWW_KEY"],
+    "CHONGLUADAO_API_KEY": ["CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY"],
+    "QUARRY_API_KEY": ["QUARRY_API_KEY", "QUARRY_KEY"],
 }
 
 # Vars that are companions/requirements, never key values — must NOT appear in any `aliases`.
-NEVER_ALIAS = {"FOFA_EMAIL", "PDNS_USERNAME", "PDNS_URL", "CENSYS_ORG_ID"}
+NEVER_ALIAS = {"FOFA_EMAIL", "PDNS_USERNAME", "PDNS_URL", "CENSYS_ORG_ID", "CERTKIT_EMAIL"}
 
 
 def _cap_registry():
@@ -149,9 +154,10 @@ def test_alias_only_key_is_not_reported_missing():
 # capability legs — other skills/commands consume them. They MUST NOT appear in api_keys.json, or
 # the WebPivot keyless banner would caveat a run on keys it never uses.
 NON_WEBPIVOT_KEYS = {
-    "HUDSONROCK_API_KEY", "CHONGLUADAO_API_KEY", "CLD_API_KEY", "BLOCKCHAIR_API_KEY",
+    "HUDSONROCK_API_KEY", "BLOCKCHAIR_API_KEY",
     "GITHUB_TOKEN", "SUBSCAN_API_KEY", "BRIGHTDATA_SERP_KEY", "GEMINI_API_KEY",
-    "GOOGLE_API_KEY", "ZONECRUNCHER_API_KEY",
+    "GOOGLE_API_KEY", "ZONECRUNCHER_API_KEY", "ABUSE_CH_API_KEY", "ABUSECH_API_KEY",
+    "URLHAUS_AUTH_KEY", "SPAMHAUS_USERNAME", "SPAMHAUS_USER", "SPAMHAUS_PASSWORD",
 }
 
 
@@ -173,13 +179,27 @@ def test_unrelated_keys_stay_out_of_the_webpivot_banner():
     assert not leaked, f"non-WebPivot key(s) leaked into the capability banner: {leaked}"
 
 
+def test_chongluadao_key_registered_with_aliases_in_both_registries():
+    """(#28) `intel.py capabilities` reads api_keys.json; `/apikeys` reads registry.json. Both must
+    carry CHONGLUADAO_API_KEY with the exact alias set wp_cld._KEY_NAMES / enrichment_run.KEY_ENVS
+    accept, or a key set only via an alias reads as PRESENT in the tool but MISSING in the report."""
+    _cap, cap_reg = _cap_registry()
+    want = {"CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY"}
+    assert cap_reg.get("CHONGLUADAO_API_KEY") == want, cap_reg.get("CHONGLUADAO_API_KEY")
+    svcs = _apikeys_services()
+    row = next((s for s in svcs if s[0] == "CHONGLUADAO_API_KEY"), None)
+    assert row is not None, "CHONGLUADAO_API_KEY missing from scripts/apikeys/registry.json"
+    assert row[1] == want, row[1]
+
+
 _TESTS = [test_capability_registry_covers_every_tool_lookup,
           test_apikeys_registry_covers_every_tool_lookup,
           test_companion_vars_never_declared_as_aliases,
           test_three_previously_silent_keys_now_registered,
           test_alias_only_key_is_not_reported_missing,
           test_capability_registry_is_exactly_the_webpivot_tool_key_set,
-          test_unrelated_keys_stay_out_of_the_webpivot_banner]
+          test_unrelated_keys_stay_out_of_the_webpivot_banner,
+          test_chongluadao_key_registered_with_aliases_in_both_registries]
 
 
 def check():

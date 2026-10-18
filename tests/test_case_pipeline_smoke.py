@@ -204,13 +204,35 @@ def test_multi_operator_case_is_flagged_not_silent():
             "multi-operator case not flagged in intelligence_gaps"
 
 
+def test_enrichment_evidence_survives_report_conversion():
+    with tempfile.TemporaryDirectory() as tmp:
+        case, kb = _make_case(tmp)
+        enrich = os.path.join(case, "enrichment")
+        os.makedirs(enrich)
+        with open(os.path.join(enrich, "index.json"), "w", encoding="utf-8") as fh:
+            json.dump({"leads": {
+                "cld-phone:+15550100042": {
+                    "file": "proof.json", "outcome": "ran",
+                    "summary": "Shield phone lookup matched one record; operator link unverified"},
+                "intelx-phonebook:kit-apex.example": {
+                    "outcome": "held", "summary": "deferred until keyed full run"}}}, fh)
+        rep = _build(case, kb, os.path.join(tmp, "R.json"))
+        rows = {r["key"]: r for r in rep["enrichment"]}
+        assert rows["cld-phone:+15550100042"]["outcome"] == "ran", rows
+        assert rows["cld-phone:+15550100042"]["file"] == "proof.json"
+        assert {"key": "intelx-phonebook:kit-apex.example", "reason": "held"} in rep["enrichment_gaps"]
+        assert not any("Shield phone lookup" in f["description"] for f in rep["findings"]), \
+            "a third-party hit must not become an attributed finding"
+
+
 _TESTS = [test_converter_populates_valid_report_json,
           test_section25_exclusions_populated_and_gated,
           test_html_report_renders_from_converter,
           test_empty_case_degrades_without_crashing,
           test_docx_renders_with_chart_media_best_effort,
           test_operator_survives_redacted_registrant_name,
-          test_multi_operator_case_is_flagged_not_silent]
+          test_multi_operator_case_is_flagged_not_silent,
+          test_enrichment_evidence_survives_report_conversion]
 
 
 def check():

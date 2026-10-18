@@ -157,6 +157,13 @@ def check():
                              "tool_input": {"url": "https://site-a.example",
                                             "flags": "--submit"}}) == "ask",
        "actionguard asks on pivot_extract --submit (it publishes the URL)")
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__quarry",
+                             "tool_input": {"case": "CASE-0001", "target": "site-a.example"}}) == "allow",
+       "actionguard allows a Quarry READ (no scan)")
+    ok(_decide(ACTIONGUARD, {"tool_name": "mcp__intel__quarry",
+                             "tool_input": {"case": "CASE-0001", "target": "site-a.example",
+                                            "start": True}}) == "ask",
+       "actionguard asks on quarry start=true (it scans the target and spends)")
 
     # ---- actionguard: dissemination (IntelShare) ---------------------------------------------
     # MISP splits into two decisions and the gate must respect that split. `push` STAGES an
@@ -195,6 +202,10 @@ def check():
     ok(bash("python3 scripts/backend/intel.py kb --stats") == "allow",
        "actionguard stays silent on ordinary engine commands")
     ok(bash("ls -la") == "allow", "actionguard stays silent on ordinary shell")
+    ok(bash("python3 quarry_bridge.py sync --case CASE-0001 --target site-a.example --quarry-scan") == "ask",
+       "actionguard asks on the Quarry scan flag from the shell")
+    ok(bash("python3 quarry_bridge.py sync --case CASE-0001 --target site-a.example") == "allow",
+       "actionguard does NOT ask on a Quarry reuse (no --quarry-scan)")
 
     r = subprocess.run([sys.executable, ACTIONGUARD], input="not json",
                        capture_output=True, text=True, timeout=30)
@@ -208,7 +219,7 @@ def check():
         d = json.load(open(ref, encoding="utf-8"))
         names = set((d.get("mcp_tools") or {}).get("entries", {}))
         for must in ("engage_account", "anyrun_submit", "harvest_authenticated",
-                     "misp_push", "misp_publish"):
+                     "misp_push", "misp_publish", "quarry"):
             ok(must in names, f"reference data still gates {must}")
 
     # ---- the wiring: a hook nobody registered is a comment that runs -------------------------

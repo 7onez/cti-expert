@@ -33,7 +33,7 @@ _FLAGS_CACHE: dict[str, frozenset[str]] = {}
 _FLAGS_LOCK = threading.Lock()
 
 # Per-call ceiling for subprocess "task calls" — ONE resolver (WebPivot/tools/wp_timeouts: env
-# CTI_CALL_TIMEOUT → skill-root/engine .env → references/timeouts.json → 1800s / 30 min). Flooring
+# CTI_CALL_TIMEOUT → skill-root/engine .env → references/timeouts.json → 5000s / ~83 min). Flooring
 # in run() means every harness _run(...) call and every collector subprocess this module launches
 # runs up to the ceiling, then times out and the run moves on — without editing each call site.
 # wp_timeouts is stdlib, so importing it keeps this module dependency-free.
@@ -48,10 +48,12 @@ def host_of(url: str) -> str:
     return urlparse(url if "://" in url else "http://" + url).hostname or url
 
 
-def run(cmd: Sequence[str], cwd: str, timeout: int = None) -> subprocess.CompletedProcess:
+def run(cmd: Sequence[str], cwd: str, timeout: int = None,
+        env: Optional[dict] = None) -> subprocess.CompletedProcess:
     # Floor to CALL_TIMEOUT: a caller's shorter per-call timeout is raised to the ceiling.
     eff = _floor(timeout)
-    return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True, timeout=eff)
+    return subprocess.run(list(cmd), cwd=cwd, capture_output=True, text=True, timeout=eff,
+                          env=({**os.environ, **env} if env else None))
 
 
 def load_json(path: str):
@@ -150,7 +152,12 @@ def collect_host(
     harness passes its `_append_manifest`; the deterministic pipeline passes None). `extra_flags`
     are appended verbatim before filtering (e.g. `--whois-reverse` / `--fofa-full` / `--render`).
 
-    Result dict keys: host, ok, reused, error, dom, n_pivots, note, data.
+    Result dict keys: host, ok, reused, error, dom, n_pivots, note, status, collect_failed, data.
+    `status` is one of 'ok' (the live fetch itself succeeded), 'recovered (<source>)' (content came
+    from an archive/urlscan capture instead), or 'unreachable (<reason>)' (neither) — `note` always
+    starts with it, so the printed per-host line never reports 'ok' for a dead live target.
+    `collect_failed` is True only for the 'unreachable' case — use it, not `ok`, to tell a real
+    collection failure from a merely-cached/host-derived hit.
     """
     render_py = render_py or py
     collpath = collector if os.path.isabs(collector) else os.path.join(root, collector)
@@ -159,6 +166,12 @@ def collect_host(
     shot_dir = os.path.join(root, "cases", case, "screenshots")
     os.makedirs(raw_dir, exist_ok=True)
     os.makedirs(dom_dir, exist_ok=True)
+    # A bare hostname ("pa.tatao.net", what the harness's frontier discovery hands back) is not a
+    # source pivot_extract accepts — it refused every one in <1 s ("source must be a URL"), so a
+    # whole round read as "collected 0/N". The pipeline already prefixes https://; do it once here
+    # so every caller is covered. A local file (a saved .eml / .html) stays a path.
+    if "://" not in url and not os.path.exists(url):
+        url = "https://" + url
     host = host_of(url)
     out = os.path.join(raw_dir, host + ".json")
     dom = os.path.join(dom_dir, host + ".html")
@@ -201,9 +214,10 @@ def collect_host(
         screenshot_py = render_py
     args, dropped = filter_args(py, collpath, root, args)
     base = [collpath, *args]
-    # A --deep-archive collection exhausts Wayback history + every urlscan DOM + CommonCrawl +
-    # archive.today on top of normal enrichment, so it needs far more than the 240s calibrated for
-    # a single-capture collection (deep_archive self-budgets at ~150s; give the whole run headroom).
+    # A --deep-archive collection SAMPLES the archive layers (≤25 Wayback snapshots, ≤25 urlscan
+    # DOMs from ≤5×100 scans, CommonCrawl + archive.today) within a ~150s self-budget, on top of
+    # normal enrichment — heavier than the 240s calibrated for a single-capture collection, but NOT
+    # exhaustive (that is the separate resumable `wayback-exhaust` job). Give the run headroom.
     _deep = "--deep-archive" in args
     _sub_timeout = 600 if _deep else (300 if want_shot else 240)
     r = run([screenshot_py, *base], cwd=root, timeout=_sub_timeout)
@@ -222,22 +236,43 @@ def collect_host(
             run([py, *base, *retry], cwd=root, timeout=300)
             used = "flaresolverr"
         elif retry:
-            run([render_py, *base, *retry], cwd=root, timeout=300)
+            # The browser retry exists to clear a Cloudflare challenge: only Chromium can, so the
+            # render engine is pinned here — under CTI_BROWSER=auto a plain --render would pick Moli.
+            run([render_py, *base, *retry], cwd=root, timeout=300, env={"CTI_BROWSER": "chromium"})
             used = "render(browser)"
         else:
             used = "no CF bypass available (collector lacks --solve-cf/--render)"
         data = load_json(out) or data
     if manifest_cb:
         manifest_cb(case, host, data, reused=False, dom_path=dom, shot_path=shot)
-    walled = (data.get("meta") or {}).get("cloudflare")
+    meta = data.get("meta") or {}
+    walled = meta.get("cloudflare")
+    # STATUS REFLECTS REALITY: 'ok' only when the live fetch itself succeeded (no live_error);
+    # 'recovered (<source>)' when content came from an archive/urlscan capture instead;
+    # 'unreachable (<reason>)' when neither — never the bare 'ok' fallback a blank note used to
+    # produce even when the live fetch failed and nothing recovered it.
+    live_error = meta.get("live_error")
+    recovered_via = meta.get("recovered_via")
+    if not live_error:
+        status = "ok"
+    elif recovered_via:
+        status = f"recovered ({recovered_via})"
+    else:
+        status = f"unreachable ({live_error})"
     cfnote = f"  · CF {cf} → {used} ({'STILL WALLED' if walled else 'bypassed'})" if cf else ""
     archnote = "" if (smoke or no_archive) else "  · archived + logged"
     # Never silently drop a requested capability — an unsupported flag means the collector in use
     # cannot do that step, and the analyst has to know the evidence was not captured.
     dropnote = f"  · unsupported by collector, skipped: {' '.join(dropped)}" if dropped else ""
     return {"host": host, "ok": True, "reused": False, "error": None, "dom": dom,
-            "n_pivots": len(data.get("pivots", [])), "note": cfnote + archnote + dropnote,
-            "data": data}
+            "n_pivots": len(data.get("pivots", [])), "note": status + cfnote + archnote + dropnote,
+            # `ok` above means only "pivot_extract produced a parseable file" — it stays True even
+            # for the 'unreachable' branch (WHOIS/DNS-derived pivots can still land with zero live
+            # content), so it is the WRONG signal for "did we actually collect this host". Callers
+            # that print a per-host line or feed convergence.py's `snapshot --failed` must key off
+            # `collect_failed` instead, or a blocked/dead target reads as a successful collection.
+            "collect_failed": status.startswith("unreachable"),
+            "status": status, "data": data}
 
 
 def collect_many(

@@ -979,6 +979,7 @@ def build_pivots(art: dict, base_host: str):
     if base_host:
         add("domain", base_host, "high", [
             {"service": "crt.sh", "query": f"%.{base_host}"},
+            {"service": "Shodan CTL (CT mirror, ~1 year)", "query": f"https://ctl.shodan.io/api/v1/domain/{base_host}"},
             {"service": "urlscan.io", "query": f"domain:{base_host}"},
             {"service": "CIRCL PDNS", "query": base_host},
             {"service": "Wayback CDX", "query": f"http://web.archive.org/cdx/search/cdx?url={base_host}*&output=json&collapse=urlkey"},
@@ -992,12 +993,11 @@ def build_pivots(art: dict, base_host: str):
             add("subdomain", sub, "medium", [
                 {"service": "FOFA", "query": _fofa_host(sub)},
                 {"service": "crt.sh", "query": f"https://crt.sh/?q={sub}.%25"},
-                {"service": "Shodan (CT)", "query": f'ssl.cert.subject.CN:"{sub}" OR hostname:"{sub}"'},
                 # tokenised `:` match, not `=` — the value is a LABEL, not a whole hostname
                 *censys_queries("subdomain", sub),
             ], f"Distinctive subdomain label '{sub}' — an operator's naming convention. The same "
-               f"label under other apexes (FOFA host / crt.sh label search / Shodan CT logs) is a "
-               f"same-operator lead; corroborate with a second artifact before clustering.")
+               f"label under other apexes (FOFA host / crt.sh label search) is a same-operator lead; "
+               f"corroborate with a second artifact before clustering.")
 
     # One pass adds the Censys CenQL (+ web-UI URL) to every remaining kind Censys can reverse —
     # see references/censys_queries.json -> pivot_kind_map. A second pass adds the IntelX selector

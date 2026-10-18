@@ -8,8 +8,8 @@ pivot queries (Shodan, PublicWWW, crt.sh, urlscan, etc.).
 
 Design goals:
   * Zero required dependencies. Core runs on the Python 3 stdlib alone.
-  * Graceful acceleration: uses `requests` if present, `playwright` for a
-    rendered (post-JS) DOM with --render, `bs4` is NOT required.
+  * Graceful acceleration: uses `requests` if present; --render builds the post-JS DOM with
+    Moli (DOM-first, default) or Playwright/Chromium (wp_browser.py routing), `bs4` is NOT required.
   * Favicon mmh3 (Shodan-style) hash is computed with a bundled pure-Python
     MurmurHash3, so it works with no pip installs.
   * Optional same-site crawl (--crawl) follows navigation/tab/panel links and
@@ -96,12 +96,15 @@ import wp_pssl     # noqa  (CIRCL passive SSL: historical cert->IP, i.e. origin 
 import wp_intelx   # noqa  (Intelligence X: leak/paste/darknet selector search; --intelx runs it live)
 import wp_exhaust  # noqa  (collection-exhaustion checklist: which evidence layers never ran)
 import wp_capabilities  # noqa  (which keys are present -> what this run could and could not query)
+import wp_ct       # noqa  (the one CT client: per-source status → meta.capability.ct)
 import wp_paths    # noqa  (URL PATH as a campaign identifier — kit directory, template, patterns)
 import wp_serp     # noqa  (advertising: Ads Transparency advertiser + the click-keyed cloaking probe)
 import wp_capture  # noqa  (raw evidence bundle: the DOM + every JS/CSS the host served, hashed)
 import wp_ippivot  # noqa  (IPPivot: bare-IP source runs passive IP recon instead of HTML)
 import wp_impersonate  # noqa  (ImpersonationHunt: --hunt-impersonation hunts lookalikes of a seed)
 import wp_email    # noqa  (.eml input: parse a victim's saved email into HTML body + header selectors)
+import wp_wayback_guard  # noqa  (run-scoped Wayback circuit breaker — 20 consecutive failures skips the rest of the run)
+import wp_wayback  # noqa  (the one Wayback client: endpoint failover, retry, pacing, cooldown)
 try:
     import api_usage  # licensed-API credit ledger (per-run summary + JSONL)
 except Exception:
@@ -122,6 +125,14 @@ def _emit_result(result, args, src):
         free_only=bool(getattr(args, "free_only", False)),
         case_dir=os.environ.get("WP_CASE_DIR") or None,
         probe=not getattr(args, "no_enrich", False))
+    # The CT lookup's per-source status belongs next to the key-level capability: a degraded crt.sh
+    # or a skipped backup is a missing evidence class, not "no certificates".
+    _ct = next((p["live_results"]["crtsh"] for p in result.get("pivots") or []
+                if isinstance((p.get("live_results") or {}).get("crtsh"), dict)
+                and p["live_results"]["crtsh"].get("ct_status")), None)
+    _ct_cap = wp_ct.capability_entry(_ct) if _ct else None
+    if _ct_cap:
+        result["meta"]["capability"]["ct"] = _ct_cap
     if args.report is not None or args.master is not None or args.misp is not None:
         import evidence_report
 
@@ -224,7 +235,9 @@ def main():
     ap.add_argument("source", nargs="?", default=None,
                     help="URL, IP address, local HTML file, or '-' for stdin (optional for "
                          "standalone actions like --validin-bulk)")
-    ap.add_argument("--render", action="store_true", help="render post-JS DOM via Playwright")
+    ap.add_argument("--render", action="store_true",
+                    help="render post-JS DOM (Moli, else Chromium — CTI_BROWSER=chromium|moli|auto; "
+                         "--screenshot always renders on Chromium)")
     ap.add_argument("--leads", action="store_true", help="print ranked pivot leads (markdown) instead of JSON")
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON")
     ap.add_argument("--ua", default=None,
@@ -245,8 +258,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=20)
     ap.add_argument("--solve-cf", action="store_true",
                     help="on a Cloudflare challenge, ESCALATE to solve it: use FlareSolverr if "
-                         "configured (--flaresolverr / $FLARESOLVERR_URL), else a Playwright "
-                         "browser render. Authorized OSINT only; prefer a residential --proxy.")
+                         "configured (--flaresolverr / $FLARESOLVERR_URL), else a Chromium "
+                         "browser render (never Moli). Authorized OSINT only; prefer a residential --proxy.")
     ap.add_argument("--flaresolverr", default=None, metavar="URL",
                     help="FlareSolverr endpoint (e.g. http://localhost:8191) used by --solve-cf "
                          "to run the Cloudflare challenge in a real browser. Env: FLARESOLVERR_URL.")
@@ -499,7 +512,7 @@ def main():
         for _line in wp_serp.banner_lines(free_only=args.free_only):
             print(_line, file=sys.stderr)
     if args.screenshot is not None and not args.render:
-        args.render = True   # a screenshot requires the rendered (Playwright) page
+        args.render = True   # a screenshot requires the rendered page (always Chromium — wp_browser)
     wp_extract.QR_DECODE_IMAGES = bool(args.decode_qr)
     wp_censys.ENABLED = not args.no_censys   # offline CenQL builder is unaffected — it costs nothing
     wp_hunterhow.ENABLED = not args.no_hunterhow  # offline query builder unaffected — costs nothing
@@ -547,14 +560,24 @@ def main():
     email_art = None          # set on the .eml input branch: header/CDN selectors from a victim email
     live_error = None
     recovered_via = None
+    urlscan_dom_uuid = None   # scan uuid, set only when urlscan_dom's HTML was actually accepted
+    dom_undecodable = None    # set when a recovered urlscan DOM was binary junk / yielded nothing
     cf_challenge = None       # set if the live target returned a Cloudflare interstitial
     snap_url = None           # closest existing Wayback snapshot (if any)
     wb_submitted = None       # result of an --archive-missing Save-Page-Now submission
     screenshot_file = None
+    renderer = None           # engine that produced `html` when it came from a render (meta.renderer)
     intel = None
     cloak_report = None       # click-keyed cloaking probe (wp_serp) — set on the URL branch
     redirects = []  # redirect hops from the seed fetch (URL branch only)
     seed_ua, seed_proxy = DEFAULT_UA, None  # only used on the URL branch; reset there
+
+    # Case dir from `-o cases/<id>/raw/<host>.json` when the caller did not export it (harness collects
+    # go through collect_core, which only passes -o). Set BEFORE the IPPivot branch: an origin IP's
+    # `meta.origin_context` (is this tenancy stale?) is read from the case's raws.
+    _outdir = os.path.dirname(os.path.abspath(args.out)) if args.out else ""
+    if _outdir and os.path.basename(_outdir) == "raw" and not os.environ.get("WP_CASE_DIR"):
+        os.environ["WP_CASE_DIR"] = os.path.dirname(_outdir)
 
     # --- IPPivot: a bare IP source runs PASSIVE IP recon (IPinfo/FOFA/Shodan/dig), not HTML. ---
     ip_target = wp_ippivot.ip_mode_target(src)
@@ -616,17 +639,27 @@ def main():
                     shot = (args.screenshot if isinstance(args.screenshot, str)
                             else (re.sub(r"\.json$", "", args.out) + ".png" if args.out
                                   else strip_www(urlparse(src).netloc) + ".png"))
-                base_url, html, cookies = render_dom(src, timeout=args.timeout, ua=seed_ua,
-                                                     proxy=seed_proxy, screenshot_path=shot)
+                base_url, html, cookies, renderer, rendered = render_dom(
+                    src, timeout=args.timeout, ua=seed_ua, proxy=seed_proxy, screenshot_path=shot)
                 if shot and os.path.isfile(shot):
                     screenshot_file = shot
                     print(f"[+] saved screenshot -> {shot}", file=sys.stderr)
-                try:
-                    _, _status, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
-                                                   proxy=seed_proxy)
-                    headers["_status"] = str(_status)      # liveness reads this; never unset it
-                except Exception:
-                    headers = {}
+                if rendered:
+                    # Moli's dump already has status, headers and the redirect chain — a second
+                    # fetch would be another attributable hit, and urllib drops proxy-auth on CONNECT.
+                    headers = dict(rendered.get("headers") or {})
+                    if rendered.get("status") is not None:
+                        headers["_status"] = str(rendered["status"])
+                    redirects.extend(
+                        {"from": h.get("from_url"), "status": h.get("status"), "to": h.get("to_url")}
+                        for h in (rendered.get("redirect_chain") or []) if isinstance(h, dict))
+                else:
+                    try:
+                        _, _status, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
+                                                       proxy=seed_proxy)
+                        headers["_status"] = str(_status)      # liveness reads this; never unset it
+                    except Exception:
+                        headers = {}
             else:
                 base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
                                                         proxy=seed_proxy, redirects_out=redirects)
@@ -639,19 +672,29 @@ def main():
         except Exception as e:
             live_error = str(e)
             html = ""
+            renderer = None
+            if isinstance(e, RenderChallenged):
+                # A Moli render cannot clear a managed challenge: record it and escalate below
+                # (raw fetch → Chromium via --solve-cf → archive), like a raw fetch that hit it.
+                cf_challenge = e.label
         # A failed RENDER is not a dead target: degrade to the plain fetch (rendered → raw → archive).
         # Without this step a Chromium/proxy hiccup discards a live page for an archive copy.
         if not html and args.render:
             try:
                 base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
                                                         proxy=seed_proxy, redirects_out=redirects)
-                cf_challenge = detect_cloudflare_challenge(status, headers, body.decode("utf-8", "ignore"))
-                if status < 400 and len(body) >= 200 and not cf_challenge:
+                raw_cf = detect_cloudflare_challenge(status, headers, body.decode("utf-8", "ignore"))
+                if status < 400 and len(body) >= 200 and not raw_cf:
                     html = body.decode("utf-8", "ignore")
                     headers["_status"] = str(status)
+                    cf_challenge = None
                     print(f"[!] render failed ({live_error}); collected the plain fetch instead",
                           file=sys.stderr)
                     live_error = None
+                else:
+                    # an unusable raw response that is not itself a CF page (5xx, stub, other
+                    # block) must not erase the challenge a Moli render already saw
+                    cf_challenge = raw_cf or cf_challenge
             except Exception as e2:
                 live_error = f"{live_error}; plain fetch: {e2}"
 
@@ -668,17 +711,19 @@ def main():
                     recovered_via, live_error = "flaresolverr", None
                     print("[+] cloudflare cleared via FlareSolverr", file=sys.stderr)
             if not html:
+                # The escalation exists because a real browser can clear a managed challenge; a
+                # non-Chromium engine cannot, so cf_challenge pins this retry to Chromium (and
+                # refuses without it) instead of spending a hostile-host fetch on a certain no-op.
                 try:
-                    print("[*] cloudflare: retrying with a Playwright browser render …", file=sys.stderr)
-                    b, h, c = render_dom(src, timeout=max(args.timeout, 45), ua=seed_ua, proxy=seed_proxy)
+                    print("[*] cloudflare: retrying with a Chromium browser render …", file=sys.stderr)
+                    b, h, c, r_eng, _ = render_dom(src, timeout=max(args.timeout, 45), ua=seed_ua,
+                                                   proxy=seed_proxy, cf_challenge=True)
                     if h and not detect_cloudflare_challenge(200, {}, h):
-                        base_url, html, cookies = b, h, c
+                        base_url, html, cookies, renderer = b, h, c, r_eng
                         recovered_via, live_error = "render_cf", None
                         print("[+] cloudflare cleared via browser render", file=sys.stderr)
                     else:
                         print("[!] still challenged after render — try a residential --proxy", file=sys.stderr)
-                except ImportError:
-                    print("[!] --solve-cf render needs Playwright (pip install playwright)", file=sys.stderr)
                 except Exception as e:
                     print(f"[!] cf render failed: {e}", file=sys.stderr)
         # --- CLICK-KEYED CLOAKING: are we being shown the same page the victims are? ------------
@@ -706,7 +751,7 @@ def main():
                     for _s in cloak_report.get("signals") or []:
                         print(f"    · {_s}", file=sys.stderr)
                     if args.render:
-                        # The probe fetches raw HTML; `html` here is a Playwright-rendered DOM.
+                        # The probe fetches raw HTML; `html` here is a browser-rendered DOM.
                         # Swapping would silently downgrade an SPA collection to its empty shell —
                         # worse than the decoy it is meant to fix. Hand the analyst the address and
                         # let them re-render it.
@@ -740,29 +785,42 @@ def main():
                 # archive.org headers. Without it every recovered page shares the toolbar's HTML
                 # comments / DOM and the KB links unrelated archive-recovered hosts to each other.
                 raw_url = wayback_raw_url(snap_url)
-                try:
-                    base_url, _, headers, body = fetch(raw_url, timeout=args.timeout, ua=seed_ua,
-                                                       proxy=seed_proxy)
+                _snap = wp_wayback.parse_snapshot(snap_url)
+                if _snap:   # an unplayable capture falls back to its nearest playable neighbour
+                    wb_resp, ts, wb_err = wp_wayback.fetch_capture(_snap[0], _snap[2], ua=seed_ua,
+                                                                   timeout=args.timeout)
+                    raw_url = wp_wayback.raw_url(ts, _snap[2])
+                else:
+                    wb_resp, wb_err = wp_wayback.fetch_url(raw_url, ua=seed_ua, timeout=args.timeout)
+                if wb_resp is not None and wb_resp.status == 200 and wb_resp.body:
+                    base_url, body = wb_resp.url, wb_resp.body
                     # the response headers are archive.org's (server, CSP …); the target's own are
                     # replayed as x-archive-orig-* — keep those, drop the rest, so no `server=nginx`
                     # or archive CSP fingerprint is attributed to the target
-                    headers = {k.lower()[len("x-archive-orig-"):]: v for k, v in (headers or {}).items()
+                    headers = {k.lower()[len("x-archive-orig-"):]: v
+                               for k, v in (wb_resp.headers or {}).items()
                                if k.lower().startswith("x-archive-orig-")}
                     html = body.decode("utf-8", "ignore")
                     recovered_via = f"wayback:{ts}"
                     print(f"[+] recovered archived copy: {raw_url}", file=sys.stderr)
-                except Exception:
-                    pass
+                else:
+                    print(f"[!] archived copy not fetched: "
+                          f"{wb_err or f'HTTP {wb_resp.status}'} ({raw_url})", file=sys.stderr)
             intel = urlscan_intel(host_for_intel, ua=seed_ua, free_only=args.free_only)
             print(f"[+] urlscan: {intel.get('total', 0)} prior scans, "
                   f"{len(intel.get('related_domains', []))} related domains", file=sys.stderr)
             # No Wayback copy but urlscan has a prior scan → analyze its stored DOM.
             if not html:
                 dom_html, dom_id = urlscan_dom(intel, ua=seed_ua, free_only=args.free_only)
-                if dom_html:
+                if dom_html and dom_is_binary_junk(dom_html):
+                    dom_undecodable = f"urlscan_dom:{dom_id}"
+                    print(f"[!] urlscan DOM {dom_id} decoded to binary junk (bad/missing "
+                          f"Content-Encoding) — treating as no recovery", file=sys.stderr)
+                elif dom_html:
                     html = dom_html
                     base_url = base_url or f"https://{host_for_intel}/"
                     recovered_via = f"urlscan_dom:{dom_id}"
+                    urlscan_dom_uuid = dom_id
                     print(f"[+] recovered urlscan DOM {dom_id}", file=sys.stderr)
 
         # --- archive-missing: guarantee a Wayback snapshot exists to pivot on later ---
@@ -772,30 +830,36 @@ def main():
             if snap_url:
                 print(f"[=] already archived: {snap_url}", file=sys.stderr)
             else:
-                print("[*] not in Wayback — submitting to Save-Page-Now …", file=sys.stderr)
-                wb_submitted = wayback_save(src, ua=seed_ua)
-                snap = (wb_submitted or {}).get("snapshot")
-                # only a genuine /web/<ts>/ capture is analyzable; never analyze the /save/
-                # endpoint or an archive.org wrapper (that yields bogus archive.org pivots).
-                if snap and re.match(r"https?://web\.archive\.org/web/\d{4,14}/", snap):
-                    snap_url = snap
-                    print(f"[+] archived now: {snap}", file=sys.stderr)
-                    if not html:   # nothing else recovered → analyze the fresh snapshot
-                        try:
-                            base_url, _, headers, body = fetch(snap, timeout=args.timeout,
-                                                               ua=seed_ua, proxy=seed_proxy)
-                            _h = body.decode("utf-8", "ignore")
-                            uh = strip_www(urlparse(unwrap_wayback(base_url)).netloc)
-                            if _h and uh and uh != "web.archive.org" \
-                                    and not detect_cloudflare_challenge(200, {}, _h):
-                                html, recovered_via = _h, "wayback_spn"
-                        except Exception:
-                            pass
+                _breaker = wp_wayback_guard.blocked()
+                if _breaker:
+                    print(f"[!] {_breaker}", file=sys.stderr)
+                    wb_submitted = {"skipped": _breaker, "skipped_kind": "breaker"}
                 else:
-                    wb_submitted = None
-                    print(f"[!] Save-Page-Now made no capture "
-                          f"(target un-crawlable — Cloudflare/robots). Nothing to analyze.",
-                          file=sys.stderr)
+                    print("[*] not in Wayback — submitting to Save-Page-Now …", file=sys.stderr)
+                    wb_submitted = wayback_save(src, ua=seed_ua)
+                    snap = (wb_submitted or {}).get("snapshot")
+                    # only a genuine /web/<ts>/ capture is analyzable; never analyze the /save/
+                    # endpoint or an archive.org wrapper (that yields bogus archive.org pivots).
+                    if snap and re.match(r"https?://web\.archive\.org/web/\d{4,14}/", snap):
+                        snap_url = snap
+                        print(f"[+] archived now: {snap}", file=sys.stderr)
+                        if not html:   # nothing else recovered → analyze the fresh snapshot
+                            wb_resp, wb_err = wp_wayback.fetch_url(snap, ua=seed_ua,
+                                                                   timeout=args.timeout)
+                            if wb_resp is not None and wb_resp.status == 200:
+                                base_url = wb_resp.url
+                                _h = wb_resp.body.decode("utf-8", "ignore")
+                                uh = strip_www(urlparse(unwrap_wayback(base_url)).netloc)
+                                if _h and uh and uh != "web.archive.org" \
+                                        and not detect_cloudflare_challenge(200, {}, _h):
+                                    html, recovered_via = _h, "wayback_spn"
+                            elif wb_err:
+                                print(f"[!] fresh snapshot not fetched: {wb_err}", file=sys.stderr)
+                    else:
+                        wb_submitted = None
+                        print(f"[!] Save-Page-Now made no capture "
+                              f"(target un-crawlable — Cloudflare/robots). Nothing to analyze.",
+                              file=sys.stderr)
     else:
         ap.error("source must be a URL, an existing file, or '-'")
 
@@ -811,6 +875,33 @@ def main():
         result["meta"]["final_url"] = result["meta"].get("final_url") or src
     if screenshot_file:
         result.setdefault("archives", {})["screenshot"] = screenshot_file
+
+    # --- urlscan-recovered page: pull its OWN captured JS/CSS so the asset layer (API base,
+    # websocket host, download/app links) still has something to read when the live site cannot
+    # be fetched at all (recovered_via == urlscan_dom:<uuid>) — reuses the existing extractors,
+    # never a second one. Also flags a DOM that decoded to readable text but still yielded
+    # nothing (an interstitial/empty shell) the same as an outright junk decode.
+    if urlscan_dom_uuid:
+        if len(html) > 200 and not result.get("pivots"):
+            dom_undecodable = dom_undecodable or recovered_via
+        _res_text = urlscan_dom_assets(urlscan_dom_uuid, ua=seed_ua, free_only=args.free_only)
+        if _res_text:
+            _self_host = result["meta"].get("host") or host_for_intel
+            _assets = result.setdefault("artifacts", {}).setdefault("assets", {})
+            _api = extract_api_endpoints(_res_text, _self_host)
+            if _api and any(_api.values()):
+                _assets["api"] = _api
+                _assets.setdefault("coverage", {})["bundles"] = (
+                    "recovered from the urlscan capture's own stored responses "
+                    "(live same-origin fetch unavailable)")
+            _dl = extract_app_downloads(_res_text, base_url or "")
+            if _dl:
+                _existing_dl = result.setdefault("artifacts", {}).setdefault("app_downloads", {})
+                for _k, _v in _dl.items():
+                    if isinstance(_v, list):
+                        _existing_dl[_k] = uniq(list(_existing_dl.get(_k) or []) + list(_v))[:20]
+                    elif _k not in _existing_dl:
+                        _existing_dl[_k] = _v
 
     # --- redirect chain + affiliate/referral codes (first-class pivots for tracker links) ---
     if redirects:
@@ -902,6 +993,10 @@ def main():
         result["meta"]["cloudflare"] = cf_challenge
     if recovered_via:
         result["meta"]["recovered_via"] = recovered_via
+    if renderer:
+        result["meta"]["renderer"] = renderer
+    if dom_undecodable:
+        result["meta"]["dom_undecodable"] = dom_undecodable
     if wb_submitted and wb_submitted.get("snapshot"):
         result.setdefault("archives", {}).setdefault("wayback", {})["submitted"] = wb_submitted["snapshot"]
     if intel is not None:
@@ -939,9 +1034,9 @@ def main():
             c_ua, c_proxy = next_ua(), next_proxy()  # rotate UA + proxy per crawled page
             try:
                 if args.render:
-                    c_base, c_html, c_cookies = render_dom(url, timeout=args.timeout,
-                                                           ua=c_ua, proxy=c_proxy)
-                    c_headers = {}
+                    c_base, c_html, c_cookies, _, c_rendered = render_dom(url, timeout=args.timeout,
+                                                                          ua=c_ua, proxy=c_proxy)
+                    c_headers = dict((c_rendered or {}).get("headers") or {})
                 else:
                     c_base, c_status, c_headers, c_body = fetch(url, timeout=args.timeout,
                                                                ua=c_ua, proxy=c_proxy)
@@ -969,9 +1064,7 @@ def main():
     if not args.no_enrich:
         # The MO-neighbour leg reuses rows already WHOIS-verified in earlier rounds of the SAME case
         # (cases/<id>/mo_neighbours.json). The case dir is implied by -o cases/<id>/raw/<host>.json.
-        _outdir = os.path.dirname(os.path.abspath(args.out)) if args.out else ""
-        if _outdir and os.path.basename(_outdir) == "raw" and not os.environ.get("WP_CASE_DIR"):
-            os.environ["WP_CASE_DIR"] = os.path.dirname(_outdir)
+        # (WP_CASE_DIR was derived from -o above, before the IPPivot branch)
         # Measure entitlement BEFORE enriching, so even the first process to reach a vendor gates its
         # Pro calls on the measured tier (free probes only). Only when a case store can hold the
         # result — an ad-hoc run without a case probes once, in _emit_result.
@@ -1078,7 +1171,7 @@ def main():
         # SPN's synchronous save often takes 60-120s; a read timeout here does NOT mean the
         # capture failed (it usually completes server-side) — give it generous headroom.
         archives["wayback"] = wayback_save(src, ua=args.ua, timeout=max(args.timeout, 90))
-        print(f"    wayback: {archives['wayback'].get('snapshot') or archives['wayback'].get('error')}",
+        print(f"    wayback: {archives['wayback'].get('snapshot') or archives['wayback'].get('error') or archives['wayback'].get('skipped')}",
               file=sys.stderr)
         print("[+] submitting to urlscan.io …", file=sys.stderr)
         archives["urlscan"] = urlscan_submit(src, timeout=max(args.timeout, 30))

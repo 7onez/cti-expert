@@ -218,30 +218,33 @@ def _domains_containing(names, label: str):
     return out
 
 
-def crtsh_keyword_hunt(label: str, timeout: int = 25):
+def crtsh_keyword_hunt(label: str):
     """CT keyword hunt: every domain whose cert identity CONTAINS `label` (crt.sh LIKE). FREE.
 
-    Uses wp_recon._crtsh_fetch with a '%label%' LIKE value (resilient q->identity fallback).
-    Recorded to the ledger at credits=0 (free) purely for run visibility.
+    Uses wp_ct.crtsh_keyword with a '%label%' LIKE value (q -> identity, retry + backoff inside the
+    ct_sources.json wall-clock budget).
+    A crt.sh that never answered returns `ct_status: degraded` with an error — an outage is never
+    reported as "no lookalikes". Recorded to the ledger at credits=0 (free) purely for visibility.
     """
     if len(label) < KEYWORD_MIN_LEN:
         return {"source": "crt.sh", "skipped": f"label '{label}' < {KEYWORD_MIN_LEN} chars — "
                 "LIKE search would be mostly noise; TLD sweep + typos still ran."}
-    from wp_recon import _crtsh_fetch
-    try:
-        rows = _crtsh_fetch(f"%{label}%", timeout=timeout)
-    except Exception as e:  # noqa: BLE001 — crt.sh 502s often; soft-fail with partial results
+    from wp_ct import crtsh_keyword
+    res = crtsh_keyword(f"%{label}%")
+    if res["status"] == "degraded":
         if api_usage:
             api_usage.record("crt.sh", "keyword_hunt", credits=0, query=f"%{label}%", ok=False)
-        return {"source": "crt.sh", "error": str(e)}
+        return {"source": "crt.sh", "ct_status": "degraded",
+                "error": "crt.sh unreachable — keyword hunt incomplete (not 'no lookalikes'): "
+                         + "; ".join(res.get("errors") or [])}
     names = []
-    for row in rows or []:
+    for row in res.get("raw_rows") or []:
         names.append(row.get("name_value", ""))
         names.append(row.get("common_name", ""))
     domains = sorted(_domains_containing(names, label))
     if api_usage:
         api_usage.record("crt.sh", "keyword_hunt", credits=0, query=f"%{label}%", results=len(domains))
-    return {"source": "crt.sh", "domains": domains, "count": len(domains)}
+    return {"source": "crt.sh", "ct_status": res["status"], "domains": domains, "count": len(domains)}
 
 
 def fofa_keyword_hunt(label: str, size: int = 100, timeout: int = 30):

@@ -37,10 +37,10 @@
   },
 
   "request_budget": {
-    "_comment": "CIRCL passive SSL is free with an account and rate-limited rather than credit-metered, so this bounds POLITENESS and blast radius, not money: a batch that fans out over every historical IP of every host in a case can issue hundreds of requests and get the shared account throttled for everyone. Over budget the layer returns a `skipped` with the reason and the UI URL, exactly like the Censys guard — never a silent stop and never a mid-case 429. Override for one run with PSSL_MAX_REQUESTS_PER_RUN.",
-    "max_requests_per_run": 40,
-    "max_cert_lookups_per_ip": 6,
-    "max_ips_per_host": 8
+    "_comment": "CIRCL passive SSL is free with an account and rate-limited rather than credit-metered, so this bounds POLITENESS and blast radius, not money. `max_requests_per_run` must be >= the largest single-host fan-out or it clips the per-IP/per-host caps below it: it is sized to max_ips_per_host (50) + max_ips_per_host x max_cert_lookups_per_ip (50x50) = 2550 so one host can use both caps fully. CIRCL's account is SHARED and rate-limited, so lower it (PSSL_MAX_REQUESTS_PER_RUN) for a wide multi-host batch to avoid throttling everyone. Over budget the layer returns a `skipped` with the reason and the UI URL, never a silent stop or a mid-case 429.",
+    "max_requests_per_run": 2550,
+    "max_cert_lookups_per_ip": 50,
+    "max_ips_per_host": 50
   },
 
   "reporting": {

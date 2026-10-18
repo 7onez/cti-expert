@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Offline unit gate for the licensed-API usage ledger (api_usage.record/summary)."""
 import os
+import subprocess
 import sys
 import json
 import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))), "WebPivot", "tools"))
+_WP_TOOLS = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))), "WebPivot", "tools")
+sys.path.insert(0, _WP_TOOLS)
 import api_usage as A  # noqa: E402
 
 
@@ -49,6 +51,24 @@ def check():
     ok(A.rl_headers(_R()) == (42, 100), "rate-limit headers parsed")
     ok(A.rl_headers(object()) == (None, None), "missing headers safe")
 
+    # #23: a SEPARATE process that never called set_context() (every subprocess tools/intel.py
+    # spawns, plus in-process modules imported by it that also never call set_context) must still
+    # tag its ledger rows with the case, via the INTEL_CASE env var tools/intel.py now exports.
+    tf2 = tempfile.mktemp(suffix=".jsonl")
+    try:
+        code = (
+            "import sys; sys.path.insert(0, %r); import api_usage as A; "
+            "A.record('childprov', 'childaction', credits=1, path=%r)" % (_WP_TOOLS, tf2)
+        )
+        env = dict(os.environ, INTEL_CASE="CASE-ENV-TEST")
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+        ok(r.returncode == 0, f"child process exits clean ({r.stderr[-200:] if r.stderr else ''})")
+        rows2 = [json.loads(l) for l in open(tf2) if l.strip()] if os.path.exists(tf2) else []
+        ok(len(rows2) == 1 and rows2[0].get("case") == "CASE-ENV-TEST",
+           "a child process with no in-process set_context() still tags case via INTEL_CASE env")
+    finally:
+        if os.path.exists(tf2):
+            os.unlink(tf2)
     os.unlink(tf)
     A._session.clear()
     return passed, failed, out

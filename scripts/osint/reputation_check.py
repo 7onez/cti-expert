@@ -12,6 +12,12 @@ Ransomware.live all answer without a key; abuse.ch (URLhaus/ThreatFox) and Phish
 that need a key are queried only when it is set and are otherwise reported as NOT CONSULTED — an
 unqueried feed is never silently counted as a clean result.
 
+Spamhaus Intelligence API is the FALLBACK: queried only when the primary feeds above did not
+already corroborate a MALICIOUS verdict (no answer, nothing adverse, or a single uncorroborated
+feed), so its monthly query quota is spent where it can change the verdict. IP -> XBL/CSS/BCL
+listing (active = signal, expired history = note); domain -> current DBL listing or an adverse
+reputation tag (signal), compromised-legitimate flag (note).
+
 Absence of record is reported as absence of record. Nothing here proves an indicator is benign.
 
 Usage:
@@ -30,6 +36,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import keyed_feeds  # noqa: E402 — sibling; attaches Auth-Key when ABUSE_CH_API_KEY is set
 
 UA = "cti-expert/reputation_check (OSINT research)"
 IPV4 = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
@@ -148,6 +156,106 @@ def abuseipdb(ind, kind):
             "isp": x.get("isp")}
 
 
+
+def _apex(host):
+    host = (host or "").lower().split(":")[0]
+    try:
+        eng = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "..", "intel_engine", "WebPivot", "tools"))
+        if eng not in sys.path:
+            sys.path.insert(0, eng)
+        from wp_common import _registrable
+        return (_registrable(host) or host).lower()
+    except Exception:
+        parts = [p for p in host.split(".") if p]
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+def chongluadao(ind, kind):
+    """The keyed first-party source. No key → NOT CONSULTED, never a silent clean."""
+    keyed_feeds.load_keys()
+    if not any(os.environ.get(n) for n in (
+            "CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY")):
+        return {"status": "NOT CONSULTED — no CHONGLUADAO_API_KEY set"}
+    if (os.environ.get("CTI_FREE_ONLY") or "").strip().lower() in ("1", "true", "yes"):
+        return {"status": "HELD — --free-only"}
+    try:
+        cld_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cld")
+        if cld_dir not in sys.path:
+            sys.path.insert(0, cld_dir)
+        import cld_api
+    except Exception as e:
+        return {"status": f"unavailable ({type(e).__name__})"}
+    a = argparse.Namespace(timeout=25, ai=False, lang="en", fresh=False, limit=50, offset=0)
+    out = {"status": "ok"}
+    try:
+        if kind in ("domain", "url"):
+            a.url = ind if "://" in ind else "https://" + ind
+            a.q = ind.split("://", 1)[-1].split("/")[0]
+            apex = _apex(a.q)
+            a.q = apex
+            st, res, err = cld_api.op_checkurl(cld_api._api_key(), a)
+            out["checkurl"] = res if err is None else {"error": err}
+            a.type, a.value = "url", ind if "://" in ind else "https://" + ind
+            st, res, err = cld_api.op_ioc(cld_api._api_key(), a)
+            out["ioc"] = res if err is None else {"error": err}
+            st, res, err = cld_api.op_ransomware(cld_api._api_key(), a)
+            _filtered, n = cld_api.filter_host_hits(res if err is None else {}, apex)
+            out["ransomware_matched"] = n
+            st, res, err = cld_api.op_clickfix(cld_api._api_key(), a)
+            _filtered, n = cld_api.filter_host_hits(res if err is None else {}, apex)
+            out["clickfix_matched"] = n
+        elif kind == "email":
+            a.type, a.value, a.q = "email", ind, ind.split("@", 1)[-1]
+            st, res, err = cld_api.op_ioc(cld_api._api_key(), a)
+            out["ioc"] = res if err is None else {"error": err}
+            st, res, err = cld_api.op_burner(cld_api._api_key(), a)
+            out["burner"] = res if err is None else {"error": err}
+        elif kind == "phone":
+            a.type, a.value, a.q = "phone", ind, ind
+            st, res, err = cld_api.op_checkphone(cld_api._api_key(), a)
+            out["checkphone"] = res if err is None else {"error": err}
+            st, res, err = cld_api.op_ioc(cld_api._api_key(), a)
+            out["ioc"] = res if err is None else {"error": err}
+        elif kind in ("ip", "hash"):
+            a.type = "ip" if kind == "ip" else "hash"
+            a.value = ind
+            st, res, err = cld_api.op_ioc(cld_api._api_key(), a)
+            out["ioc"] = res if err is None else {"error": err}
+        else:
+            return {"status": "n/a for this indicator type"}
+    except Exception as e:
+        return {"status": f"unavailable ({type(e).__name__})"}
+    return out
+
+
+# Spamhaus domain-tag classes are reference DATA (references/spamhaus_tags.json, names from the
+# official /api/intel/v2/domains/tags list). Fallback = conservative minimum from the docs page.
+_SPAMHAUS_TAGS_FALLBACK = {"adverse_tags": ["botnet", "botnetcc", "malware", "phish", "spam"],
+                           "abusech_derived_tags": ["botnet", "botnetcc", "malware"],
+                           "override_tags": ["sinkhole", "neverlist"],
+                           "victim_tags": ["abused", "compromised"]}
+
+
+def _load_spamhaus_tags():
+    try:
+        eng = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "..", "intel_engine", "WebPivot", "tools"))
+        if eng not in sys.path:
+            sys.path.insert(0, eng)
+        from wp_refs import load_ref, ref_path
+        return load_ref(ref_path(__file__, "spamhaus_tags.json"), _SPAMHAUS_TAGS_FALLBACK)
+    except Exception:  # noqa: BLE001 — loader missing: the conservative minimum, loudly
+        print("[!] spamhaus_tags.json not loaded — using the embedded minimum", file=sys.stderr)
+        return dict(_SPAMHAUS_TAGS_FALLBACK)
+
+
+_SH_TAGS = _load_spamhaus_tags()
+_SPAMHAUS_ADVERSE_TAGS = set(_SH_TAGS["adverse_tags"])
+_SPAMHAUS_ABUSECH_DERIVED = set(_SH_TAGS["abusech_derived_tags"])
+_SPAMHAUS_VICTIM_TAGS = set(_SH_TAGS["victim_tags"])
+_SPAMHAUS_OVERRIDE_TAGS = set(_SH_TAGS["override_tags"])
+
+
 def verdict(res, mode):
     """Turn feed output into a defensible verdict — and refuse to overclaim in either direction."""
     signals, consulted, unavailable = [], 0, []
@@ -183,9 +291,83 @@ def verdict(res, mode):
         consulted += 1
         if (a.get("abuse_confidence") or 0) >= 25:
             signals.append(f"AbuseIPDB: {a['abuse_confidence']}% abuse confidence")
+    ab = res["sources"].get("abusech", {})
+    if ab.get("status") == "ok":
+        consulted += 1
+        if ab.get("listed"):
+            where = ", ".join(ab.get("listed_on") or []) or "a feed"
+            signals.append(f"abuse.ch: listed on {where}")
+    elif ab:
+        unavailable.append("abuse.ch")
     r = res["sources"].get("ransomware_live", {})
     if r.get("status") == "ok" and r.get("hits"):
         signals.append(f"Ransomware.live: {r['hits']} victim record(s)")
+    cld = res["sources"].get("chongluadao", {})
+    if cld.get("status") == "ok":
+        consulted += 1
+        cu = cld.get("checkurl") if isinstance(cld.get("checkurl"), dict) else {}
+        listed = str(cu.get("result") or "").lower() in ("malicious", "phishing", "scam")
+        ioc = cld.get("ioc") if isinstance(cld.get("ioc"), dict) else {}
+        data = ioc.get("data") if isinstance(ioc.get("data"), dict) else {}
+        matches = data.get("threat_matches") or []
+        reports = data.get("threat_reports") if isinstance(data.get("threat_reports"), dict) else {}
+        label = str(ioc.get("verdict") or "").lower()
+        if listed or matches or reports.get("count"):
+            signals.append("ChongLuaDao: denylist listing or threat report")
+        elif label in ("malicious", "suspicious"):
+            res.setdefault("notes", []).append(
+                "ChongLuaDao labelled this without a listing or threat report — not scored")
+        if cld.get("ransomware_matched") or cld.get("clickfix_matched"):
+            res.setdefault("notes", []).append(
+                "ChongLuaDao host-matched ransomware/ClickFix row — a victim or lure fact, not an operator verdict")
+    elif str(cld.get("status") or "").startswith("NOT CONSULTED"):
+        unavailable.append("chongluadao")
+    sh = res["sources"].get("spamhaus", {})
+    if sh.get("status") == "ok":
+        consulted += 1
+        if sh.get("kind") == "ip":
+            if sh.get("active_datasets"):
+                signals.append(f"Spamhaus: currently listed on {', '.join(sh['active_datasets'])}")
+            elif sh.get("history_count"):
+                res.setdefault("notes", []).append(
+                    f"Spamhaus: {sh['history_count']} expired listing(s) in the last 12 months — "
+                    "history, not scored (residential/dynamic IPs churn through XBL)")
+        else:
+            tags = {str(t).lower() for t in sh.get("tags") or []}
+            bad_tags = sorted(_SPAMHAUS_ADVERSE_TAGS & tags)
+            override = sorted(_SPAMHAUS_OVERRIDE_TAGS & tags)
+            score = sh.get("score")
+            if sh.get("listed"):
+                signals.append("Spamhaus DBL: domain currently listed")
+            elif override:
+                # sinkhole = defender-controlled; neverlist = protected. Their abuse tags describe
+                # what the domain CATCHES, not what it does — never scored.
+                res.setdefault("notes", []).append(
+                    f"Spamhaus marks this {', '.join(override)}"
+                    + (f"; its {', '.join(bad_tags)} tag(s) describe captured traffic" if bad_tags else "")
+                    + " — not scored")
+            elif bad_tags and isinstance(score, (int, float)) and score < 0:
+                if set(bad_tags) <= _SPAMHAUS_ABUSECH_DERIVED and ab.get("listed"):
+                    # Spamhaus builds its malware dimension partly FROM abuse.ch — not independent
+                    res.setdefault("notes", []).append(
+                        f"Spamhaus tags {', '.join(bad_tags)} corroborate abuse.ch but are partly "
+                        "derived from it — not counted as a second independent feed")
+                else:
+                    signals.append(f"Spamhaus: domain tagged {', '.join(bad_tags)} with negative "
+                                   f"reputation ({score})")
+            elif bad_tags:
+                # Measured live: example.com carries phish/spam tags (it is NAMED in phish and spam)
+                # at score +34.3. A tag without a negative score is context, never a verdict.
+                res.setdefault("notes", []).append(
+                    f"Spamhaus tags {', '.join(bad_tags)} but reputation score is {score} "
+                    "(not negative) — the domain appears in that traffic, not scored")
+            victim = sorted(_SPAMHAUS_VICTIM_TAGS & tags)
+            if sh.get("abused") or victim:
+                res.setdefault("notes", []).append(
+                    "Spamhaus flags this as a COMPROMISED/abused legitimate or defensive domain "
+                    f"({', '.join(victim) or 'abused'}) — the owner is not the operator")
+    elif str(sh.get("status") or "").startswith(("NOT CONSULTED", "unavailable")):
+        unavailable.append("spamhaus")
 
     if consulted == 0:
         return {"verdict": "UNKNOWN", "confidence": "none",
@@ -219,13 +401,25 @@ def main():
     kind = classify(ind)
     res = {"indicator": ind, "type": kind, "mode": a.mode, "sources": {}}
     res["sources"]["otx"] = otx(ind, kind)
+    res["sources"]["abusech"] = keyed_feeds.abusech_lookup(ind, kind)
     res["sources"]["urlscan"] = urlscan(ind, kind)
     res["sources"]["virustotal"] = virustotal(ind, kind)
     if kind == "ip":
         res["sources"]["abuseipdb"] = abuseipdb(ind, kind)
     if a.mode == "scam":
         res["sources"]["ransomware_live"] = ransomware_live(ind, kind)
+    res["sources"]["chongluadao"] = chongluadao(ind, kind)
     res.update(verdict(res, a.mode))
+    # Spamhaus is the fallback: spend a SIA query only when the primary feeds did not already
+    # corroborate the indicator as malicious.
+    if res["verdict"] != "MALICIOUS" and kind in ("ip", "domain", "url"):
+        target = ind if kind == "ip" else _apex(ind.split("://", 1)[-1].split("/")[0])
+        res["sources"]["spamhaus"] = keyed_feeds.spamhaus_lookup(target, "ip" if kind == "ip" else "domain")
+        res["spamhaus_fallback"] = f"primary verdict was {res['verdict']}"
+        res.pop("notes", None)                 # verdict() re-derives every note from sources
+        res.update(verdict(res, a.mode))
+    elif kind in ("ip", "domain", "url"):
+        res["sources"]["spamhaus"] = {"status": "NOT NEEDED — primary feeds already corroborate MALICIOUS"}
 
     print(f"{ind} [{kind}] → {res['verdict']} ({res['confidence']}) — {res['reason'][:90]}",
           file=sys.stderr)

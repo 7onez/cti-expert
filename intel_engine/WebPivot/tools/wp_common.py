@@ -54,21 +54,23 @@ _install_cti_proxy()
 
 # DATA: how we present ourselves when fetching, and the public-suffix table. Both go stale on a
 # schedule nobody controls (browser releases; new ccTLD second levels), so both are tunable.
-_FP_FALLBACK = {"ua_pool": ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"],
+_FP_FALLBACK = {"ua_pool": ["Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"],
                 "cloudflare_body_markers": ["just a moment", "cf_chl_", "attention required"]}
 _FP_REF = load_ref(ref_path(__file__, "fetch_profile.json"), _FP_FALLBACK)
 _GLC_FALLBACK = {"multi_part_tlds": ["co.uk", "com.au", "com.br", "com.vn", "com.cn"]}
 _GLC_REF = load_ref(ref_path(__file__, "generic_labels.json"), _GLC_FALLBACK)
 
 
-DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+# Android Chrome (project decision — see /apikeys skill notes): fetch/screenshot/archive
+# requests present as an Android device by default, not a desktop OS.
+DEFAULT_UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
-              "Chrome/140.0.0.0 Safari/537.36")
+              "Chrome/140.0.0.0 Mobile Safari/537.36")
 
 # Per-call ceiling for every DATA-FETCHING / API / collector / subprocess call in the engine.
 # ONE resolver (wp_timeouts): process env CTI_CALL_TIMEOUT → skill-root/engine .env → the RULE 3
-# reference references/timeouts.json → 1800s (30 min). Each call runs up to this long, then times
+# reference references/timeouts.json → 5000s (~83 min). Each call runs up to this long, then times
 # out and the run moves on. Deliberately NOT applied to raw DNS / TLS / JARM resolution micro-probes
 # (getaddrinfo/dig/nslookup/handshake) — a dead name or black-hole IP would hang the full ceiling
 # there with no benefit; those keep their short fail-fast bounds.
@@ -191,10 +193,13 @@ def _browser_headers(ua: str) -> dict:
     return h
 
 def _decode_body(raw: bytes, content_encoding: str) -> bytes:
-    """Decompress a urllib response body per its Content-Encoding (gzip/deflate); else as-is."""
+    """Decompress a urllib response body per its Content-Encoding (gzip/deflate); else as-is.
+    Also SNIFFS the gzip magic (\x1f\x8b) as a fallback when Content-Encoding is absent or wrong
+    — a third-party store (urlscan's /dom/<uuid>/, observed 2026-09) can serve gzip bytes without
+    an accurate header, and decoding those straight as UTF-8 produces binary junk."""
     enc = (content_encoding or "").lower()
     try:
-        if "gzip" in enc:
+        if "gzip" in enc or raw[:2] == b"\x1f\x8b":
             return gzip.decompress(raw)
         if "deflate" in enc:
             try:
@@ -363,12 +368,32 @@ def unwrap_wayback(url: str) -> str:
 _PSL_FALLBACK = {"icann": [], "private": []}
 _PSL_REF = load_ref(ref_path(__file__, "public_suffix_list.json"), _PSL_FALLBACK)
 _MULTI_TLDS = frozenset(_GLC_REF["multi_part_tlds"])
+
+
+def _with_idna(rules):
+    """`rules` plus the IDNA (punycode) form of every non-ASCII rule. The PSL stores IDN rules in
+    Unicode (`рф`, `公司.cn`) but DNS, crt.sh and urlscan return `xn--p1ai` / `xn--55qx5d.cn`; both
+    forms must match. Encoded per label with the `*.`/`!` prefix kept; a label the codec rejects
+    keeps only its Unicode rule — a bad PSL entry never breaks the import."""
+    out = set(rules)
+    for r in rules:
+        if r.isascii():
+            continue
+        head = r[:2] if r.startswith("*.") else r[:1] if r.startswith("!") else ""
+        try:
+            out.add(head + ".".join(lb if lb.isascii() else lb.encode("idna").decode("ascii")
+                                    for lb in r[len(head):].split(".")))
+        except (UnicodeError, ValueError):
+            continue
+    return out
+
+
+_PSL_ALL = frozenset(_with_idna(_PSL_REF["icann"] + _PSL_REF["private"]))
 # rule tables: plain suffixes, wildcard parents ("*.ck" -> "ck"), exceptions ("!www.ck" -> "www.ck")
-_PSL_RULES = frozenset(r for r in (_PSL_REF["icann"] + _PSL_REF["private"])
-                       if not r.startswith(("*.", "!"))) | _MULTI_TLDS
-_PSL_WILD = frozenset(r[2:] for r in (_PSL_REF["icann"] + _PSL_REF["private"]) if r.startswith("*."))
-_PSL_EXC = frozenset(r[1:] for r in (_PSL_REF["icann"] + _PSL_REF["private"]) if r.startswith("!"))
-_PSL_PRIVATE = frozenset(r.lstrip("!*.") for r in _PSL_REF["private"])
+_PSL_RULES = frozenset(r for r in _PSL_ALL if not r.startswith(("*.", "!"))) | _MULTI_TLDS
+_PSL_WILD = frozenset(r[2:] for r in _PSL_ALL if r.startswith("*."))
+_PSL_EXC = frozenset(r[1:] for r in _PSL_ALL if r.startswith("!"))
+_PSL_PRIVATE = frozenset(r.lstrip("!*.") for r in _with_idna(_PSL_REF["private"]))
 
 
 @functools.lru_cache(maxsize=4096)

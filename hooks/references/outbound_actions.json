@@ -33,6 +33,11 @@
       "misp_publish": {
         "why": "PUBLISHES the event so it syncs to the community. This is the irreversible one: a MISP event pushed to peers cannot be recalled, and every indicator in it becomes somebody else's blocking rule. A false positive here blocks innocent infrastructure on networks you will never see.",
         "before": "Confirm every attribute survives false-positive control (run /cti-check on the clustering indicators), that the TLP matches what the source permits, and that the analyst has explicitly asked to disseminate. Staging with push first is the reversible option."
+      },
+      "quarry": {
+        "why": "Starts a scan on the Quarry platform. Quarry crawls the target from its own egress and spends the same vendor accounts this skill uses. A scan cannot be un-run, and it can fan out for hours.",
+        "before": "Confirm the case allows contact and spend. A no-spend or no-contact case is refused in code as well, but the decision to scan is the analyst's.",
+        "flag_required": ["\"start\": true"]
       }
     }
   },
@@ -50,7 +55,8 @@
       {"match": "sh_misp.py push", "why": "IntelShare: writes the event to your MISP instance (staged, organisation-only)."},
       {"match": "sh_misp.py publish", "why": "IntelShare: PUBLISHES to the community — irreversible; the event cannot be recalled and its indicators become other people's blocking rules."},
       {"match": "intel.py misp push", "why": "IntelShare via the T2 dispatcher — writes the event to your MISP instance."},
-      {"match": "intel.py misp publish", "why": "IntelShare via the T2 dispatcher — PUBLISHES to the community; irreversible."}
+      {"match": "intel.py misp publish", "why": "IntelShare via the T2 dispatcher — PUBLISHES to the community; irreversible."},
+      {"match": "--quarry-scan", "why": "Quarry: this flag is what starts a new scan (crawls the target, spends the shared vendor accounts). Reuse without it is not gated."}
     ]
   }
 }

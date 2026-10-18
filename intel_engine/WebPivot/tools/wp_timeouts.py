@@ -5,7 +5,7 @@ wp_timeouts.py — the ONE resolver for the per-call timeout CEILING (`CTI_CALL_
 POLICY
 ------
 Every data-fetching / API / collector / renderer / subprocess "task call" in the engine runs up
-to CALL_TIMEOUT seconds (default 1800 = 30 min), then times out and the run moves on. Shorter
+to CALL_TIMEOUT seconds (default 5000 ≈ 83 min), then times out and the run moves on. Shorter
 per-call values written at a call site are FLOORED to the ceiling via `floor()`; only raw DNS /
 TLS / JARM micro-probes (getaddrinfo, dig, nslookup, ping, handshake) keep their fail-fast bounds.
 
@@ -75,8 +75,11 @@ def _reference_default() -> int | None:
         if _HERE not in sys.path:
             sys.path.insert(0, _HERE)
         from wp_refs import load_ref, ref_path  # noqa: E402
-        ref = load_ref(ref_path(__file__, "timeouts.json"), {"call_timeout": DEFAULT_CALL_TIMEOUT})
-        return _positive(ref.get("call_timeout"))
+        ref = load_ref(ref_path(__file__, "timeouts.json"),
+                       {"call_timeout": {"value": DEFAULT_CALL_TIMEOUT}})
+        node = ref.get("call_timeout")
+        val = node.get("value") if isinstance(node, dict) else node
+        return _positive(val)
     except Exception:  # noqa: BLE001 — a broken reference file must not take the engine down
         return None
 

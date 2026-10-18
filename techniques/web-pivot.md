@@ -22,7 +22,7 @@ Integrated from the **WebPivot** toolkit by **[Zeroska](https://github.com/Zeros
 | Invocation | Runs | Purpose |
 |---|---|---|
 | `/webpivot <url>` | `pivot_extract.py <url> --leads` | ranked pivots for one page (add `-o` to save to the case) |
-| `/webpivot <url> --render` | `pivot_extract.py --render` | render a JS-heavy SPA first (needs playwright) |
+| `/webpivot <url> --render` | `pivot_extract.py --render` | render a JS-heavy SPA first (Moli by default, else Chromium) |
 | `/webpivot <url> --crawl [N]` | `pivot_extract.py --crawl N` | walk same-site nav/tabs and merge artifacts |
 | `/webpivot <domain> --history` | `wayback_ga.py <domain> --timeline` | scrubbed GA/AdSense IDs across Wayback (Bellingcat) |
 | `/webpivot <url> --fetch [--near D]` | `wayback_fetch.py <url> --near D` | fetch archived page content (WebFetch can't reach Wayback) |
@@ -59,8 +59,8 @@ and `/sensitive-paths` are top-level aliases for the same tools.
 ## The tools (`uv run`, zero required deps)
 
 Runner (any OS): `uv run "$SKILL_DIR/scripts/webpivot/<tool>.py" <args>`. The core runs on
-the Python 3 stdlib; optional accelerators are `requests` (fetch) and `playwright`
-(`--render` post-JS DOM). The Shodan-style favicon `mmh3` hash uses a bundled pure-Python
+the Python 3 stdlib; optional accelerators are `requests` (fetch) and a browser for
+`--render` post-JS DOM (Moli from the default install, or Playwright/Chromium). The Shodan-style favicon `mmh3` hash uses a bundled pure-Python
 MurmurHash3 — no `mmh3` package needed.
 
 ### 1. `pivot_extract.py` — the extraction engine
@@ -71,7 +71,7 @@ WP="$SKILL_DIR/scripts/webpivot"
 uv run "$WP/pivot_extract.py" https://suspicious-site.example --pretty -o "<case>/raw/suspicious-site.example.json"
 # Just the ranked pivot leads (markdown, high→low confidence)
 uv run "$WP/pivot_extract.py" https://suspicious-site.example --leads
-# Render a JS-heavy SPA before extraction (needs playwright + chromium)
+# Render a JS-heavy SPA before extraction (Moli by default; Chromium when CTI_BROWSER=chromium)
 uv run "$WP/pivot_extract.py" https://spa.example --render --leads
 # Offline: analyze saved HTML, or pipe from stdin / another scraper
 uv run "$WP/pivot_extract.py" saved_page.html --pretty
@@ -220,7 +220,7 @@ uv run "$WP/rank_relations.py" "<case>"/raw/*.json --min-strength 8 # strong lin
 |---|---|
 | **5** | `registrant_email` · `wallet` · `tracking_id` · `verification` — operator-grade / exact private ID |
 | **4** | `favicon` · `shared_cert` · `same_origin_ip` — kit or infra (origin IPs only; CDN edge IPs dropped) |
-| **3** | `registrant_name` · `social` · `redirect_chain` · `dom_skeleton` |
+| **3** | `registrant_name` · `social` · `redirect_chain` · `dom_skeleton` · `mail` (M365 tenant / custom MX / SPF single-host IP — one family, so a tenant and its own MX host count once; never links alone) |
 | **2** | `same_ip` (unknown class) · `wp_theme` · `nameserver` · `reg_batch` · `email` |
 | **1** | `page_link` |
 
@@ -232,11 +232,14 @@ is plain-text and editable; bypass entirely with `CTI_PIVOT_NOISE_DISABLE=1`.
 
 ### 7. `cert_pivot.py` — TLS cert-fingerprint pivoting
 
-`/cert-history` time-lines a domain's **own** certs; this pivots the **fingerprint** to
-find **other hosts serving the same cert** — a strong same-operator signal — and mines a
-cert's **SAN list** for sibling domains. Keyless it live-fetches the leaf cert (stdlib
-`ssl`, computes SHA-1/SHA-256), queries crt.sh, and emits copy-paste queries + deep-links
-for Shodan/Censys/FOFA. With keys it runs the pivots live.
+`/cert-history` time-lines a domain's **own** certs (CT, per-source status); this pivots the
+**fingerprint** to find **other hosts serving the same cert** — a strong same-operator signal — and
+mines a cert's **SAN list** for sibling domains. Keyless it live-fetches the leaf cert (stdlib `ssl`,
+computes SHA-1/SHA-256), reads the domain's CT history through the shared `wp_ct` client (its `crtsh`
+block carries `ct_status` + `completeness_line`), and emits copy-paste queries + deep-links for
+Shodan/Censys/FOFA. With keys it runs the pivots live. Every host a fingerprint pivot returns is a
+**related host (unverified)** — never the target's origin or hosting/abuse contact until two origin
+checks agree (`techniques/fx-dns-cert-history.md` §3.4).
 
 ```bash
 uv run "$WP/cert_pivot.py" suspicious-site.top --pretty
@@ -247,7 +250,7 @@ uv run "$WP/cert_pivot.py" --sha256 <hex>            # pivot an explicit fingerp
 | Key | Auto-fires | Query |
 |---|---|---|
 | `SHODAN_API_KEY` | leaf cert | `ssl.cert.fingerprint:<sha256>` (SHA-1 alt) → hosts |
-| `CENSYS_API_ID`+`CENSYS_API_SECRET` | leaf cert | `services.tls.certificates.leaf_data.fingerprint_sha256="<sha256>"` → hosts |
+| `CENSYS_API_KEY` (+`CENSYS_ORG_ID`) | leaf cert | Platform CenQL `web.cert.fingerprint_sha256=<sha256> or host.services.cert.fingerprint_sha256=<sha256>` → hostnames + IPs (search is Starter+; Free plan gets the UI link) |
 
 ### 8. `pivot_suggest.py` — ranked "what to pivot on next"
 

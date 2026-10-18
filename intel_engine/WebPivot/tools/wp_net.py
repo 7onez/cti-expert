@@ -50,6 +50,8 @@ _USCAN_FALLBACK = {
                  "scan_prefix": "VIA-SCAN", "summary_seen_on": ["2100-01-01", "2200-01-01"],
                  "first_seen_sources": {"ct": "ct_first"}},
     "verdict": {"structural_labels": ["domain.apexdomain", "content.rootdir", "hosting.cdn"]},
+    "dom_assets": {"max_resources": 10, "extensions": [".js", ".css"],
+                   "mime_prefixes": ["javascript", "css"]},
 }
 _USCAN_REF = load_ref(ref_path(__file__, "urlscan_endpoints.json"), _USCAN_FALLBACK)
 URLSCAN_ENDPOINTS = _USCAN_REF["endpoints"]
@@ -57,6 +59,8 @@ URLSCAN_HOSTNAME_CFG = _USCAN_REF["hostname"]
 # result labels that describe structure/hosting class, never a finding — a verdict row is emitted
 # only on signal (malicious / score>0 / brand / a label outside this set)
 URLSCAN_STRUCTURAL_LABELS = frozenset((_USCAN_REF.get("verdict") or _USCAN_FALLBACK["verdict"])["structural_labels"])
+# bounds for urlscan_dom_assets — see references/urlscan_endpoints.json -> dom_assets
+URLSCAN_DOM_ASSETS_CFG = _USCAN_REF.get("dom_assets") or _USCAN_FALLBACK["dom_assets"]
 URLSCAN_BASE = "https://urlscan.io"
 
 
@@ -300,52 +304,55 @@ def flaresolverr_get(url: str, endpoint: str, timeout: int = 60, proxy: str = No
     cookies = [{"name": c.get("name"), "value": c.get("value")} for c in sol.get("cookies", [])]
     return sol.get("url") or url, html, cookies
 
-def _playwright_proxy(proxy: str = None):
-    """Chromium proxy config for Playwright, or None for a direct launch.
+class RenderChallenged(RuntimeError):
+    """A render whose document is a Cloudflare interstitial, not the page. `label` is the
+    detect_cloudflare_challenge() verdict the caller records as meta.cloudflare."""
 
-    Chromium honours HTTP(S)_PROXY/ALL_PROXY from the environment but ignores inline
-    `user:pass@` credentials (the form the CTI proxy layer exports), answering every
-    navigation with a 407 and an empty document. Resolve the same proxy the urllib path
-    uses and hand the credentials over as Playwright's `username`/`password` fields.
-    """
-    raw = proxy or os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") \
-        or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") \
-        or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
-    if not raw:
-        return None
-    u = urlparse(raw if "://" in raw else "http://" + raw)
-    if not u.hostname:
-        return None
-    # Chromium knows http:// and socks5:// (it resolves through SOCKS anyway, so socks5h == socks5);
-    # an https:// proxy URL in the pool means "HTTP proxy reached over TLS", which Chromium spells https://
-    scheme = {"socks5h": "socks5", "socks4a": "socks4", "": "http"}.get(u.scheme.lower(), u.scheme.lower())
-    cfg = {"server": f"{scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")}
-    if u.username:
-        cfg["username"] = unquote(u.username)
-        cfg["password"] = unquote(u.password or "")
-    bypass = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
-    if bypass:
-        cfg["bypass"] = bypass
-    return cfg
+    def __init__(self, label: str, renderer: str):
+        super().__init__(f"{renderer} render served a Cloudflare challenge [{label}]")
+        self.label = label
 
 
 def render_dom(url: str, timeout: int = 30, ua: str = DEFAULT_UA, proxy: str = None,
-               screenshot_path: str = None):
-    """Return post-JS rendered HTML using Playwright (chromium). Requires playwright.
+               screenshot_path: str = None, cf_challenge: bool = False):
+    """Return (final_url, post-JS html, cookies, renderer, response).
 
-    `proxy` (if given, else the process's HTTP(S)_PROXY) is passed to chromium so the
-    rendered fetch egresses through it — credentials included. `screenshot_path` (if given)
-    saves a full-page PNG of the rendered page — an evidentiary capture of what the target
-    actually served (phishing-kit evidence). Raises on a proxy/HTTP failure or an empty
-    document so the caller records a real `live_error` instead of a silent passive fallback.
+    `response` is {status, headers, redirect_chain} when the engine already has them (Moli) and
+    None for Chromium, whose page.content() does not — the caller then does one plain fetch.
+    A screenshot or `cf_challenge=True` always renders on Chromium. Raises on no usable engine,
+    a proxy/HTTP failure, an empty document, or a Moli DOM that is a Cloudflare interstitial.
     """
+    import wp_browser
+    engine, why = wp_browser.select_dom_engine(proxy, cf_challenge=cf_challenge,
+                                               screenshot=bool(screenshot_path))
+    if engine is None:
+        raise RuntimeError(f"render: {why}")
+    if engine == "moli":
+        import wp_moli
+        d = wp_moli.fetch_dom(url, timeout=timeout, ua=ua, proxy=wp_browser.resolve_proxy(proxy))
+        # Moli cannot clear a managed challenge, so a Moli DOM that IS the interstitial is not the
+        # page: raise it as a challenge so the caller escalates (raw fetch → Chromium → archive).
+        hdrs = {(h.get("name") or "").lower(): h.get("value", "")
+                for h in d["headers"] if isinstance(h, dict) and h.get("name")}
+        label = detect_cloudflare_challenge(d["status"] or 200, hdrs, d["html"])
+        if label:
+            raise RenderChallenged(label, d["renderer"])
+        return (d["final_url"], d["html"], d["cookies"], d["renderer"],
+                {"status": d["status"], "headers": hdrs, "redirect_chain": d["redirect_chain"]})
+    return (*_render_chromium(url, timeout=timeout, ua=ua, proxy=proxy,
+                              screenshot_path=screenshot_path), None)
+
+
+def _render_chromium(url: str, timeout: int = 30, ua: str = DEFAULT_UA, proxy: str = None,
+                     screenshot_path: str = None):
+    """Playwright/Chromium render; `screenshot_path` saves a full-page PNG of the rendered page —
+    an evidentiary capture of what the target actually served (phishing-kit evidence)."""
+    import wp_browser
     timeout = _floor_to(timeout)   # Playwright ms path bypasses the urllib floor
     from playwright.sync_api import sync_playwright  # optional
     with sync_playwright() as p:
-        launch_kwargs = {"headless": True}
-        pcfg = _playwright_proxy(proxy)
-        if pcfg:
-            launch_kwargs["proxy"] = pcfg
+        launch_kwargs = wp_browser.chromium_launch_kwargs(proxy)
+        pcfg = launch_kwargs.get("proxy")
         browser = p.chromium.launch(**launch_kwargs)
         try:
             ctx = browser.new_context(user_agent=ua)
@@ -366,9 +373,10 @@ def render_dom(url: str, timeout: int = 30, ua: str = DEFAULT_UA, proxy: str = N
                     page.screenshot(path=screenshot_path, full_page=True)
                 except Exception as e:
                     print(f"[!] screenshot failed: {e}", file=sys.stderr)
+            renderer = wp_browser.chromium_renderer_tag(browser)
         finally:
             browser.close()
-    return final_url, html, cookies
+    return final_url, html, cookies, renderer
 
 
 # ---------------------------------------------------------- passive fallback
@@ -386,41 +394,17 @@ def wayback_raw_url(snap_url: str) -> str:
 
 
 def wayback_closest(url: str, ua: str = DEFAULT_UA):
-    """Nearest available Wayback snapshot for a URL, or (None, None).
+    """Nearest available Wayback snapshot for a URL (the newest), or (None, None).
 
-    Tries the availability API, then the CDX API as a backup. Prints a distinct
-    notice on HTTP 429 so callers don't misread throttling as 'not archived'.
-    """
-    import urllib.parse
-    q = urllib.parse.quote(url, safe="")
-    # 1) availability API (lightest)
-    api = "http://archive.org/wayback/available?url=" + q
-    try:
-        req = urllib.request.Request(api, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=25) as r:
-            snap = json.load(r).get("archived_snapshots", {}).get("closest", {})
-        if snap.get("available") and snap.get("url"):
-            return snap["url"], snap.get("timestamp")
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            print("[!] archive.org rate-limited (429) — retry later or use a saved snapshot",
-                  file=sys.stderr)
-    except Exception:
-        pass
-    # 2) CDX backup — last 200 HTML capture
-    host = urlparse(url if url.startswith("http") else "http://" + url).netloc or url
-    cdx = (f"http://web.archive.org/cdx/search/cdx?url={host}&output=json"
-           f"&filter=statuscode:200&limit=-1")
-    try:
-        req = urllib.request.Request(cdx, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            rows = json.load(r)
-        if rows and len(rows) > 1:
-            ts, orig = rows[-1][1], rows[-1][2]
-            return f"https://web.archive.org/web/{ts}id_/{orig}", ts
-    except Exception:
-        pass
-    return None, None
+    Delegates to wp_wayback.closest — the id_ redirect resolver, then the availability API, then
+    the index — every request paced and guarded by wp_wayback_guard (run breaker, egress pacer,
+    429/refusal cooldown). An archive that did not answer prints its reason so it is never
+    misread as 'not archived'."""
+    import wp_wayback
+    snap, ts, err = wp_wayback.closest(url, ua=ua)
+    if err:
+        print(f"[!] Wayback lookup for {url} not definitive: {err}", file=sys.stderr)
+    return snap, ts
 
 def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
                   max_pages: int = 1, page_size: int = 100, free_only: bool = False):
@@ -481,12 +465,21 @@ def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
                 servers.add(p["server"])
             uid = res.get("_id")
             latest_uid = latest_uid or uid
+            # page.domain/ip/asn per scan: the aggregate `ips` above mixes in pages that merely
+            # LOADED the host, so wp_origin_history dates the host's own hosting from these rows
+            # (page.domain == host) instead.
             out["all_scans"].append({
                 "uuid": uid, "url": p.get("url"), "time": res.get("task", {}).get("time"),
                 "result": f"https://urlscan.io/result/{uid}/",
+                "domain": p.get("domain"), "ip": p.get("ip"),
+                "asn": p.get("asn"), "asnname": p.get("asnname"),
             })
-        # advance the cursor; stop when the API says there is no more or a page came back empty
-        if not results or not data.get("has_more"):
+        # advance the cursor. urlscan's `has_more` is NOT trustworthy (measured 2026-09-28: false on
+        # a full page of 100 while `total` was 248 and page 2 held 100 fresh scans), so stop on an
+        # empty page or once `total` is listed — bounded by max_pages as before.
+        tot = data.get("total")
+        if not results or (isinstance(tot, int) and len(out["all_scans"]) >= tot) \
+                or (not isinstance(tot, int) and not data.get("has_more")):
             break
         sortv = results[-1].get("sort")
         if not sortv:
@@ -750,11 +743,28 @@ def urlscan_hostname(host: str, ua: str = DEFAULT_UA, timeout: int = 30, max_pag
     return out
 
 
+_BINARY_JUNK_THRESHOLD = 0.05
+
+
+def dom_is_binary_junk(html: str) -> bool:
+    """True when decoded 'HTML' is actually undecoded binary — a heavy run of control bytes or
+    the Unicode replacement character, the fingerprint of a gzip/deflate body decoded straight
+    as UTF-8 because Content-Encoding lied or was missing (before _decode_body ran, or the
+    store used a compression scheme that is neither gzip nor deflate)."""
+    if not html:
+        return False
+    sample = html[:4000]
+    bad = sum(1 for ch in sample if ch == "\ufffd" or (ord(ch) < 32 and ch not in "\t\n\r"))
+    return (bad / max(len(sample), 1)) > _BINARY_JUNK_THRESHOLD
+
+
 def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only: bool = False):
     """Fetch the rendered DOM of the most recent urlscan scan for a host, so a dead /
     blocked target is still analyzable from a third-party capture. Returns (html, id)
     or ('', None). urlscan stores the DOM at /dom/<uuid>/ — which returns 403 without an
-    API-Key, so the key (when set) is sent; keyless (or free_only) degrades to ('', None)."""
+    API-Key, so the key (when set) is sent; keyless (or free_only) degrades to ('', None).
+    The body is decoded per its actual Content-Encoding (_decode_body, gzip-magic-sniffing
+    fallback included) before UTF-8 — a bare `.decode()` of a gzip body is binary junk."""
     _uk = None if free_only else _secret("URLSCAN_API_KEY")
     hdr = {"User-Agent": ua}
     if _uk:
@@ -768,7 +778,9 @@ def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only:
         try:
             req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                html = r.read().decode("utf-8", "ignore")
+                raw = r.read()
+                enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
+            html = _decode_body(raw, enc).decode("utf-8", "ignore")
             if html and len(html) > 200:
                 return html, uid
         except Exception:
@@ -780,9 +792,10 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
                     max_attempts: int = None, deadline: float = None, free_only: bool = False):
     """Fetch EVERY distinct cached DOM urlscan holds for a host (not just the newest, which
     urlscan_dom returns). Iterates `all_scans` (falls back to recent_scans), pulls
-    /dom/<uuid>/ (sending the API-Key when set — the endpoint is 403 keyless), and dedupes
-    count once. Returns [{'uuid','url','time','sha256','html'}], newest first, capped at
-    max_doms distinct DOMs.
+    /dom/<uuid>/ (sending the API-Key when set — the endpoint is 403 keyless), decodes each
+    body per its Content-Encoding (_decode_body), and dedupes on the DECODED text's sha256.
+    Returns [{'uuid','url','time','sha256','html'}], newest first, capped at max_doms distinct
+    DOMs.
 
     BOUNDED so a host with hundreds of scans whose DOMs 404/time out cannot stall the caller:
     stops after `max_attempts` fetches (default max_doms*3+10) or when `deadline`
@@ -817,7 +830,9 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 if api_usage:
                     _rem, _lim = api_usage.rl_headers(r)
-                html = r.read().decode("utf-8", "ignore")
+                raw = r.read()
+                enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
+            html = _decode_body(raw, enc).decode("utf-8", "ignore")
         except Exception:
             continue
         if not html or len(html) < min_len:
@@ -836,10 +851,108 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
                          remaining=_rem, limit=_lim)
     return out
 
+
+def urlscan_result_requests(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
+    """The RESULT endpoint's `data.requests` list for a scan uuid — every HTTP transaction
+    urlscan recorded during navigation; each response entry carries a sha256 `hash` urlscan
+    stores verbatim at /responses/<hash>/. None on transport failure/bad JSON, else a list
+    (possibly empty)."""
+    headers = {"User-Agent": ua}
+    key = _secret("URLSCAN_API_KEY")
+    if key:
+        headers["API-Key"] = key
+    try:
+        req = urllib.request.Request(f"{URLSCAN_BASE}/api/v1/result/{uuid}/", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.load(r) or {}
+        return (data.get("data") or {}).get("requests") or []
+    except Exception:
+        return None
+
+
+def urlscan_response(sha256: str, ua: str = DEFAULT_UA, timeout: int = 20):
+    """Fetch one stored HTTP response body by its urlscan sha256 (/responses/<hash>/), decoded
+    per Content-Encoding (_decode_body, gzip-sniffing fallback included). '' on failure —
+    never raises."""
+    headers = {"User-Agent": ua}
+    key = _secret("URLSCAN_API_KEY")
+    if key:
+        headers["API-Key"] = key
+    try:
+        req = urllib.request.Request(f"{URLSCAN_BASE}/responses/{sha256}/", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
+        return _decode_body(raw, enc).decode("utf-8", "ignore")
+    except Exception:
+        return ""
+
+
+def urlscan_dom_assets(uuid: str, ua: str = DEFAULT_UA, timeout: int = 20, free_only: bool = False):
+    """For a page RECOVERED from a urlscan DOM capture (the live site cannot be fetched), pull
+    that SAME scan's own stored JS/CSS responses (data.requests[].response.hash ->
+    /responses/<sha256>/) so the existing asset layer (wp_assets.extract_api_endpoints /
+    wp_extract.extract_app_downloads — API base, websocket host, download/app links) still has
+    bundle text to read, instead of the empty result a same-origin fetch against a dead site
+    would otherwise leave. Keyless/free_only -> '' (the /responses/ endpoint is licensed).
+    Capped via references/urlscan_endpoints.json -> dom_assets.max_resources; every fetch is
+    ledgered as one batch, like urlscan_dom_all. Returns the concatenated resource text."""
+    if free_only or not _secret("URLSCAN_API_KEY"):
+        return ""
+    reqs = urlscan_result_requests(uuid, ua=ua, timeout=timeout)
+    if not reqs:
+        return ""
+    cfg = URLSCAN_DOM_ASSETS_CFG
+    exts = tuple(cfg.get("extensions") or (".js", ".css"))
+    mimes = tuple(cfg.get("mime_prefixes") or ("javascript", "css"))
+    cap = int(cfg.get("max_resources") or 10)
+    seen, texts = set(), []
+    for entry in reqs:
+        if len(texts) >= cap:
+            break
+        resp = (entry or {}).get("response") or {}
+        h = resp.get("hash")
+        if not h or h in seen:
+            continue
+        meta = resp.get("response") or {}
+        url = str(meta.get("url") or "")
+        mime = str(meta.get("mimeType") or "").lower()
+        if not (url.lower().endswith(exts) or any(m in mime for m in mimes)):
+            continue
+        seen.add(h)
+        text = urlscan_response(h, ua=ua, timeout=timeout)
+        if text:
+            texts.append(text)
+    if texts and api_usage:
+        api_usage.record("urlscan", "responses", credits=len(texts), query=uuid, results=len(texts))
+    return "\n".join(texts)
+
+if HAVE_REQUESTS:
+    class _UAScopedSession(requests.Session):
+        """requests Session that re-scopes User-Agent on every redirect hop
+        (wp_wayback_guard.ua_for): requests keeps a request's headers across redirects, which
+        would carry the archive.org UA to whatever host the archive redirects to."""
+
+        def __init__(self, base_ua: str):
+            super().__init__()
+            self._base_ua = base_ua
+
+        def rebuild_auth(self, prepared_request, response):
+            super().rebuild_auth(prepared_request, response)
+            import wp_wayback_guard as wg
+            prepared_request.headers["User-Agent"] = wg.ua_for(prepared_request.url, self._base_ua)
+
 def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
     """Submit a URL to the Wayback Machine's Save Page Now. Returns a dict with the
     archived snapshot URL (or an error). Passive-safe: it makes web.archive.org fetch the
-    page, so the archive box (not you) touches the target from then on."""
+    page, so the archive box (not you) touches the target from then on. Routed through
+    wp_wayback_guard: a tripped run breaker or an egress cooldown returns a
+    {"skipped": ..., "skipped_kind": "breaker"} dict without making a request; otherwise the
+    request waits for its paced playback slot, and a 429 / refused connection arms the cooldown."""
+    import wp_wayback_guard as wg
+    reason = wg.admit("web.archive.org", "playback")
+    if reason:
+        return {"skipped": reason, "skipped_kind": "breaker"}
     timeout = _floor_to(timeout)   # requests path bypasses the urllib floor
     save_url = "https://web.archive.org/save/" + url
     # A REAL capture URL is /web/<14-digit-timestamp>/<original>. The bare /save/ endpoint URL
@@ -852,24 +965,34 @@ def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
     try:
         # requests follows the redirect to the created snapshot; note Content-Location too
         if HAVE_REQUESTS:
-            r = requests.get(save_url, headers={"User-Agent": ua}, timeout=timeout,
-                             allow_redirects=True)
+            with _UAScopedSession(ua) as s:
+                r = s.get(save_url, headers={"User-Agent": wg.ua_for(save_url, ua)},
+                          timeout=timeout, allow_redirects=True)
             snap = r.headers.get("Content-Location") or ""
             if snap and not snap.startswith("http"):
                 snap = "https://web.archive.org" + snap
             snap = snap or r.url
             if _valid(snap):
+                wg.record(True, kind="save")
+                wg.observe("web.archive.org", True)
                 return {"snapshot": snap, "status": r.status_code}
+            wg.record(not wg.is_failure(r.status_code), kind="save")
+            wg.observe("web.archive.org", r.status_code, r.headers)
             return {"error": f"no capture created (status {r.status_code}) — target likely "
                              f"un-crawlable (Cloudflare/robots)", "status": r.status_code}
-        req = urllib.request.Request(save_url, headers={"User-Agent": ua})
+        req = wg.scope_ua(urllib.request.Request(save_url), ua)  # re-scoped per redirect hop
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             cl = resp.headers.get("Content-Location") or ""
             snap = ("https://web.archive.org" + cl) if cl else resp.geturl()
             if _valid(snap):
+                wg.record(True, kind="save")
+                wg.observe("web.archive.org", True)
                 return {"snapshot": snap, "status": resp.status}
+            wg.record(not wg.is_failure(resp.status), kind="save")
             return {"error": f"no capture created (status {resp.status})", "status": resp.status}
     except Exception as e:
+        wg.record(not wg.is_failure(e), kind="save")
+        wg.observe("web.archive.org", e, getattr(e, "headers", None))
         return {"error": str(e)}
 
 def urlscan_submit(url: str, timeout: int = 30, visibility: str = None):

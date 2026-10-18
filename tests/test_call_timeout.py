@@ -4,8 +4,8 @@
 WHAT THIS PROTECTS
 ------------------
 The engine's policy is that every DATA-FETCHING / API / collector / renderer / subprocess call runs
-up to CALL_TIMEOUT (default 1800s / 30 min), then times out and the run moves on. ONE resolver
-(wp_timeouts) reads env CTI_CALL_TIMEOUT → the skill-root .env → references/timeouts.json → 1800 and
+up to CALL_TIMEOUT (default 5000s ≈ 83 min), then times out and the run moves on. ONE resolver
+(wp_timeouts) reads env CTI_CALL_TIMEOUT → the skill-root .env → references/timeouts.json → 5000 and
 exports the result so child processes inherit it; wp_common floors urllib.request.urlopen
 process-wide and every subprocess runner floors its bound. This asserts:
   1. the resolver's order: reference default, env override, .env file, garbage fall-through;
@@ -46,14 +46,14 @@ def check():
     _saved = os.environ.pop("CTI_CALL_TIMEOUT", None)
     try:
         ok(os.path.isfile(os.path.join(ROOT, "intel_engine", "WebPivot", "references", "timeouts.json"))
-           and wp_timeouts._reference_default() == 1800,
+           and wp_timeouts._reference_default() == 5000,
            "the ceiling default is loaded from references/timeouts.json, not the embedded fallback")
-        ok(R(env_files=(), export=False) == 1800, "with no env and no .env the ceiling is the json default (1800s)")
+        ok(R(env_files=(), export=False) == 5000, "with no env and no .env the ceiling is the json default (5000s)")
         os.environ["CTI_CALL_TIMEOUT"] = "600"
         ok(R(env_files=(), export=False) == 600, "an exported CTI_CALL_TIMEOUT overrides the ceiling")
         for _bad in ("0", "-5", "abc", ""):
             os.environ["CTI_CALL_TIMEOUT"] = _bad
-            ok(R(env_files=(), export=False) == 1800, f"a non-positive/garbage override ({_bad!r}) falls back to the default")
+            ok(R(env_files=(), export=False) == 5000, f"a non-positive/garbage override ({_bad!r}) falls back to the default")
         os.environ.pop("CTI_CALL_TIMEOUT", None)
 
         with tempfile.TemporaryDirectory() as td:
@@ -66,8 +66,8 @@ def check():
             os.environ.pop("CTI_CALL_TIMEOUT", None)
             with open(envf, "w", encoding="utf-8") as fh:
                 fh.write("CTI_CALL_TIMEOUT=oops\n")
-            ok(R(env_files=(envf,), export=False) == 1800, "a garbage .env value falls through to the reference default")
-            ok(R(env_files=(os.path.join(td, "missing.env"),), export=False) == 1800,
+            ok(R(env_files=(envf,), export=False) == 5000, "a garbage .env value falls through to the reference default")
+            ok(R(env_files=(os.path.join(td, "missing.env"),), export=False) == 5000,
                "a missing .env file is skipped, not an error")
             # 2. export: the resolved value is published to children via os.environ.
             with open(envf, "w", encoding="utf-8") as fh:

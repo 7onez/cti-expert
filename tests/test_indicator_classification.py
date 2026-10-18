@@ -19,7 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "intel_engine", "tools", "kb"))
 
 from ingest_webpivot import _is_privacy, _is_role_placeholder, _norm_name  # noqa: E402
-from noise_filters import is_managed_dns  # noqa: E402
+from noise_filters import (is_managed_dns, is_noise_email, is_noise_phone,  # noqa: E402
+                           is_parking_host, is_shared_infra_apex)
 
 FAILURES = []
 
@@ -130,6 +131,77 @@ SELF_HOSTED_DNS = [
 ]
 for ns in SELF_HOSTED_DNS:
     check(f"self-hosted DNS is attribution-grade: {ns!r}", is_managed_dns(ns), False)
+
+# Parking / marketplace hosts: matched on label boundaries like nameservers. A raw substring check
+# made jordan.com "parking" (⊃ dan.com), so an operator apex that merely ENDS like a provider was
+# shared infrastructure — never seeded, never clustered.
+PARKING_HOSTS = [
+    "dan.com", "www.dan.com",              # dotted entry: exact domain and its subdomains
+    "img.sedoparking.com",
+    "ns1.parkingcrew.net",                 # bare entry: a whole label
+    "afternic.com",
+]
+for h in PARKING_HOSTS:
+    check(f"parking host is noise: {h!r}", is_parking_host(h), True)
+
+NOT_PARKING = [
+    "jordan.com",                          # ⊃ dan.com
+    "casedo.com",                          # ⊃ sedo.com
+    "treasureabove.com",                   # ⊃ above.com
+    "myparkingcrewshop.com",               # bare word inside a label
+    "site-a.example",
+]
+for h in NOT_PARKING:
+    check(f"look-alike domain is NOT parking: {h!r}", is_parking_host(h), False)
+    check(f"look-alike apex is NOT shared infra: {h!r}", is_shared_infra_apex(h), False)
+
+
+# ---------------------------------------------------------------------------
+# 6. Registrant EMAIL classification, both directions (RULE 5).
+#
+# Regression: privacy tokens were raw substrings of the whole address and role local-parts were
+# noise on ANY domain, so an operator's own legal@ / proxyshop / protectorsgroup / whoisthat
+# address could never become a `registered_by` edge. Tokens now match whole labels / hyphen
+# segments; role mailboxes are noise only on a registrar / registry / privacy-proxy domain.
+# ---------------------------------------------------------------------------
+PROVIDER_EMAILS = [                       # real registrar / privacy-proxy mailboxes — noise
+    "abuse@godaddy.com",
+    "registry-abuse@cloudflare.com",
+    "x.protect@withheldforprivacy.com",
+    "owner-1234@domainsbyproxy.com",
+    "contact@contactprivacy.com",
+    "client@whoisguard.com",
+    "c1@data-protected.net",
+    "a1@whoissecure.net",
+    "reg@domain-contact.org",
+    "info@yinsibaohu.aliyun.com",
+    "abuse@nic.example",                  # registry role mailbox
+    "noreply@abuse.registrar.example",    # abuse.<provider> host — whatever the local-part
+]
+for em in PROVIDER_EMAILS:
+    check(f"provider email is noise: {em!r}", is_noise_email(em), True)
+
+OPERATOR_EMAILS = [                       # operator / self-hosted mailboxes — keep as leads
+    "legal@operator.example",
+    "abuse@operator.example",
+    "ops@proxyshop.example",
+    "owner@protectorsgroup.example",
+    "x@anonymous-bank.example",
+    "boss@whoisthat.example",
+    "registrant@163.com",
+]
+for em in OPERATOR_EMAILS:
+    check(f"operator email is NOT noise: {em!r}", is_noise_email(em), False)
+
+# The same vocabulary judges a registrant ORG when deciding whether a phone is the proxy's.
+check("privacy-proxy org makes its phone noise",
+      is_noise_phone("442071838750", registrant_org="Domains By Proxy, LLC"), True)
+check("privacy-proxy org (compound word) makes its phone noise",
+      is_noise_phone("442071838750", registrant_org="WhoisGuard, Inc."), True)
+check("operator org does NOT make its phone noise",
+      is_noise_phone("442071838750", registrant_org="Protectors Group LLC"), False)
+check("operator org with a privacy-looking prefix does NOT make its phone noise",
+      is_noise_phone("442071838750", registrant_org="Anonymous Bank"), False)
 
 
 # ---------------------------------------------------------------------------

@@ -17,11 +17,12 @@ Design:
     The render NEVER lowers a static verdict: reconciliation takes the max, and non-corroboration
     of a static signal is surfaced as `static_only_higher` for the analyst to weigh — it is not
     applied as a downgrade.
-  * The RENDER step (drive Playwright / agent-browser, hook the clipboard API, dump computed
-    hidden elements) is OPTIONAL and lives behind availability checks. It is an OUTBOUND,
-    attributable, JS-executing fetch of the target, so it requires `--render` and warns (and
-    accepts `--proxy` for a research egress). Absent a renderer it returns evidence=None with a
-    note — the static verdict stays authoritative, never a crash.
+  * The RENDER step (drive Moli or Chromium, hook the clipboard API before any page script runs,
+    dump computed-style hidden elements) is OPTIONAL and lives behind availability checks. It is
+    an OUTBOUND, attributable, JS-executing fetch of the target, so it requires `--render` and
+    warns (and accepts `--proxy` for a research egress). Engine choice is the engine's own
+    wp_browser rule (Moli when installed and the proxy scheme is verified, else Chromium). Absent a
+    renderer it returns evidence=None with a note — the static verdict stays authoritative.
 
 Usage (pure reconcile over supplied evidence — the offline path):
   echo '{"clipboard":["powershell -enc AAAA"],"computed_hidden":[]}' \
@@ -115,71 +116,130 @@ def confirm_from_evidence(html, evidence, origin=None, brands=None):
 
 
 # ------------------------------------------------- optional live render (degrades to a note)
-def _render_available():
-    """True only if a renderer we can drive is importable/executable. Never raises."""
+# One instrumentation pair for both engines: the hook runs before any page script (Playwright
+# add_init_script / Moli --document-start-script) and the probe is evaluated after readiness.
+# A copy of a selected <textarea>/<input> (the classic ClickFix staging) is read from the field's
+# own selection range when getSelection() is empty — Moli does not mirror field selections there.
+_CLIPBOARD_HOOK = (
+    "window.__clip=[];"
+    "const _w=navigator.clipboard&&navigator.clipboard.writeText;"
+    "if(_w){navigator.clipboard.writeText=function(t){window.__clip.push(String(t));"
+    "return _w.call(navigator.clipboard,t);};}"
+    "document.execCommand=(function(o){return function(c){"
+    "if(String(c).toLowerCase()==='copy'){try{"
+    "var s=(document.getSelection&&document.getSelection().toString())||'';"
+    "if(!s){var f=[document.activeElement].concat(Array.from(document.querySelectorAll('textarea,input')));"
+    "for(var i=0;i<f.length&&!s;i++){var a=f[i];"
+    "if(a&&typeof a.value==='string'&&a.selectionEnd>a.selectionStart){"
+    "s=a.value.substring(a.selectionStart,a.selectionEnd);}}}"
+    "window.__clip.push(String(s));}catch(e){}}"
+    "return o.apply(document,arguments);};})(document.execCommand);"
+)
+_HIDDEN_PROBE = (
+    "Array.from(document.querySelectorAll('*')).filter(function(e){"
+    "var s=getComputedStyle(e);return (s.display==='none'||s.visibility==='hidden'||"
+    "parseFloat(s.opacity)===0) && (e.querySelector('input[type=password]')||"
+    "e.tagName==='FORM'||e.tagName==='A');}).slice(0,50).map(function(e){return {"
+    "kind:(e.tagName==='FORM'?'hidden_form':e.tagName==='A'?'hidden_link':'hidden_field'),"
+    "detail:(e.getAttribute('action')||e.getAttribute('href')||e.tagName),"
+    "concealment:getComputedStyle(e).display==='none'?'display:none':'hidden',"
+    "severity:(e.querySelector('input[type=password]')?'high':'medium')};})"
+)
+
+
+def _wp_browser():
+    """The engine's browser router (intel_engine/WebPivot/tools/wp_browser.py), or None when this
+    script runs without the vendored engine (stateless Tier 3)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for root in (os.environ.get("INTEL_HOME"), os.path.join(here, "..", "intel_engine")):
+        tools = os.path.join(root, "WebPivot", "tools") if root else ""
+        if tools and os.path.isfile(os.path.join(tools, "wp_browser.py")):
+            if tools not in sys.path:
+                sys.path.insert(0, tools)
+            try:
+                import wp_browser
+                return wp_browser
+            except Exception:  # noqa: BLE001
+                return None
+    return None
+
+
+def _render_available(proxy=None):
+    """(engine, why): 'moli' | 'playwright' | 'agent-browser' | None. Never raises."""
+    wb = _wp_browser()
+    if wb is not None:
+        engine, why = wb.select_dom_engine(proxy)
+        if engine:
+            return ("playwright" if engine == "chromium" else engine), why
+        # The router already decided (no Chromium for a pixel/CF render, unverified proxy, …).
+        # agent-browser has no driver here, so reporting it would hide the real reason.
+        return None, why
     try:
         import playwright  # noqa: F401
-        return "playwright"
-    except Exception:
-        pass
+        return "playwright", "Playwright importable"
+    except Exception:  # noqa: BLE001
+        why = "no engine router"
     from shutil import which
     if which("agent-browser"):
-        return "agent-browser"
-    return None
+        return "agent-browser", why
+    return None, why
 
 
 def run_render(url, proxy=None):
     """Attempt a live render capturing clipboard writes + computed-hidden elements.
     Returns (evidence_dict|None, note). OPTIONAL: absent a renderer, returns (None, note) — the
     caller keeps the static verdict. This is deliberately the only non-pure function here."""
-    engine = _render_available()
+    engine, why = _render_available(proxy)
     if not engine:
-        return None, ("no renderer available (Playwright/agent-browser not installed) — "
-                      "static verdict stands; install Playwright to enable renderer confirmation")
-    if engine == "playwright":
+        return None, (f"no renderer available ({why}) — static verdict stands; install Moli "
+                      "(scripts/install.sh) or Chromium (--headless) to enable renderer confirmation")
+    drivers = {"moli": _render_moli, "playwright": _render_playwright}
+    if engine in drivers:
         try:
-            return _render_playwright(url, proxy)
+            return drivers[engine](url, proxy)
         except Exception as e:  # noqa: BLE001
             return None, f"render failed ({e}); static verdict stands"
     return None, (f"renderer '{engine}' detected but no driver wired here — "
-                  "run it out-of-band and feed --evidence, or install Playwright")
+                  "run it out-of-band and feed --evidence, or install Moli/Chromium")
+
+
+def _note(engine, proxy, clip, comp):
+    return (f"rendered with {engine}" + (" via proxy" if proxy else "")
+            + f": {len(clip)} clipboard write(s), {len(comp)} computed-hidden element(s)")
+
+
+def _render_moli(url, proxy=None):
+    """Moli driver: the clipboard hook as a document-start script, one eval for both probes."""
+    wb = _wp_browser()
+    import wp_moli
+    got = wp_moli.eval_page(
+        url, "(function(){return {clipboard:(window.__clip||[]).filter(Boolean),"
+             "computed_hidden:" + _HIDDEN_PROBE + "};})()",
+        timeout=20, proxy=wb.resolve_proxy(proxy), start_script=_CLIPBOARD_HOOK)
+    got = got if isinstance(got, dict) else {}
+    clip = [c for c in (got.get("clipboard") or []) if c]
+    comp = [c for c in (got.get("computed_hidden") or []) if isinstance(c, dict)]
+    return {"clipboard": clip, "computed_hidden": comp}, _note(wp_moli.renderer_tag(), proxy, clip, comp)
 
 
 def _render_playwright(url, proxy=None):
-    """Playwright driver: hook clipboard API, collect computed-hidden elements. Best-effort."""
+    """Chromium driver: hook clipboard API, collect computed-hidden elements. Best-effort."""
     from playwright.sync_api import sync_playwright  # type: ignore
+    wb = _wp_browser()
+    launch = (wb.chromium_launch_kwargs(proxy) if wb
+              else {"headless": True, **({"proxy": {"server": proxy}} if proxy else {})})
     clip, comp = [], []
     with sync_playwright() as pw:
-        b = pw.chromium.launch(headless=True, proxy=({"server": proxy} if proxy else None))
+        b = pw.chromium.launch(**launch)
         try:
             pg = b.new_page()
-            pg.add_init_script(
-                "window.__clip=[];"
-                "const _w=navigator.clipboard&&navigator.clipboard.writeText;"
-                "if(_w){navigator.clipboard.writeText=function(t){window.__clip.push(String(t));"
-                "return _w.call(navigator.clipboard,t);};}"
-                "document.execCommand=(function(o){return function(c){"
-                "if(String(c).toLowerCase()==='copy'){try{window.__clip.push(String("
-                "(document.getSelection&&document.getSelection().toString())||''));}catch(e){}}"
-                "return o.apply(document,arguments);};})(document.execCommand);"
-            )
+            pg.add_init_script(_CLIPBOARD_HOOK)
             pg.goto(url, wait_until="networkidle", timeout=20000)
             clip = [c for c in (pg.evaluate("window.__clip||[]") or []) if c]
-            comp = pg.evaluate(
-                "Array.from(document.querySelectorAll('*')).filter(function(e){"
-                "var s=getComputedStyle(e);return (s.display==='none'||s.visibility==='hidden'||"
-                "parseFloat(s.opacity)===0) && (e.querySelector('input[type=password]')||"
-                "e.tagName==='FORM'||e.tagName==='A');}).slice(0,50).map(function(e){return {"
-                "kind:(e.tagName==='FORM'?'hidden_form':e.tagName==='A'?'hidden_link':'hidden_field'),"
-                "detail:(e.getAttribute('action')||e.getAttribute('href')||e.tagName),"
-                "concealment:getComputedStyle(e).display==='none'?'display:none':'hidden',"
-                "severity:(e.querySelector('input[type=password]')?'high':'medium')};});"
-            ) or []
+            comp = pg.evaluate(_HIDDEN_PROBE) or []
         finally:
             b.close()
-    return {"clipboard": clip, "computed_hidden": comp}, ("rendered with Playwright"
-            + (f" via proxy {proxy}" if proxy else "")
-            + f": {len(clip)} clipboard write(s), {len(comp)} computed-hidden element(s)")
+    return {"clipboard": clip, "computed_hidden": comp}, _note("Chromium", proxy, clip, comp)
 
 
 def _read(path):

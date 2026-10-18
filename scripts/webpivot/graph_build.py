@@ -58,6 +58,32 @@ try:
 except Exception:
     _rank = None
 
+# Ownership-era + noise classification — single source of truth with the ingester/KB (whois_eras.py
+# contract: only the CURRENT owner's WHOIS values may become an `operator`-class edge; a previous
+# owner from a drop-catch/resale is never even a node attribute here beyond a dated fact, and a
+# registrar/privacy/role value is never a registrant at all). Falls back to a live-field-only,
+# never-historical read if the engine tree is unavailable — safe by omission, never by inclusion.
+try:
+    _ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.join(_ENGINE_ROOT, "intel_engine", "WebPivot", "tools"))
+    sys.path.insert(0, os.path.join(_ENGINE_ROOT, "intel_engine", "tools", "kb"))
+    from whois_eras import owner_values as _owner_values, prior_values as _prior_values
+    from whois_enrich import is_privacy as _is_privacy
+    from noise_filters import is_noise_email as _is_noise_email, is_managed_dns as _is_managed_dns
+except Exception:
+    def _owner_values(wh, kind):
+        live = (wh or {}).get({"email": "registrant_email", "name": "registrant_name",
+                               "phone": "registrant_phone", "org": "registrant_org"}[kind])
+        return [live] if live else []
+    def _prior_values(wh, kind):
+        return []
+    def _is_privacy(v):
+        return False
+    def _is_noise_email(v):
+        return False
+    def _is_managed_dns(ns):
+        return False
+
 # ---- node type styling hints (shape/icon carried to the renderer) ----
 TYPE_META = {
     "domain":       {"shape": "round-rectangle", "icon": "🌐"},
@@ -232,76 +258,64 @@ def build(analyses, operator=None, operator_links=None, history=None):
             g.edge(host, f"ip:{ip}", "ip",
                    confidence="inferred",
                    evidence="shared origin IP (candidate)" if origin else "urlscan IP")
-        # WhoisXML registration data (registrant = operator-grade glue)
+        # WhoisXML registration data (registrant = operator-grade glue). Era-aware: only the
+        # CURRENT owner's values may become an `operator`-class edge (whois_eras.py contract) —
+        # a drop-catch/resale's previous registrant is recorded as a dated FACT on the domain
+        # node, never an edge, never a frontier seed, never named as this operator.
         wh = art.get("whois") or {}
-        _PRIV_MARK = ("privacy", "redacted", "whoisguard", "data protected", "withheld",
-                      "not disclosed", "domains by proxy", "domainsbyproxy",
-                      "registration private", "private by design", "identity protect",
-                      "contact privacy", "perfect privacy",
-                      # WHOIS status/placeholder registrants — never a real identity, so
-                      # they must not become false hubs linking unrelated domains.
-                      "reactivation", "redemption", "pending delete", "statutory masking",
-                      "masking enabled", "registry registrant id", "not available from registry",
-                      "registrant country", "registrant state", "registrant city",
-                      "whois agent", "see notes", "see the notes", "on how to view",
-                      # registrar orgs / expired-domain placeholders (not the owner)
-                      "domain expired", "runsystem", "gmo-z.com", "gmo internet",
-                      "domain admin", "c/o id#", "domainadmin")
-        _PROXY_DOM = ("porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com",
-                      "withheldforprivacy.com", "privacyprotect.org", "contactprivacy.com",
-                      # registrars/resellers whose role mailbox is not the operator
-                      "onamae.com", "tenten.vn", "inet.vn", "gname.com", "sav.com",
-                      "enom.com", "gmo.jp", "matbao.com", "pavietnam.vn", "raothue.com")
-        # role mailboxes: registrar/abuse/reseller inboxes, never the registrant
-        _ROLE_LOCAL = ("abuse@", "abuse-contact@", "hostmaster@", "noc@", "postmaster@",
-                       "registrar@", "admin@onamae", "complaint@", "reg_", "reactivation",
-                       "proxy@", "protected@", "dataprotected@", "info@", "sales@",
-                       "support@", "contact@", "noreply@", "no-reply@")
 
-        def _priv(s):
-            s = (s or "").strip().lower()
-            if not s or s.startswith("http"):
-                return True
-            if any(m in s for m in _PRIV_MARK):
-                return True
-            if s.startswith(_ROLE_LOCAL):
-                return True
-            if "@" in s and s.split("@", 1)[1] in _PROXY_DOM:
-                return True
-            return False
-        cur_email = wh.get("registrant_email")
-        hist = wh.get("history") or {}
+        def _noise(v):
+            return not v or _is_privacy(v) or _is_noise_email(v)
+
+        live_email = (wh.get("registrant_email") or "").lower().strip()
         seen_emails = set()
-        for em in ([cur_email] if cur_email else []) + (hist.get("registrant_emails") or []):
+        for em in _owner_values(wh, "email"):
             em = (em or "").lower().strip()
-            if not em or _priv(em) or em in seen_emails:
+            if _noise(em) or em in seen_emails:
                 continue
             seen_emails.add(em)
             rid = f"registrant_email:{em}"
             g.node(rid, "email", label=em, subtype="registrant")
             g.edge(host, rid, "registrant",
-                   confidence="confirmed" if em == cur_email else "inferred",
-                   evidence="whois registrant email" if em == cur_email else "historical whois email")
+                   confidence="confirmed" if em == live_email else "inferred",
+                   evidence="whois registrant email")
         _corrupt = lambda s: any(0x80 <= ord(c) <= 0x9f for c in s)  # C1 mojibake bytes
-        for nm in ([wh.get("registrant_name") or wh.get("registrant_org")]
-                   + (hist.get("registrant_names") or [])):
+        seen_names = set()
+        for nm in _owner_values(wh, "name") + _owner_values(wh, "org"):
             nm = (nm or "").strip()
-            if not nm or _priv(nm) or _corrupt(nm):
+            if not nm or _noise(nm) or _corrupt(nm) or nm.lower() in seen_names:
                 continue
+            seen_names.add(nm.lower())
             nid = f"registrant:{nm.lower()}"
             g.node(nid, "registrant", label=nm)
             g.edge(host, nid, "registrant", confidence="inferred", evidence="whois registrant name")
-        if wh.get("registrar") and not _priv(wh["registrar"]):
+        # previous owners: whois_eras.prior_values() is the ONLY place this history may surface —
+        # a dated fact on the domain node, never an edge/hub a second domain could connect through.
+        prior = (_prior_values(wh, "email") + _prior_values(wh, "name") + _prior_values(wh, "org"))
+        prior_display = sorted({f"{p['value']} (era {p['era_created']})" for p in prior
+                                if p.get("value") and not _noise(p["value"])})[:8]
+        if prior_display:
+            g.node(host, "domain", previous_registrants=prior_display)
+        if wh.get("registrar") and not _is_privacy(wh["registrar"]):
             gid = f"registrar:{wh['registrar'].lower()}"
             g.node(gid, "registrar", label=wh["registrar"])
             g.edge(host, gid, "registrar", confidence="inferred", evidence="registrar")
+        managed_ns = []
         for ns in (wh.get("name_servers") or []):
             ns = (ns or "").lower().strip()
             if not ns:
                 continue
+            if _is_managed_dns(ns):
+                # managed/registrar/parking DNS (Cloudflare, GoDaddy, …) is shared by millions of
+                # unrelated domains: never a shared hub node here, or two unrelated domains would
+                # connect through it in the connectivity/community analytics below. Infra only.
+                managed_ns.append(ns)
+                continue
             nsid = f"ns:{ns}"
             g.node(nsid, "nameserver", label=ns)
             g.edge(host, nsid, "nameserver", confidence="inferred", evidence="name server")
+        if managed_ns:
+            g.node(host, "domain", managed_nameservers=sorted(set(managed_ns)))
         # shared WHOIS creation date = domains batch-registered in one sitting (same actor).
         # Same class as sequential GA/UA numbers — corroborating same-operator. Day precision.
         created = wh.get("created")

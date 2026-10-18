@@ -167,8 +167,9 @@
 
   "search_budget": {
     "_comment": "THE SPEND GUARD. IntelX meters searches (a free key gets a small daily allowance; a paid key spends credits), and — unlike a rate limit — running out is silent from the analyst's side: the search simply returns nothing and an empty result reads as 'the operator is not in any leak'. So spend is counted from MEMORY/api_usage.jsonl before the call and measured per run and per month, exactly like the Censys guard. `phonebook_costs` reflects that a phonebook search is the expensive call and should not be fired at every domain in a 200-host batch. Override per run with INTELX_MAX_SEARCHES_PER_RUN / INTELX_MONTHLY_SEARCHES. POLICY (project decision): `block_when_exhausted` is FALSE — the skill imposes no hard usage limit; the ledger still counts, the `warn_at_remaining` banner still prints, and a cap that would have refused a call is printed once as an advisory while the call proceeds. The vendor's own quota (402/429, handled tri-state) is the real limit. Set it back to true to refuse instead.",
-    "monthly_searches": 500,
-    "max_searches_per_run": 25,
+    "daily_searches": 500,
+    "monthly_searches": 15500,
+    "max_searches_per_run": 50,
     "warn_at_remaining": 50,
     "phonebook_costs": 5,
     "search_costs": 1,
@@ -177,7 +178,7 @@
 
   "result_limits": {
     "_comment": "Per-call ceilings the tool applies so one selector cannot dominate a case file or a poll loop. `max_records` is what is kept from a search, `poll_*` bound the two-step result fetch, and `preview_lines` is how much of an item's content is pulled when previewing.",
-    "max_records": 200,
+    "max_records": 300,
     "max_selectors": 500,
     "poll_attempts": 8,
     "poll_sleep_seconds": 1,

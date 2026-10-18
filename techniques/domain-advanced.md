@@ -237,7 +237,7 @@ internal.*, intranet.*          → May be accidentally public
 shodan:
   - YOUR_SHODAN_API_KEY
 censys:
-  - YOUR_CENSYS_API_ID:YOUR_CENSYS_SECRET
+  - YOUR_CENSYS_PAT:YOUR_CENSYS_ORG_ID   # Platform PAT; a bare PAT also works on a Free account
 securitytrails:
   - YOUR_ST_API_KEY
 ```

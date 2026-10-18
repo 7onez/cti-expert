@@ -47,6 +47,31 @@ try:
 except Exception:
     _cdn, _CDN_IDX = None, None
 
+# Ownership-era + noise classification — single source of truth with the ingester/KB (see
+# whois_eras.py's module docstring): only the CURRENT owner's WHOIS values may score a
+# same-operator signal; a previous owner from a drop-catch/resale never contributes here.
+try:
+    _ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sys.path.insert(0, os.path.join(_ENGINE_ROOT, "intel_engine", "WebPivot", "tools"))
+    sys.path.insert(0, os.path.join(_ENGINE_ROOT, "intel_engine", "tools", "kb"))
+    from whois_eras import owner_values as _owner_values
+    from whois_enrich import is_privacy as _is_privacy
+    from noise_filters import (is_noise_email as _is_noise_email, is_managed_dns as _is_managed_dns,
+                               is_noise_indicator as _is_noise_indicator)
+except Exception:
+    def _owner_values(wh, kind):
+        live = (wh or {}).get({"email": "registrant_email", "name": "registrant_name",
+                               "phone": "registrant_phone", "org": "registrant_org"}[kind])
+        return [live] if live else []
+    def _is_privacy(v):
+        return False
+    def _is_noise_email(v):
+        return False
+    def _is_managed_dns(ns):
+        return False
+    def _is_noise_indicator(v):
+        return False
+
 _DENYLIST_PATH = Path(__file__).parent / "data" / "pivot-noise-denylist.txt"
 
 # Strength-signal weights (tunable). A relation's `relation_strength` is the sum of the
@@ -54,6 +79,7 @@ _DENYLIST_PATH = Path(__file__).parent / "data" / "pivot-noise-denylist.txt"
 # reusable kit templates medium; shared infrastructure least (unless it is an origin).
 SIGNAL_WEIGHTS: dict[str, int] = {
     "registrant_email": 5,  # WHOIS registrant email — operator-grade private identifier
+    "registrant_phone": 5,  # WHOIS registrant phone — operator-grade private identifier
     "wallet":           5,  # same crypto address on both pages — operator-grade
     "tracking_id":      5,  # exact analytics/ads ID shared (GA/GTM/AdSense/pixel)
     "verification":     5,  # site-verification token (google/bing/fb domain-verify)
@@ -64,33 +90,15 @@ SIGNAL_WEIGHTS: dict[str, int] = {
     "social":           3,  # same social handle linked from both
     "redirect_chain":   3,  # one host appears in the other's redirect chain
     "dom_skeleton":     3,  # identical DOM-skeleton hash (same template/kit)
+    "mail":             3,  # shared M365 tenant / custom MX host / SPF single-host IP — ONE family
+                            # (an M365 tenant and its MX host are one fact); 3 so it never links alone
     "same_ip":          2,  # shared IP of unknown class (not proven CDN, not proven origin)
     "wp_theme":         2,  # shared CMS theme slug
-    "nameserver":       2,  # shared authoritative name server
+    "nameserver":       2,  # shared authoritative name server (managed-DNS providers excluded)
     "reg_batch":        2,  # registered on the same day (batch registration)
     "email":            2,  # same on-page contact email
     "page_link":        1,  # one page hyperlinks the other
 }
-
-# WHOIS privacy / proxy / role markers — never treat these as a real shared identity.
-_PRIV_MARK = (
-    "privacy", "redacted", "whoisguard", "data protected", "withheld", "not disclosed",
-    "domains by proxy", "domainsbyproxy", "registration private", "private by design",
-    "identity protect", "contact privacy", "perfect privacy", "statutory masking",
-    "masking enabled", "registry registrant id", "not available from registry",
-    "registrant country", "registrant state", "registrant city", "whois agent",
-    "redemption", "pending delete", "reactivation", "domain expired",
-)
-_PROXY_DOM = (
-    "porkbun.com", "godaddy.com", "namecheap.com", "domainsbyproxy.com",
-    "withheldforprivacy.com", "privacyprotect.org", "contactprivacy.com",
-    "onamae.com", "tenten.vn", "inet.vn", "gname.com", "sav.com", "enom.com",
-)
-_ROLE_LOCAL = (
-    "abuse@", "hostmaster@", "noc@", "postmaster@", "registrar@", "complaint@",
-    "proxy@", "protected@", "dataprotected@", "info@", "sales@", "support@",
-    "contact@", "noreply@", "no-reply@", "admin@",
-)
 
 
 # --------------------------------------------------------------------------- denylist
@@ -127,20 +135,6 @@ def is_noise(host: str, denylist: frozenset) -> bool:
 # ------------------------------------------------------------------------- helpers
 def _norm_host(h) -> str:
     return (h or "").strip().lower().rstrip(".")
-
-
-def _priv(s: str) -> bool:
-    """True when a WHOIS value is a privacy/proxy/role placeholder, not a real identity."""
-    s = (s or "").strip().lower()
-    if not s or s.startswith("http"):
-        return True
-    if any(m in s for m in _PRIV_MARK):
-        return True
-    if s.startswith(_ROLE_LOCAL):
-        return True
-    if "@" in s and s.split("@", 1)[1] in _PROXY_DOM:
-        return True
-    return False
 
 
 def _host_of(url: str) -> str:
@@ -208,21 +202,24 @@ def extract_signals(analysis, denylist):
         if art.get(cert_field):
             add("shared_cert", art[cert_field])
 
-    # WHOIS operator glue (privacy/proxy filtered)
+    # WHOIS operator glue — CURRENT owner only (whois_eras.py contract): a previous owner's
+    # WHOIS-of-the-day value must never score a same-operator relation.
     wh = art.get("whois") or {}
-    hist = wh.get("history") or {}
-    for em in ([wh.get("registrant_email")] + (hist.get("registrant_emails") or [])):
+    for em in _owner_values(wh, "email"):
         em = _norm_host(em)
-        if em and not _priv(em):
+        if em and not _is_privacy(em) and not _is_noise_email(em):
             add("registrant_email", em)
-    for nm in ([wh.get("registrant_name") or wh.get("registrant_org")]
-               + (hist.get("registrant_names") or [])):
+    for nm in _owner_values(wh, "name") + _owner_values(wh, "org"):
         nm = (nm or "").strip().lower()
-        if nm and not _priv(nm):
+        if nm and not _is_privacy(nm) and not _is_noise_email(nm):
             add("registrant_name", nm)
+    for ph in _owner_values(wh, "phone"):
+        digits = "".join(c for c in str(ph) if c.isdigit())
+        if len(digits) >= 7:
+            add("registrant_phone", digits)
     for ns in (wh.get("name_servers") or []):
         ns = _norm_host(ns)
-        if ns and not is_noise(ns, denylist):
+        if ns and not is_noise(ns, denylist) and not _is_managed_dns(ns):
             add("nameserver", ns)
     created = wh.get("created")
     if isinstance(created, str) and len(created) >= 10:
@@ -241,6 +238,26 @@ def extract_signals(analysis, denylist):
             add("same_origin_ip", ip)
         else:
             add("same_ip", ip)  # unknown class — weak co-hosting signal
+
+    # Mail infrastructure (wp_recon.detect_mail_provider → artifacts.mail). Managed providers are
+    # already classified out there; shared-infra MX apexes are dropped here via noise_filters. All
+    # three kinds share the ONE `mail` signal so they never corroborate each other.
+    mail = art.get("mail") or {}
+    if mail.get("m365_tenant"):
+        add("mail", f"m365:{str(mail['m365_tenant']).strip().lower()}")
+    for ex in (mail.get("custom_mx_hosts") or []):
+        ex = _norm_host(ex)
+        if ex and not is_noise(ex, denylist) and not _is_noise_indicator(f"mail:mx:{ex}"):
+            add("mail", f"mx:{ex}")
+    spf = mail.get("spf") or {}
+    for sip in (spf.get("ip4") or []) + (spf.get("ip6") or []):
+        sip = str(sip).strip()
+        if "/" in sip and sip.split("/")[-1] not in ("32", "128"):
+            continue  # a whole netblock in SPF is an ESP range, not one sending box
+        ip = sip.split("/")[0]
+        cls = _cdn.classify(ip, _CDN_IDX) if (_CDN_IDX and ip) else None
+        if ip and not (cls and cls.get("cdn") is True):
+            add("mail", f"spf_ip:{ip}")
 
     return sig, meta
 

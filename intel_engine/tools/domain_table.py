@@ -46,12 +46,18 @@ sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 try:
     from whois_enrich import (whois_current, whois_summary, whois_summary_keyless,  # type: ignore
                               is_privacy)
+    from whois_eras import owner_values                                            # type: ignore
 except Exception:                                        # pragma: no cover - degrade gracefully
     whois_current = None
     whois_summary = None
     whois_summary_keyless = None
     def is_privacy(v):  # noqa
         return False
+    def owner_values(w, kind):  # noqa — live field only, never historical (safe by omission)
+        live = {"email": "registrant_email", "name": "registrant_name",
+               "phone": "registrant_phone", "org": "registrant_org"}[kind]
+        v = (w or {}).get(live)
+        return [v] if v else []
 
 # WHOIS-history purchase policy for the SIDECAR. "off" = current WHOIS only (today's behaviour and
 # the report-path default: a plain rebuild never spends history credits); "preview" = one cheap
@@ -334,9 +340,11 @@ def _whois_cached(domain, case_dir, history_mode="off", free_only=False):
 
 
 def _fmt_registrant(w):
-    email = w.get("registrant_email")
-    name = w.get("registrant_name")
-    org = w.get("registrant_org")
+    # CURRENT owner only (whois_eras.py contract): a drop-catch/resale's previous registrant
+    # must never render here, only the live registrant field or the current era's history value.
+    email = next(iter(owner_values(w, "email")), None)
+    name = next(iter(owner_values(w, "name")), None)
+    org = next(iter(owner_values(w, "org")), None)
     val = org or name or email or "—"
     if val != "—" and (is_privacy(val) or (email and is_privacy(email))):
         return f"priv: {email or val}"
@@ -417,13 +425,18 @@ def _ns_short(w):
 
 # ---------------------------------------------------------------- rendering
 def gather_rows(domains_results, case_dir, kb, notes, history_mode="off", history_for=None,
-                free_only=False):
+                free_only=False, kb_registrant=None):
     """domains_results: list of (domain, result_dict_or_None). Returns row dicts.
 
     `history_mode`/`free_only` are passed to the WHOIS sidecar (see _whois_cached). When
     `history_for` is a set of domains, only those get `history_mode`; every other domain is
     fetched with history "off" — this is how the pipeline restricts a purchase to seed + cluster
-    members instead of the whole estate. None means every domain."""
+    members instead of the whole estate. None means every domain.
+
+    `kb_registrant` (optional {domain: value}) is the SAME KB `registered_by` binding the
+    cluster report judges the case on (evidence_report._kb_registrant_edges) — when the
+    current-WHOIS sidecar is empty/redacted for a domain, its Registrant cell falls back to
+    this value instead of '—', tagged with its KB provenance."""
     registry = _load_registry(kb)
     asn_cache = {}
     rows = []
@@ -436,6 +449,11 @@ def gather_rows(domains_results, case_dir, kb, notes, history_mode="off", histor
             status, ip = _status_from_live(domain)
         mode = history_mode if (hist_set is None or domain in hist_set) else "off"
         w = _whois_cached(domain, case_dir, history_mode=mode, free_only=free_only)
+        reg = _fmt_registrant(w)
+        if reg == "—" or reg.lower().startswith("priv:"):
+            kb_val = (kb_registrant or {}).get(domain)
+            if kb_val:
+                reg = f"{kb_val} (from KB registrant edge)"
         rows.append({
             "domain": domain,
             "status": status,
@@ -443,7 +461,7 @@ def gather_rows(domains_results, case_dir, kb, notes, history_mode="off", histor
             "expires": _short_date(w.get("expires")),
             "registrar": (w.get("registrar") or "—").replace(", ", " ").split(" operations")[0],
             "nameservers": _ns_short(w),
-            "registrant": _fmt_registrant(w),
+            "registrant": reg,
             "ip_asn": (f"{ip} · {_asn_for_ip(ip, asn_cache)}" if ip else "—"),
             "attribution": _attribution(domain, registry),
             "context": (notes or {}).get(domain, "—"),
@@ -579,13 +597,16 @@ def rows_to_markdown(rows, title="Domain Summary", layout="wide"):
 
 
 def render_domain_table(results, case=None, kb="knowledge", notes=None, title="Domain Summary",
-                        layout="wide", history_mode="off", history_for=None, free_only=False):
+                        layout="wide", history_mode="off", history_for=None, free_only=False,
+                        kb_registrant=None):
     """Convenience entry point for report renderers.
 
     `results` is a list of pivot_extract raw-JSON dicts (each with meta.host).
     Returns a ready-to-embed markdown string (or '' if nothing usable).
     `history_mode`/`history_for`/`free_only` control WHOIS-history spend on the sidecar (see
     gather_rows); the defaults reproduce the historical render-path behaviour — current WHOIS only.
+    `kb_registrant` ({domain: value}, optional): see gather_rows — a KB-sourced fallback for the
+    Registrant cell when the current sidecar is empty/redacted.
     """
     case_dir = os.path.join(ROOT, "cases", case) if case else None
     if notes is None and case_dir:
@@ -602,7 +623,7 @@ def render_domain_table(results, case=None, kb="knowledge", notes=None, title="D
             pairs.append((host, res))
     rows = gather_rows(pairs, case_dir, os.path.join(ROOT, kb) if kb and not os.path.isabs(kb) else kb,
                        notes or {}, history_mode=history_mode, history_for=history_for,
-                       free_only=free_only)
+                       free_only=free_only, kb_registrant=kb_registrant)
     return rows_to_markdown(rows, title=title, layout=layout)
 
 

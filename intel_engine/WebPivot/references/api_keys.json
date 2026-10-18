@@ -92,6 +92,20 @@
         "free_fallback": "the selector classifier and a ready-to-run intelx.io / phonebook.cz URL for every artifact, which a free web account can run by hand",
         "signup": "https://intelx.io/account?tab=developer (Account -> Developer tab)"
       },
+      "CHONGLUADAO_API_KEY": {
+        "service": "ChongLuaDao (CLD)",
+        "aliases": [
+          "CLD_API_KEY",
+          "CHONGLUADAO_KEY",
+          "BURNER_API_KEY"
+        ],
+        "metered": true,
+        "impact": "high",
+        "unlocks": "first-party VN threat intel: denylist/checkurl verdict, Shield IoC reputation (URL/IP/hash/email/phone/bank), ransomware/ClickFix/PhaaS victim + internal-leak search, brand-label denylist estate/lead discovery, and the PRIMARY WHOIS source for .vn hosts — unlimited plan (no per-call credit cap or account quota; every request is still ledgered via api_usage for spend visibility, a call COUNT never a spend). Unlike every other metered key in this table, ChongLuaDao legs are NOT held under --free-only (enrichment_run.METERED deliberately excludes 'cld') because there is no quota to protect",
+        "without_it": "no first-party VN denylist/reputation verdict, no .vn WHOIS backfill (whois_enrich falls through to RDAP/port-43 instead), and the brand-label denylist search that finds scam-estate siblings under a different apex never runs",
+        "free_fallback": "the public chongluadao.vn checkurl/denylist-search web page, checked by hand one host at a time — no automation, no Shield IoC/ransomware/ClickFix/PhaaS corpus search, and no .vn WHOIS backfill",
+        "signup": "https://chongluadao.vn"
+      },
       "ANYRUN_API_KEY": {
         "service": "ANY.RUN TI Lookup (BinaryPivot)",
         "aliases": [
@@ -267,6 +281,33 @@
         "free_fallback": "keyless crt.sh issuance polling and anonymous CertSpotter (both rate-limited)",
         "signup": "https://sslmate.com/certspotter/"
       },
+      "CERTINDEX_API_KEY": {
+        "service": "CertIndex",
+        "aliases": [
+          "CTINDEX_API_KEY"
+        ],
+        "companion": [],
+        "metered": false,
+        "impact": "medium",
+        "unlocks": "a ~1-year certificate-transparency backup (currently valid certificates) for when crt.sh is degraded or empty — on small, new domains it often holds more history than the keyless mirrors. Free tier: PERSONAL / NON-COMMERCIAL use only, 10 full-domain lookups per hour account-wide; the quota is read for free and never waited on",
+        "without_it": "a crt.sh outage falls back to the keyless Shodan CTL + CertSpotter mirrors (and CertKit when keyed), which hold fewer certificates for small domains",
+        "free_fallback": "keyless Shodan CTL + CertSpotter (both ~1 year)",
+        "signup": "https://ctindex.io"
+      },
+      "CERTKIT_PASSWORD": {
+        "service": "CertKit Discovery (web login)",
+        "aliases": [],
+        "companion": [],
+        "requires": [
+          "CERTKIT_EMAIL"
+        ],
+        "metered": false,
+        "impact": "medium",
+        "unlocks": "a ~1-year certificate-transparency backup that keeps EXPIRED certificates and real x509 serials (Discovery CSV export), for when crt.sh is degraded or empty. No API: it signs in with the account's web session, so MFA on the account or a changed login form breaks it (reported as a failed source, never as 'no certificates')",
+        "without_it": "a crt.sh outage falls back to the keyless Shodan CTL + CertSpotter mirrors (and CertIndex when keyed); expired certificates from the last year may be missing",
+        "free_fallback": "keyless Shodan CTL + CertSpotter (both ~1 year)",
+        "signup": "https://app.certkit.io"
+      },
       "NETLAS_API_KEY": {
         "service": "Netlas",
         "aliases": [
@@ -292,6 +333,35 @@
         "without_it": "no same-kit sibling discovery from a scan-corpus fingerprint — the case sees only the kit deployments its own crawl and urlscan reached; no registration-feed day for the seed; no infostealer exposure count",
         "free_fallback": "urlscan structure-similarity (Pro) and the local DOM-skeleton / inline-CSS same-template indicators the extractor computes itself",
         "signup": "https://intel.webamon.com"
+      },
+      "PUBLICWWW_API_KEY": {
+        "service": "PublicWWW",
+        "aliases": [
+          "PUBLICWWW_KEY"
+        ],
+        "companion": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "source-code reverse search across the PublicWWW HTML corpus — a string/filename/token embedded in page source returns every other host serving the same snippet (complements FOFA body= for indexes FOFA misses)",
+        "without_it": "no PublicWWW source-code reverse search — FOFA body= and urlscan text.content remain the only HTML-corpus paths",
+        "free_fallback": "FOFA body= (metered) and urlscan text.content / page.title (quota-backed); the ready-to-run PublicWWW query strings wp_pivots already emits",
+        "signup": "https://publicwww.com/profile/api.html"
+      },
+      "QUARRY_API_KEY": {
+        "service": "Quarry",
+        "aliases": [
+          "QUARRY_KEY"
+        ],
+        "companion": [
+          "QUARRY_MCP_URL"
+        ],
+        "requires": [],
+        "metered": true,
+        "impact": "high",
+        "unlocks": "a Quarry scan platform over MCP (QUARRY_MCP_URL): reuse a scan it already finished, or start one and wait for it, then import the stored vendor answers instead of paying those vendors again. Off unless QUARRY_ENABLED=on or the analyst passes --quarry",
+        "without_it": "no Quarry reuse — every vendor is queried by this skill directly",
+        "free_fallback": "this skill's own collectors",
+        "signup": "https://quarry.chongluadao.vn"
       }
     }
   },

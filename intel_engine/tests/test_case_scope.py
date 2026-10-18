@@ -223,18 +223,26 @@ def check():
            "the orchestrator fills the placeholder rather than leaving it in the prompt")
 
         # --- 12. the CLI flags reach the record ----------------------------------------------
-        argv = ["C11", "--target-class", "victim_host", "--claim", "x", "--no-spend",
+        case_id = "_TEST_SCOPE_ARGV"
+        argv = [case_id, "--target-class", "victim_host", "--claim", "x", "--no-spend",
                 "https://a.example", "https://b.example"]
-        saved_root = O.case_scope.ROOT
+        real_path = os.path.join(O.case_scope.ROOT, "cases", case_id, "scope.json")
+        real_resolve = O.case_scope.resolve
         try:
-            O.case_scope.ROOT = tmp                      # keep the test out of the real cases/
-            sc = O._scope_from_argv(argv, "C11")
+            # resolve()/save() bind root=ROOT as a DEFAULT ARGUMENT, so patching case_scope.ROOT never
+            # redirected the write (it rewrote the real cases/<id>/scope.json every run); route the
+            # root explicitly instead.
+            O.case_scope.resolve = lambda case, **kw: real_resolve(case, tmp, **kw)
+            sc = O._scope_from_argv(argv, case_id)
         finally:
-            O.case_scope.ROOT = saved_root
-        ok(argv == ["C11", "https://a.example", "https://b.example"],
+            O.case_scope.resolve = real_resolve
+        ok(argv == [case_id, "https://a.example", "https://b.example"],
            "intake flags are consumed, leaving only the case and its seeds")
         ok(sc["target_class"] == "victim_host" and sc["constraints"]["no_spend"] is True,
            "the flags land in the resolved scope")
+        ok(os.path.isfile(os.path.join(tmp, "cases", case_id, "scope.json"))
+           and not os.path.exists(real_path),
+           "the scope is persisted under the test root, never the real case store")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

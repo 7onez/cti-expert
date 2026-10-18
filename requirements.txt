@@ -26,6 +26,8 @@ graphviz>=0.20            # entity/infrastructure link graphs (also needs the `d
 openpyxl>=3.1             # .xlsx master evidence ledger (else CSV-only fallback)
 pyzbar>=0.1.9            # QR decode for /webpivot --decode-qr (needs system libzbar0/zbar)
 pillow>=10.0             # image handling for the pyzbar QR path
+psycopg[binary]>=3.1     # crt.sh public PostgreSQL fallback (wp_ct) when the crt.sh web front end is
+                         # down; absent → that fallback is skipped with a status note, never an error
 
 # --- authentication surface (Engage) — OPTIONAL, and deliberately not pinned above ---
 # Engage's detection half (en_forms) is stdlib+requests and needs nothing extra. Driving a real

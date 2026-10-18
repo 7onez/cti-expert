@@ -219,6 +219,13 @@ def dns_history(domain, record_type="a", timeout=25):
     if rt not in DNS_RECORD_TYPES:
         return {"error": "unsupported DNS record type %r (allowed: %s)"
                           % (record_type, ", ".join(DNS_RECORD_TYPES))}
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.securitytrails_key(domain, rt))
+        if _hit is not None:
+            return _hit
+    except Exception:  # noqa: BLE001
+        pass
     data, err = _get("/history/%s/dns/%s" % (urllib.parse.quote(domain), rt), timeout=timeout)
     if err:
         _record("dns_history:" + domain, 0, ok=False)

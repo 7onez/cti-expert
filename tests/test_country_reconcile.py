@@ -160,8 +160,8 @@ def _with_fakes(records, keep_raw=True, history_mode="purchase"):
             "registrar": "Example Registrar", "created": "2026-05-21", "expires": "2027-05-21",
             "name_servers": ["ns1.example.net"], "registrant_email": "b@synthetic.invalid",
             **({"_raw": {"WhoisRecord": {"registrantContact": {"country": "VN"}}}} if keep_raw else {})}
-        we.whois_history = lambda d, mode="purchase", timeout=40, keep_raw=True: _fake_history(
-            records if mode == "purchase" else [])
+        we.whois_history = lambda d, mode="purchase", timeout=40, keep_raw=True, current_created=None: (
+            _fake_history(records if mode == "purchase" else []))
         return we.whois_summary("synthetic.invalid", history_mode=history_mode, keep_raw=keep_raw)
     finally:
         we._key, we.whois_current, we.whois_history = old

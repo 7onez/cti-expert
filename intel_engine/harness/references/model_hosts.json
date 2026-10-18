@@ -1,0 +1,9 @@
+{
+  "_comment": "LLM-provider API hosts the harness's MODEL traffic goes to directly, never through the research egress proxy pool (scripts/proxy). The pool exists so COLLECTORS touch target infrastructure from a research IP; a model provider is not a target, and routing its API through those exits made phases slow or time out (a probe took 20 s via the pool vs 8 s direct, and a dead exit reads as 'backend unavailable', triggering a needless failover). backend_select.bypass_proxy_for_models() appends these to NO_PROXY for model CLIs only; collector processes keep the pool. A leading dot matches every subdomain (curl / Node / reqwest / Bun NO_PROXY semantics).",
+  "no_proxy_hosts": [
+    "api.anthropic.com", ".anthropic.com", "claude.ai", ".claude.ai",
+    "api.openai.com", ".openai.com", "chatgpt.com", ".chatgpt.com",
+    "api.deepseek.com", ".deepseek.com", "api.moonshot.cn", ".moonshot.cn", ".moonshot.ai",
+    "generativelanguage.googleapis.com", "openrouter.ai", ".openrouter.ai"
+  ]
+}

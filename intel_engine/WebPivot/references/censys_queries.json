@@ -109,10 +109,10 @@
   },
 
   "credit_budget": {
-    "_comment": "THE SPEND LEDGER. Censys is the tightest budget in the toolkit: 100 credits a MONTH on the free plan, no rollover, and a single careless sweep of 20 searches burns the entire month in one run — after which every Censys pivot in every other case is dead until the 1st. `wp_censys` tracks this month's cost from MEMORY/api_usage.jsonl (provider=censys). `monthly_credits` is the plan grant; raise it after buying credits or set CENSYS_MONTHLY_CREDITS. `warn_at_remaining` controls the balance banner. `max_credits_per_run` and `reserve_for_lookups` are advisory thresholds in the shipped policy: the would-have-blocked reason is printed once, the call proceeds, and the vendor's 402/429 is authoritative. Set `block_when_exhausted` true for strict refusal. POLICY (project decision): the skill imposes no hard usage limit by default; it keeps the ledger and warnings.",
-    "monthly_credits": 100,
+    "_comment": "THE SPEND LEDGER. The Censys FREE plan grants 100 credits a MONTH (see credit_costs.free_monthly_credits), no rollover; a lookup is 1 credit and a search is 5, so on the free plan ~20 searches empty the month. THIS DEPLOYMENT is configured for a larger plan: `monthly_credits` 2000 and `max_credits_per_run` 50 (raise/lower after changing plans or set CENSYS_MONTHLY_CREDITS / CENSYS_MAX_CREDITS_PER_RUN). `wp_censys` tracks the month's cost from MEMORY/api_usage.jsonl (provider=censys). `warn_at_remaining` controls the balance banner. `max_credits_per_run` and `reserve_for_lookups` are advisory thresholds in the shipped policy: the would-have-blocked reason is printed once, the call proceeds, and the vendor's 402/429 is authoritative. Set `block_when_exhausted` true for strict refusal. POLICY (project decision): the skill imposes no hard usage limit by default; it keeps the ledger and warnings.",
+    "monthly_credits": 2000,
     "warn_at_remaining": 30,
-    "max_credits_per_run": 20,
+    "max_credits_per_run": 50,
     "reserve_for_lookups": 10,
     "block_when_exhausted": false
   },

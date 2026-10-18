@@ -32,8 +32,9 @@ manual steps below only when you need a single step in isolation or the pipeline
    ```
 
 2. **Bulk-collect the WHOLE set — don't narrow early.** Extract artifacts for every domain.
-   Acquire by hostility: passive-first for adversarial, live for low-risk. Under parallelism,
-   web.archive.org rate-limits — use `-P 3` and re-run misses (empty `meta.host`).
+   Acquire by hostility: passive-first for adversarial, live for low-risk. Parallel collectors share
+   one machine-wide Wayback pacer (`wp_wayback_guard`), so archive lookups queue instead of bursting
+   into web.archive.org's firewall; re-run misses (empty `meta.host`) after a cooldown notice.
    ```bash
    tr -d '\r' < "$CASE/domains.txt" | xargs -P 4 -n1 -I{} \
      python3 WebPivot/tools/pivot_extract.py "https://{}" --timeout 20 -o "$CASE/raw/{}.json"

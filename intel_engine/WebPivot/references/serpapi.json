@@ -178,8 +178,8 @@
 
   "search_budget": {
     "_comment": "THE SPEND LEDGER. A SerpApi plan grants a fixed number of searches per month and the quota is per account. MEMORY/api_usage.jsonl records toolkit spend across cases; `wp_serp.py budget` prints the provider's account figure alongside it because searches made elsewhere are invisible to the local ledger. `monthly_searches`, `max_searches_per_run`, and `max_creative_details_per_run` are advisory thresholds in the shipped policy: the would-have-blocked reason is printed once, the call proceeds, and the vendor's 402/429 is authoritative. Override thresholds with SERPAPI_MONTHLY_SEARCHES / SERPAPI_MAX_SEARCHES_PER_RUN. Set `block_when_exhausted` true for strict refusal. POLICY (project decision): the skill imposes no hard usage limit by default; it keeps the ledger and warnings.",
-    "monthly_searches": 250,
-    "max_searches_per_run": 8,
+    "monthly_searches": 5000,
+    "max_searches_per_run": 50,
     "max_creative_details_per_run": 3,
     "block_when_exhausted": false,
     "warn_at_remaining": 25

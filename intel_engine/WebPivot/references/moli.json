@@ -1,0 +1,33 @@
+{
+  "_comment": "Moli (github.com/lexmount/moli) — the DOM-first headless renderer wp_moli.py drives through `moli fetch`, and the routing policy wp_browser.py applies between Moli and Chromium. Moli renders DOM/Markdown/JSON only in this engine: evidence PIXELS (wp_screenshot, house-report captures, engage) and the Cloudflare-escalation render always stay on Chromium, because Moli's software paint is not pixel-parity with what a victim's Chrome shows and a non-Chromium engine cannot clear a managed challenge. Overrides the inline _MOLI_FALLBACK in wp_moli.py; a missing/bad file degrades to that fallback (fewer verified proxy schemes, Chromium as default engine) with a warning.",
+  "release": {
+    "_comment": "The pinned release. The installers (scripts/install.sh, scripts/install.ps1) read THIS group, download exactly the listed asset and verify its sha256 before installing — never the vendor's `curl | sh` installer script. Move the pin only after re-running tests/test_render_parity.py and the Gate-0 proxy probe against the new build. Digests are the ones GitHub publishes on the release (api.github.com/repos/lexmount/moli/releases).",
+    "version": "1.1.10",
+    "base_url": "https://github.com/lexmount/moli/releases/download/v1.1.10"
+  },
+  "assets": {
+    "_comment": "Per-platform archive name + sha256, keyed <os>-<arch> as the installers compute it (os: linux|darwin|windows, arch: x86_64|aarch64). Each archive holds one top-level directory moli-v<version>-<triple>/ containing the `moli` (or `moli.exe`) binary.",
+    "entries": {
+      "linux-x86_64": {"name": "moli-x86_64-unknown-linux-gnu.tar.gz", "sha256": "8f3d840287ef183033c513b869c410a0f1cf06a906402df9218c9067c7c03df7"},
+      "linux-aarch64": {"name": "moli-aarch64-unknown-linux-gnu.tar.gz", "sha256": "7aa10072144c5d493bd47d4bd543809437d56bc10cfcf312d85384d6337ce887"},
+      "darwin-x86_64": {"name": "moli-x86_64-apple-darwin.tar.gz", "sha256": "d2fb76cd298af45b9b518dd90b8037a2f0cc03ad07f7b823b68dc6d60882e8d4"},
+      "darwin-aarch64": {"name": "moli-aarch64-apple-darwin.tar.gz", "sha256": "bf98e9f01fcf504a26e7e5c9b10b0a02ea1196c59622c6a6fb9ba7f2c21c457a"},
+      "windows-x86_64": {"name": "moli-x86_64-pc-windows-msvc.zip", "sha256": "412daca3240f64cdecd21c889eb4ea1b7f7bfc21b18d47c1f51865a039cddbce"},
+      "windows-aarch64": {"name": "moli-aarch64-pc-windows-msvc.zip", "sha256": "863c6f2b44d18a2c7e5d26d171151dd0f1da0dfa2ad0a2f7cba27c10e90cbc76"}
+    }
+  },
+  "proxy": {
+    "_comment": "`verified_schemes` are the research-egress proxy schemes PROVEN to carry a Moli fetch (Gate 0, moli 1.1.10, 2026-09-25): a credentialed proxy (URL-encoded user:pass with '@' and ':' in the password) received every request — plain-HTTP forward, HTTPS via CONNECT, SOCKS5 with RFC 1929 auth — wrong credentials and a dead proxy failed closed with no direct connection to the origin. Proved for both delivery routes; wp_moli uses the ENVIRONMENT route (http_proxy/https_proxy/all_proxy) so pool credentials never appear in the world-readable process command line. A proxy whose scheme is NOT listed (socks4/socks4a and https:// proxies were not exercised) is never handed to Moli: wp_browser routes that render to Chromium or refuses it. Add a scheme only after running the same probe for it.",
+    "verified_schemes": ["http", "socks5", "socks5h"]
+  },
+  "fetch": {
+    "_comment": "`moli fetch` defaults. `wait` is Moli's completion strategy (`done` = its own load+settle heuristic; `networkidle` hangs on long-polling pages). `min_timeout_seconds` floors Moli's readiness deadline (-t) — the vendor default is 25 s. `min_html_bytes` matches the Chromium path: a shorter document is an error page/empty shell and is raised, never returned as content.",
+    "wait": "done",
+    "min_timeout_seconds": 25,
+    "min_html_bytes": 200
+  },
+  "router": {
+    "_comment": "wp_browser engine selection. `default_engine` applies when CTI_BROWSER is unset: `auto` = Moli for plain DOM renders when installed and the proxy scheme is verified, else Chromium; `chromium` = today's Playwright path only; `moli` = Moli only for DOM renders (refuse rather than silently switch — for parity runs). Screenshots and the Cloudflare-escalation render ignore this setting and always need Chromium.",
+    "default_engine": "auto"
+  }
+}

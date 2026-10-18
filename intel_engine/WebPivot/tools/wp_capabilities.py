@@ -141,6 +141,18 @@ def _probe_netlas():
     return {"tier": tier, "requests_limit": p.get("requests_limit"), "coins_left": p.get("coins_left")}
 
 
+def _probe_certindex():
+    """CertIndex /v1/usage — free, NOT a lookup, so probing never eats the 10/hour quota."""
+    import wp_certindex
+    if not wp_certindex.certindex_configured():
+        return None
+    u = wp_certindex.usage()
+    if u.get("error"):
+        return {"tier": "unknown", "error": u["error"]}
+    return {"tier": u.get("tier") or "unknown", "commercial_use_allowed": u.get("commercial_use_allowed"),
+            "full_domain_left_this_hour": u.get("full_domain_left"), "monthly_left": u.get("monthly_left")}
+
+
 def _probe_securitytrails():
     import wp_securitytrails
     if not wp_securitytrails.securitytrails_configured():
@@ -202,7 +214,8 @@ def _probe_webamon():
 
 _PROBES = (("urlscan", _probe_urlscan), ("netlas", _probe_netlas), ("securitytrails", _probe_securitytrails),
            ("dnslytics", _probe_dnslytics), ("intelx", _probe_intelx), ("validin", _probe_validin),
-           ("grayhatwarfare", _probe_grayhatwarfare), ("webamon", _probe_webamon))
+           ("grayhatwarfare", _probe_grayhatwarfare), ("webamon", _probe_webamon),
+           ("certindex", _probe_certindex))
 
 
 def _measured(entry) -> bool:
@@ -363,8 +376,18 @@ def banner_lines(free_only: bool = False) -> list:
         if r.get("free_fallback"):
             lines += _wrap(f"instead: {r['free_fallback']}", "        ", max_lines=2)
     if minor:
-        lines += _wrap("also absent: " + ", ".join(minor) +
-                       "  — full detail: `python3 WebPivot/tools/wp_capabilities.py`", "    · ")
+        # The roll-up grows with every registered vendor; cap it at two lines and COUNT the rest,
+        # so the banner stays readable and nothing is silently cut.
+        def _rollup(shown):
+            more = len(minor) - len(shown)
+            return _wrap("also absent: " + ", ".join(shown) + (f" +{more} more" if more else "")
+                         + "  — full detail: `python3 WebPivot/tools/wp_capabilities.py`", "    · ")
+        shown = []
+        for item in minor:
+            if len(_rollup(shown + [item])) > 2:
+                break
+            shown.append(item)
+        lines += _rollup(shown)
     worst = next((i for i in _IMPACT_ORDER
                   if any((rows.get(e) or {}).get("impact") == i for e in absent)), None)
     if worst:

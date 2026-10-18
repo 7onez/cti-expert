@@ -273,6 +273,38 @@ def test_grayhatwarfare_is_exposure_never_seed():
     check("…and never lists the bucket as discovered infrastructure", "seed-brand-assets" not in rep.split("## Exposure")[0])
 
 
+def test_cld_leads_do_not_double_bill_or_hash_a_favicon():
+    raw = {"meta": {"host": "seed-brand.example"},
+           "artifacts": {"whois": {"registrant_email": "owner@seed-brand.example",
+                                   "registrant_org": "Privacy service"}},
+           "pivots": [{"kind": "favicon_hash", "value": "123"},
+                      {"kind": "phone", "value": "+84901112233"},
+                      {"kind": "whois:registrant_phone", "value": "+84909998877"}]}
+    saved = {n: os.environ.get(n) for n in (
+        "CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY")}
+    try:
+        os.environ["CHONGLUADAO_API_KEY"] = "test-key"
+        leads = {}
+        cs._enrichment_leads_from_raw(raw, leads)
+        check("one email lead, not breach plus email-deep",
+              ("email-deep", "owner@seed-brand.example") in leads
+              and ("breach", "owner@seed-brand.example") not in leads)
+        check("a favicon hash is not an IoC-hash lead",
+              not any(k[0] == "cld-hash" for k in leads))
+        check("a page phone is not a CLD phone lead (only the registrant phone is)",
+              not any(k[0] == "cld-phone" and "+84901112233" in k[1] for k in leads))
+        check("the registrant phone is",
+              ("cld-phone", "+84909998877") in leads)
+        check("a privacy org is not a ransomware lead",
+              not any(k[0] == "cld-org" for k in leads))
+    finally:
+        for n, v in saved.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
+
+
 def test_censys_search_file_seeds_on_exact_cert_only():
     with _tempfile.TemporaryDirectory() as tmp:
         cdir = os.path.join(tmp, "CASE-0001")
@@ -395,8 +427,8 @@ def test_live_run_followups_ranking_memo_mask_roles():
     sys.path.insert(0, os.path.join(ROOT, "..", "scripts"))
     import cti_third_party_mask as m
     out = m.mask_third_parties("refer to abuse@registrar.example and owner@third.example", keep=(), hosts=())
-    check("registrar abuse@ role mailbox stays in clear; a third-party person is masked",
-          "abuse@registrar.example" in out and "owner@third.example" not in out and "o***@third.example" in out, detail=out)
+    check("masking is disabled: all emails appear in plain text (including abuse@ and third-party)",
+          "abuse@registrar.example" in out and "owner@third.example" in out, detail=out)
     # (4) IntelX role filter
     import wp_intelx as ix
     rows = ix._enrich_targets({"meta": {"host": "seed.example"}, "pivots": [
@@ -411,7 +443,7 @@ for _t in (test_quake_zoomeye_gate_and_proxy_safe, test_quake_normalises_and_tri
            test_zoomeye_normalises_and_tri_states, test_reputation_is_corroboration_only,
            test_frontier_merges_sources, test_report_lists_engines,
            test_dnslytics_reverseip_is_cohost_routed_never_yielding, test_securitytrails_history_and_reverse_whois,
-           test_grayhatwarfare_is_exposure_never_seed, test_censys_search_file_seeds_on_exact_cert_only,
+           test_grayhatwarfare_is_exposure_never_seed, test_cld_leads_do_not_double_bill_or_hash_a_favicon, test_censys_search_file_seeds_on_exact_cert_only,
            test_live_run_followups_ranking_memo_mask_roles):
     _t()
 

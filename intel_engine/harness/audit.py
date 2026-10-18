@@ -50,7 +50,9 @@ from __future__ import annotations
 import contextvars
 import datetime
 import json
+import math
 import os
+import re
 import sys
 import threading
 
@@ -87,8 +89,27 @@ _POLICY_FALLBACK = {
     # approval-required tool stays fully gated rather than opening a branch the fallback cannot see.
     "approval_briefing": {},
     "mutating_tools": ["kb_ingest", "reference_add", "misp_push", "misp_publish"],
-    "redact_args": ["key", "api_key", "token", "password", "secret"],
+    # Name FRAGMENTS, matched as substrings of the normalised argument name (see _secret_key).
+    "redact_args": ["key", "token", "secret", "pass", "auth"],
+    # Declared BOOLEAN parameters whose names happen to contain a redact fragment (passive ⊃ pass,
+    # secrets ⊃ secret). Only these keep a switch value in the ledger. Conservative = none: with
+    # the data file unreadable they are redacted too, never a credential let through.
+    "redact_bool_switches": [],
     "budget": {"max_metered_calls_per_run": 60, "max_arg_chars": 200},
+    # Cross-type loop: metered pivots it proposes are gated on cases/<case>/proposal.json while the
+    # loop is active. Conservative minimum = gate both pivot tools the loop proposes.
+    "proposal_gated_tools": ["corpus_search", "reverse_whois"],
+    # Tools whose meteredness depends on a ROUTE argument (pivot_map.json → routes.<r>.metered).
+    # An unknown route counts as metered (conservative).
+    "route_metered_tools": {"corpus_search": "route"},
+    # Tools that spend only when an argument is truthy (search_pivot run=true -> SerpApi fallback).
+    # Conservative minimum = the one known entry, so a missing data file never under-counts it.
+    "arg_metered_tools": {"search_pivot": "run"},
+    # The analyst's consent step; never callable from a harness phase.
+    "operator_only_tools": ["case_approve"],
+    # Metered tools whose handler honours free_only (a keyless mode). Every OTHER metered tool
+    # refuses free_only rather than spend (tools._free_only_refusal). Conservative = empty.
+    "free_only_capable_tools": [],
 }
 
 _P = load_ref(ref_path(__file__, "tool_policy.json"), _POLICY_FALLBACK)
@@ -102,10 +123,34 @@ APPROVAL_REQUIRED = dict(_P["approval_required_tools"])
 APPROVAL_BRIEFING = {k: set(v) for k, v in dict(_P.get("approval_briefing") or {}).items()}
 MUTATING_TOOLS = set(_P["mutating_tools"])
 REDACT_ARGS = set(_P["redact_args"])
+_REDACT_FRAGS = {str(f).lower().replace("_", "").replace("-", "") for f in REDACT_ARGS if f}
+REDACT_BOOL_SWITCHES = {str(f).lower().replace("_", "").replace("-", "")
+                        for f in (_P.get("redact_bool_switches") or []) if f}
 BUDGET = dict(_P["budget"])
+PROPOSAL_GATED = set(_P.get("proposal_gated_tools") or [])
+ROUTE_METERED = dict(_P.get("route_metered_tools") or {})
+ARG_METERED = dict(_P.get("arg_metered_tools") or {})
+OPERATOR_ONLY = set(_P.get("operator_only_tools") or [])
+FREE_ONLY_CAPABLE = set(_P.get("free_only_capable_tools") or [])
 
-MAX_METERED = int(os.environ.get("HARNESS_METERED_BUDGET")
-                  or BUDGET.get("max_metered_calls_per_run", 60))
+_TOOLS_DIR = os.path.join(ROOT, "tools")
+
+
+def _route_metered(route: str) -> bool:
+    """pivot_map.json routes.<route>.metered; unknown route or unreadable map → metered."""
+    try:
+        if _TOOLS_DIR not in sys.path:
+            sys.path.append(_TOOLS_DIR)                       # append: never shadow harness/tools.py
+        import selector_types as _st  # noqa: E402
+        spec = (_st.load_pivot_map().get("routes") or {}).get(str(route or ""))
+    except Exception:  # noqa: BLE001 — conservative
+        return True
+    return True if not isinstance(spec, dict) else bool(spec.get("metered", True))
+
+# Project decision: no CTI-wide local usage caps — vendor HTTP 402/429 responses enforce limits.
+# The per-run metered counter stays in the ledger/summary, but it DENIES only when an operator
+# opts in with HARNESS_METERED_BUDGET=<n> (0/unset = never deny on count).
+MAX_METERED = int(os.environ.get("HARNESS_METERED_BUDGET") or 0)
 MAX_ARG_CHARS = int(BUDGET.get("max_arg_chars", 200))
 
 # Same floor as tools.POLICY: an env-set hostile posture applies even to a front-end that has no
@@ -164,7 +209,12 @@ def classify(tool_name: str, args: dict) -> list[str]:
     out = []
     if t in OUTBOUND_TOOLS and not _truthy(args, PASSIVE_ARGS):
         out.append("outbound")
-    if t in METERED_TOOLS and not _truthy(args, FREE_ONLY_ARGS):
+    route_field = ROUTE_METERED.get(t)
+    route_metered = (route_field is None or _route_metered((args or {}).get(route_field)))
+    arg_field = ARG_METERED.get(t)
+    arg_metered = arg_field is None or _truthy(args, {arg_field})
+    if ((t in METERED_TOOLS or route_field or arg_field) and route_metered and arg_metered
+            and not _truthy(args, FREE_ONLY_ARGS)):
         out.append("metered")
         if _truthy(args, METERED_ARG_TRIGGERS):
             out.append("metered-expanded")
@@ -175,13 +225,24 @@ def classify(tool_name: str, args: dict) -> list[str]:
     return out
 
 
-def decide(tool_name: str, args: dict, *, hostile: bool | None = None) -> tuple[bool, str, list]:
-    """(allow, reason, classes). Pure — no logging, no counter mutation, so it is testable."""
+def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
+           case: str | None = None, phase: str | None = None) -> tuple[bool, str, list]:
+    """(allow, reason, classes). No logging, no counter mutation, so it is testable. The one read
+    it does is cases/<case>/proposal.json, for the cross-type loop's per-round approval gate."""
     t = bare(tool_name)
     args = args or {}
     classes = classify(tool_name, args)
     if hostile is None:
         hostile = bool((_CTX.get() or {}).get("hostile", _ENV_HOSTILE))
+
+    # Operator-only tools (case_approve): the analyst's consent step. A harness PHASE calling it
+    # would be the loop approving its own spend, so any non-interactive phase is denied.
+    ph = phase if phase is not None else (_CTX.get() or {}).get("phase")
+    if t in OPERATOR_ONLY and ph not in (None, "", "interactive"):
+        return (False,
+                f"{t} is the ANALYST's consent step and cannot be called from a harness phase "
+                f"({ph}). Stop and hand the proposal back; the analyst approves it with "
+                f"`harness approve` or this tool in an interactive session.", classes)
 
     env = APPROVAL_REQUIRED.get(t)
     if env and os.environ.get(env, "").strip().lower() not in ("1", "true", "yes", "on"):
@@ -206,14 +267,48 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None) -> tuple[
                 f"third-party sources only) or proxy=<host> — do not retry unchanged.", classes)
 
     if "metered" in classes:
+        # A no_spend case scope rules out EVERY credit-spending call — pivot_extract's keyed
+        # layers, censys, intelx_search, anyrun_lookup, reverse_whois, corpus_search's metered
+        # routes — not only the cross-type loop's pivots. free_only=true drops the class.
+        if HERE not in sys.path:
+            sys.path.append(HERE)
+        import proposal as _proposal  # noqa: E402 — harness/proposal.py, stdlib only
+        _case = case or (_CTX.get() or {}).get("case")
+        if _case and _proposal._no_spend(ROOT, _case):
+            return (False,
+                    f"{t} would spend metered credits and case {_case}'s scope is no_spend — the "
+                    f"analyst ruled out spending on this case. Re-call with free_only=true. "
+                    f"Do not retry unchanged.", classes)
         with _LOCK:
             spent = _COUNTS["metered"]
-        if spent >= MAX_METERED:
+        if MAX_METERED and spent >= MAX_METERED:
             return (False,
                     f"metered-call budget exhausted for this run ({spent}/{MAX_METERED} "
                     f"credit-spending calls). Third-party credits are per-account and do not roll "
                     f"over. Re-call with free_only=true to continue on keyless sources, or hand "
                     f"the remaining pivots to the analyst as metered leads.", classes)
+        # Cross-type loop: while it is active for this case, a proposal-gated metered pivot runs
+        # only if it matches an item the analyst approved (digest-current). Not prompt-enforced.
+        if t in PROPOSAL_GATED:
+            if HERE not in sys.path:
+                sys.path.append(HERE)
+            import proposal as _proposal  # noqa: E402 — harness/proposal.py, stdlib only
+            ok, why = _proposal.gate_check(ROOT, case or (_CTX.get() or {}).get("case"), t, args,
+                                           gated=PROPOSAL_GATED)
+            if not ok:
+                return False, why, classes
+        elif (_case and _proposal.loop_active(_proposal.load(ROOT, _case))
+              and not (t == "pivot_extract"
+                       and _proposal.is_seed_host(ROOT, _case, (args or {}).get("url")))):
+            # Any OTHER metered call while the case's cross-type loop is active (a collect/judge
+            # agent reaching for deep_profile, censys, intelx_search, a keyed pivot_extract of a
+            # host the analyst did not type …) has no approved proposal item — denied. The one
+            # exemption is collecting an analyst-typed SEED host with its keyed layers.
+            return (False,
+                    f"{t} would spend metered credits while case {_case}'s cross-type loop is "
+                    f"active — paid pivots run only as items the analyst approved in "
+                    f"cases/{_case}/proposal.json. Re-call with free_only=true, or leave it to the "
+                    f"next proposal. Do not retry unchanged.", classes)
 
     return True, "", classes
 
@@ -226,19 +321,96 @@ def _ledger_path(case: str | None) -> str:
     return os.path.join(ROOT, "MEMORY", "tool_calls.jsonl")
 
 
+def _norm_key(k) -> str:
+    """`apiKey`, `x-api-key`, `X_API_KEY` -> `apikey` / `xapikey`: lowercase, `_` and `-` stripped."""
+    return str(k).lower().replace("_", "").replace("-", "")
+
+
+def _secret_key(k) -> bool:
+    """A key/parameter NAME that carries a credential: its normalised form contains any
+    redact_args fragment (key, token, secret, pass, auth, cookie, bearer …)."""
+    n = _norm_key(k)
+    return any(frag in n for frag in _REDACT_FRAGS)
+
+
+_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)([^/\s?#@]*@)")
+_QUERY_RE = re.compile(r"([?&;])([^=&;#\s]+)=([^&;#\s]*)")
+_BEARER_RE = re.compile(r"(?i)\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=\-]{6,}")
+
+
+def _scrub(s: str) -> str:
+    """Credentials embedded in a free string value: URL userinfo (`user:pass@`), secret-named query
+    parameters (`?token=…&apikey=…`) and `Bearer <token>` — the host, path and non-secret
+    parameters stay readable, because the ledger's job is to show WHAT was touched."""
+    s = _URL_RE.sub(lambda m: m.group(1) + "<redacted>@", s)
+    s = _QUERY_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}=<redacted>"
+                      if _secret_key(m.group(2)) else m.group(0), s)
+    return _BEARER_RE.sub(lambda m: f"{m.group(1)} <redacted>", s)
+
+
+_BOOL_WORDS = {"true", "false", "yes", "no", "on", "off", "1", "0", "none", "null", ""}
+_MAX_ITEMS = 20                                       # list/dict entries previewed per container
+
+
+def _is_switch(k, v) -> bool:
+    """A declared boolean switch (`passive=true`, `secrets="yes"`) — the NAME must be one of
+    redact_bool_switches. A switch-shaped VALUE alone proves nothing: `password="true"` or
+    `token="1"` is a credential like any other and is redacted."""
+    if _norm_key(k) not in REDACT_BOOL_SWITCHES:
+        return False
+    if isinstance(v, bool) or v is None or (isinstance(v, int) and v in (0, 1)):
+        return True
+    return isinstance(v, str) and v.strip().lower() in _BOOL_WORDS
+
+
+def _safe_value(v, depth: int = 0):
+    if isinstance(v, bool) or v is None or isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return v if math.isfinite(v) else str(v)       # NaN/inf are not JSON
+    if isinstance(v, (dict, list, tuple)):
+        if depth >= 4:
+            return "<nested>"
+        items = list(v.items()) if isinstance(v, dict) else list(v)
+        more = len(items) - _MAX_ITEMS
+        items = items[:_MAX_ITEMS]
+        if isinstance(v, dict):
+            out = {str(k): ("<redacted>" if _secret_key(k) and not _is_switch(k, x)
+                            else _safe_value(x, depth + 1)) for k, x in items}
+            if more > 0:
+                out["…"] = f"+{more} keys"
+            return out
+        out = [_safe_value(x, depth + 1) for x in items]
+        if more > 0:
+            out.append(f"…(+{more} items)")
+        return out
+    s = _scrub(str(v))
+    if len(s) > MAX_ARG_CHARS:
+        s = s[:MAX_ARG_CHARS] + f"…(+{len(s) - MAX_ARG_CHARS} chars)"
+    return s
+
+
 def _safe_args(args: dict) -> dict:
     """Argument preview for the ledger: credentials replaced, long values truncated. The ledger is
-    an audit trail of WHAT was called, not a copy of the payload."""
-    out = {}
-    for k, v in (args or {}).items():
-        if k.lower() in REDACT_ARGS:
-            out[k] = "<redacted>"
-            continue
-        s = v if isinstance(v, (int, float, bool)) or v is None else str(v)
-        if isinstance(s, str) and len(s) > MAX_ARG_CHARS:
-            s = s[:MAX_ARG_CHARS] + f"…(+{len(str(v)) - MAX_ARG_CHARS} chars)"
-        out[k] = s
-    return out
+    an audit trail of WHAT was called, not a copy of the payload. A secret-NAMED argument (matched
+    by fragment on the normalised name, at any nesting depth) is replaced outright — unless it is a
+    declared boolean switch (redact_bool_switches: `passive`, `secrets`) carrying a boolean value,
+    which the audit trail needs; any other string is scrubbed of embedded URL userinfo / secret
+    query params."""
+    if not isinstance(args, dict):
+        return {"_args": _safe_value(args)}
+    return _safe_value(args)
+
+
+def _ledger_line(rec: dict) -> str:
+    """One JSON line that ALWAYS serialises: NaN/inf are already strings (_safe_value); anything
+    else unencodable (a lone surrogate) is \\u-escaped rather than allowed to raise."""
+    try:
+        line = json.dumps(rec, ensure_ascii=False, allow_nan=False)
+        line.encode("utf-8")
+        return line
+    except (ValueError, TypeError, UnicodeError):
+        return json.dumps(rec, ensure_ascii=True, default=str)
 
 
 def record(tool_name: str, args: dict, *, allowed: bool, reason: str, classes: list,
@@ -261,11 +433,12 @@ def record(tool_name: str, args: dict, *, allowed: bool, reason: str, classes: l
         rec["reason"] = reason
     path = _ledger_path(case)
     try:
+        line = _ledger_line(rec)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with _LOCK:                                    # concurrent collectors share one ledger file
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except OSError as e:
+            with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+                f.write(line + "\n")
+    except Exception as e:  # noqa: BLE001 — the ledger must never fail the call it records
         if not getattr(record, "_warned", False):
             print(f"[audit] WARNING: tool-call ledger unwritable ({e}); the run continues but "
                   f"its actions are NOT being recorded.", file=sys.stderr)
@@ -278,7 +451,7 @@ def gate(tool_name: str, args: dict, *, case: str | None = None, phase: str | No
 
     This is the ONLY entry point a front-end needs. `case`/`phase` are explicit for callers that
     run concurrently (the SDK hook closure); everything else may rely on the ambient context."""
-    allowed, reason, classes = decide(tool_name, args, hostile=hostile)
+    allowed, reason, classes = decide(tool_name, args, hostile=hostile, case=case, phase=phase)
     with _LOCK:
         _COUNTS["total"] += 1
         _COUNTS["allowed" if allowed else "denied"] += 1

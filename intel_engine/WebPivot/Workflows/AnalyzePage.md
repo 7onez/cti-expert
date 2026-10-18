@@ -29,7 +29,9 @@ Extract every pivot artifact from one page and produce ranked leads.
    live scam funnel last year, and that archived DOM is a full set of pivot artifacts.
    ```bash
    # full snapshot timeline (status codes reveal parking 302→ww1./ww25. PPC vs real 200 content)
-   curl -s "http://web.archive.org/cdx/search/cdx?url=<host>*&output=json&collapse=digest&limit=200"
+   python3 "$SKILL_DIR/scripts/backend/intel.py" wayback-fetch <host> --list --status '' --mime ''   # paced + retried
+   # by hand: web/timemap/json is the same index as /cdx/search/cdx (which intermittently 503s)
+   curl -s "https://web.archive.org/web/timemap/json?url=<host>&matchType=prefix&output=json&collapse=digest&limit=200"
    ```
    - Read the **status codes + mimetypes**: `302 → ww1./ww2./ww25.<host>/?subid1=` is Bodis/
      above.com PPC parking; a Sedo/NameSilo `200` is parking too — neither is operator content.

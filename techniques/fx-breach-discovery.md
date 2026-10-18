@@ -44,12 +44,11 @@ Locate compromised credential sets and exposed PII tied to a subject across know
 | 7 | IntelligenceX | intelx.io | Paid; dark web paste index |
 | 8 | **Lunar Domain Exposure** | api.lunarcyber.com (free API) | **Domain-only** org-level infostealer + breach exposure, 12-mo trend, malware-family & VPN/SSO breakdown — no API key |
 
-### HudsonRock Cavalier Community API (Free, No Key Required)
+### Hudson Rock — send the key when it is set
 
-Checks if an email, username, IP, or domain appears in **infostealer** malware logs. Free,
-open, unrestricted — no key, no approval. **Rate limit: 50 requests / 10 seconds.** A
-premium/commercial key exists for higher tiers (see `handbook/api-keys.md`), but every
-endpoint below is fully usable keyless.
+`HUDSONROCK_API_KEY` is the Cavalier **v3** key. `scripts/osint/keyed_feeds.py` POSTs it as the `api-key` header to `https://api.hudsonrock.com/json/v3/search-by-login/emails` or `search-by-domain`. `/breach-deep` and `/email-deep` send it when the key is in `.env`. The keyless `cavalier.hudsonrock.com` host does **not** take this key; do not append it there. No key → the lookup is NOT CONSULTED, not a clean result.
+
+The endpoints below are the **keyless** Cavalier community API. Use them only when `HUDSONROCK_API_KEY` is absent. Do not put that key on these URLs.
 
 **Canonical base:** `https://cavalier.hudsonrock.com/api/json/v2/osint-tools/`
 Use the **osint-tools** base above for `search-by-email` / `search-by-username` / `search-by-ip` / `search-by-domain` / `urls-by-domain`. One deliberate exception: the **full, uncapped** domain login-URL list lives on the older `stats` host (row below) — it is a richer superset of `urls-by-domain`, not drift, so keep it.

@@ -1,7 +1,7 @@
 """Regression: the ChongLuaDao reputation layer (wp_cld) and its KB ingest.
 
-  1. cld_domain returns checkurl + ioc_url, adds a whois leg ONLY for .vn, and returns None under
-     free_only / no key (metered gate).
+  1. cld_domain returns checkurl + ioc_url + Shield ransomware/clickfix, adds a whois leg ONLY
+     for .vn, and returns None under free_only / no key (metered gate).
   2. verdict_of reads the verdict AND folds a checkurl denylist listing into has_evidence — a label
      on empty evidence stays has_evidence=False (never adopted as a finding), a denylist hit flips it.
   3. ingest records the verdict as FACTS on the domain (cld_verdict / cld_denylisted /
@@ -72,9 +72,11 @@ def test_cld_domain_shape_and_vn_whois_and_gate():
     orig, fake = _install(_MALICIOUS)
     try:
         b = wp_cld.cld_domain("example.vn", timeout=5)
-        assert set(b) == {"checkurl", "ioc_url", "whois"}, b   # .vn adds the whois leg
-        assert wp_cld.cld_domain("example.com", timeout=5).keys() == {"checkurl", "ioc_url"}  # no whois off-.vn
-        assert wp_cld.cld_domain("example.com", free_only=True) is None    # metered gate
+        assert set(b) == {"checkurl", "ioc_url", "ransomware", "clickfix", "phaas",
+                          "internal_leaks", "denylist", "whois"}, b
+        assert set(wp_cld.cld_domain("example.com", timeout=5)) == {
+            "checkurl", "ioc_url", "ransomware", "clickfix", "phaas", "internal_leaks", "denylist"}
+        # CLD is unlimited — no free-only spend gate (cld_domain has no free_only param anymore).
     finally:
         wp_cld._api = orig
     # no key configured → not configured, cld_domain None
@@ -188,8 +190,9 @@ def test_cld_email_ioc():
     try:
         e = wp_cld.cld_email("owner@example.com", timeout=5)
         assert e and e.get("data", {}).get("breaches"), e
-        assert fake.calls == [("POST", "/api/v1/ioc/external/email")], fake.calls
-        assert wp_cld.cld_email("owner@example.com", free_only=True) is None   # metered gate
+        assert ("POST", "/api/v1/ioc/external/email") in fake.calls
+        assert ("GET", "/external/checkburneremail") in fake.calls
+        # CLD is unlimited — cld_email runs regardless of spend posture (no free_only param).
         assert wp_cld.cld_email("notanemail") is None
     finally:
         wp_cld._api = orig
@@ -294,6 +297,245 @@ def test_vn_sidecar_transient_failure_retries():
             assert open(sidecar, "rb").read() == before, "sidecar must be byte-identical on a transient failure"
 
 
+def _load_cld():
+    """A fresh cld_api module (its own ledger state), deterministic classifier."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cld_api_under_test", os.path.join(ROOT, "scripts", "cld", "cld_api.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod._classify = None
+    mod.POLL_INTERVAL = 0
+    return mod
+
+
+class _CliEnv:
+    """Process env for one synthetic CLI run: key present/absent, ledger in a temp file, no .env."""
+    _NAMES = ("CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY",
+              "API_USAGE_LOG", "CTI_API_KEYS_ENV", "WP_CASE_DIR")
+
+    def __init__(self, tmp, key="k"):
+        self.log = os.path.join(tmp, "api_usage.jsonl")
+        self.key, self.tmp = key, tmp
+
+    def __enter__(self):
+        self.saved = {n: os.environ.get(n) for n in self._NAMES}
+        for n in self._NAMES:
+            os.environ.pop(n, None)
+        os.environ["API_USAGE_LOG"] = self.log
+        os.environ["CTI_API_KEYS_ENV"] = os.path.join(self.tmp, "absent.env")
+        os.environ["WP_CASE_DIR"] = os.path.join(self.tmp, "CASE-LEDGER")
+        if self.key:
+            os.environ["CHONGLUADAO_API_KEY"] = self.key
+        return self
+
+    def __exit__(self, *exc):
+        for n, v in self.saved.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
+
+    def rows(self):
+        if not os.path.isfile(self.log):
+            return []
+        with open(self.log, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+
+def _run_cli(mod, argv, responder):
+    """Run cld_api.main(argv) with the wire stubbed BELOW the ledger → (exit, envelope, wire calls)."""
+    import contextlib
+    import io
+    wire = []
+
+    def http(method, base, path, key, params, body, timeout):
+        wire.append((base, path))
+        return responder(base, path, body)
+
+    mod._http = http
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = mod.main(argv)
+    text = out.getvalue().strip()
+    return code, (json.loads(text) if text else None), wire
+
+
+def test_cli_route_ledgers_every_leg_once():
+    """`route` (the MCP default) ledgers each HTTP leg it sends — not one row per route — and a
+    rejected leg is ledgered with ok=false / 0 credits while the envelope keeps its partial."""
+    mod = _load_cld()
+
+    def responder(base, path, body):
+        if base == mod.FEEDS:
+            return 500, None, "HTTP 500"
+        return 200, {"items": []}, None
+
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp) as env:
+        code, envelope, wire = _run_cli(mod, ["route", "https://example.com"], responder)
+        rows = env.rows()
+    assert code == 0 and envelope["ok"] is True, envelope
+    assert envelope["result"]["sides"]["feeds_checkurl"]["ok"] is False, envelope
+    actions = [r["action"] for r in rows]
+    assert sorted(actions) == sorted([
+        "feeds:checkurl", "ti:ransomware", "ti:clickfix", "ti:phaas", "ti:internal-leaks",
+        "ti:ioc/url"]), actions
+    assert len(rows) == len(wire), (rows, wire)          # one ledger row per wire call, no more
+    by = {r["action"]: r for r in rows}
+    assert by["feeds:checkurl"]["ok"] is False and by["feeds:checkurl"]["credits"] == 0, by
+    assert all(r["credits"] == 0 and r["ok"] for a, r in by.items() if a.startswith("ti:")), by
+    assert {r["provider"] for r in rows} == {"chongluadao"}
+    assert {r["case"] for r in rows} == {"CASE-LEDGER"}, rows
+    usage = envelope["usage"]
+    assert usage["calls"] == 6 and usage["billable_units"] == 0 and usage["basis"] == "unlimited", usage
+    assert usage["by_tier"]["feeds"] == {"calls": 1, "billable_units": 0}, usage
+
+
+def test_cli_direct_and_async_ledger_per_request():
+    """A direct op ledgers once; an async job ledgers its start and every status poll. CLD is
+    unlimited so every unit is 0 (still one ledger row per call). With the reference missing, the
+    conservative fallback prices every call at 1 (never silently free)."""
+    polls = {"n": 0}
+
+    def responder(base, path, body):
+        if path.endswith("/start"):
+            return 200, {"job_id": "job-1"}, None
+        if path.endswith("/poll"):
+            polls["n"] += 1
+            return 200, {"status": "done" if polls["n"] >= 2 else "running"}, None
+        return 200, {"verdict": "clean"}, None
+
+    mod = _load_cld()
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp) as env:
+        code, envelope, wire = _run_cli(mod, ["ioc", "url", "https://example.com"], responder)
+        assert code == 0 and len(wire) == 1, (code, wire)
+        code, envelope, wire = _run_cli(mod, ["leaked-accounts", "user@example.com"], responder)
+        rows = env.rows()
+    assert code == 0 and envelope["ok"] is True, envelope
+    assert [(r["action"], r["credits"]) for r in rows] == [
+        ("ti:ioc/url", 0), ("ti:leaked-accounts/start", 0),
+        ("ti:leaked-accounts/poll", 0), ("ti:leaked-accounts/poll", 0)], rows
+    assert envelope["usage"]["calls"] == 3 and envelope["usage"]["polls"] == 2, envelope["usage"]
+
+    polls["n"] = 0
+    mod = _load_cld()
+    mod._USAGE_REF = os.path.join(ROOT, "scripts", "cld", "absent-usage.json")
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp) as env:
+        _run_cli(mod, ["leaked-accounts", "user@example.com"], responder)
+        rows = env.rows()
+    assert [r["credits"] for r in rows] == [1, 1, 1], rows      # conservative fallback
+
+
+def test_no_key_preflight_and_library_calls_ledger_nothing():
+    """No key (exit 3), a failed pre-flight, and a route skip send nothing and ledger nothing; an
+    importer calling `_request` directly (wp_cld keeps its own accounting) is never double-ledgered."""
+    mod = _load_cld()
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp, key=None) as env:
+        code, envelope, wire = _run_cli(mod, ["route", "https://example.com"], lambda *a: (200, {}, None))
+        assert code == 3 and wire == [] and env.rows() == [], (code, wire)
+    mod = _load_cld()
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp) as env:
+        code, _, wire = _run_cli(mod, ["clickfix"], lambda *a: (200, {}, None))
+        assert code == 2 and wire == [] and env.rows() == [], (code, wire)
+        code, envelope, wire = _run_cli(mod, ["route", "John Smith"], lambda *a: (200, {}, None))
+        assert code == 0 and envelope["skipped"] is True and wire == [], envelope
+        assert envelope["usage"]["calls"] == 0 and env.rows() == [], envelope
+    lib = _load_cld()
+    lib._http = lambda *a: (200, {"ok": True}, None)
+    with tempfile.TemporaryDirectory() as tmp, _CliEnv(tmp) as env:
+        assert lib._request("POST", lib.FEEDS, "/external/checkurl", "k")[0] == 200
+        assert env.rows() == [] and lib.usage_summary() is None
+
+
+def test_route_queries_both_apis_and_keeps_a_partial():
+    import argparse
+    mod = _load_cld()
+    calls = []
+
+    def ok(method, base, path, key, params=None, body=None, timeout=30):
+        calls.append((base, path))
+        if path.endswith("/victims"):
+            return 200, {"items": [{"website": "other.example"}, {"website": "https://example.com"}]}, None
+        return 200, {"ok": True}, None
+
+    mod._request = ok
+    a = argparse.Namespace(target="https://example.com", ai=False, timeout=5)
+    _name, tup = mod.op_route("k", a)
+    bases = {c[0] for c in calls}
+    paths = [c[1] for c in calls]
+    assert mod.FEEDS in bases and mod.TI in bases, calls
+    assert "/external/checkurl" in paths, paths
+    assert "/api/v1/ioc/external/url" in paths, paths
+    assert "/api/v1/ransomware/external/victims" in paths, paths
+    assert tup[1]["sides"]["shield_ransomware"]["matched"] == 1
+    assert tup[1]["sides"]["shield_ransomware"]["hit"] is True
+
+    def feeds_down(method, base, path, key, params=None, body=None, timeout=30):
+        if base == mod.FEEDS:
+            return 500, None, "HTTP 500"
+        return 200, {"verdict": "clean"}, None
+
+    mod._request = feeds_down
+    _name, tup = mod.op_route("k", a)
+    assert tup[0] == 200 and tup[1]["sides"]["shield_ioc"]["ok"], tup
+    assert tup[1]["sides"]["feeds_checkurl"]["ok"] is False
+
+
+def test_denylist_label_boundary_estate_vs_lead():
+    """(#14) A brand-label denylist row is matched on a DNS-label boundary, never a raw substring:
+    an IPFS-gateway host with the label embedded inside an opaque CID subdomain must never match
+    (even though a naive substring check WOULD); the case's own apex is estate evidence, a
+    different apex sharing the same wordmark is a name-similar LEAD, never a cluster member."""
+    cid_host = "bafyzntbrandxuhm123456789abc.ipfs.dweb.link"
+    assert "brandx" in cid_host, "sanity: the CID host DOES contain the label as a raw substring"
+    routes = dict(_MALICIOUS)
+    routes["/external/denylists/search"] = (200, {"items": [
+        {"domain": "brandx.example", "status": "scam"},          # estate (case apex)
+        {"domain": "shop.brandx.test", "status": "scam"},        # name-similar lead (diff apex)
+        {"domain": cid_host},                                    # must NOT match — no label boundary
+    ]}, None)
+    orig, _ = _install(routes)
+    try:
+        out = wp_cld.cld_domain("brandx.example", timeout=5, page_title="BrandX - Home")
+    finally:
+        wp_cld._api = orig
+    dl = out["denylist"]
+    assert "brandx" in dl["labels_searched"], dl["labels_searched"]
+    estate_hosts = {r["_matched_host"] for r in dl["estate"]}
+    lead_hosts = {r["_matched_host"] for r in dl["leads"]}
+    assert estate_hosts == {"brandx.example"}, dl
+    assert lead_hosts == {"shop.brandx.test"}, dl
+    assert cid_host not in (estate_hosts | lead_hosts), dl
+    # a raw substring check WOULD have matched the CID row — proving the boundary rule is load-bearing
+    assert not wp_cld._label_boundary_match("brandx", cid_host)
+
+
+def test_cld_whois_all_null_is_miss():
+    """(#15) An all-null CLD checkwhois body (no registrar, dates, owner, or NS) is a MISS, not an
+    answer — cld_whois must say so instead of handing back a confirmed empty-registrant WHOIS, so
+    the caller (whois_enrich) falls back to RDAP/port-43 instead of trusting a null CLD record."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts", "cld"))
+    import cld_api as real_api
+    orig_api, orig_request = wp_cld._api, real_api._request
+    os.environ["CHONGLUADAO_API_KEY"] = "k"
+    wp_cld._api = lambda: real_api
+    try:
+        real_api._request = lambda method, base, path, key, params=None, body=None, timeout=30: (
+            200, {"registrar": None, "owner": None, "registration_date": None, "name_servers": []}, None)
+        r = wp_cld.cld_whois("example.vn", timeout=5)
+        assert r.get("miss") is True, r
+        assert "RDAP" in r.get("reason", ""), r
+
+        real_api._request = lambda method, base, path, key, params=None, body=None, timeout=30: (
+            200, {"registrar": "iNET", "owner": "Test Co", "registration_date": "27-04-2022"}, None)
+        r2 = wp_cld.cld_whois("example.vn", timeout=5)
+        assert "miss" not in r2, r2
+        assert r2.get("registrar") == "iNET", r2
+    finally:
+        wp_cld._api = orig_api
+        real_api._request = orig_request
+
+
 _TESTS = [
     test_cld_domain_shape_and_vn_whois_and_gate,
     test_verdict_folds_denylist_into_evidence,
@@ -306,6 +548,12 @@ _TESTS = [
     test_ingest_records_cld_email_fact,
     test_vn_sidecar_self_heals,
     test_vn_sidecar_transient_failure_retries,
+    test_route_queries_both_apis_and_keeps_a_partial,
+    test_denylist_label_boundary_estate_vs_lead,
+    test_cld_whois_all_null_is_miss,
+    test_cli_route_ledgers_every_leg_once,
+    test_cli_direct_and_async_ledger_per_request,
+    test_no_key_preflight_and_library_calls_ledger_nothing,
 ]
 
 

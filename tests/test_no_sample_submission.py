@@ -7,11 +7,10 @@ Run:  python3 tests/test_no_sample_submission.py     (zero deps)
 
 WHY THIS EXISTS
 ---------------
-ANY.RUN's API is, in the main, a SUBMISSION API: you upload a file, it detonates it, you read the
-report. This toolkit uses the read-only corner of it — Threat Intelligence Lookup, which reports
-what OTHER people's detonations already recorded — freely, and carries ONE submit path
-(`bp_anyrun.submit()`, harness `anyrun_submit`) that refuses unless the analyst has confirmed THIS
-submission, defaults to private, and reads back the applied privacy afterwards.
+ANY.RUN has separate TI Lookup and sandbox-submission APIs. Direct `bp_anyrun.submit()` and MCP
+`anyrun_submit` refuse without a per-call confirmation, default to private, and read back privacy.
+The key-authorized case pipeline is a separate caller in `tools/binary_auto.py`; it invokes that
+same submit function after its own file/spend/egress gate. See `test_binary_auto.py`.
 
 That distinction is the whole OPSEC posture of the file half of a case, and it is not a stylistic
 preference:
@@ -26,9 +25,9 @@ preference:
     from the wrong egress, there is no cleaning up afterwards.
   - It is an OUTBOUND act taken against a third party's service, and it costs a run.
 
-So: detonation is a decision the ANALYST makes explicitly, per submission, on a private plan,
-having read the risk briefing. It is never a side effect of a pivot, never something a collector
-does on its own initiative, and never something an agent arranges because it seemed helpful.
+Direct detonation is an explicit per-submission analyst decision. The automatic pipeline instead
+uses the analyst's configured key as standing authorization, and must keep the submit function's
+privacy/plan enforcement. This test guards the direct API contract.
 
 WHAT THIS TEST ASSERTS
 ----------------------
@@ -40,12 +39,9 @@ Documentation rots and comments do not fail builds. This converts the intention 
   2. The module builds no URL that is not one of the read-only or gated endpoints.
   3. File-upload machinery (multipart bodies, binary file reads fed to a request) is allowed ONLY
      while the gate holds.
-  4. The gate itself: the marker `REQUIRES_ANALYST_CONFIRMATION` must sit alongside the refusal
-     `if not confirm: return submit_preflight(...)`. Either alone is not a gate. This test is what
-     makes that non-negotiable rather than aspirational.
-
-If this test fails, do not "fix" it by relaxing the assertion. Either the submission capability is
-unwanted (remove it), or it is genuinely needed and must ship behind a confirmation gate.
+  4. The direct API gate itself: the marker `REQUIRES_ANALYST_CONFIRMATION` must sit alongside
+     `if not confirm: return submit_preflight(...)`. The automatic pipeline passes `confirm=True`
+     only after its own policy checks (covered by `test_binary_auto.py`).
 """
 import json
 import os
@@ -173,10 +169,9 @@ def check():
                + (f"allowed, behind the {CONFIRM_MARKER} gate" if has_confirm_gate
                   else f"and there is no {CONFIRM_MARKER} gate"))
 
-    # --- 4. the read-only contract is stated where an analyst will meet it ---------------------
-    # A guarantee nobody can see is a guarantee nobody can rely on.
-    ok(re.search(r"no submit path|NEVER SUBMIT|never detonat|NO DETONATION", src, re.I) is not None,
-       "bp_anyrun.py states the no-submission contract in its own docstring")
+    # --- 4. the direct API contract is stated where an analyst will meet it -------------------
+    ok("submit_preflight()" in src and "per-submission confirmation" in src,
+       "bp_anyrun.py documents the direct submission briefing and confirmation")
     harness = os.path.join(ENGINE, "harness", "tools.py")
     if os.path.exists(harness):
         h = open(harness, encoding="utf-8").read()

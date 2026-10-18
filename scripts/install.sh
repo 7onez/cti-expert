@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # CTI Expert — all-in-one tool installer
 # Usage: bash scripts/install.sh [--headless] [--go] [--all]
-#   --headless  Auto-install Scrapling headless browser (downloads ~200MB Chromium)
+#   --headless  Auto-install the Chromium stack: Scrapling headless, agent-browser, and
+#               Playwright + Chromium (~200MB) for evidence screenshots, engage and the
+#               Cloudflare-escalation render. DOM renders use Moli, installed by default.
 #   --go        Install Go-based tools (requires Go 1.21+)
 #   --all       Install everything including headless + Go tools
 #
@@ -9,7 +11,7 @@
 # bootstraps uv automatically, and falls back to python3 -m venv + pip/pipx when uv
 # cannot be installed *or* when a PATH wrapper intercepts `uv pip`. Every tool is
 # probed for the subcommand it is actually asked to run, never just `command -v`.
-# Supported platforms: Linux (apt), macOS (brew), Windows (Git Bash / WSL).
+# Supported platforms: Linux (apt · dnf/yum · pacman · zypper · apk), macOS (brew), WSL; Windows via install.ps1 (winget).
 
 set -euo pipefail
 
@@ -155,9 +157,14 @@ ensure_uv() {
   # On a fresh Linux box (esp. minimal VPS/containers) install the prerequisites the
   # uv installer + venv fallback need, before anything else. python3-pip matters
   # because the pip fallback is what runs whenever uv is unusable.
-  if [[ "$OS" == "linux" ]] && has apt-get; then
-    $SUDO apt-get update -y &>/dev/null 2>&1 || true
-    $SUDO apt-get install -y curl ca-certificates git python3 python3-venv python3-pip &>/dev/null 2>&1 || true
+  if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+    pkg_update &>/dev/null 2>&1 || true
+    case "$(pkg_mgr)" in
+      apt)            pkg_install_raw curl ca-certificates git python3 python3-venv python3-pip &>/dev/null 2>&1 || true ;;
+      dnf|yum|zypper) pkg_install_raw curl ca-certificates git python3 python3-pip &>/dev/null 2>&1 || true ;;
+      pacman)         pkg_install_raw curl ca-certificates git python python-pip &>/dev/null 2>&1 || true ;;
+      apk)            pkg_install_raw curl ca-certificates git python3 py3-pip py3-virtualenv &>/dev/null 2>&1 || true ;;
+    esac
   fi
   if [[ "$OS" == "macos" ]] && has brew; then brew install uv &>/dev/null 2>&1 || true; fi
   detect_bins
@@ -202,51 +209,100 @@ ensure_agent_browser() {
   fi
 }
 
+# ── Linux/macOS package-manager dispatch ──────────────────────
+# Detect the manager and map an apt package name to its equivalent on that manager
+# for the handful that disagree. This is what makes the installer NOT apt-only:
+# apt · dnf/yum · pacman · zypper · apk on Linux, brew on macOS.
+pkg_mgr() {
+  local m=none
+  if [[ "$OS" == "linux" ]]; then
+    if   has apt-get; then m=apt
+    elif has dnf;     then m=dnf
+    elif has yum;     then m=yum
+    elif has pacman;  then m=pacman
+    elif has zypper;  then m=zypper
+    elif has apk;     then m=apk
+    fi
+  elif [[ "$OS" == "macos" ]]; then
+    has brew && m=brew
+  fi
+  echo "$m"
+}
+
+pkg_update() {
+  case "$(pkg_mgr)" in
+    apt)    $SUDO apt-get update -y ;;
+    dnf)    $SUDO dnf -y makecache ;;
+    yum)    $SUDO yum -y makecache ;;
+    pacman) : ;;                       # never 'pacman -Sy' alone — partial-upgrade hazard (Arch wiki); pkg_install_raw uses -S --needed
+    zypper) $SUDO zypper --non-interactive refresh ;;
+    apk)    $SUDO apk update ;;
+    *)      return 0 ;;
+  esac
+}
+
+# Install one or more packages with the active manager (names already resolved).
+pkg_install_raw() {
+  case "$(pkg_mgr)" in
+    apt)    $SUDO apt-get install -y "$@" ;;
+    dnf)    $SUDO dnf install -y "$@" ;;
+    yum)    $SUDO yum install -y "$@" ;;
+    pacman) $SUDO pacman -S --needed --noconfirm "$@" ;;
+    zypper) $SUDO zypper --non-interactive install "$@" ;;
+    apk)    $SUDO apk add "$@" ;;
+    brew)   brew install "$@" ;;
+    *)      return 1 ;;
+  esac
+}
+
+# Map an apt package name to the equivalent on the active manager (default: unchanged).
+pkg_name() {
+  local apt="$1" mgr; mgr="$(pkg_mgr)"
+  case "$mgr" in apt|brew|none) echo "$apt"; return ;; esac
+  case "$apt:$mgr" in
+    dnsutils:dnf|dnsutils:yum|dnsutils:zypper) echo bind-utils ;;
+    dnsutils:pacman)                           echo bind ;;
+    dnsutils:apk)                              echo bind-tools ;;
+    libimage-exiftool-perl:dnf|libimage-exiftool-perl:yum) echo perl-Image-ExifTool ;;
+    libimage-exiftool-perl:pacman)             echo perl-image-exiftool ;;
+    libimage-exiftool-perl:zypper|libimage-exiftool-perl:apk) echo exiftool ;;
+    poppler-utils:pacman)                      echo poppler ;;
+    poppler-utils:zypper)                      echo poppler-tools ;;
+    libcairo2:dnf|libcairo2:yum|libcairo2:pacman|libcairo2:apk) echo cairo ;;
+    imagemagick:dnf|imagemagick:yum|imagemagick:zypper) echo ImageMagick ;;
+    tesseract-ocr:dnf|tesseract-ocr:yum|tesseract-ocr:pacman|tesseract-ocr:apk) echo tesseract ;;
+    *)                                         echo "$apt" ;;
+  esac
+}
+
 apt_install() {
   # $1 apt package · $2 command to probe (default $1) · $3 brew formula (default $1).
-  # apt and Homebrew disagree on names for several packages (dnsutils->bind, poppler-utils->poppler,
-  # libimage-exiftool-perl->exiftool); passing $3 lets one call install correctly on both OSes.
-  local pkg="$1" cmd="${2:-$1}" brew_pkg="${3:-$1}"
-  # Linux is not only Debian/Ubuntu. Without apt-get there is nothing to run, so
-  # report the state honestly instead of failing on "apt-get: command not found".
-  if [[ "$OS" == "linux" ]] && ! has apt-get; then
+  # Named `apt_install` for call-site stability, but dispatches to any supported manager.
+  local pkg="$1" cmd="${2:-$1}" brew_pkg="${3:-$1}" mgr name
+  mgr="$(pkg_mgr)"
+  if [[ "$mgr" == "none" ]]; then
     if has "$cmd"; then
-      log_skip "$pkg (present; no apt-get to upgrade it)"
+      log_skip "$pkg (present; no supported package manager to upgrade it)"
     else
-      log_fail "$pkg" "no apt-get on this Linux — install '$pkg' with your package manager (dnf/pacman/apk/zypper)"
+      log_fail "$pkg" "no supported package manager (apt/dnf/pacman/zypper/apk/brew) — install '$pkg' by hand"
     fi
     return
   fi
+  if [[ "$mgr" == "brew" ]]; then name="$brew_pkg"; else name="$(pkg_name "$pkg")"; fi
   if has "$cmd"; then
-    if [[ "$OS" == "linux" ]]; then
-      if $SUDO apt-get install --only-upgrade -y "$pkg" &>/dev/null 2>&1; then
-        log_ok "$pkg updated"
-      else
-        log_skip "$pkg"
-      fi
-    elif [[ "$OS" == "macos" ]]; then
-      if has brew && brew upgrade "$brew_pkg" &>/dev/null 2>&1; then
-        log_ok "$brew_pkg updated"
-      else
-        log_skip "$brew_pkg"
-      fi
+    if [[ "$mgr" == "apt" ]]; then
+      $SUDO apt-get install --only-upgrade -y "$name" &>/dev/null 2>&1 && log_ok "$name updated" || log_skip "$name"
+    elif [[ "$mgr" == "brew" ]]; then
+      brew upgrade "$name" &>/dev/null 2>&1 && log_ok "$name updated" || log_skip "$name"
     else
-      log_skip "$pkg"
+      log_skip "$name (present)"
     fi
-  elif [[ "$OS" == "linux" ]]; then
-    if $SUDO apt-get install -y "$pkg" &>/dev/null 2>&1; then
-      log_ok "$pkg"
-    else
-      log_fail "$pkg" "try: sudo apt-get update && sudo apt install $pkg"
-    fi
-  elif [[ "$OS" == "macos" ]]; then
-    if has brew && brew install "$brew_pkg" &>/dev/null 2>&1; then
-      log_ok "$brew_pkg"
-    else
-      log_fail "$brew_pkg" "try: brew install $brew_pkg"
-    fi
+    return
+  fi
+  if pkg_install_raw "$name" &>/dev/null 2>&1; then
+    log_ok "$name"
   else
-    log_fail "$pkg" "Windows: install manually (winget or choco)"
+    log_fail "$name" "install '$name' with your package manager ($mgr)"
   fi
 }
 
@@ -330,8 +386,8 @@ pipx_install() {
   local tool="$1" cmd="${2:-$1}" pre_pkg="${3:-}" label="${4:-$1}"
   local already=false
   has "$cmd" && already=true
-  if [[ -n "$pre_pkg" ]] && [[ "$OS" == "linux" ]] && has apt-get; then
-    $SUDO apt-get install -y "$pre_pkg" &>/dev/null 2>&1 || true
+  if [[ -n "$pre_pkg" ]] && [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+    pkg_install_raw "$(pkg_name "$pre_pkg")" &>/dev/null 2>&1 || true
   fi
   if [[ -n "$UV_BIN" ]]; then
     if [[ "$already" == true ]] && "$UV_BIN" tool upgrade "$tool" &>/dev/null 2>&1; then
@@ -535,14 +591,18 @@ apt_install plantuml plantuml plantuml
 # apt ships `libreoffice-writer`; on macOS it is a Homebrew cask (not a formula), so branch.
 if [[ "$OS" == "macos" ]]; then
   if has brew; then brew install --cask libreoffice &>/dev/null 2>&1 && log_ok "libreoffice (brew cask)" || log_skip "libreoffice (brew install --cask libreoffice)"; fi
-elif [[ "$OS" == "linux" ]] && has apt-get; then
-  # --no-install-recommends keeps this to Writer + core (~10x smaller than the full suite)
+elif [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
   if has soffice; then
     log_skip "libreoffice-writer (present)"
-  elif $SUDO apt-get install -y --no-install-recommends libreoffice-writer &>/dev/null 2>&1; then
-    log_ok "libreoffice-writer"
   else
-    log_fail "libreoffice-writer" "try: sudo apt-get install --no-install-recommends libreoffice-writer"
+    case "$(pkg_mgr)" in
+      apt)     $SUDO apt-get install -y --no-install-recommends libreoffice-writer &>/dev/null 2>&1 ;;
+      dnf|yum) pkg_install_raw libreoffice-writer &>/dev/null 2>&1 ;;
+      zypper)  pkg_install_raw libreoffice-writer &>/dev/null 2>&1 ;;
+      pacman)  pkg_install_raw libreoffice-still &>/dev/null 2>&1 || pkg_install_raw libreoffice-fresh &>/dev/null 2>&1 ;;
+      apk)     pkg_install_raw libreoffice &>/dev/null 2>&1 ;;
+    esac
+    has soffice && log_ok "libreoffice-writer" || log_fail "libreoffice-writer" "install a LibreOffice Writer package with $(pkg_mgr)"
   fi
 else
   has soffice && log_skip "libreoffice (present)" || log_fail "libreoffice" "install libreoffice-writer via your package manager (dnf/pacman/zypper)"
@@ -551,8 +611,9 @@ fi
 # SVGs into the DOCX report with consistent text (graphviz `dot` above also renders
 # the Diagram AI Generator cloud figure).
 apt_install libcairo2 libcairo2 cairo
-if [[ "$OS" == "linux" ]] && has apt-get; then
-  $SUDO apt-get install -y fonts-dejavu-core &>/dev/null 2>&1 && log_ok "fonts-dejavu-core (editorial raster text)" || log_skip "fonts-dejavu-core"
+if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  case "$(pkg_mgr)" in apt) _dj=fonts-dejavu-core ;; dnf|yum) _dj=dejavu-sans-fonts ;; pacman) _dj=ttf-dejavu ;; zypper) _dj=dejavu-fonts ;; apk) _dj=font-dejavu ;; *) _dj="" ;; esac
+  { [[ -n "$_dj" ]] && pkg_install_raw "$_dj" &>/dev/null 2>&1 && log_ok "dejavu fonts (editorial raster text)"; } || log_skip "dejavu fonts"
 fi
 # ── Media / vision toolchain ──────────────────────────────────
 # ffmpeg + imagemagick preprocess A/V and image evidence; Node/npx runs the multix
@@ -561,15 +622,20 @@ apt_install ffmpeg ffmpeg
 apt_install imagemagick convert            # `convert` on IM6, `magick` on IM7; package is imagemagick
 apt_install tesseract-ocr tesseract tesseract   # keyless OCR fallback — apt pkg `tesseract-ocr`, brew formula `tesseract`
 # OCR language packs — cti-expert is VN-first + heavy CN recon; bare tesseract is eng-only.
-if [[ "$OS" == "linux" ]] && has apt-get; then
-  $SUDO apt-get install -y tesseract-ocr-vie tesseract-ocr-chi-sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract-ocr-vie/chi-sim"
+if [[ "$OS" == "linux" ]]; then
+  case "$(pkg_mgr)" in
+    apt)     $SUDO apt-get install -y tesseract-ocr-vie tesseract-ocr-chi-sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract langs" ;;
+    dnf|yum) pkg_install_raw tesseract-langpack-vie tesseract-langpack-chi_sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract langs" ;;
+    pacman)  pkg_install_raw tesseract-data-vie tesseract-data-chi_sim &>/dev/null 2>&1 && log_ok "tesseract langs: vie + chi_sim" || log_skip "tesseract langs" ;;
+    *)       log_skip "tesseract langs (install vie + chi_sim traineddata via your package manager)" ;;
+  esac
 elif [[ "$OS" == "macos" ]] && has brew; then
   brew install tesseract-lang &>/dev/null 2>&1 && log_ok "tesseract-lang (all languages)" || log_skip "tesseract-lang"
 fi
 if has npx; then
   log_skip "node/npx (present)"
-elif [[ "$OS" == "linux" ]] && has apt-get; then
-  $SUDO apt-get install -y nodejs npm &>/dev/null 2>&1 && log_ok "nodejs + npm" || log_fail "nodejs" "install Node 20+ (NodeSource) — needed for npx multix + agent-browser"
+elif [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  pkg_install_raw nodejs npm &>/dev/null 2>&1 && log_ok "nodejs + npm" || log_fail "nodejs" "install Node 20+ — needed for npx multix + agent-browser"
 elif [[ "$OS" == "macos" ]] && has brew; then
   brew install node &>/dev/null 2>&1 && log_ok "node (brew)" || log_fail "node" "brew install node"
 else
@@ -606,14 +672,16 @@ else
   apt_install gh gh
 fi
 # zbar shared lib for pyzbar QR decoding (/webpivot --decode-qr)
-if [[ "$OS" == "linux" ]] && has apt-get; then
-  $SUDO apt-get install -y libzbar0 &>/dev/null 2>&1 && log_ok "libzbar0 (QR decode)" || log_skip "libzbar0"
+if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  case "$(pkg_mgr)" in apt|zypper) _zb=libzbar0 ;; *) _zb=zbar ;; esac
+  pkg_install_raw "$_zb" &>/dev/null 2>&1 && log_ok "$_zb (QR decode)" || log_skip "zbar"
 elif [[ "$OS" == "macos" ]] && has brew; then
   brew install zbar &>/dev/null 2>&1 && log_ok "zbar (QR decode)" || log_skip "zbar"
 fi
 # libcairo2-dev needed by maigret on Linux
-if [[ "$OS" == "linux" ]] && ! dpkg -l libcairo2-dev &>/dev/null 2>&1; then
-  $SUDO apt-get install -y libcairo2-dev &>/dev/null 2>&1 && log_ok "libcairo2-dev (maigret dep)" || true
+if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  case "$(pkg_mgr)" in apt) _cd=libcairo2-dev ;; dnf|yum|zypper) _cd=cairo-devel ;; pacman) _cd=cairo ;; apk) _cd=cairo-dev ;; *) _cd="" ;; esac
+  { [[ -n "$_cd" ]] && pkg_install_raw "$_cd" &>/dev/null 2>&1 && log_ok "$_cd (maigret dep)"; } || true
 fi
 
 # ── Report PDF engine: xelatex + fonts (ALWAYS) ───────────────
@@ -623,20 +691,48 @@ fi
 # reports do not need it, but a user asking for a PDF must never hit a missing-engine wall.
 # texlive is large (hundreds of MB); that is the deliberate cost of shipping a working PDF path.
 section "Report PDF engine (xelatex + Noto fonts)"
-if [[ "$OS" == "linux" ]] && has apt-get; then
-  # fontconfig provides `fc-list`, which render_report.py uses to DETECT an installed
-  # Vietnamese-capable family. Without it, detection returns empty and the render silently
-  # falls back to Latin Modern (no VN coverage) -> a tofu PDF with no warning. Install it first.
-  $SUDO apt-get install -y fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list — VN font detection)" || log_fail "fontconfig" "sudo apt install fontconfig"
-  # texlive-latex-recommended carries the LaTeX packages pandoc's default PDF template loads
-  # (fancyvrb, etc.); lmodern is the fallback body font; fonts-noto-core covers Vietnamese and
-  # fonts-noto-cjk (best-effort) covers Chinese for the CN-recon reports.
-  if $SUDO apt-get install -y texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern &>/dev/null 2>&1; then
-    log_ok "texlive-xetex + Noto (PDF report engine)"
-  else
-    log_fail "texlive-xetex" "sudo apt install texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern"
-  fi
-  $SUDO apt-get install -y fonts-noto-cjk &>/dev/null 2>&1 && log_ok "fonts-noto-cjk (CN report glyphs)" || log_skip "fonts-noto-cjk (optional; CN glyphs in PDF)"
+if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  case "$(pkg_mgr)" in
+    apt)
+      $SUDO apt-get install -y fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list — VN font detection)" || log_fail "fontconfig" "sudo apt install fontconfig"
+      if $SUDO apt-get install -y texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern &>/dev/null 2>&1; then
+        log_ok "texlive-xetex + Noto (PDF report engine)"
+      else
+        log_fail "texlive-xetex" "sudo apt install texlive-xetex texlive-latex-recommended texlive-fonts-recommended fonts-noto-core lmodern"
+      fi
+      $SUDO apt-get install -y fonts-noto-cjk &>/dev/null 2>&1 && log_ok "fonts-noto-cjk (CN report glyphs)" || log_skip "fonts-noto-cjk (optional; CN glyphs in PDF)"
+      ;;
+    dnf|yum)
+      pkg_install_raw fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list)" || log_skip "fontconfig"
+      if pkg_install_raw texlive-xetex texlive-collection-fontsrecommended texlive-lm google-noto-sans-fonts google-noto-serif-fonts &>/dev/null 2>&1; then
+        log_ok "texlive-xetex + Noto (PDF report engine)"
+      else
+        log_fail "texlive-xetex" "install texlive-xetex + Noto fonts with $(pkg_mgr)"
+      fi
+      pkg_install_raw google-noto-sans-cjk-fonts &>/dev/null 2>&1 && log_ok "noto-cjk (CN report glyphs)" || log_skip "noto-cjk (optional)"
+      ;;
+    pacman)
+      pkg_install_raw fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list)" || log_skip "fontconfig"
+      if pkg_install_raw texlive-xetex texlive-fontsrecommended noto-fonts &>/dev/null 2>&1; then
+        log_ok "texlive-xetex + Noto (PDF report engine)"
+      else
+        log_fail "texlive-xetex" "install texlive-xetex + noto-fonts with pacman"
+      fi
+      pkg_install_raw noto-fonts-cjk &>/dev/null 2>&1 && log_ok "noto-cjk (CN report glyphs)" || log_skip "noto-cjk (optional)"
+      ;;
+    zypper)
+      pkg_install_raw fontconfig &>/dev/null 2>&1 && log_ok "fontconfig (fc-list)" || log_skip "fontconfig"
+      if pkg_install_raw texlive-xetex noto-sans-fonts noto-serif-fonts &>/dev/null 2>&1; then
+        log_ok "texlive-xetex + Noto (PDF report engine)"
+      else
+        log_fail "texlive-xetex" "install texlive-xetex + Noto fonts with zypper"
+      fi
+      ;;
+    apk)
+      pkg_install_raw fontconfig font-noto &>/dev/null 2>&1 && log_ok "fontconfig + noto (apk)" || log_skip "fontconfig/noto"
+      log_fail "texlive-xetex" "Alpine: install a TeX Live xetex package for PDF reports"
+      ;;
+  esac
   fc-cache -f &>/dev/null 2>&1 || true   # register newly-installed fonts so fc-list sees them this run
 elif [[ "$OS" == "macos" ]] && has brew; then
   if has xelatex; then
@@ -804,13 +900,90 @@ else
   echo -e "  ${YELLOW}–${NC} agent-browser not requested (add --headless; installs CLI + Chrome)"
 fi
 
-# ── Playwright (render / screenshot / engage) ─────────────────
-# Post-JS DOM render (/webpivot --render), full-page screenshot evidence, and Engage's
-# synthetic-persona automation all use Playwright. Provisioned by DEFAULT now (like pandoc) so
-# /cti renders live out of the box. The ~120MB Chromium download is best-effort and NEVER fails
-# the install — a miss degrades to the urlscan-DOM recovery path. Set NO_PLAYWRIGHT=1 to opt out.
-section "Playwright (render / screenshot / engage)"
-if [[ "${NO_PLAYWRIGHT:-}" == "1" ]]; then
+# ── Moli (DOM render — default) ───────────────────────────────
+# Post-JS DOM render (/webpivot --render, --render-extract, render_confirm) runs on Moli, a
+# single ~40MB binary at a fraction of Chromium's memory. The pinned release + per-platform
+# sha256 live in intel_engine/WebPivot/references/moli.json (RULE 3); the archive is verified
+# before install and never piped to a shell. Best-effort: a miss degrades DOM renders to
+# Chromium (if --headless) or to the raw-fetch/archive path. NO_MOLI=1 opts out.
+section "Moli (DOM render)"
+MOLI_REF="$SKILL_DIR/intel_engine/WebPivot/references/moli.json"
+MOLI_OS=""; case "$OS" in linux) MOLI_OS="linux" ;; macos) MOLI_OS="darwin" ;; windows) MOLI_OS="windows" ;; esac
+MOLI_ARCH="$ARCH"; [[ "$MOLI_ARCH" == "arm64" ]] && MOLI_ARCH="aarch64"
+if [[ "$OS" == "windows" ]]; then
+  MOLI_DIR="${LOCALAPPDATA:-$HOME/AppData/Local}/Moli/bin"; MOLI_EXE="moli.exe"
+else
+  MOLI_DIR="$HOME/.local/bin"; MOLI_EXE="moli"
+fi
+if [[ "${NO_MOLI:-}" == "1" ]]; then
+  echo -e "  ${YELLOW}–${NC} Moli skipped (NO_MOLI=1)"
+elif [[ -z "$MOLI_OS" || ! -f "$MOLI_REF" ]]; then
+  log_skip "moli (unsupported platform $RAW_OS/$ARCH or missing $MOLI_REF)"
+else
+  # version \t base_url \t asset \t sha256 for this platform (empty asset = no build published)
+  MOLI_PIN="$("$VENV_PYTHON" -c 'import json,sys;d=json.load(open(sys.argv[1]));r=d["release"];a=d["assets"]["entries"].get(sys.argv[2]) or {};print(r["version"],r["base_url"],a.get("name",""),a.get("sha256",""),sep="\t")' "$MOLI_REF" "$MOLI_OS-$MOLI_ARCH" 2>/dev/null || true)"
+  IFS=$'\t' read -r MOLI_VER MOLI_BASE MOLI_ASSET MOLI_SHA <<< "$MOLI_PIN"
+  MOLI_HAVE="$("$MOLI_DIR/$MOLI_EXE" --version 2>/dev/null | awk '{print $2}' || true)"
+  if [[ -z "$MOLI_ASSET" || -z "$MOLI_SHA" ]]; then
+    log_skip "moli (no pinned build for $MOLI_OS-$MOLI_ARCH in moli.json)"
+  elif [[ "$MOLI_HAVE" == "$MOLI_VER" ]]; then
+    log_ok "moli $MOLI_VER (already installed at $MOLI_DIR/$MOLI_EXE)"
+  else
+    # The published Linux build needs GLIBC 2.35 (Ubuntu 22.04 / Debian 12). Older hosts get a
+    # loader error, not a useful install — say so and leave DOM renders on Chromium / raw fetch.
+    if [[ "$OS" == "linux" ]] && has ldd; then
+      MOLI_GLIBC="$(ldd --version 2>&1 | awk 'NR==1 {print $NF}')"
+      if ! "$VENV_PYTHON" -c 'import sys; a=tuple(int(x) for x in sys.argv[1].split(".")[:2]); raise SystemExit(0 if a >= (2, 35) else 1)' "$MOLI_GLIBC" 2>/dev/null; then
+        log_skip "moli (this host's glibc ${MOLI_GLIBC:-unknown} is older than 2.35; the pinned binary will not start)"
+        MOLI_ASSET=""
+      fi
+    fi
+    # The Linux build links fontconfig/freetype/libpng/brotli (text shaping), which a minimal
+    # server image lacks; fontconfig's package pulls the rest. Best-effort, like install-deps.
+    if [[ -n "$MOLI_ASSET" && "$OS" == "linux" ]]; then
+      if has apt-get; then $SUDO apt-get install -y libfontconfig1 libfreetype6 libstdc++6 &>/dev/null 2>&1 || true
+      elif has dnf; then $SUDO dnf install -y fontconfig freetype libstdc++ &>/dev/null 2>&1 || true
+      elif has pacman; then $SUDO pacman -S --noconfirm --needed fontconfig freetype2 &>/dev/null 2>&1 || true; fi
+    fi
+    if [[ -z "$MOLI_ASSET" ]]; then
+      :
+    else
+    MOLI_TMP="$(mktemp -d)"
+    if curl --proto '=https' --tlsv1.2 -fsSL -o "$MOLI_TMP/$MOLI_ASSET" "$MOLI_BASE/$MOLI_ASSET"; then
+      if has sha256sum; then MOLI_GOT="$(sha256sum "$MOLI_TMP/$MOLI_ASSET" | awk '{print $1}')"
+      else MOLI_GOT="$(shasum -a 256 "$MOLI_TMP/$MOLI_ASSET" | awk '{print $1}')"; fi
+      if [[ "$MOLI_GOT" != "$MOLI_SHA" ]]; then
+        log_fail "moli" "sha256 mismatch for $MOLI_ASSET (got $MOLI_GOT) — NOT installed"
+      elif { [[ "$MOLI_ASSET" == *.zip ]] && unzip -q "$MOLI_TMP/$MOLI_ASSET" -d "$MOLI_TMP"; } \
+           || tar -xzf "$MOLI_TMP/$MOLI_ASSET" -C "$MOLI_TMP"; then
+        MOLI_SRC="$(find "$MOLI_TMP" -type f -name "$MOLI_EXE" | head -1 || true)"
+        mkdir -p "$MOLI_DIR"
+        if [[ -n "$MOLI_SRC" ]] && cp "$MOLI_SRC" "$MOLI_DIR/$MOLI_EXE" && chmod 755 "$MOLI_DIR/$MOLI_EXE" \
+           && "$MOLI_DIR/$MOLI_EXE" --version &>/dev/null; then
+          log_ok "moli $MOLI_VER → $MOLI_DIR/$MOLI_EXE (sha256 verified)"
+          case ":$PATH:" in *":$MOLI_DIR:"*) ;; *) echo -e "  ${YELLOW}!${NC} $MOLI_DIR is not on PATH — the engine still finds it there (or set MOLI_BIN)" ;; esac
+        else
+          log_fail "moli" "extracted archive has no runnable $MOLI_EXE"
+        fi
+      else
+        log_fail "moli" "could not extract $MOLI_ASSET"
+      fi
+    else
+      log_skip "moli (download deferred — network; DOM renders fall back to Chromium/raw fetch)"
+    fi
+    rm -rf "$MOLI_TMP"
+  fi
+fi
+fi
+
+# ── Playwright + Chromium (screenshots / engage / CF escalation — --headless) ──
+# Evidence screenshots, Engage's synthetic-persona automation and the Cloudflare-escalation
+# render need real Chromium pixels/behaviour, so they stay on Playwright — opt-in with the rest
+# of the Chromium stack (--headless). Without it those paths skip with an explicit note.
+section "Playwright + Chromium (screenshots / engage / CF escalation)"
+if [[ "$OPT_HEADLESS" != true ]]; then
+  echo -e "  ${YELLOW}–${NC} Playwright not requested (add --headless; installs playwright + Chromium ~120MB)"
+elif [[ "${NO_PLAYWRIGHT:-}" == "1" ]]; then
   echo -e "  ${YELLOW}–${NC} Playwright skipped (NO_PLAYWRIGHT=1)"
 elif vpip --quiet --upgrade playwright 2>/dev/null; then
   PW_CLI="$VENV_BIN/playwright"; [[ "$OS" == "windows" ]] && PW_CLI="$VENV_BIN/playwright.exe"
@@ -821,7 +994,7 @@ elif vpip --quiet --upgrade playwright 2>/dev/null; then
     log_skip "playwright (package in; Chromium download deferred — finish: $VENV_PYTHON -m playwright install chromium)"
   fi
 else
-  log_skip "playwright (pip install deferred; core techniques degrade gracefully without it)"
+  log_skip "playwright (pip install deferred; screenshots/engage skip with a note without it)"
 fi
 
 # ── Go tools (optional) ────────────────────────────────────────
@@ -882,10 +1055,14 @@ section "ASN lookup tool (nitefood/asn)"
 ASN_RAW="https://raw.githubusercontent.com/nitefood/asn/master/asn"
 ASN_DIR="$HOME/.claude/skills/cti-expert/vendor/asn"
 ASN_BIN="$HOME/.local/bin"
-if [[ "$OS" == "linux" ]] && has apt-get; then
-  # mtr-tiny/bind9-dnsutils on newer Debian; mtr/dnsutils on older — try both, tolerate misses
-  $SUDO apt-get install -y curl whois jq mtr-tiny aha ipcalc grepcidr nmap bind9-dnsutils &>/dev/null 2>&1 \
-    || $SUDO apt-get install -y curl whois jq mtr aha ipcalc grepcidr nmap dnsutils &>/dev/null 2>&1 || true
+if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
+  if [[ "$(pkg_mgr)" == apt ]]; then
+    # mtr-tiny/bind9-dnsutils on newer Debian; mtr/dnsutils on older — try both, tolerate misses
+    $SUDO apt-get install -y curl whois jq mtr-tiny aha ipcalc grepcidr nmap bind9-dnsutils &>/dev/null 2>&1 \
+      || $SUDO apt-get install -y curl whois jq mtr aha ipcalc grepcidr nmap dnsutils &>/dev/null 2>&1 || true
+  else
+    pkg_install_raw curl whois jq mtr nmap "$(pkg_name dnsutils)" &>/dev/null 2>&1 || true
+  fi
 elif [[ "$OS" == "macos" ]] && has brew; then
   brew install curl whois jq mtr aha ipcalc grepcidr nmap &>/dev/null 2>&1 || true
 fi

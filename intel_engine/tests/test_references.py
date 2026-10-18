@@ -149,6 +149,7 @@ def check():
     import case_scope                                                              # noqa: E401
     import wp_liveness                                                             # noqa: E401
     import wp_pssl                                                                 # noqa: E401
+    import wp_origin_history                                                       # noqa: E401
     import wp_exhaust                                                              # noqa: E401
     import sh_export                                                               # noqa: E401
     import tools                                                                   # noqa: E401  (harness/tools.py — the context governor)
@@ -161,6 +162,18 @@ def check():
         ("wp_pssl.POLICY", wp_pssl.POLICY,
          wp_pssl._PSSL_FALLBACK["clustering_policy"]),
         ("wp_pssl.ENDPOINTS", wp_pssl.ENDPOINTS, wp_pssl._PSSL_FALLBACK["endpoints"]),
+        # Historical origin sweep: on the fallback an Akamai / Imperva / DDoS-Guard / Sucuri history row
+        # (or a Bodis / ParkingCrew era) reads as an operator ORIGIN and is collected as an IP seed.
+        ("wp_origin_history.EDGE_ASNS", wp_origin_history.EDGE_ASNS,
+         wp_origin_history._ORIGIN_FALLBACK["edge_asns"]),
+        ("wp_origin_history.EDGE_ORG_MARKERS", wp_origin_history.EDGE_ORG_MARKERS,
+         wp_origin_history._ORIGIN_FALLBACK["edge_org_markers"]),
+        ("wp_origin_history.PARKING_MARKERS", wp_origin_history.PARKING_MARKERS,
+         wp_origin_history._ORIGIN_FALLBACK["parking_markers"]),
+        ("wp_origin_history.AMBIGUOUS_ASNS", wp_origin_history.AMBIGUOUS_ASNS,
+         wp_origin_history._ORIGIN_FALLBACK["ambiguous_asns"]),
+        ("wp_origin_history.AMBIGUOUS_ORG_MARKERS", wp_origin_history.AMBIGUOUS_ORG_MARKERS,
+         wp_origin_history._ORIGIN_FALLBACK["ambiguous_org_markers"]),
         ("wp_pivots._GENERIC_SUBLABELS", wp_pivots._GENERIC_SUBLABELS,
          wp_pivots._LABELS_FALLBACK["subdomain_labels"]),
         ("wp_pivots.AFFILIATE_PARAMS", wp_pivots.AFFILIATE_PARAMS,
@@ -306,6 +319,8 @@ def check():
          wp_extract._SP_FALLBACK["social_hosts"]),
         ("wp_extract.BOILERPLATE_SOCIAL_HANDLES", wp_extract.BOILERPLATE_SOCIAL_HANDLES,
          wp_extract._SP_FALLBACK["boilerplate_social_handles"]),
+        ("wp_extract.EMAIL_ASSET_SUFFIXES", wp_extract.EMAIL_ASSET_SUFFIXES,
+         wp_extract._GL_FALLBACK["email_asset_suffixes"]),
         # Fetch profile. On the fallback the crawler rotates ONE user-agent (defeating rotation
         # entirely) and knows 3 Cloudflare markers instead of 14 — so challenge interstitials get
         # collected AS the site and their favicon/DOM hash clusters every challenged domain.
@@ -367,6 +382,10 @@ def check():
         # takedown addresses start seeding `registered_by` registrant clusters.
         ("noise_filters.ROLE_EMAIL_LOCALPARTS", noise_filters.ROLE_EMAIL_LOCALPARTS,
          noise_filters._FALLBACK["role_email_localparts"]),
+        ("noise_filters.PRIVACY_LABEL_FILLERS", noise_filters.PRIVACY_LABEL_FILLERS,
+         noise_filters._FALLBACK["privacy_label_fillers"]),
+        ("noise_filters.REGISTRY_EMAIL_LABELS", noise_filters.REGISTRY_EMAIL_LABELS,
+         noise_filters._FALLBACK["registry_email_labels"]),
         ("noise_filters.SHARED_INFRA_APEXES", noise_filters.SHARED_INFRA_APEXES,
          noise_filters._FALLBACK["shared_infra_apexes"]),
         ("analyze_artifact._FAKE_TLD", analyze_artifact._FAKE_TLD,
@@ -436,6 +455,8 @@ def check():
         ("audit.MUTATING_TOOLS", audit.MUTATING_TOOLS,
          audit._POLICY_FALLBACK["mutating_tools"]),
         ("audit.REDACT_ARGS", audit.REDACT_ARGS, audit._POLICY_FALLBACK["redact_args"]),
+        ("audit.REDACT_BOOL_SWITCHES", audit.REDACT_BOOL_SWITCHES,
+         audit._POLICY_FALLBACK["redact_bool_switches"]),
         # Risk scoring. The fallback carries the NRD day-thresholds ONLY — a date comparison still
         # works with no reference data, a denylist match cannot. So on the fallback `bph` and
         # `money_trail` are empty dicts and every bulletproof-hosting / money-trail check matches
@@ -678,6 +699,92 @@ def check():
     ok("MINE" in open(os.path.join(T, "cases", "c1", "assessment.md")).read(),
        "save_markdown left the analyst file byte-intact")
     shutil.rmtree(T)
+
+    # --- 7. cross-type selector model (pivot_map + rungs + classify regex parity) --------------
+    # tools/selector_types.py is the harness-side typed classifier (NOT `selectors.py`: that name
+    # shadows the stdlib module asyncio/subprocess import). pivot_map.json caps auto pivots and
+    # names routes; rungs.json is the owner/kit/neighbour table. Fallback must be STRICTER than the
+    # JSON (auto_max_hits 0, every rung kit, no routes) so a missing file never auto-spends or
+    # auto-attributes. Regexes are copied from intel.py (import side effects); assert pattern parity.
+    import importlib.util
+    _sel_path = os.path.join(ROOT, "tools", "selector_types.py")
+    _sel_spec = importlib.util.spec_from_file_location("intel_engine_selectors", _sel_path)
+    sel = importlib.util.module_from_spec(_sel_spec)
+    sys.modules["intel_engine_selectors"] = sel
+    _sel_spec.loader.exec_module(sel)
+
+    pm = sel.load_pivot_map()
+    fb_am = sel._PIVOT_FALLBACK["auto_max_hits"]
+    fb_am_max = fb_am["max"] if isinstance(fb_am, dict) else int(fb_am or 0)
+    ok(fb_am_max == 0,
+       "pivot_map fallback auto_max_hits is 0 (everything needs approval when JSON is missing)")
+    ok(isinstance(pm.get("auto_max_hits"), int) and pm["auto_max_hits"] > fb_am_max,
+       f"pivot_map auto_max_hits came from JSON ({pm.get('auto_max_hits')} > fallback {fb_am_max})")
+    ok(pm.get("auto_max_hits") == 25,
+       f"pivot_map auto_max_hits is the locked ceiling 25 (got {pm.get('auto_max_hits')})")
+    ok(len(pm.get("filename_exts") or []) > len(sel._PIVOT_FALLBACK.get("filename_exts") or []),
+       "pivot_map filename_exts came from JSON (richer than fallback)")
+    ok(len(pm.get("routes") or {}) > len(sel._PIVOT_FALLBACK.get("routes") or {}),
+       f"pivot_map routes came from JSON ({len(pm.get('routes') or {})} > fallback "
+       f"{len(sel._PIVOT_FALLBACK.get('routes') or {})})")
+
+    _ROUTE_KEYS = ("types", "metered", "count_probe")
+    for rkey, rspec in (pm.get("routes") or {}).items():
+        ok(isinstance(rspec, dict), f"pivot_map route {rkey!r} is a dict")
+        if not isinstance(rspec, dict):
+            continue
+        missing = [k for k in _ROUTE_KEYS if k not in rspec]
+        ok(not missing, f"pivot_map route {rkey!r} has schema keys {_ROUTE_KEYS}"
+                        + (f" (missing {missing})" if missing else ""))
+        ok(isinstance(rspec.get("types"), list) and len(rspec["types"]) > 0,
+           f"pivot_map route {rkey!r} types is a non-empty list")
+        ok(isinstance(rspec.get("metered"), bool),
+           f"pivot_map route {rkey!r} metered is bool")
+
+    # rungs: fallback is every class → kit; JSON promotes owner/neighbour where locked
+    fb_rungs = sel._RUNGS_FALLBACK.get("rungs") or {}
+    ok(bool(fb_rungs) and all(v == "kit" for v in fb_rungs.values()),
+       "rungs fallback is conservative (every class → kit)")
+    loaded_rungs = sel.load_rungs()
+    ok(len(loaded_rungs) >= len(fb_rungs),
+       f"rungs JSON loaded ({len(loaded_rungs)} classes, fallback {len(fb_rungs)})")
+    ok(sel.rung_for("analytics.ga") == "owner", "rungs: analytics.ga → owner")
+    ok(sel.rung_for("wallet.exchange") == "neighbour", "rungs: wallet.exchange → neighbour")
+    ok(sel.rung_for("string") == "kit", "rungs: string → kit")
+    ok(sel.rung_for("ads.anything_new") == "kit", "rungs: unknown ads.* → kit")
+    ok(sel.rung_for("not_a_real_class") == "kit", "rungs: unknown class → kit (conservative)")
+    ok(any(v == "owner" for v in loaded_rungs.values()),
+       "rungs JSON has owner classes (not stuck on fallback)")
+    ok(any(v == "neighbour" for v in loaded_rungs.values()),
+       "rungs JSON has neighbour classes")
+
+    # Regex parity with intel.py — selector_types copies the patterns (intel import has side effects)
+    import intel as _intel_for_re                                            # noqa: E401
+    for name in ("_BARE_DOMAIN_RE", "_URL_SCHEME_RE", "_HASH_HEX_RE",
+                 "_PHONE_SHAPE_RE", "_WALLET_SHAPE_RE"):
+        ok(getattr(sel, name).pattern == getattr(_intel_for_re, name).pattern,
+           f"selector_types.{name} pattern matches intel.{name}")
+        ok(getattr(sel, name).flags == getattr(_intel_for_re, name).flags,
+           f"selector_types.{name} flags match intel.{name}")
+
+    # phase 3 corpus refs
+    ex_ref = os.path.join(ROOT, "WebPivot", "references", "exchange_wallets.json")
+    ok(os.path.isfile(ex_ref), "exchange_wallets.json present")
+    us_ref = os.path.join(ROOT, "WebPivot", "references", "urlscan_endpoints.json")
+    with open(us_ref, encoding="utf-8") as fh:
+        us_doc = json.load(fh)
+    ok("field_search" in us_doc and "identifier_rungs" in us_doc,
+       "urlscan_endpoints.json has field_search + identifier_rungs (phase 3)")
+    we_ref = os.path.join(ROOT, "WebPivot", "references", "wayback_endpoints.json")
+    with open(we_ref, encoding="utf-8") as fh:
+        we_doc = json.load(fh)
+    ok(isinstance(we_doc.get("collection_search"), dict),
+       "wayback_endpoints.json has collection_search block")
+    ak = os.path.join(ROOT, "WebPivot", "references", "api_keys.json")
+    with open(ak, encoding="utf-8") as fh:
+        ak_doc = json.load(fh)
+    ok("PUBLICWWW_API_KEY" in (ak_doc.get("api_keys") or {}).get("entries", {}),
+       "api_keys.json lists PUBLICWWW_API_KEY")
 
     return passed, failed, out
 

@@ -5,10 +5,10 @@ comes back EMPTY on a domain (parked page, empty favicon hash, NXDOMAIN, brand-n
 The point is to never end a seed on a silent "nothing found". Instead we sweep the
 keyless, always-available corners that survive a dead/parked front page:
 
-  1. crt.sh        — CT/SSL certs. A cert whose SAN list covers OTHER domains is the
-                     single strongest operator link there is (issued together = same owner).
-                     When crt.sh + Shodan CTL both come up empty, falls back to the keyless
-                     AGGREGATED indexes crt.name + agniops (names only, not CT-attributable).
+  1. CT logs       — certificate history through the shared client (wp_ct: crt.sh → PostgreSQL
+                     → Shodan CTL + CertSpotter → AGGREGATED crt.name + agniops names last). A
+                     cert whose SAN list covers OTHER domains is the single strongest operator
+                     link there is (issued together = same owner).
   2. Wayback CDX   — the full capture TIMELINE, not just today. Parked-today is routinely
                      a domain that served a live scam last year — the history is the pivot.
   3. archive.is    — the mirror analysts use when Wayback has nothing (operators often
@@ -18,9 +18,10 @@ keyless, always-available corners that survive a dead/parked front page:
   5. Local KB      — is any part of this domain ALREADY known/attributed? A hit here means
                      "don't re-investigate, show the prior verdict".
 
-Then it renders a VERDICT: PIVOTABLE (a lead survived) or NO-PIVOT-YET (genuinely cold —
-here are the explicit next moves). Keyless throughout, so it works even when the paid
-APIs are out of credits.
+Then it renders a VERDICT: PIVOTABLE (a lead survived), NO-PIVOT-YET (genuinely cold — here are
+the explicit next moves) or INCONCLUSIVE-CT-DEGRADED (cold, but crt.sh was unreachable so the CT
+corner was not really swept). Keyless throughout, so it works even when the paid APIs are out of
+credits.
 
 Usage:
   python3 tools/fallback_probe.py example.com --kb knowledge [--json]
@@ -40,9 +41,10 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Per-call ceiling — ONE resolver (WebPivot/tools/wp_timeouts: env CTI_CALL_TIMEOUT → .env →
-# references/timeouts.json → 1800s / 30 min). Stdlib sibling; floors every call this module makes.
+# references/timeouts.json → 5000s / ~83 min). Stdlib sibling; floors every call this module makes.
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
+import wp_ct  # noqa: E402 — the one CT client
 
 
 def _host(s: str) -> str:
@@ -59,138 +61,51 @@ def _get(url: str, timeout: int = None) -> str:
         return r.read().decode("utf-8", "ignore")
 
 
-def _ct_hostlist(url: str, domain: str) -> set:
-    """Fetch a keyless AGGREGATED subdomain index that replies with a plaintext,
-    newline-delimited host list (crt.name, agniops). Returns in-scope hosts only,
-    lowercased, apex excluded. Stdlib-only; never raises."""
-    out: set = set()
-    try:
-        body = _get(url, timeout=20).strip()
-    except Exception:
-        return out
-    if not body or body[0] == "<":            # empty or an HTML error page, not a host list
-        return out
-    dom = domain.lower()
-    for line in body.splitlines():
-        name = line.strip().lower().lstrip("*.")   # tolerate '*.' / leading-'.' artifacts
-        if not name or " " in name or "@" in name:
-            continue
-        if name != dom and not name.endswith("." + dom):   # in-scope hosts only
-            continue
-        if name != dom:
-            out.add(name)
-    return out
-
-
 # ------------------------------------------------------------------ 1. CT logs
 def _reg(name: str) -> str:
     return ".".join(name.split(".")[-2:])
 
 
 def crtsh(domain: str) -> dict:
-    """CT certs for the domain, from TWO keyless CT indexes merged — crt.sh and Shodan's
-    CTL mirror (ctl.shodan.io) of the same DB. crt.sh alone 502s often; Shodan covers the
-    gap. The prize is SAN-sibling domains: a single cert covering this domain AND an
-    unrelated-looking one binds them to one owner. If BOTH CT indexes yield no names, sweeps
-    the keyless AGGREGATED indexes crt.name + agniops as a last resort — their hits are NOT
-    CT-log-attributable (returned under `aggregated_subdomains`, tagged, verify before use)."""
-    subs, siblings, issuers, cert_n, srcs = set(), set(), set(), 0, []
-
-    def _sort_name(name: str):
-        name = name.strip().lower().lstrip("*.")
-        if not name or "@" in name:
-            return
-        # Group by REGISTRABLE domain, not a bare endswith: `fakesite.com`.endswith("site.com")
-        # is True yet it's a different owner — an unanchored test buried the strongest pivot
-        # (a SAN sibling) in the subdomain bucket. Match cert_overlap's _reg-based comparison.
-        if _reg(name) == _reg(domain):
-            subs.add(name)
-        else:
-            siblings.add(name)          # a DIFFERENT registrable domain on the same cert
-
-
-    # (a) crt.sh — ?q= 502s a lot; ?identity= is steadier
-    rows = []
-    for q in (f"%.{domain}", domain):
-        for param in ("q", "identity"):
-            try:
-                data = json.loads(_get("https://crt.sh/?" + urllib.parse.urlencode(
-                    {param: q, "output": "json"})))
-                if isinstance(data, list):
-                    rows.extend(data)
-                    break
-            except Exception:
-                continue
-    if rows:
-        srcs.append("crt.sh")
-        cert_n += len(rows)
-        for row in rows:
-            issuers.add(str(row.get("issuer_name", ""))[:60])
-            for name in str(row.get("name_value", "")).splitlines():
-                _sort_name(name)
-
-    # (b) Shodan CTL mirror — flat hostnames + cert objects (san_dns_names, issuer_cn)
-    base = f"https://ctl.shodan.io/api/v1/domain/{urllib.parse.quote(domain)}"
-    try:
-        for name in json.loads(_get(base + "/hostnames", timeout=20)):
-            _sort_name(str(name))
-        srcs.append("shodan-ctl")
-    except Exception:
-        pass
-    try:
-        certs = json.loads(_get(base, timeout=20))
-        cert_n += len(certs)
-        if "shodan-ctl" not in srcs:
-            srcs.append("shodan-ctl")
-        for row in certs:
-            issuers.add(str(row.get("issuer_cn", ""))[:60])
-            _sort_name(str(row.get("subject_cn", "")))
-            for n in (row.get("san_dns_names") or []):
-                _sort_name(str(n))
-    except Exception:
-        pass
-
-    # (c) AGGREGATED fallback — only when the CT logs yielded NO names (both peers down or
-    # empty). crt.name (CT + Common Crawl/CZDS/Chaos/HaGeZi) and agniops are keyless
-    # aggregated indexes: NOT CT-log-attributable, so they are tagged and ranked below crt.sh,
-    # and querying them discloses the apex to a third-party operator — hence gated to the
-    # cold case where they are the difference between a lead and a silent "nothing found".
-    agg_subs, agg_srcs = set(), []
-    if not subs and not siblings:
-        for label, url in (
-            ("crt.name(aggregated)",
-             "https://crt.name/v1/search?" + urllib.parse.urlencode({"apex": domain})),
-            ("agniops(aggregated)",
-             "https://app.agniops.in/v1/search?" + urllib.parse.urlencode({"domain": domain})),
-        ):
-            hits = _ct_hostlist(url, domain)
-            if hits:
-                agg_subs |= hits
-                agg_srcs.append(label)
-
-    if not srcs and not agg_srcs:
-        return {"ok": False,
-                "error": "no CT/subdomain source reachable (crt.sh + shodan-ctl + crt.name + agniops all failed)"}
-    out = {"ok": True, "sources": srcs, "certs": cert_n, "subdomains": sorted(subs)[:40],
-           "san_siblings": sorted(siblings)[:40], "issuers": sorted(i for i in issuers if i)[:8]}
-    if agg_srcs:
-        out["aggregated_sources"] = agg_srcs
-        out["aggregated_subdomains"] = sorted(agg_subs)[:80]
+    """CT certs for the domain through wp_ct. The prize is SAN-sibling domains: a single cert
+    covering this domain AND an unrelated-looking one binds them to one owner. Names grouped by
+    REGISTRABLE domain, not a bare endswith (`fakesite.com`.endswith("site.com") is a different
+    owner). Aggregated names (crt.name + agniops, asked only when CT left no name) stay separate:
+    not CT-log-attributable, verify before use."""
+    r = wp_ct.ct_search(domain, max_certs=None, max_subdomains=None)
+    subs, siblings, issuers = set(), set(), set()
+    for c in r.get("certs") or []:
+        if c.get("issuer_cn"):
+            issuers.add(c["issuer_cn"][:60])
+    for name in r.get("subdomains") or []:
+        (subs if _reg(name) == _reg(domain) else siblings).add(name)
+    crt = (r.get("ct_status") or {}).get("crt.sh", {}).get("status")
+    out = {"ok": not r.get("error"), "sources": r.get("sources") or [],
+           "crtsh_status": crt, "completeness_line": r.get("completeness_line"),
+           "certs": r.get("cert_total", 0), "subdomains": sorted(subs)[:40],
+           "subdomain_total": len(subs), "san_siblings": sorted(siblings)[:40],
+           "san_sibling_total": len(siblings), "issuers": sorted(issuers)[:8]}
+    if r.get("error"):
+        out["error"] = r["error"]
+    if r.get("aggregated_subdomains"):
+        out["aggregated_sources"] = r.get("aggregated_sources") or []
+        out["aggregated_subdomains"] = r["aggregated_subdomains"][:80]
     return out
 
 
 # ---------------------------------------------------------------- 2. Wayback CDX
 def wayback(domain: str) -> dict:
-    """Full capture timeline from the Wayback CDX API — first seen, last seen, count.
+    """Full capture timeline from the Wayback index — first seen, last seen, count.
     A parked domain with 400 captures over 3 years had content worth pivoting on."""
-    try:
-        body = _get("http://web.archive.org/cdx/search/cdx?" + urllib.parse.urlencode({
-            "url": domain, "matchType": "domain", "output": "json",
-            "fl": "timestamp,original,statuscode", "collapse": "timestamp:6", "limit": "500"}))
-        rows = json.loads(body)
-    except Exception as e:
-        return {"ok": False, "error": f"wayback CDX: {e}"}
-    rows = rows[1:] if rows and rows[0] and rows[0][0] == "timestamp" else rows
+    import wp_wayback  # noqa: E402 (WebPivot/tools already on sys.path, line 44)
+    rows, err = wp_wayback.index([
+        ("url", domain), ("matchType", "domain"), ("output", "json"),
+        ("fl", "timestamp,original,statuscode"), ("collapse", "timestamp:6"), ("limit", "500")],
+        ua=UA)
+    if err:
+        # a skip/non-answer is a GAP, never "never archived"
+        return {"ok": False, "skipped": err, "skipped_kind": "breaker",
+                "note": f"NOT queried (gap, re-run) — {err}"}
     if not rows:
         return {"ok": True, "captures": 0, "note": "never archived"}
     stamps = sorted(r[0] for r in rows if r and r[0])
@@ -283,6 +198,15 @@ def probe(domain: str, kb_dir: str) -> dict:
     if leads:
         res["verdict"] = "PIVOTABLE"
         res["leads"] = leads
+    elif res["crtsh"].get("crtsh_status") == "degraded":
+        res["verdict"] = "INCONCLUSIVE-CT-DEGRADED"
+        res["leads"] = []
+        res["next_steps"] = [
+            f"CT was not fully swept — {res['crtsh'].get('completeness_line')}. Older certificates "
+            "(and their SAN siblings) are invisible until crt.sh answers: this is not a cold seed yet.",
+            "Re-run fallback_probe when crt.sh is reachable (or install psycopg for its PostgreSQL fallback).",
+            "Run the emitted search dorks manually / via web search for off-site mentions.",
+        ]
     else:
         res["verdict"] = "NO-PIVOT-YET"
         res["leads"] = []
@@ -298,7 +222,9 @@ def probe(domain: str, kb_dir: str) -> dict:
 def _human(r: dict) -> str:
     out = [f"FALLBACK PROBE · {r['domain']} · VERDICT: {r['verdict']}"]
     c = r["crtsh"]
-    out.append(f"  CT logs    : {'%d certs, %d subdomains, %d SAN-siblings  [%s]' % (c.get('certs',0), len(c.get('subdomains',[])), len(c.get('san_siblings',[])), '+'.join(c.get('sources',[]))) if c.get('ok') else c.get('error')}")
+    out.append(f"  CT logs    : {'%d certs, %d subdomains, %d SAN-siblings  [%s]' % (c.get('certs',0), c.get('subdomain_total',0), c.get('san_sibling_total',0), '+'.join(c.get('sources',[]))) if c.get('ok') else c.get('error')}")
+    if c.get("completeness_line"):
+        out.append(f"     └ {c['completeness_line']}")
     if c.get("san_siblings"):
         out.append("     └ SAN-siblings (same-owner pivot): " + ", ".join(c["san_siblings"][:10]))
     if c.get("aggregated_subdomains"):

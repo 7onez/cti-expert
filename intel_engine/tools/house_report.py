@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import glob
+import ipaddress
 import json
 import os
 import re
@@ -65,24 +66,59 @@ INK, MUTED, GRID = "#1f1d1a", "#6f6a61", "#d9d3c7"
 STEEL, SLATE, OCHRE, BRICK, PAPER = "#3b5566", "#22333f", "#b0790f", "#8c2d2d", "#ffffff"
 
 # Rule 12: internal working / data-vendor names -> public source CLASS. Case evidence is never touched.
+# _V(): a bare vendor word that must not rewrite an indicator VALUE (Rule 12a) — no match inside a
+# host/e-mail label (`otx.example`, `ops-netlas.example`, `subfinder@example.com`).
+def _V(word: str) -> str:
+    return rf"(?<![\w.@-]){word}(?![\w@-]|\.[A-Za-z0-9])"
+
+
 PUBLIC_CLASS = [
+    (r"\bwhoisxmlapi\.com\b|\brdap\.org\b", "registration-data service"),
+    (r"\bintelx\.io\b", "leak-corpus search"),
+    (r"\bcrt\.sh\b", "certificate transparency"),
     (r"\bWhoisXML\b", "registration-data service"),
     (r"\bIntelX\b|\bIntelligence X\b", "leak-corpus search"),
     (r"\bCLD\b|\bChongLuaDao\b|\bChống Lừa Đảo\b", "anti-scam verdict service"),
     (r"\bHudsonRock(-class)?\b", "infostealer-corpus"),
     (r"\bFOFA\b|\burlscan(\.io)?\b|\bCensys\b|\bShodan\b|\bValidin\b|\bSecurityTrails\b|\bDNSLytics\b|\bQuake\b|\bZoomEye\b|\bHunter\.how\b|\bWebamon\b",
      "web-scan index"),
+    (_V("Netlas"), "web-scan index"),
+    (_V(r"(?:ANY\.RUN|AnyRun)"), "malware sandbox"),
+    (_V("VirusTotal"), "multi-engine reputation service"),
+    (_V("(?:Spamhaus|AbuseIPDB|OTX)"), "reputation feed"),
+    (_V("HackerTarget"), "passive DNS"),
+    (_V("CIRCL"), "passive DNS / certificate archive"),
+    (_V("subfinder"), "subdomain enumeration"),
     (r"\bmaigret\b|\bsherlock\b", "username enumeration"),
     (r"\bWayback\b", "web-archive"),
     (r"\bCDX\b", "archive-index"),
     (r"\bIPinfo\b", "IP/ASN data"),
+    (r"(?-i:\bMoli\b)", "headless renderer"),   # case-sensitive: `moli` is an ordinary word elsewhere
     (r"\bpivot_extract\b|\bpipeline open\b|\bcase-store\b|\bkb_ingest\b|\bintel\.py\b|\breference ledger\b|\boperators ledger\b|\bthe KB\b|\bknowledge base\b",
      "the case record"),
 ]
+# "registration-data service lookup via registration-data service" -> one mention of the class
+_DUP_CLASS_RES = [re.compile(rf"({re.escape(cls)})((?:\s+[\w-]+)?)\s+(?:via|from|at)\s+{re.escape(cls)}\b", re.I)
+                  for cls in dict.fromkeys(c for _, c in PUBLIC_CLASS)]
+# case_timeline source keys (IntelGraph references/evidence_sources.json `source_grading`) -> public class
+TIMELINE_SOURCE_CLASS = {
+    "rdap": "registration data (RDAP)", "whois_registry": "registry WHOIS",
+    "whois_registrar": "registrar WHOIS", "whois_history": "historical WHOIS",
+    "whois_registrant_contact": "WHOIS registrant contact",
+    "certificate_transparency": "certificate transparency", "tls_handshake": "live TLS handshake",
+    "bgp": "routing data", "passive_dns": "passive DNS", "securitytrails": "passive DNS",
+    "live_dns": "live DNS", "wayback": "web-archive", "archive_today": "web-archive",
+    "urlscan": "web-scan index", "fofa": "web-scan index", "shodan": "web-scan index",
+    "censys": "web-scan index", "page_content": "live page",
+    "page_self_declared_date": "page self-declared date", "analyst_inference": "analyst inference",
+}
 # backticked internal tooling (slash-commands, pipeline flags, script names) -> one neutral phrase
 _TOOL_TICK_RE = re.compile(r"`(?:/[a-z][a-z-]*[^`]*|[^`]*(?:--no-collect|--passive|pivot_extract|pipeline open|intel\.py|case-store|urllib)[^`]*)`")
 _UNITS_RE = re.compile(r"\s*\((?:\d+\s*[×x]\s*)?\d+\s*(?:units?|credits?)\)")
-_PLAIN_PATH_RE = re.compile(r"\b(?:evidence|raw|whois|report|knowledge|cases|MEMORY)/[A-Za-z0-9_.*<>/-]+")
+# a case-store path, including any absolute install prefix in front of it
+# (/root/.claude/skills/cti-expert/intel_engine/cases/CASE-0001/raw/x.json -> one replacement)
+_PLAIN_PATH_RE = re.compile(r"(?:(?<![\w.:/-])(?:~|\.{1,2})?/(?:[A-Za-z0-9_.-]+/)*)?"
+                            r"\b(?:evidence|raw|whois|report|knowledge|cases|MEMORY)/[A-Za-z0-9_.*<>/-]+")
 _TAG_RE = re.compile(r"\s*`?\[(?:[a-z0-9-]+)(?:\]\[(?:[a-z0-9-]+))*\]`?(?=[\s.,;)]|$)")
 _PATH_RE = re.compile(r"`(?:[A-Za-z0-9_./-]+/)+[A-Za-z0-9_.*<>-]+`")
 _DROP_LINE_RE = re.compile(r"api_usage|MEMORY/|Credits spent|ledger window", re.I)
@@ -94,8 +130,8 @@ _DROP_LINE_RE = re.compile(r"api_usage|MEMORY/|Credits spent|ledger window", re.
 # <case>/report_mask.json (display names, page slugs …).
 sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "scripts"))
 from cti_text_normalize import normalize_dashes  # noqa: E402
-from cti_third_party_mask import mask_third_parties as _mask, load_case_mask  # noqa: E402
-from cti_case_meta import resolve_seed, case_classification  # noqa: E402
+from cti_third_party_mask import mask_third_parties as _mask, load_case_mask, load_case_keep  # noqa: E402
+from cti_case_meta import resolve_seed, case_classification, expansion_anchor, raw_host_names  # noqa: E402
 import house_report_captures as hrc  # noqa: E402
 import house_report_correlations as hrx  # noqa: E402
 import house_report_dossier as hrd  # noqa: E402
@@ -106,8 +142,12 @@ try:  # registrar/privacy-proxy classifier for the Registrant-eras table (best-e
 except Exception:  # pragma: no cover — the table still renders, class falls back to "named"
     _is_privacy = None
 # Per-call ceiling for every figure/renderer subprocess (env CTI_CALL_TIMEOUT → .env →
-# references/timeouts.json → 1800s). _run() floors a caller's shorter bound to it.
+# references/timeouts.json → 5000s). _run() floors a caller's shorter bound to it.
 from wp_timeouts import floor as _floor  # noqa: E402
+# WHOIS-history era splitter (whois_eras.py) — the ONLY module allowed to turn history into
+# owner-link values; a previous owner's contact/name from an earlier registration era must never
+# reach _KEEP, a report subject, or a figure.
+from whois_eras import owner_values, prior_values  # noqa: E402
 try:  # eTLD+1 reducer shared with the collectors/frontier (PSL-aware); degrade to last-two-labels
     from wp_common import _registrable as _registrable_apex  # noqa: E402
 except Exception:  # pragma: no cover
@@ -161,21 +201,22 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
     # hops / clusters.json related_hosts). A LEAF — owner-linked to a previous hop, not to the operator —
     # is rendered ONCE as a bounding host and is otherwise invisible: no dossier, no WHOIS era, no
     # cohort, no landing page, and its registrant never enters _KEEP (so it masks like any third party).
-    st = _load_json(os.path.join(case_dir, "state.json"), {}) or {}
-    hops = {str(k).lower(): int(v) for k, v in (st.get("hops") or {}).items() if isinstance(v, int)}
-    depth = st.get("expansion_depth") if isinstance(st.get("expansion_depth"), int) else 2
-    related = {str(h).lower() for h in (c["clusters"].get("related_hosts") or [])}
+    # One leaf rule, shared with build_report_data (cti_case_meta.expansion_anchor): a host absent
+    # from a hop-tracked case's hops is not a seed — it is a leaf.
+    anchor = expansion_anchor(case_dir)
+    hops = anchor.hops
     all_raw = sorted(p for p in glob.glob(os.path.join(case_dir, "raw", "*.json"))
                      if not os.path.basename(p).startswith("harvest.")
                      and not p.endswith(".impersonation.json"))
-
-    def _is_leaf(host):
-        h = host.lower()
-        return h in related or (bool(hops) and hops.get(h, depth) >= depth)
-    c["related_hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in all_raw
-                                if _is_leaf(os.path.basename(p)[:-5]))
+    # Collected ORIGIN IPs (the loop's historical origin sweep — IPPivot raws named after the address)
+    # are infrastructure, not domains: never an estate host, a dossier, a WHOIS row or a graph seed.
+    # They render once, in the "Historical origin hosting" table.
+    c["ip_raw"] = {os.path.basename(p)[:-5]: p for p in all_raw if _is_ip_name(os.path.basename(p)[:-5])}
+    all_raw = [p for p in all_raw if os.path.basename(p)[:-5] not in c["ip_raw"]]
+    leaf_paths = {p for p in all_raw if anchor.is_leaf(*raw_host_names(p))}
+    c["related_hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in all_raw if p in leaf_paths)
     c["hops"] = hops
-    c["raw"] = [p for p in all_raw if not _is_leaf(os.path.basename(p)[:-5])]
+    c["raw"] = [p for p in all_raw if p not in leaf_paths]
     c["hosts"] = sorted(os.path.basename(p)[:-5].lower() for p in c["raw"])
     estate_apexes = {_registrable_apex(h) for h in c["hosts"]}
     c["whois"] = {}
@@ -191,13 +232,37 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
     global _KEEP, _MASK_EXTRA, _CURRENT_CASE, _HOSTS
     _CURRENT_CASE = c["case"]
     _HOSTS = set(c["hosts"])
-    counts = {}
-    for w in c["whois"].values():                 # estate WHOIS only — a leaf's registrant stays masked
-        for k in ("registrant_email", "registrant_phone"):
-            v = (w.get(k) or "").strip().lower()
-            if v and "privacy" not in v and not v.startswith("abuse@"):
-                counts[v] = counts.get(v, 0) + 1
-    _KEEP = {v for v, n in counts.items() if n >= 2}
+    # Era-aware join key (whois_eras.py — the single place history becomes an owner-link value):
+    # owner_values() is the live registrant field + the CURRENT era's history records only, so a
+    # previous owner's contact from an earlier registration era can never become a join key.
+    # Grouped by REGISTRABLE APEX (not host) so identical subdomain WHOIS copies of one apex's
+    # history cannot inflate a single apex's value past the >=2-apex threshold.
+    apex_values: dict = {}
+    for host, w in c["whois"].items():             # estate WHOIS only — a leaf's registrant stays masked
+        apex = _registrable_apex(host)
+        for kind in ("email", "phone"):
+            for v in owner_values(w, kind):
+                vl = v.strip().lower()
+                if not vl or "privacy" in vl or vl.startswith("abuse@") or (_is_privacy and _is_privacy(vl)):
+                    continue
+                apex_values.setdefault(vl, set()).add(apex)
+    _KEEP = {v for v, apexes in apex_values.items() if len(apexes) >= 2}
+    # The assessment's own operator selectors: a cluster[].shared_artifacts e-mail/phone is the
+    # analyst's own asserted join key and does not have to re-earn the >=2-apex count (e.g. a
+    # single-apex benign-check estate).
+    for m in (c["assessment"].get("cluster") or []):
+        for art in (m.get("shared_artifacts") or []) if isinstance(m, dict) else []:
+            mm = re.match(r"(?:registrant_email|email|registrant_phone|phone)\s*:\s*(.+)", str(art or ""), re.I)
+            if mm:
+                v = mm.group(1).strip().lower()
+                if v and "privacy" not in v and not v.startswith("abuse@"):
+                    _KEEP.add(v)
+    # Case-scoped keep file: analyst-certified operator identifiers WHOIS never carries (a tax id,
+    # a support e-mail/phone) — <case>/report_keep.json.
+    for v in load_case_keep(case_dir):
+        vl = str(v).strip().lower()
+        if vl:
+            _KEEP.add(vl)
     # Related personas (MO-neighbour, rung 10) render IN CLEAR by default — an analyst decision
     # (Validation Session 1) — so exactly those verified identities are folded into _KEEP. Scoped:
     # every other third-party value in the case stays masked. --mask-personas skips the fold-in.
@@ -207,28 +272,33 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
             if v:
                 _KEEP.add(v)
     _MASK_EXTRA = load_case_mask(case_dir)
-    # A registrant NAME that appears only in ONE host's WHOIS history and is neither the current
-    # registrant nor an operator identity is a previous owner — an uninvolved third party under the
-    # output rule. E-mails/phones already fall to the generic mask; names need the same treatment.
+    # A registrant NAME from a PREVIOUS ownership era (whois_eras.prior_values — never the current
+    # era) that is neither the current registrant nor an operator identity is an uninvolved third
+    # party under the output rule; e-mails/phones already fall to the generic mask, names need the
+    # same treatment. Counted by REGISTRABLE APEX (not host) so identical subdomain histories of
+    # one drop-caught apex cannot lift a stranger's name over the >=2-apex escape hatch.
     ops_text = " ".join(str(r.get("operator") or "") for r in c["operators"]).lower()
     current = {str(w.get(k) or "").strip().lower()
                for w in c["whois"].values() for k in ("registrant_name", "registrant_org")}
-    name_hosts: dict = {}
-    hist_sources = [(h, (w.get("history") or {})) for h, w in c["whois"].items()]
+    name_apexes: dict = {}
+    whois_sources = list(c["whois"].items())
     for rp in c["raw"]:                       # the collector's own WHOIS layer keeps the era names
         arts = (_load_json(rp, {}) or {}).get("artifacts") or {}
-        hist_sources.append((os.path.basename(rp)[:-5].lower(), ((arts.get("whois") or {}).get("history") or {})))
-    for host, hist in hist_sources:
-        for n in (hist.get("registrant_names") or []) if isinstance(hist, dict) else []:
-            n = str(n).strip()
+        w2 = arts.get("whois") or {}
+        if w2:
+            whois_sources.append((os.path.basename(rp)[:-5].lower(), w2))
+    for host, w in whois_sources:
+        apex = _registrable_apex(host)
+        for item in prior_values(w, "name"):
+            n = str(item.get("value") or "").strip()
             if not n or (_is_privacy and _is_privacy(n)):
                 continue
             if re.search(r"whois|privacy|private|redacted|domain", n, re.I):
                 continue                      # a privacy service / registrar placeholder, not a person
-            name_hosts.setdefault(n, set()).add(host)
-    for n, hs in name_hosts.items():
+            name_apexes.setdefault(n, set()).add(apex)
+    for n, apexes in name_apexes.items():
         nl = n.lower()
-        if len(hs) >= 2 or nl in current or nl in _KEEP or (ops_text and (nl in ops_text or ops_text in nl)):
+        if len(apexes) >= 2 or nl in current or nl in _KEEP or (ops_text and (nl in ops_text or ops_text in nl)):
             continue
         if n not in _MASK_EXTRA:
             _MASK_EXTRA.append(n)
@@ -307,8 +377,42 @@ def find_section(secs: dict, *needles: str) -> str:
     return ""
 
 
-def scrub(text: str) -> str:
-    """Rule 12: drop collection-method tags, internal paths and vendor names; keep evidence values."""
+_CODE_SPAN_RE = re.compile(r"(`+)(?:(?!\1).)+?\1")
+
+
+def _escape_angles(text: str, gt: bool = False) -> str:
+    """Pandoc reads `<word …>` as raw HTML and drops it from the PDF/DOCX. Escape every `<` OUTSIDE
+    code spans — inside a code span pandoc already prints it literally and an entity would show as
+    `&lt;`. `gt` also escapes `>` (single-line table cells only: in multi-line markdown a line-leading
+    `>` is a blockquote marker and must survive)."""
+    out, pos = [], 0
+    for m in _CODE_SPAN_RE.finditer(text):
+        out.append(text[pos:m.start()])
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(text[pos:])
+    for i in range(0, len(out), 2):            # even slots = text outside code spans
+        seg = out[i].replace("<", "&lt;")
+        if gt:
+            seg = seg.replace(">", "&gt;")
+        out[i] = seg
+    return "".join(out)
+
+
+def scrub_vendors(line: str) -> str:
+    """Rule 12 vendor/tool names -> public source class; indicator values are never rewritten."""
+    for pat, repl in PUBLIC_CLASS:
+        line = re.sub(pat, repl, line, flags=re.I)
+    for rx in _DUP_CLASS_RES:
+        line = rx.sub(r"\1\2", line)
+    return line
+
+
+def scrub(text: str, escape: bool = True) -> str:
+    """Rule 12: drop collection-method tags, internal paths and vendor names; keep evidence values.
+    `escape` (default): the result is house MARKDOWN — `<` is entity-escaped outside code spans so an
+    attacker/analyst string like `Sign in to <Acme Bank>` survives pandoc. Pass escape=False for
+    plain-text sinks (figure labels)."""
     out = []
     for line in text.splitlines():
         if _DROP_LINE_RE.search(line):
@@ -318,15 +422,15 @@ def scrub(text: str) -> str:
         line = _UNITS_RE.sub("", line)
         line = _PATH_RE.sub("the case record", line)
         line = _PLAIN_PATH_RE.sub("the case record", line)
-        for pat, repl in PUBLIC_CLASS:
-            line = re.sub(pat, repl, line, flags=re.I)
-        out.append(line)
+        out.append(scrub_vendors(line))
     text = "\n".join(out)
     for bad, good in (("→", "->"), ("≠", "!="), ("≤", "<="), ("≥", ">="), ("⇄", "<->")):
         text = text.replace(bad, good)   # Noto Serif has no glyph for these -> tofu in the PDF
     text = mask_third_parties(text)
     # a bare <!-- … --> is an HTML comment to pandoc and silently vanishes from PDF/DOCX
     text = re.sub(r"(?<!`)(<!--.*?-->)(?!`)", r"`\1`", text)
+    if escape:
+        text = _escape_angles(text)
     # collapse the blank runs the drops leave behind
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
@@ -352,7 +456,13 @@ def condense_timeline_ledger(md: str, events: dict | None = None) -> tuple:
         if not m or "collected by us" in m.group(3):
             continue
         what = m.group(3).split(" — ")[0].strip()
-        tbl.append(f"| {m.group(1).strip()[:10]} | {m.group(2).strip()} | {_md_escape(what)} | {m.group(4).strip()} |")
+        src = m.group(4).strip()
+        sm = re.fullmatch(r"([A-Za-z_][\w-]*)\s*\(([A-F][1-6])\)", src)
+        if sm and sm.group(1).lower() in TIMELINE_SOURCE_CLASS:
+            src = f"{TIMELINE_SOURCE_CLASS[sm.group(1).lower()]} ({sm.group(2)})"
+        elif sm and "_" in sm.group(1):          # an unmapped internal key: never print it raw
+            src = f"{sm.group(1).replace('_', ' ')} ({sm.group(2)})"
+        tbl.append(f"| {m.group(1).strip()[:10]} | {m.group(2).strip()} | {_md_escape(what)} | {_md_escape(src)} |")
     ledger = "\n".join(tbl) if len(tbl) > 2 else ""
     return hrx.temporal_correlations_md(md, _md_escape, events), ledger
 
@@ -369,7 +479,7 @@ def parse_judgments(section: str) -> list:
         title, body = m.group(1).strip(" .—-"), " ".join(m.group(2).split())
         g = re.findall(r"\(([A-F][1-6])", body)
         conf = re.search(r"(assessed|likely|possible|cannot rule out|unattributed)\s*/?\s*(high|moderate|low)?", title + " " + body, re.I)
-        out.append({"title": title, "body": scrub(body), "grade": g[-1] if g else "",
+        out.append({"title": scrub(title), "body": scrub(body), "grade": g[-1] if g else "",
                     "confidence": (conf.group(0) if conf else "").strip()})
     return out
 
@@ -496,7 +606,7 @@ def fig_sector_graph(c: dict, rep_dir: str, title: str) -> str | None:
     if len(domains) < 3:
         return None
     ops = [o for o in c["operators"] if o.get("case") == c["case"]] or c["operators"][:1]
-    persona = (ops[0].get("operator") if ops else None) or next(iter(_KEEP), "registrant record")
+    persona = (ops[0].get("operator") if ops else None) or "registrant record"
     try:
         sys.path.insert(0, os.path.join(ROOT, "IntelGraph", "scripts"))
         from theme import mermaid_init  # noqa: WPS433
@@ -583,7 +693,7 @@ def fig_attribution_chain(c: dict, rep_dir: str) -> str | None:
         grade = re.search(r"\[([A-F][1-6])", e)
         strong = (rung and int(rung.group(1)) <= 8) or (grade and grade.group(1)[0] in "AB")
         if strong and "rejected" not in e.lower():
-            support.append("- " + _wrap(scrub(body), 40))
+            support.append("- " + _wrap(scrub(body, escape=False), 40))
     support = support[:6] or ["- (see Evidence ledger)"]
 
     rejected, open_alts = [], []
@@ -685,10 +795,10 @@ def fig_timeline(c: dict, rep_dir: str, observed: str) -> tuple:
 
 # --------------------------------------------------------------------------- tables
 def _md_escape(s) -> str:
+    """One table cell / inline value: `|` escaped, newlines folded, `<` (and `>` when the value
+    carries a tag) entity-escaped outside code spans so pandoc cannot swallow it as raw HTML."""
     t = str(s if s is not None else "—").replace("|", "\\|").replace("\n", " ")
-    if "<" in t and "`" not in t:
-        t = t.replace("<", "&lt;").replace(">", "&gt;")
-    return t
+    return _escape_angles(t, gt=True) if "<" in t else t
 
 
 def source_class(indicator: str) -> tuple:
@@ -821,6 +931,109 @@ def _strip_handling_notes(text: str) -> str:
     return _HANDLING_RE.sub("", text or "").strip()
 
 
+def _is_ip_name(name: str) -> bool:
+    try:
+        ipaddress.ip_address(str(name or "").strip())
+        return True
+    except ValueError:
+        return False
+
+
+# public source CLASS per origin-history source (Rule 12: never the product name) and its grade
+_ORIGIN_SOURCE_CLASS = {"live_dns": ("live DNS", "A2"), "urlscan_hostname": ("public web-scan data", "B2"),
+                        "urlscan_scans": ("public web-scan data", "B2")}
+
+
+def origin_hosting_md(c: dict) -> str:
+    """The estate's NON-CDN hosting history — every origin address an estate host resolved to (CDN /
+    WAF / parking / bogon edges and previous-owner eras excluded), dated, with the network, country
+    and abuse contact read off the collected origin IP. Co-tenants are COUNTED, never named: they are
+    third parties until an identity artifact ties one to the estate."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+        import wp_origin_history as OH  # noqa: E402
+    except Exception:  # noqa: BLE001
+        return ""
+    per_ip = {}
+    for rp in c.get("raw") or []:
+        _h, _reg, rows = OH.host_origins(_load_json(rp, {}) or {})
+        for r in rows:
+            if r["era"] == "previous_owner":
+                continue
+            e = per_ip.setdefault(r["ip"], {"hosts": set(), "sources": set(), "first": None, "last": None,
+                                            "live": False, "era": r["era"], "asn": r.get("asn"), "org": r.get("org"),
+                                            "ambiguous": False})
+            e["ambiguous"] = e["ambiguous"] or r.get("status") == "ambiguous"
+            e["hosts"].add(_h)
+            e["sources"].update(r.get("sources") or ())
+            if r.get("first_seen") and (e["first"] is None or r["first_seen"] < e["first"]):
+                e["first"] = r["first_seen"]
+            if r.get("last_seen") and (e["last"] is None or r["last_seen"] > e["last"]):
+                e["last"] = r["last_seen"]
+            e["live"] = e["live"] or bool(r.get("live"))
+            if OH._ERA_RANK[r["era"]] < OH._ERA_RANK[e["era"]]:
+                e["era"] = r["era"]
+    if not per_ip:
+        return ""
+    L = ["Every address an estate domain has resolved to that is **not** a shared CDN / DDoS-protection "
+         "edge or a parking service — the boxes the estate was actually served from, including ones now "
+         "hidden behind a CDN. Eras that predate a domain's current registration belong to a previous "
+         "owner and are omitted. Other sites on the same address are counted, not named: sharing a "
+         "server is not evidence of a shared operator.", "",
+         "| Address | Estate domains | Hosting window | Network | Abuse contact | Other sites | Source (grade) |",
+         "|:--|:--|:--|:--|:--|:--|:--|"]
+    for ip in sorted(per_ip, key=lambda i: (OH._ERA_RANK[per_ip[i]["era"]], -len(per_ip[i]["hosts"]), i)):
+        e = per_ip[ip]
+        ii = ((_load_json(c["ip_raw"][ip], {}) or {}).get("artifacts") or {}).get("ip_intel") or {} \
+            if ip in (c.get("ip_raw") or {}) else {}
+        info = ii.get("ipinfo") or {}
+        net = " ".join(x for x in (info.get("asn") or e["asn"], info.get("org_name") or e["org"],
+                                   f"({info['country']})" if info.get("country") else None) if x) or "—"
+        if e["ambiguous"]:
+            net += " — sells DDoS proxying and servers; other sites may sit behind the same edge"
+        abuse = (info.get("abuse") or {}).get("email") or "—"
+        others = {_registrable_apex(d) for d in ii.get("co_hosted_domains") or []} - \
+                 {_registrable_apex(h) for h in c.get("hosts") or []}
+        window = f"{e['first'] or '?'} → {'present' if e['live'] else (e['last'] or '?')}"
+        classes = sorted({_ORIGIN_SOURCE_CLASS.get(s, ("passive DNS / IP", "B2")) for s in e["sources"]})
+        src = "; ".join(f"{k} ({g})" for k, g in classes)
+        L.append(f"| `{ip}` | {_md_escape(', '.join(sorted(e['hosts'])))} | {window} | {_md_escape(net)} | "
+                 f"{_md_escape(abuse)} | {len(others) if ii else 'not examined'} | {src} |")
+    return "\n".join(L)
+
+
+# CT source → public source class (Rule 12): the deliverable names the class and its window, never
+# the vendor. Several ~1-year mirrors share one class; their rows stay separate so a reader sees
+# how many answered.
+CT_SOURCE_CLASS = {"crt.sh": "CT log search (full history)", "shodan-ctl": "CT mirror",
+                   "certspotter": "CT mirror", "certkit": "CT mirror", "certindex": "CT mirror",
+                   "netlas": "certificate index (multi-year, sparse)",
+                   "censys": "certificate index (sampled)",
+                   "crt.name(aggregated)": "aggregated name index", "agniops(aggregated)": "aggregated name index"}
+
+
+def ct_related_md(c: dict):
+    """(certificate-transparency completeness md, related-hosts md) for the estate. CT: one line per
+    host — never "no certificates" when the log search was unreachable. Related hosts: hosts sharing a
+    certificate / favicon / tracking ID with an estate host, graded by agreeing origin checks; they
+    are never hosting, never an abuse or takedown recipient (that is Historical origin hosting)."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+        import evidence_report as ER  # noqa: E402
+    except Exception:  # noqa: BLE001
+        return "", ""
+    results = [_load_json(rp, {}) or {} for rp in c.get("raw") or []]
+    ct, related = ER.ct_and_related(results)
+    for s in ct.values():
+        s["sources"] = {f"{CT_SOURCE_CLASS.get(k, 'certificate source')} [{i}]": v
+                        for i, (k, v) in enumerate((s.get("sources") or {}).items(), 1)}
+        s["completeness_line"] = scrub_vendors(s.get("completeness_line") or "")
+    ct_md = "\n".join(ER.WR.ct_md(ct)).strip()
+    rel_md = "\n".join(scrub_vendors(line) for line in ER.WR.related_md(related)).strip()
+    return ct_md, mask_third_parties(rel_md) if rel_md else ""
+
+
+
 def related_personas_md(mo: dict, masked: bool = False) -> str:
     """'Related personas on the same infrastructure' — the MO-neighbour deliverable, placed under
     Alternative analysis because that is what it is: the syndicate-vs-campaign question, unresolved.
@@ -869,6 +1082,22 @@ def related_personas_md(mo: dict, masked: bool = False) -> str:
     return "\n".join(L).rstrip()
 
 
+_NOMINEE_RE = re.compile(r"\b(nominee|front|proxy|straw)\b", re.I)
+_CANNOT_RULE_OUT_RE = re.compile(r"cannot[\s_-]*rule[\s_-]*out", re.I)
+
+
+def _nominee_uncertain(c: dict) -> bool:
+    """True when assessment.json names a nominee/front/proxy/straw explanation the analyst marked
+    'cannot rule out' — the registrant is then a WHOIS persona, not an asserted real-world operator
+    (IntelAnalysis persona doctrine). Never assert 'the operator' in that case."""
+    for alt in (c["assessment"].get("alternatives") or []):
+        s = alt if isinstance(alt, str) else f"{alt.get('hypothesis','')} {alt.get('status','')} {alt.get('why','')}"
+        s = str(s)
+        if _NOMINEE_RE.search(s) and _CANNOT_RULE_OUT_RE.search(s):
+            return True
+    return False
+
+
 def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     a = c["assessment"]
     secs = split_sections(c["analyst_md"]) if c["analyst_md"] else {}
@@ -877,6 +1106,11 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     brand = c["scope"].get("brand") or ""
     title = secs.get("_title") or a.get("bluf", "")[:90] or f"Assessment — {seed}"
     title = re.sub(r"^Analyst Assessment \(ICD-203\)\s*[—-]\s*", "", title)
+    # the cover title is plain text (render_report tex-escapes it): Rule 12 scrub, no markdown escape;
+    # a title that is only the internal case id is no title at all (the cover never shows the case id)
+    title = scrub(title, escape=False)
+    if not title or re.fullmatch(r"CASE-[\w-]+", title, re.I) or title.lower() == case.lower():
+        title = f"Assessment — {seed}"
 
     purpose = _strip_handling_notes(a.get("decision_supported") or "")
     purpose = scrub(purpose or
@@ -886,13 +1120,24 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     conf = a.get("confidence", "—")
     attribution = a.get("attribution_level", "—")
 
-    # Cover "Basis": a run that fetched live pages is not passive OSINT — say which it was.
-    live_hosts = 0
+    # Cover "Basis": a run that fetched live pages is not passive OSINT — say which it was; a host
+    # with a live_error (fetch failed) or recovered_via (served from an archive) is NOT live, even
+    # when the collector printed "ok" — never assert a retrieval that did not happen.
+    live_hosts = archived_hosts = 0
     for rp in c["raw"]:
         meta = (_load_json(rp, {}) or {}).get("meta") or {}
-        if meta.get("host") and not meta.get("recovered_via"):
+        if not meta.get("host"):
+            continue
+        if meta.get("live_error") or meta.get("recovered_via"):
+            archived_hosts += 1
+        else:
             live_hosts += 1
-    basis = "OSINT incl. live retrieval" if live_hosts else "Passive OSINT"   # label-length: the cover column is narrow
+    if live_hosts:
+        basis = "OSINT incl. live retrieval"
+    elif archived_hosts:
+        basis = "Passive OSINT (archived captures)"
+    else:
+        basis = "Passive OSINT"
 
     L = []
     L += ["---", f'title: "{title[:140].replace(chr(34), chr(39))}"', f"case_id: {case}",
@@ -916,7 +1161,7 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
                    if (c["scope"].get("target_class") or "") in ("confirmed_scam", "suspected_scam", "threat_actor_infra")
                    else "Brand / entity in play")
     if brand:
-        L.append(f"- **{brand_label}:** {brand}")
+        L.append(f"- **{brand_label}:** {_md_escape(brand)}")
     L.append("")
 
     # II — Methodology
@@ -938,9 +1183,12 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           f"| Observed | {observed} |", ""]
     w = c["whois"].get(seed, {})
     if w:
-        L += [f"`{seed}` was registered {(w.get('created') or '—')[:10]} through {w.get('registrar') or 'an undisclosed registrar'}; "
-              f"registrant record: {' / '.join(x for x in (w.get('registrant_name'), w.get('registrant_email'), w.get('registrant_phone')) if x) or 'privacy-redacted'}; "
-              f"nameservers {', '.join((w.get('name_servers') or [])[:2]) or '—'}.", ""]
+        reg = " / ".join(_md_escape(x) for x in (w.get("registrant_name"), w.get("registrant_email"),
+                                                  w.get("registrant_phone")) if x)
+        L += [f"`{seed}` was registered {_md_escape((w.get('created') or '—')[:10])} through "
+              f"{_md_escape(w.get('registrar') or 'an undisclosed registrar')}; "
+              f"registrant record: {reg or 'privacy-redacted'}; "
+              f"nameservers {_md_escape(', '.join((w.get('name_servers') or [])[:2]) or '—')}.", ""]
 
     # IV — Findings (analyst narrative, scrubbed)
     L += ["# Findings", ""]
@@ -1011,6 +1259,14 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     corr, dated_ledger = condense_timeline_ledger(figs.get("timeline_md", ""), figs.get("timeline_events"))
     if corr:
         L += ["## Temporal correlations", "", corr, ""]
+    origin_md = origin_hosting_md(c)
+    if origin_md:
+        L += ["## Historical origin hosting", "", origin_md, ""]
+    ct_md, rel_md = ct_related_md(c)
+    if ct_md:
+        L += ["## Certificate transparency — completeness", "", ct_md, ""]
+    if rel_md:
+        L += ["## Related hosts (unverified)", "", rel_md, ""]
     excluded = find_section(secs, "excluded")
     if excluded:
         L += ["## Tested and excluded (false-positive control)", "", demote_headings(scrub(excluded)), ""]
@@ -1019,13 +1275,22 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     L += ["# Attribution", ""]
     if figs.get("attribution"):
         L += [f"![The inference chain. Solid lines are the evidence relied on; the dashed box is what was tested and excluded. Observed {observed}.]({os.path.basename(figs['attribution'])})", ""]
-    L += ["## The operator", ""]
+    nominee = _nominee_uncertain(c)
+    L += [f"## {'The registrant' if nominee else 'The operator'}", ""]
     mine = [o for o in c["operators"] if o.get("case") == case] or c["operators"][:1]
     if mine:
         o = max(mine, key=lambda r: len(r.get("domains") or []))
-        L += [f"The estate is recorded against one registrant persona, **{_md_escape(o.get('operator'))}** — "
-              f"{len(o.get('domains') or [])} domains, attribution *{o.get('confidence', '—')}*. The persona is the "
-              f"WHOIS registrant record (e-mail, name, phone); it is not a verified real-world identity.", ""]
+        if nominee:
+            L += [f"The estate is recorded against one registrant persona, **{_md_escape(o.get('operator'))}** — "
+                  f"{len(o.get('domains') or [])} domains. A nominee/front explanation could not be ruled out "
+                  "(see Alternative analysis); the operator behind this persona is NOT asserted.", ""]
+        else:
+            L += [f"The estate is recorded against one registrant persona, **{_md_escape(o.get('operator'))}** — "
+                  f"{len(o.get('domains') or [])} domains, attribution *{o.get('confidence', '—')}*. The persona is the "
+                  f"WHOIS registrant record (e-mail, name, phone); it is not a verified real-world identity.", ""]
+    elif nominee:
+        L += ["A nominee/front explanation could not be ruled out (see Alternative analysis); the operator "
+              "is not asserted.", ""]
     confs = find_section(secs, "confidence")
     if confs:
         L += [demote_headings(scrub(confs)), ""]
@@ -1173,7 +1438,7 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
 
     md = compose(c, figs, classification, observed)
     md = normalize_dashes(md)
-    md_path = os.path.join(rep_dir, stem + ".md")
+    md_path = os.path.join(rep_dir, stem + ".house.md")
     open(md_path, "w", encoding="utf-8").write(md)
     out = {"markdown": md_path, **{k: v for k, v in figs.items() if k not in ("timeline_md", "timeline_events", "captures", "captures_skipped", "capture_hosts", "rep_dir", "charts")},
            "landing_pages": f"{len(figs['captures'])}/{len(hosts)} captured"
@@ -1196,9 +1461,12 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
 
 
 def main():
+    import uuid
+    os.environ.setdefault("INTEL_RUN_ID", uuid.uuid4().hex)   # wp_wayback_guard: one breaker per run
     ap = argparse.ArgumentParser(description="case dir -> IntelReport house-style PDF + DOCX (deterministic)")
     ap.add_argument("case", help="case id under cases/ or a case dir path")
-    ap.add_argument("--stem", help="output filename stem (default CTI-REPORT-<case>-<date>)")
+    ap.add_argument("--stem", help="output filename stem (default CTI-REPORT-<case>-<date>); "
+                    "the composed markdown is <stem>.house.md — PDF/DOCX keep <stem>.pdf/.docx")
     ap.add_argument("--classification", default=None,
                     help="handling caveat (default: the case's TLP from assessment.md / assessment.json / scope.json, else TLP:AMBER)")
     ap.add_argument("--audience", default="technical", choices=["technical", "executive", "le"])

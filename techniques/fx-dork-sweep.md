@@ -1,7 +1,7 @@
 # fx-dork-sweep
 
 ## Purpose
-Execute zero-auth Google-style dork sweeps across Telegram ecosystem, document-hosting platforms, and target-domain filetypes. Builds precision queries, runs through a 4-tier fallback cascade (WebSearch → Bing → DuckDuckGo → agent-browser), deduplicates hits, and records findings to subject registry.
+Execute Google-style dork sweeps across Telegram ecosystem, document-hosting platforms, and target-domain filetypes. Builds precision queries, runs through a free 4-tier fallback cascade (WebSearch → Bing → DuckDuckGo → agent-browser), then — only when every free tier failed — a metered SerpApi Google tier (Tier 5, needs `SERPAPI_KEY`, skipped under free-only), deduplicates hits, and records findings to subject registry.
 
 ## Quick Reference
 | Item | Detail |
@@ -10,7 +10,7 @@ Execute zero-auth Google-style dork sweeps across Telegram ecosystem, document-h
 | Input | Keyword, domain, email, username, phone, or person name |
 | Output | Deduplicated ranked hit list + evidence URLs; findings logged with trust score |
 | Confidence | HIGH for indexed content verified via ≥2 tiers; MEDIUM for snippet-only |
-| No-auth | YES — zero API keys, zero logins |
+| No-auth | YES for Tiers 1–4 (zero API keys, zero logins). Tier 5 is the only keyed step: `SERPAPI_KEY`, metered, fallback-only |
 
 ## Methodology
 1. Parse TARGET; wrap multi-word inputs in `"..."`. URL-encode for direct-URL tiers.
@@ -24,7 +24,7 @@ Execute zero-auth Google-style dork sweeps across Telegram ecosystem, document-h
 6. Dispatch via cascade-runner (Tools & Fallbacks below).
 7. Classify hits: indexed+retrievable=HIGH, snippet-only=MEDIUM, cached/mirror=LOW.
 8. Cross-engine dedup (URL canonicalization).
-9. `/record-finding` per hit: source URL, collection tier, trust score (3 single-tier, 4 cross-tier match).
+9. `/record-finding` per hit: source URL, collection tier (`T1`…`T4`, or `serpapi` for a Tier-5 hit), trust score (3 single-tier, 4 cross-tier match).
 10. For Doc-host hits with severity concern → handoff to [`fx-document-leak-hunt.md`](fx-document-leak-hunt.md).
 
 ## Dork Library
@@ -102,8 +102,24 @@ Invoke tiers sequentially. Escalate only on failure signal. Add 2s delay between
 # Mode: headless=false, user-data-dir=persistent for cookie warmth
 # Invocation: navigate to https://www.google.com/search?q={URLENC}
 # Evidence: mandatory screenshot at results page
-# Failure: CAPTCHA prompt → log collection-gap, do NOT retry
+# Failure: CAPTCHA prompt → Tier 5 if SERPAPI_KEY is set and the run is not free-only,
+#          else log collection-gap, do NOT retry
 ```
+
+**Tier 5 — SerpApi Google (metered, only for a query every free tier failed on):**
+```
+# Re-run EXACTLY the query that failed (the mega-dork / split chunk, not a regenerated set):
+#   python3 intel_engine/WebPivot/tools/wp_serp.py web '<QUERY>' [--num 10] [--gl vn --hl vi]
+# 1 search per query, ledgered in api_usage, bounded by WebPivot/references/serpapi.json
+#   search_budget. Record each hit's collection tier as `serpapi`.
+# Output: {"query", "results":[{position,title,link,host,snippet}]}; `skipped` = never asked,
+#   `empty` = Google had nothing (still billed), `error`.
+# Skip: free-only run / case scope no_spend / no SERPAPI_KEY / `related:` (retired by Google)
+#   → log the query as a collection-gap: NOT ANSWERED, never "no results".
+```
+For the generic `/query` / `/search-pivot` dork set (not this command's mega-dorks),
+`intel.py query <indicator> --run` executes it end to end: DuckDuckGo per query first, SerpApi
+only for the queries DuckDuckGo challenged or failed.
 
 **User-Agent pool (rotate every 3 Tier-2 queries):**
 - `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127.0.0.0 Safari/537.36`

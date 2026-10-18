@@ -1,0 +1,88 @@
+{
+  "_comment": "wp_wayback — the Wayback Machine endpoints and retry knobs every archive call site goes through. Measured live 2026-09-28, PACED (~1 request/5s per exit). Reliability is ENDPOINT-side, not route-side: /web/timemap/json answered every paced request on every exit tried (median 5-7s); the /web/<ts>id_/<url> redirect resolver every request (<3s; 302 Location = nearest capture, 404 = none); id_ playback every request; /cdx/search/cdx only ~5-6/9 (503 'Temporarily Offline' or a ~40s hang); archive.org/wayback/available 0/27 (always 429, from three unrelated IPs) — dropped from the client. Exits verified reachable: direct (VNPT), Tor (socks5h 127.0.0.1:9050), and the CTI_PROXIES HTTP pool except 37.252.26.70 (407 bad credentials); WARP (socks5h 127.0.0.1:40000) is reachable for HTTP but was NOT hash-verified for snapshot bytes (curl SOCKS failure during the hash run). Snapshot BYTES compared by sha256 direct vs Tor vs one pool proxy MATCH after decompression (id_ replays the capture's original gzip; wp_wayback decompresses centrally). Earlier UNPACED runs overstated proxy failures and got the direct IP firewalled — pace, do not burst.",
+  "index": {
+    "_comment": "CDX-grammar index endpoints, tried in order on every attempt; a valid empty answer ([]) from any of them is final. timemap/json first (reliable), the classic CDX server second.",
+    "value": [
+      "https://web.archive.org/web/timemap/json",
+      "https://web.archive.org/cdx/search/cdx"
+    ]
+  },
+  "playback": {
+    "_comment": "Snapshot base: {playback}{timestamp}{modifier}/{original}. id_ = the original bytes (no toolbar/rewrites), if_ = rendered without the toolbar.",
+    "value": "https://web.archive.org/web/"
+  },
+  "latest_timestamp": {
+    "_comment": "Placeholder timestamp for 'the newest capture' in the id_ resolver: the archive redirects any timestamp to its nearest real capture.",
+    "value": "99991231235959"
+  },
+  "attempts": {
+    "_comment": "Rounds per request. A round tries every index endpoint once; 5xx / timeout / reset / unparseable body move on, 429 and a refused connection stop at once (they arm the egress cooldown in wp_wayback_guard).",
+    "value": 3
+  },
+  "backoff_seconds": {
+    "_comment": "Sleep before round n+1 = backoff_seconds * n.",
+    "value": 3
+  },
+  "truncation_topup_rows": {
+    "_comment": "A whole-domain (matchType=domain) index query comes back in URL order, oldest first per URL, so one that fills its row cap silently loses later URLs and recent years (measured: iana.org's 2000 html rows end 2020-05 though captures run to 2026). wayback_ga.cdx_snapshots then merges in this many of the apex's NEWEST html captures (one extra query, negative limit) and flags the result `truncated`.",
+    "value": 200
+  },
+  "exits": {
+    "_comment": "Default egress routes for the exhaustive archive job (wp_wayback_exhaust / wp_exits), used when env CTI_WAYBACK_EXITS is unset. 'direct' = this machine's IP (archive traffic only — the target is never contacted); 'pool' = every CTI_PROXIES / proxy-store entry; socks5h:// = WARP (127.0.0.1:40000) and Tor (127.0.0.1:9050) as installed on this machine. Each exit is probed once at start; a HARD-broken exit (dead port, 407 credential rejection, SOCKS reply 1/2/4) is dropped for the run and reported, while a merely throttled exit (429) keeps its place and its per-exit cooldown holds it back until it clears. Bytes verified identical across direct / Tor / one pool proxy (sha256); WARP HTTP-reachable but not byte-verified.",
+    "value": [
+      "direct",
+      "pool",
+      "socks5h://127.0.0.1:40000",
+      "socks5h://127.0.0.1:9050"
+    ]
+  },
+  "exhaust": {
+    "_comment": "wp_wayback_exhaust knobs. index_page_rows = rows per paged index request (resumeKey paging); fetch_attempts = tries per capture across exits before it is recorded as failed; exit_fail_limit = consecutive failures after which one exit's worker stops for the run; fetch_timeout = per-request bound in seconds (a failed capture is re-queued to another exit, which is the failover — so the CTI_CALL_TIMEOUT floor is deliberately not applied to these requests); urlscan_page_size / urlscan_max_pages bound the scan listing (a safety ceiling far above any real host — the listing stops when urlscan says has_more=false). urlscan_dom_timeout bounds each /dom/ fetch (seconds, via the unfloored urlopen so one slow DOM cannot stall the run); the DOM pass is resumable (fetched uuids in state), ledgers each DOM to api_usage as it goes, and stops on a 429/402 vendor limit or the run's --max-hours budget, recording the rest as a gap for the next run. default_max_hours = the run budget when --max-hours is not given (analyst setting: 7 h); the MCP tool runs the job DETACHED under this budget, since a synchronous tool call cannot outlive the host's call timeout.",
+    "index_page_rows": 5000,
+    "fetch_attempts": 3,
+    "exit_fail_limit": 8,
+    "fetch_timeout": 60,
+    "urlscan_page_size": 100,
+    "urlscan_max_pages": 500,
+    "urlscan_dom_timeout": 20,
+    "default_max_hours": 7
+  },
+  "collection_search": {
+    "_comment": "Undocumented Wayback collection-search API (verified live 2026-10-03). GET __wb/search/waybacksearch?q=&size=&page=&collection= → {total, hits:[{url,surt_url,host,domain,tld,snippet,title,first_captured,content_type?}]} (empty may be []); GET __wb/search/collectioninfo?collection= → {count,last_updated,description,collection,title,url} or {} when unknown. Latency 13–50s → timeout ≥60s. A collection that returns {} or errors is reported as unavailable, NEVER as empty. telegram → telegram.username kit rows; pdf → host kit rows; mediacloud/russian-independent-media/EoT → mention_only facts. RULE 1: no case data.",
+    "search_url": "https://web.archive.org/__wb/search/waybacksearch",
+    "info_url": "https://web.archive.org/__wb/search/collectioninfo",
+    "timeout": 60,
+    "page_size": 50,
+    "max_pages": 3,
+    "collections": {
+      "telegram": {
+        "tier": "high",
+        "mention_only": false
+      },
+      "pdf": {
+        "tier": "medium",
+        "mention_only": false
+      },
+      "mediacloud": {
+        "tier": "low",
+        "mention_only": true
+      },
+      "russian-independent-media": {
+        "tier": "low",
+        "mention_only": true
+      },
+      "EndOfTerm2024WebCrawls": {
+        "tier": "low",
+        "mention_only": true
+      },
+      "EndOfTerm2020WebCrawls": {
+        "tier": "low",
+        "mention_only": true
+      },
+      "EndOfTerm2016WebCrawls": {
+        "tier": "low",
+        "mention_only": true
+      }
+    }
+  }
+}

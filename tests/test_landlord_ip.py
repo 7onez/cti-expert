@@ -31,8 +31,24 @@ import ingest_webpivot as I  # noqa: E402
 import noise_filters as NF  # noqa: E402
 import query as Q  # noqa: E402
 from knowledge_base import KB  # noqa: E402
+import ipaddress  # noqa: E402
+import wp_origin_history as OH  # noqa: E402
 
 LANDLORD, ORIGIN = "203.0.113.9", "203.0.113.10"
+
+
+class _FakeCdn:
+    """The real cdn_ranges.is_bogon calls RFC 5737 documentation addresses non-routable (they are
+    `is_private` to the stdlib), so ingest's origin-history veto would drop every fixture edge. This
+    stand-in treats only 127/8, 10/8 and 192.168/16 as bogons and knows no CDN ranges."""
+    @staticmethod
+    def is_bogon(ip):
+        a = ipaddress.ip_address(ip)
+        return any(a in ipaddress.ip_network(n) for n in ("127.0.0.0/8", "10.0.0.0/8", "192.168.0.0/16"))
+
+    @staticmethod
+    def classify(ip, idx):
+        return {"ip": ip, "cdn": False, "provider": None, "kind": "origin_candidate"}
 
 
 def _raw(host, ips, fofa_total_for_landlord=2500):
@@ -75,8 +91,13 @@ def check():
 
         # 1. ingest: landlord -> fact, origin -> edge
         kb = KB(kbdir)
-        for p in paths:
-            I.ingest_file(kb, p)
+        saved_cdn = OH._cdn
+        OH._cdn = lambda: (_FakeCdn, {"fake": True})
+        try:
+            for p in paths:
+                I.ingest_file(kb, p)
+        finally:
+            OH._cdn = saved_cdn
         edges = [e for e in kb.edges() if e["rel"] == "hosted_on"]
         dsts = {e["dst"] for e in edges}
         ok(f"ip:{ORIGIN}" in dsts, "a small origin IP still gets a hosted_on edge")

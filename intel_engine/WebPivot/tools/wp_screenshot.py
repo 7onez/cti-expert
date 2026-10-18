@@ -35,7 +35,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # import wp_net / wp_refs standalone
 
-# Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 1800s).
+# Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 5000s).
 # Applied to the Playwright page.goto timeout below.
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 
@@ -91,18 +91,6 @@ def _title(html: str):
     return re.sub(r"\s+", " ", m.group(1)).strip()[:200] if m else None
 
 
-def _playwright_proxy(proxy: str) -> dict:
-    """Chromium rejects credentials inside the proxy URL — split `scheme://user:pass@host:port`
-    (the form the research-egress pool stores) into Playwright's server/username/password."""
-    from urllib.parse import urlsplit, unquote
-    u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-    out = {"server": f"{u.scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")}
-    if u.username:
-        out["username"] = unquote(u.username)
-        out["password"] = unquote(u.password or "")
-    return out
-
-
 def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str = ".",
                        proxy: str = None, timeout: int = None, ua: str = None,
                        label: str = None, click: str = None, wait_selector: str = None,
@@ -120,6 +108,11 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     URL and its archived_at) and `host` files the capture under the SUBJECT host when `url` is a
     third-party copy of it (a web-archive snapshot URL is not the host it shows).
     """
+    import wp_browser
+    if not wp_browser.chromium_available():
+        # Evidence pixels are Chromium-only by design: a Moli software-paint PNG is not what a
+        # victim's browser showed, so there is no fallback engine here.
+        raise RuntimeError(wp_browser.chromium_missing_note())
     from playwright.sync_api import sync_playwright              # lazy: playwright only needed here
 
     host = _host_slug(host) if host else _host_slug(url)
@@ -137,10 +130,7 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     to_ms = _floor(timeout or CAP["timeout_seconds"]) * 1000
     actions: list[str] = []
     with sync_playwright() as p:
-        launch = {"headless": True}
-        if proxy:
-            launch["proxy"] = _playwright_proxy(proxy)
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**wp_browser.chromium_launch_kwargs(proxy))
         ctx = browser.new_context(user_agent=ua or CAP["user_agent"],
                                   viewport={"width": 1280, "height": 800})
         page = ctx.new_page()
@@ -195,7 +185,7 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
         "width": w,
         "height": h,
         "title": _title(html),
-        "proxy": bool(proxy),
+        "proxy": bool(wp_browser.resolve_proxy(proxy)),
         "label": label,
         "actions": actions,
         "full_page": full_page,

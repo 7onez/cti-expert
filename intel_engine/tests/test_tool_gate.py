@@ -132,12 +132,19 @@ def check():
         if prior is not None:
             os.environ[env] = prior
 
-    # --- 3. metered budget: the runaway-loop backstop -----------------------------------------
+    # --- 3. metered budget: opt-in only (project decision: no local usage caps by default) ----
     audit.reset()
     ok(allows("pivot_extract", {"url": "http://x.example"}), "metered call allowed under budget")
-    audit._COUNTS["metered"] = audit.MAX_METERED
+    _saved_cap = audit.MAX_METERED
+    audit.MAX_METERED = 0
+    audit._COUNTS["metered"] = 10_000
+    ok(allows("pivot_extract", {"url": "http://x.example"}),
+       "with no HARNESS_METERED_BUDGET the count never denies (vendor 402/429 are the limit)")
+    audit.MAX_METERED = 5
+    audit._COUNTS["metered"] = 5
     ok(not allows("pivot_extract", {"url": "http://x.example"}),
-       "metered call DENIED once the run's credit budget is exhausted")
+       "metered call DENIED once an OPT-IN budget is exhausted")
+    audit.MAX_METERED = _saved_cap
     ok(allows("pivot_extract", {"url": "http://x.example", "free_only": True}),
        "free_only=true still allowed over budget (keyless work never stops)")
     ok("metered" not in audit.classify("pivot_extract", {"url": "u", "free_only": True}),
@@ -187,10 +194,11 @@ def check():
            f"counters: only calls that RAN can spend ({c['total']} total, {c['metered']} metered)")
         ok("DENIED" in audit.summary("C"), "the run banner reports denials")
 
-        # An unwritable ledger must warn, not kill a case mid-round.
+        # An unwritable ledger must warn, not kill a case mid-round. A FILE where the ledger's
+        # parent directory must be makes the write fail for every uid (root ignores chmod bits).
         audit.ROOT = os.path.join(tmp, "nope")
-        os.makedirs(audit.ROOT)
-        os.chmod(audit.ROOT, 0o500)
+        with open(audit.ROOT, "w") as fh:
+            fh.write("not a directory\n")
         err = io.StringIO()
         try:
             import contextlib
@@ -200,7 +208,7 @@ def check():
             ok("WARNING" in err.getvalue(),
                "an unwritable ledger WARNS (never silent, never fatal)")
         finally:
-            os.chmod(audit.ROOT, 0o700)
+            pass
     finally:
         audit.ROOT = real_root
         audit.reset()

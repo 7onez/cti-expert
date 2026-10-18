@@ -1156,6 +1156,29 @@ def serp_ads(query: str, gl: str = None, hl: str = None, location: str = None,
     return out
 
 
+def web_search(query: str, num: int = 10, gl: str = None, hl: str = None, timeout: int = 30) -> dict:
+    """Organic Google results for one dork query — the METERED fallback `search_pivot --run` uses
+    when the free DuckDuckGo HTML endpoint bot-walls or cannot serve the operator. One SerpApi
+    search per call, ledgered and budget-guarded by `_call` like every other call here.
+
+    Returns {query, results:[{position,title,link,host,snippet}]} or the `_call` error dict
+    (`skipped` = never asked, `empty` = asked and Google had nothing, `error`)."""
+    out = {"query": query, "results": []}
+    data, err = _call("google", {"q": query, "num": num, "gl": gl, "hl": hl},
+                      action="web_search", timeout=timeout)
+    if err:
+        out.update(err)
+        return out
+    for r in (data.get("organic_results") or [])[:max(1, num)]:
+        if not isinstance(r, dict) or not r.get("link"):
+            continue
+        out["results"].append({"position": r.get("position"), "title": r.get("title") or "",
+                               "link": r["link"],
+                               "host": strip_www(urllib.parse.urlparse(r["link"]).netloc),
+                               "snippet": r.get("snippet") or ""})
+    return out
+
+
 # --------------------------------------------------------------------------- pivots
 def _policy(kind: str, field: str, default):
     node = CLUSTERING_POLICY.get(kind) or {}
@@ -1466,6 +1489,13 @@ def main():
     p.add_argument("--hl", default=None, help="interface language, e.g. vi")
     p.add_argument("--location", default=None)
 
+    p = sub.add_parser("web", help="METERED: organic Google results for ONE dork query (1 search) — "
+                                   "the dork-sweep fallback when the free tiers could not answer it")
+    p.add_argument("query")
+    p.add_argument("--num", type=int, default=10)
+    p.add_argument("--gl", default=None)
+    p.add_argument("--hl", default=None)
+
     p = sub.add_parser("params", help="offline: classify the advertising parameters on a URL")
     p.add_argument("url")
 
@@ -1501,6 +1531,8 @@ def main():
         out["pivots"] = advertiser_pivots(out.get("advertisers"), region=args.region)
     elif args.cmd == "serp":
         out = serp_ads(args.query, gl=args.gl, hl=args.hl, location=args.location)
+    elif args.cmd == "web":
+        out = web_search(args.query, num=args.num, gl=args.gl, hl=args.hl)
     elif args.cmd == "params":
         out = paid_arrival(args.url)
         out["stripped_url"] = strip_ad_params(args.url)

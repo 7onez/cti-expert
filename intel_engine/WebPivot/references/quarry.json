@@ -1,0 +1,72 @@
+{
+  "_comment": "Quarry MCP bridge (WebPivot/tools/wp_quarry.py client + tools/quarry_bridge.py orchestration). Quarry is a separate scan platform reached over Streamable-HTTP MCP; a case may hand it the seed domain, WAIT for the scan (hours or days on a large estate) and import the stored result. RULE 3: tunables and the classification of Quarry's correlation kinds live here. RULE 1: classes and timings only, never case data. Endpoint and key come from the environment (QUARRY_MCP_URL / QUARRY_API_KEY in the gitignored .env), never from this file.",
+
+  "connection": {
+    "_comment": "protocol_version is sent on initialize. timeout_s must exceed the server's own 90 s hold on quarry_scan_status(wait_until_complete=true) plus the proxy/CDN hop, or every long poll reads as a transport failure.",
+    "protocol_version": "2025-06-18",
+    "timeout_s": 150,
+    "status_wait": true
+  },
+
+  "polling": {
+    "_comment": "How the bridge waits. poll_seconds is the pause BETWEEN status calls (each call already blocks up to 90 s server-side). There is no overall wait limit: the cti driver waits as long as the scan runs. Transient faults (network, 5xx, 429, a lost MCP session after a server restart) back off from backoff_initial_s to backoff_max_s and never end the wait; only an auth failure or a terminal job status does. max_resubmits: how many times a job the server lost to a restart is resubmitted. heartbeat_minutes: how often an unchanged scan still prints a progress line.",
+    "poll_seconds": 60,
+    "backoff_initial_s": 30,
+    "backoff_max_s": 600,
+    "heartbeat_minutes": 15,
+    "max_resubmits": 1
+  },
+
+  "fetch": {
+    "_comment": "What is pulled once a scan is complete. connected_page is the server's page cap (1-200); connected_max bounds the total peers read so one hub domain cannot pull the whole corpus.",
+    "connected_page": 200,
+    "connected_max": 2000
+  },
+
+  "target_class_map": {
+    "_comment": "case_scope target_class to the class Quarry's scan posture understands. victim_host maps to victim_org, which makes Quarry skip its intrusive active probes (crawl, path fuzz, ping, secret verification, binary download). Anything unmapped is sent as unknown.",
+    "entries": {
+      "confirmed_scam": "suspected_scam",
+      "suspected_scam": "suspected_scam",
+      "threat_actor_infra": "threat_actor_infra",
+      "victim_host": "victim_org",
+      "benign_check": "unknown",
+      "unknown": "unknown"
+    }
+  },
+
+  "kind_rungs": {
+    "_comment": "Quarry connected_scans fingerprint KIND to the rungs.json identifier class the import writes it under (selector_types.rung_for decides owner|kit|neighbour). Collecting is not attributing: only owner classes become KB edges; everything else is add_fact only. A connection is classed by its STRONGEST shared kind. Unlisted kinds resolve to kit_link. nameserver stays neighbour here because Quarry does not say whether the NS is self-hosted (the KB's own uses_nameserver rule makes that call from collected data); git_key stays kit because one freelance developer's key spans unrelated clients. tracking_id is resolved per value (GA/GTM/UA to analytics.*, ca-pub to ads.adsense, other to token.other).",
+    "entries": {
+      "registrant_email": "whois.registrant_email",
+      "cert_sha256": "cert.exact",
+      "cert_sha1": "cert.exact",
+      "wallet": "wallet.operator",
+      "verification_token": "owner_link",
+      "m365_tenant_id": "owner_link",
+      "tracking_id": "tracker",
+      "git_key": "kit_link",
+      "cert_san": "kit_link",
+      "favicon_mmh3": "favicon",
+      "social_handle": "username",
+      "bundle_sha256": "hash",
+      "kit_structure_hash": "kit_link",
+      "path_template": "kit_link",
+      "reg_batch_day": "kit_link",
+      "asn": "neighbour_link",
+      "ip": "ip.cotenant",
+      "nameserver": "neighbour_link"
+    }
+  },
+
+  "finding_rungs": {
+    "_comment": "Quarry finding category on the TARGET's own page/repos to rungs.json class. crypto and tracking_ids are resolved per value (exchange wallet to wallet.exchange; tracker prefix as above). Page-scraped contacts and GitHub committer e-mails are kit: a contact printed on a page or a commit that merely mentions the domain is not ownership. Categories not listed are kept in the saved export only.",
+    "entries": {
+      "emails": "page.email",
+      "phones": "page.phone",
+      "crypto": "wallet.operator",
+      "tracking_ids": "tracker",
+      "social": "username"
+    }
+  }
+}

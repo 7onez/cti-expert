@@ -42,6 +42,42 @@ class Alternative(BaseModel):
     )
 
 
+class TierMember(BaseModel):
+    """A collected host/selector that is NOT owner-linked — kit sibling or neighbour.
+
+    These never enter `cluster` and are NEVER attributed. They exist so the assessment can
+    report what was collected without elevating a shared kit artifact or co-tenant into an
+    operator claim. See `tools/kb/references/rungs.json` and SKILL.md RULE 5 rails.
+    """
+
+    node_type: str = Field(description="typed selector kind (domain, email, wallet, ip, …)")
+    value: str = Field(description="the selector value")
+    rung_class: str = Field(
+        description="identifier class from rungs.json (e.g. ads.affiliate, favicon, "
+        "wallet.exchange, ip.cotenant)"
+    )
+    via: str = Field(
+        description="how it entered the case (shared artifact, corpus hit, counterparty, …)"
+    )
+    caveat: str = Field(
+        description="rung caveat shown to the reader — always a not-attribution statement"
+    )
+
+
+class Mention(BaseModel):
+    """A corpus/news/pdf hit that names a selector without binding ownership.
+
+    Mentions are NEVER attributed and never belong in `cluster`. They surface Wayback
+    collection / mediacloud / EndOfTerm / pdf hits so the reader can chase them.
+    """
+
+    selector: str = Field(description="the named selector (domain, handle, …)")
+    url: str = Field(description="source URL of the mention")
+    date: str = Field(default="", description="capture or publication date when known")
+    snippet: str = Field(default="", description="short surrounding text when available")
+
+
+
 class Assessment(BaseModel):
     """The IntelAnalysis deliverable — mirrors the §7 write-up standard."""
 
@@ -98,3 +134,53 @@ class Assessment(BaseModel):
         "the target); inconclusive = the target was never observed, so the claim was not tested. "
         "Neither means benign.",
     )
+    kit_siblings: list[TierMember] = Field(
+        default_factory=list,
+        description="kit-rung nodes collected but NEVER attributed — shared kit artifacts "
+        "(ad/affiliate IDs, html-id, telegram.username, page-scraped contacts, bank account, "
+        "unique username/string/filename/hash/title, favicon, tx id). NEVER belong in `cluster`.",
+    )
+    neighbours: list[TierMember] = Field(
+        default_factory=list,
+        description="neighbour-rung nodes collected but NEVER attributed — exchange wallets "
+        "and IP co-tenants. NEVER belong in `cluster`.",
+    )
+    mentions: list[Mention] = Field(
+        default_factory=list,
+        description="news/pdf/EoT/mediacloud (and similar corpus) hits naming a selector. "
+        "NEVER attributed and NEVER belong in `cluster`.",
+    )
+
+
+
+# --------------------------------------------------------------------------- cross-type Plan phase
+class PlannedPivot(BaseModel):
+    """One pivot the planner ADDS beyond the proposer's candidates. Validated after the phase:
+    the route must exist in harness/references/pivot_map.json and accept `type`; a domain passes
+    the never-seed / noise / filename guards. The planner never sizes or prices it — the count
+    probe and pivot_map do — so it cannot talk an oversized or metered pivot past approval."""
+
+    type: Literal["domain", "email", "phone", "wallet", "ip", "hash", "string", "filename",
+                  "telegram"]
+    selector: str = Field(description="the exact value to pivot on, as seen in the case")
+    tool: str = Field(description="a pivot_map route key, e.g. urlscan.filename, wayback.telegram, "
+                                  "or `collect` for a domain")
+    why: str = Field(description="one sentence: what in the case makes this pivot worth its cost")
+
+
+class PlanDrop(BaseModel):
+    id: str = Field(description="a proposer candidate id")
+    why: str = Field(description="why it should not run this round")
+
+
+class Plan(BaseModel):
+    """The Plan phase deliverable: re-rank the proposer's candidates and add cross-type pivots."""
+
+    ranked: list[str] = Field(default_factory=list,
+                              description="proposer candidate ids, best first; omitted ids keep "
+                                          "their proposer order after these")
+    added: list[PlannedPivot] = Field(default_factory=list,
+                                      description="pivots the proposer did not list")
+    dropped: list[PlanDrop] = Field(default_factory=list,
+                                    description="candidates to skip this round, with reasons")
+    notes: str = Field(default="", description="one or two sentences for the analyst")

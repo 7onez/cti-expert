@@ -1,0 +1,388 @@
+{
+  "name": "CASE-origin",
+  "fake_cdn": true,
+  "_comment": "Historical origin-IP sweep: live / undated / historical / ambiguous origins are queued; CDN (CIDR + Imperva ASN), parking, bogon and the previous-owner era are not.",
+  "files": {
+    "seed.example": {
+      "meta": {
+        "host": "seed.example"
+      },
+      "artifacts": {
+        "whois": {
+          "created": "2022-01-01"
+        }
+      },
+      "pivots": [
+        {
+          "kind": "domain",
+          "value": "seed.example",
+          "live_results": {
+            "dns": {
+              "ips": [
+                "192.0.2.30",
+                "198.51.100.40"
+              ]
+            },
+            "passivedns": {
+              "hosts": [
+                {
+                  "host": "panel.seed.example",
+                  "ip": "198.51.100.44"
+                }
+              ],
+              "ips": [
+                "198.51.100.44"
+              ]
+            },
+            "securitytrails_dns_history": {
+              "eras": [
+                {
+                  "ip": "198.51.100.41",
+                  "first_seen": "2023-01-01",
+                  "last_seen": "2023-09-01"
+                },
+                {
+                  "ip": "198.51.100.42",
+                  "first_seen": "2018-01-01",
+                  "last_seen": "2019-01-01"
+                },
+                {
+                  "ip": "198.51.100.43",
+                  "first_seen": "2023-02-01",
+                  "last_seen": "2023-03-01",
+                  "org": "Sedo GmbH"
+                },
+                {
+                  "ip": "198.51.100.45",
+                  "first_seen": "2023-02-01",
+                  "last_seen": "2023-03-01",
+                  "org": "DDoS-Guard Ltd"
+                },
+                {
+                  "ip": "127.0.0.1",
+                  "first_seen": "2019-06-01",
+                  "last_seen": "2019-07-01"
+                }
+              ]
+            },
+            "webamon_servers": {
+              "servers": [
+                {
+                  "ip": "198.51.100.46",
+                  "asn": 19551,
+                  "first_seen": "2023-01-01",
+                  "last_seen": "2023-02-01"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "state": {
+    "hops": {
+      "seed.example": 0
+    },
+    "expansion_depth": 2,
+    "consumed": [
+      "seed.example"
+    ]
+  },
+  "goldens": {
+    "max0": {
+      "case": "CASE-origin",
+      "round": 0,
+      "pending": [],
+      "candidates": {},
+      "candidate_total": 0,
+      "expansion_depth": 2,
+      "leaves": [],
+      "related_leads": [],
+      "subdomains_pending": {},
+      "subdomains": {
+        "panel.seed.example": {
+          "apex": "seed.example",
+          "sources": [
+            "passive_dns"
+          ],
+          "dns": false
+        }
+      },
+      "ips_pending": [
+        "198.51.100.40",
+        "198.51.100.41",
+        "198.51.100.45",
+        "198.51.100.44"
+      ],
+      "origin_ips": {
+        "198.51.100.40": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "live_dns"
+          ],
+          "first_seen": null,
+          "last_seen": null,
+          "live": true,
+          "era": "current",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "seedable"
+        },
+        "198.51.100.41": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "securitytrails_dns_history"
+          ],
+          "first_seen": "2023-01-01",
+          "last_seen": "2023-09-01",
+          "live": false,
+          "era": "historical",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "held as leads (historical tenancy)"
+        },
+        "198.51.100.45": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "securitytrails_dns_history"
+          ],
+          "first_seen": "2023-02-01",
+          "last_seen": "2023-03-01",
+          "live": false,
+          "era": "historical",
+          "asn": null,
+          "org": "DDoS-Guard Ltd",
+          "ambiguous": true,
+          "hop": 0,
+          "cotenants": "held as leads (DDoS-proxy-or-host network)"
+        },
+        "198.51.100.44": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "passivedns"
+          ],
+          "first_seen": null,
+          "last_seen": null,
+          "live": false,
+          "era": "undated",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "held as leads (historical tenancy)"
+        }
+      },
+      "metered_leads": [],
+      "co_tenancy_leads": [
+        {
+          "check": "previous-owner origin IP",
+          "cost": "free",
+          "seen_on": "seed.example",
+          "ip": "198.51.100.42",
+          "why": "seed.example resolved to 198.51.100.42 until 2019-01-01, before its current registration (2022-01-01) — the previous owner's box, not collected"
+        }
+      ],
+      "enrichment_leads": [
+        {
+          "tool": "/intelx phonebook",
+          "value": "seed.example",
+          "key": "intelx-phonebook:seed.example",
+          "cost": "metered",
+          "run": [
+            {
+              "op": "intelx",
+              "argv": [
+                "phonebook",
+                "seed.example"
+              ]
+            }
+          ],
+          "why": "inventory every email/subdomain/URL IntelX has seen under seed.example"
+        },
+        {
+          "tool": "/dork-sweep --filetype --docs",
+          "value": "seed.example",
+          "key": "dork:seed.example",
+          "cost": "free",
+          "why": "Google/Bing dork sweep + doc-leak hunt on seed.example"
+        },
+        {
+          "tool": "/github-osint + /secrets (github_harvest)",
+          "value": "seed.example",
+          "key": "github:seed.example",
+          "cost": "free",
+          "why": "GitHub org/repo search for seed.example → committer-identity harvest (.patch From: e-mails) + exposed-secret recon"
+        },
+        {
+          "tool": "/secrets",
+          "value": "seed.example",
+          "key": "grayhatwarfare:seed.example",
+          "cost": "metered (keyless dork fallback)",
+          "why": "open S3/Azure/GCS buckets carrying the seed label — exposure, not attribution"
+        }
+      ],
+      "enrichment_gaps": [],
+      "enrichment_results": []
+    },
+    "max8": {
+      "case": "CASE-origin",
+      "round": 0,
+      "pending": [],
+      "candidates": {},
+      "candidate_total": 0,
+      "expansion_depth": 2,
+      "leaves": [],
+      "related_leads": [],
+      "subdomains_pending": {},
+      "subdomains": {
+        "panel.seed.example": {
+          "apex": "seed.example",
+          "sources": [
+            "passive_dns"
+          ],
+          "dns": false
+        }
+      },
+      "ips_pending": [
+        "198.51.100.40",
+        "198.51.100.41",
+        "198.51.100.45",
+        "198.51.100.44"
+      ],
+      "origin_ips": {
+        "198.51.100.40": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "live_dns"
+          ],
+          "first_seen": null,
+          "last_seen": null,
+          "live": true,
+          "era": "current",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "seedable"
+        },
+        "198.51.100.41": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "securitytrails_dns_history"
+          ],
+          "first_seen": "2023-01-01",
+          "last_seen": "2023-09-01",
+          "live": false,
+          "era": "historical",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "held as leads (historical tenancy)"
+        },
+        "198.51.100.45": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "securitytrails_dns_history"
+          ],
+          "first_seen": "2023-02-01",
+          "last_seen": "2023-03-01",
+          "live": false,
+          "era": "historical",
+          "asn": null,
+          "org": "DDoS-Guard Ltd",
+          "ambiguous": true,
+          "hop": 0,
+          "cotenants": "held as leads (DDoS-proxy-or-host network)"
+        },
+        "198.51.100.44": {
+          "hosts": [
+            "seed.example"
+          ],
+          "sources": [
+            "passivedns"
+          ],
+          "first_seen": null,
+          "last_seen": null,
+          "live": false,
+          "era": "undated",
+          "asn": null,
+          "org": null,
+          "ambiguous": false,
+          "hop": 0,
+          "cotenants": "held as leads (historical tenancy)"
+        }
+      },
+      "metered_leads": [],
+      "co_tenancy_leads": [
+        {
+          "check": "previous-owner origin IP",
+          "cost": "free",
+          "seen_on": "seed.example",
+          "ip": "198.51.100.42",
+          "why": "seed.example resolved to 198.51.100.42 until 2019-01-01, before its current registration (2022-01-01) — the previous owner's box, not collected"
+        }
+      ],
+      "enrichment_leads": [
+        {
+          "tool": "/intelx phonebook",
+          "value": "seed.example",
+          "key": "intelx-phonebook:seed.example",
+          "cost": "metered",
+          "run": [
+            {
+              "op": "intelx",
+              "argv": [
+                "phonebook",
+                "seed.example"
+              ]
+            }
+          ],
+          "why": "inventory every email/subdomain/URL IntelX has seen under seed.example"
+        },
+        {
+          "tool": "/dork-sweep --filetype --docs",
+          "value": "seed.example",
+          "key": "dork:seed.example",
+          "cost": "free",
+          "why": "Google/Bing dork sweep + doc-leak hunt on seed.example"
+        },
+        {
+          "tool": "/github-osint + /secrets (github_harvest)",
+          "value": "seed.example",
+          "key": "github:seed.example",
+          "cost": "free",
+          "why": "GitHub org/repo search for seed.example → committer-identity harvest (.patch From: e-mails) + exposed-secret recon"
+        },
+        {
+          "tool": "/secrets",
+          "value": "seed.example",
+          "key": "grayhatwarfare:seed.example",
+          "cost": "metered (keyless dork fallback)",
+          "why": "open S3/Azure/GCS buckets carrying the seed label — exposure, not attribution"
+        }
+      ],
+      "enrichment_gaps": [],
+      "enrichment_results": []
+    }
+  }
+}

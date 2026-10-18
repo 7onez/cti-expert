@@ -1,0 +1,20 @@
+{
+  "_comment": "How reputation_check.py reads Spamhaus Intelligence API domain TAGS. Source of truth for tag names: GET api.spamhaus.org/api/intel/v2/domains/tags (32 tags, fetched 2026-10-07). A tag is only ever scored together with a NEGATIVE domain reputation score (Spamhaus: 0 = neutral, positive = good) — measured live, example.com carries phish+spam at +34.3 because it is NAMED in that traffic. Platform descriptors (cdn, dyndns, freehost, hosting, isp, shared, redirector, shortener, parked, disposable, freemail, esp, transactional, corporate, educational, government) are in NO group on purpose: they describe the platform, never the operator. Edit this file when Spamhaus adds/renames a tag; the code holds only the matching logic.",
+  "adverse_tags": {
+    "_comment": "Tags that describe ABUSE by the domain itself. With a negative score -> one scored signal. adware/botnet/botnetcc/malware/phish/scam/spam/snowshoe/dga/hailstorm/proxy (callback proxy endpoint)/tds (traffic distribution system).",
+    "values": ["adware", "botnet", "botnetcc", "dga", "hailstorm", "malware", "phish", "proxy",
+               "scam", "snowshoe", "spam", "tds"]
+  },
+  "abusech_derived_tags": {
+    "_comment": "Tags Spamhaus builds partly FROM abuse.ch data (310-Domains: the malware dimension). When abuse.ch already listed the indicator these corroborate it but are NOT a second independent feed -> note, never a second signal.",
+    "values": ["botnet", "botnetcc", "malware"]
+  },
+  "override_tags": {
+    "_comment": "Tags that OVERRIDE tag scoring: sinkhole = researcher/defender-controlled (its botnetcc/malware tags describe the traffic it catches), neverlist = Spamhaus will never list it. Checked FIRST: when one matches, adverse tags become a note and are never scored. A current DBL listing (`listed`) is still scored — Spamhaus does not list a sinkhole or a neverlist domain, so a listing there is a deliberate Spamhaus call.",
+    "values": ["neverlist", "sinkhole"]
+  },
+  "victim_tags": {
+    "_comment": "Tags that mark the domain owner as a VICTIM (hijacked/abused legitimate domain). Reported as a note ALONGSIDE any abuse signal: the indicator is bad, the owner is not the operator (SKILL RULE 5: never name an innocent party).",
+    "values": ["abused", "compromised"]
+  }
+}

@@ -46,7 +46,7 @@ from wp_common import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_net import fetch  # noqa
 from wp_extract import (extract_trackers, extract_saas, extract_crypto,  # noqa
-                        extract_socials, extract_telegram, EMAIL_RE,
+                        extract_socials, extract_telegram, extract_emails,
                         BOILERPLATE_EMAIL_HOSTS)
 
 # ------------------------------------------------------------------ toggles (set by main())
@@ -577,10 +577,7 @@ def extract_from_bundles(text: str, self_host: str = ""):
         else:
             del trackers["sentry_dsn"]
     urls = uniq(_QUOTED_URL_RE.findall(text))
-    emails = [e for e in uniq(EMAIL_RE.findall(text))
-              if (el := e.lower())
-              and not el.endswith((".png", ".jpg", ".gif", ".svg", ".webp", ".js", ".css"))
-              and not el.split("@")[-1].endswith(BOILERPLATE_EMAIL_HOSTS)][:20]
+    emails = extract_emails(text)[:20]          # same asset / version-string / platform filter as HTML
     return {
         "trackers": trackers,
         "saas_ids": extract_saas(text),

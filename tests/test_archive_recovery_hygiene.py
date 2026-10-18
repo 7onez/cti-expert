@@ -1,7 +1,7 @@
 """Regression: the collector must not manufacture same-operator evidence out of its own recovery
 path, and must not misreport a live capture as dead.
 
-  1. `wp_net._playwright_proxy` hands Chromium the pool's credentials as separate fields (an
+  1. `wp_browser.proxy_for_chromium` hands Chromium the pool's credentials as separate fields (an
      inline `user:pass@` URL made every render answer 407 → empty DOM → silent archive fallback).
   2. `wp_net.wayback_raw_url` turns a snapshot URL into its `id_` form (original bytes, no
      archive toolbar) — the toolbar's HTML comments once linked every archive-recovered host in
@@ -19,6 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "intel_engine", "WebPivot", "tools"))
 sys.path.insert(0, os.path.join(ROOT, "intel_engine", "tools", "kb"))
 
+import wp_browser  # noqa: E402
 import wp_net  # noqa: E402
 import wp_liveness  # noqa: E402
 import noise_filters  # noqa: E402
@@ -41,13 +42,13 @@ def _restore_env(saved):
 def test_proxy_credentials_are_split_for_chromium():
     saved = _clear_env()
     try:
-        cfg = wp_net._playwright_proxy("http://us%40er:p%3Ass@198.51.100.7:8080")
+        cfg = wp_browser.proxy_for_chromium("http://us%40er:p%3Ass@198.51.100.7:8080")
         assert cfg == {"server": "http://198.51.100.7:8080", "username": "us@er", "password": "p:ss"}, cfg
-        assert wp_net._playwright_proxy("socks5h://198.51.100.7:1080") == {"server": "socks5://198.51.100.7:1080"}
-        assert wp_net._playwright_proxy(None) is None, "no proxy anywhere must mean a direct launch"
+        assert wp_browser.proxy_for_chromium("socks5h://198.51.100.7:1080") == {"server": "socks5://198.51.100.7:1080"}
+        assert wp_browser.proxy_for_chromium(None) is None, "no proxy anywhere must mean a direct launch"
         os.environ["HTTPS_PROXY"] = "http://u:p@198.51.100.9:3128"
         os.environ["NO_PROXY"] = "localhost,127.0.0.1"
-        cfg = wp_net._playwright_proxy(None)
+        cfg = wp_browser.proxy_for_chromium(None)
         assert cfg["server"] == "http://198.51.100.9:3128" and cfg["username"] == "u" \
             and cfg["password"] == "p" and cfg["bypass"] == "localhost,127.0.0.1", cfg
     finally:

@@ -1,0 +1,41 @@
+{
+  "_comment": "wp_vncorp — keyless Vietnamese business-registry lookup (tax code / MST, or a company name) against public mirrors. Every endpoint URL template, the fetch profile, and the Vietnamese-label -> canonical-field map live here (RULE 3) so a mirror going stale or a new label variant is a data edit, not a code change. `{query}` is URL-encoded by the caller before substitution. Nothing here is case data — these are public mirror hostnames and generic Vietnamese business-registry vocabulary.",
+  "settings": {
+    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests over a desktop one); timeout_seconds is the socket timeout per mirror fetch.",
+    "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    "timeout_seconds": 15
+  },
+  "sources": {
+    "_comment": "Public VN business-registry mirrors, queried in order. `mst_url` is used for a 10/13-digit tax-code (MST) query; `name_url` (falling back to `mst_url` if absent) is used for a company-name query. Each is a keyless HTML page — no account, no key.",
+    "entries": {
+      "masothue": {
+        "label": "masothue.com",
+        "mst_url": "https://masothue.com/Search/?q={query}&type=auto",
+        "name_url": "https://masothue.com/Search/?q={query}&type=company"
+      },
+      "hsctvn": {
+        "label": "hsctvn.com",
+        "mst_url": "https://hsctvn.com/Tra-cuu-ma-so-thue/{query}.html",
+        "name_url": "https://hsctvn.com/tim-kiem?q={query}"
+      },
+      "doanhnghiep_biz": {
+        "label": "doanhnghiep.biz",
+        "mst_url": "https://doanhnghiep.biz/tim-kiem?keyword={query}",
+        "name_url": "https://doanhnghiep.biz/tim-kiem?keyword={query}"
+      }
+    }
+  },
+  "label_map": {
+    "_comment": "Vietnamese (accented and ASCII-folded) label variants -> canonical field name. wp_vncorp folds diacritics before comparing, so an accented label in real HTML still matches the ASCII variant listed here. Order is the field order in the tool's output.",
+    "entries": {
+      "tax_code": ["mã số thuế", "ma so thue", "mst"],
+      "company_name_vn": ["tên chính thức", "ten chinh thuc", "tên công ty", "ten cong ty", "tên doanh nghiệp", "ten doanh nghiep"],
+      "company_name_intl": ["tên quốc tế", "ten quoc te", "tên giao dịch quốc tế", "ten giao dich quoc te"],
+      "legal_representative": ["người đại diện", "nguoi dai dien", "đại diện pháp luật", "dai dien phap luat", "chủ sở hữu", "chu so huu"],
+      "address": ["địa chỉ", "dia chi"],
+      "phone": ["điện thoại", "dien thoai", "số điện thoại", "so dien thoai"],
+      "status": ["tình trạng", "tinh trang", "trạng thái", "trang thai"],
+      "registration_date": ["ngày cấp", "ngay cap", "ngày hoạt động", "ngay hoat dong", "ngày thành lập", "ngay thanh lap"]
+    }
+  }
+}

@@ -23,9 +23,20 @@ def _mine(obj, seeds=("seed.example",)):
     return set(cands), leads
 
 
-def _domain_pivot(**live):
+def _domain_pivot(registered_on=None, **live):
+    obj = {"meta": {"host": "seed.example"},
+           "pivots": [{"kind": "domain", "value": "seed.example", "live_results": live}]}
+    if registered_on:
+        obj["artifacts"] = {"whois": {"created": registered_on}}
+    return obj
+
+
+def _reverse_pivot(kind, term, **live):
+    """A raw file whose reverse-WHOIS block rides on the registrant pivot that produced it — the
+    shape wp_analyze.whois_enrich_result emits (the block is on the email/name pivot, not `domain`)."""
     return {"meta": {"host": "seed.example"},
-            "pivots": [{"kind": "domain", "value": "seed.example", "live_results": live}]}
+            "pivots": [{"kind": "domain", "value": "seed.example"},
+                       {"kind": kind, "value": term, "live_results": live}]}
 
 
 def check():
@@ -41,9 +52,14 @@ def check():
             out.append(("FAIL", label))
 
     # --- 1. TLS certs -------------------------------------------------------------------------
-    narrow = {"certs": [{"id": 1, "issuer": "CA", "names": ["seed.example", "sibling.example"]}],
+    # A2/A3 crt.sh guard: a foreign co-SAN on a narrow cert only seeds when that cert's not_before
+    # is on/after the host's current WHOIS registration (see test_crtsh_seed_guard.py for the full
+    # date-gate + flat-list-truncation matrix) — registered_on/not_before are set here so this
+    # section still isolates the CERT-WIDTH guard, not the date guard.
+    narrow = {"certs": [{"id": 1, "issuer": "CA", "names": ["seed.example", "sibling.example"],
+                         "not_before": "2024-06-01T00:00:00"}],
               "subdomains": ["sibling.example"]}
-    apex, leads = _mine(_domain_pivot(crtsh=narrow))
+    apex, leads = _mine(_domain_pivot(crtsh=narrow, registered_on="2024-01-01"))
     ok("sibling.example" in apex, "narrow cert: a real SAN sibling still seeds")
     ok(not leads, "narrow cert: no co-tenancy lead raised")
 
@@ -69,10 +85,14 @@ def check():
     ok("panel.seed.example" in CS._SUBS.get("seed.example", {}), "the seed's OWN subdomain is still noted")
     CS._SUBS.clear()
     # dedicated issuance (no wide cert anywhere in the listing): a narrow co-SAN is a real sibling
-    dedicated = {"certs": [{"id": 5, "names": ["seed.example", "sibling.example"]},
-                           {"id": 6, "names": ["www.seed.example", "seed.example"]}],
+    # once its cert postdates the current registration (see test_crtsh_seed_guard.py for the
+    # stale/unknown-date branches this guard also holds back).
+    dedicated = {"certs": [{"id": 5, "names": ["seed.example", "sibling.example"],
+                            "not_before": "2024-06-01T00:00:00"},
+                           {"id": 6, "names": ["www.seed.example", "seed.example"],
+                            "not_before": "2024-06-02T00:00:00"}],
                  "subdomains": ["sibling.example"]}
-    apex, leads = _mine(_domain_pivot(crtsh=dedicated))
+    apex, leads = _mine(_domain_pivot(crtsh=dedicated, registered_on="2024-01-01"))
     ok("sibling.example" in apex and not leads, "dedicated certs only: the narrow co-SAN seeds")
 
     # --- 2. IP co-hosts -----------------------------------------------------------------------
@@ -120,22 +140,67 @@ def check():
     # --- 3. Reverse-WHOIS ---------------------------------------------------------------------
     few = {"term": "operator@example.com", "count": 3,
            "domains": ["one.example", "two.example", "three.example"]}
-    apex, leads = _mine(_domain_pivot(reverse_whois_current=few))
+    apex, leads = _mine(_reverse_pivot("whois:registrant_email", few["term"], reverse_whois_current=few))
     ok({"one.example", "two.example", "three.example"} <= apex,
        "small registrant term: siblings seed")
     ok(not leads, "small registrant term: no lead")
 
     bulk = {"term": "reseller@example.com", "count": CS.MAX_WHOIS_SIBLINGS + 100,
             "domains": [f"b{i}.example" for i in range(10)]}   # count > returned page
-    apex, leads = _mine(_domain_pivot(reverse_whois_historic=bulk))
+    apex, leads = _mine(_reverse_pivot("whois:registrant_email", bulk["term"], reverse_whois_historic=bulk))
     ok(not apex, "bulk registrant term: siblings do NOT seed (count, not page size, decides)")
     ok(any(l["check"] == "bulk registrant term" for l in leads), "bulk term: raised as lead")
 
     privacy = {"term": "registry-abuse@cloudflare.com", "count": 2,
                "domains": ["p1.example", "p2.example"]}
-    apex, leads = _mine(_domain_pivot(reverse_whois_current=privacy))
+    apex, leads = _mine(_reverse_pivot("whois:registrant_email", privacy["term"], reverse_whois_current=privacy))
     ok(not apex, "privacy/registrar-abuse term: never seeds even when the count is small")
     ok(any(l["check"] == "bulk registrant term" for l in leads), "privacy term: raised as lead")
+
+    # RULE 5: only registrant e-mail/phone are decisive join keys. A NAME reverse answers every
+    # namesake — live run: a common registrant name returned 28 current / 153 historic unrelated
+    # domains, all under MAX_WHOIS_SIBLINGS, and every one was seeded and collected.
+    namesakes = {"term": "Nguyen Van Example", "count": 12,
+                 "domains": ["n1.example", "n2.example", "n3.example"]}
+    for kind in ("whois:registrant_name", "whois:registrant_org"):
+        apex, leads = _mine(_reverse_pivot(kind, namesakes["term"], reverse_whois_current=namesakes,
+                                           reverse_whois_historic=namesakes))
+        ok(not apex, f"{kind} reverse: a small namesake set still NEVER seeds")
+        ok(len(leads) == 1 and "collision" in leads[0]["check"] and leads[0]["sibling_count"] == 12,
+           f"{kind} reverse: held as ONE collision lead carrying its count (current+historic merged)")
+    phone = {"term": "15550000000", "count": 2, "domains": ["ph1.example", "ph2.example"]}
+    apex, _leads = _mine(_reverse_pivot("whois:registrant_phone", phone["term"], reverse_whois_current=phone))
+    ok({"ph1.example", "ph2.example"} <= apex, "registrant PHONE reverse is decisive and still seeds")
+
+    # --- 3b. METERED leads never ask for spend that is wasted or already made ---------------------
+    def _metered(obj):
+        leads = {}
+        CS._metered_leads_from_raw(obj, leads)
+        return {v["query"] for v in leads.values()}
+    owner = "owner@example.com"
+    def _email_raw(**live):
+        return {"meta": {"host": "seed.example"}, "artifacts": {"whois": {"registrant_email": owner}},
+                "pivots": [{"kind": "whois:registrant_email", "value": owner, "live_results": live}]}
+    rw_q = f'reverse-whois email="{owner}"'
+    ok(rw_q in _metered(_email_raw()), "an owner email never reversed is offered as a metered lead")
+    ok(rw_q not in _metered(_email_raw(reverse_whois_current={"term": owner, "count": 0, "domains": []})),
+       "an owner email whose reverse-WHOIS already ran (even with 0 hits) is NOT offered again — "
+       "that would ask the analyst to approve spend that already happened")
+    ok(rw_q in _metered(_email_raw(reverse_whois_current={"error": "HTTP 503"})),
+       "a reverse-WHOIS that ERRORED stays offered (nothing was learned)")
+    dns_obj = {"meta": {"host": "seed.example"}, "pivots": [{"kind": "domain", "value": "seed.example",
+               "live_results": {"dns": {"ip_classification": [
+                   {"ip": "127.0.0.1", "cdn": False, "kind": "bogon"},
+                   {"ip": "198.51.100.7", "cdn": False, "kind": "origin_candidate"}]}}}]}
+    q = _metered(dns_obj)
+    ok('ip="127.0.0.1"' not in q, "a bogon (loopback/private) origin is never offered as a FOFA ip reverse")
+    ok('ip="198.51.100.7"' in q, "a real origin candidate is still offered")
+    fav_obj = {"meta": {"host": "seed.example"}, "pivots": [{"kind": "favicon_hash", "value": 12345}]}
+    ok('icon_hash="12345"' in _metered(fav_obj), "a favicon hash never reversed is offered as a FOFA lead")
+    fav_paid = {"meta": {"host": "seed.example"}, "pivots": [{"kind": "favicon_hash", "value": 12345,
+                "live_results": {"fofa": {"results": [], "total": 0}}}]}
+    ok('icon_hash="12345"' not in _metered(fav_paid),
+       "a favicon hash whose FOFA reverse already ran is NOT offered again")
 
     # --- 4. ONE noise policy: the frontier gate delegates to noise_filters -----------------------
     infra = {"query": 'ip="203.0.113.12"', "total": 3,

@@ -16,6 +16,17 @@ dependency, never run a Linux-only command on Windows.
 > `AGENTS.md`-aware agents alike (see [`../AGENTS.md`](../AGENTS.md)). **`$SKILL_DIR`** = the
 > directory containing `SKILL.md` — Claude Code: `~/.claude/skills/cti-expert`; Codex/clone:
 > the repo you're working in. Resolve it by locating `SKILL.md`; don't hard-assume `~/.claude`.
+> Registering the `/cti` commands is OS-neutral Python: `python3 scripts/register_agents.py`
+> (`py` on Windows) wires omp, pi, OpenCode, Gemini CLI, Qwen Code, Factory droid, Windsurf and
+> the shared `~/.agents/skills/cti` skill (Codex `$cti`, Cursor / Copilot CLI `/cti`); only the
+> Claude Code symlinks in `register.sh` need a bash on Windows — use **Git Bash**, whose `~` is
+> `%USERPROFILE%`. Run it in **WSL** only for agents that themselves run inside WSL: there `~` is
+> the Linux home, so Windows-native agents never see what it registers. Git Bash's `ln -s` copies
+> by default; `register.sh` sets `MSYS=winsymlinks:nativestrict` (real links need Developer Mode
+> or admin) and falls back to marked pointer stubs (`register_agents.py --host claude`) if refused.
+> Python is resolved as `.venv/bin/python`, `.venv/Scripts/python.exe`, `python3`, `python`, then
+> `py -3`, each probed for 3.10+ (the Store `python3` stub fails the probe); if stubs or the other
+> agents cannot be written, `register.sh` ends with "Registration INCOMPLETE" and exit 1.
 
 ---
 
@@ -122,8 +133,15 @@ than tool-by-tool:
 | **Windows (PowerShell)** | `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-expert\scripts\install.ps1"` |
 | **macOS / Linux / Git Bash / WSL** | `bash ~/.claude/skills/cti-expert/scripts/install.sh` |
 
-Flags (both installers): `-Headless`/`--headless` (Scrapling + Chromium ~200 MB),
-`-Go`/`--go` (Go tools), `-All`/`--all` (everything).
+Flags (both installers): `-Headless`/`--headless` (the Chromium stack — Scrapling, agent-browser,
+Playwright + Chromium ~200 MB — for evidence screenshots, engage and the Cloudflare-escalation
+render), `-Go`/`--go` (Go tools), `-All`/`--all` (everything).
+
+DOM renders (`--render`, `--render-extract`, `render_confirm.py`) use **Moli**, installed by
+default: the pinned release archive named in `intel_engine/WebPivot/references/moli.json` is
+downloaded and its sha256 verified before it lands in `~/.local/bin/moli`
+(`%LOCALAPPDATA%\Moli\bin\moli.exe` on Windows). `NO_MOLI=1` opts out; `CTI_BROWSER=chromium`
+keeps every render on Chromium.
 
 Both installers **bootstrap uv first**, create the skill venv with `uv venv`, install
 libraries with `uv pip`, and install CLI tools with `uv tool` — falling back to

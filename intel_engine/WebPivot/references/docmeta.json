@@ -56,11 +56,11 @@
   },
 
   "budget": {
-    "_comment": "Download limits. This layer FETCHES FILES FROM THE TARGET, so it is a real footprint on the operator's server and a real cost in time — these caps keep it proportionate. max_files is the total downloaded per page; max_bytes_per_file skips anything larger (checked via Content-Length before the body is read); max_total_bytes is the whole-run ceiling; min_image_bytes skips tracking pixels, spacers and icons, which never carry useful metadata. max_documents reserves part of max_files for PDFs/Office files, so a page full of images cannot starve the highest-value target.",
-    "max_files": 12,
-    "max_documents": 6,
-    "max_bytes_per_file": 5242880,
-    "max_total_bytes": 20971520,
+    "_comment": "Download limits. This layer FETCHES FILES FROM THE TARGET, so it is a real footprint on the operator's server and a real cost in time — these caps keep it proportionate. max_files is the total downloaded per page; max_bytes_per_file (10 MB) skips anything larger (checked via Content-Length before the body is read); max_total_bytes (500 MB) is the whole-run ceiling — larger now, so heavier on the target: keep this layer proportionate to the case; min_image_bytes skips tracking pixels, spacers and icons, which never carry useful metadata. max_documents reserves part of max_files for PDFs/Office files, so a page full of images cannot starve the highest-value target.",
+    "max_files": 24,
+    "max_documents": 12,
+    "max_bytes_per_file": 10485760,
+    "max_total_bytes": 524288000,
     "min_image_bytes": 8192,
     "timeout_seconds": 15
   }

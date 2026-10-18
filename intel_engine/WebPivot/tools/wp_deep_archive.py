@@ -104,11 +104,19 @@ def deep_archive(domain, *, ua=None, max_snaps=25, cdx_limit=2000, root_only=Fal
                                with_urlscan=False,
                                fetch_budget=max(20, budget_s * 0.4))
         meta["wayback_snapshots"] = wb.get("snapshots_scanned", 0)
-        for r in wb.get("records", []):
-            key = (r["kind"], r["value"])
-            records[key] = {**r, "sources": {"wayback"}}
-        if meta["wayback_snapshots"]:
-            meta["sources"].append("wayback")
+        if wb.get("skipped"):
+            # a breaker skip is a GAP (never queried), not "queried, found nothing" — record it
+            # distinctly so this run's report/collection-gaps read never closes it as empty.
+            meta["wayback_skipped"] = wb["skipped"]
+            meta["wayback_skipped_kind"] = wb.get("skipped_kind", "")
+        else:
+            if wb.get("truncated"):
+                meta["wayback_truncated"] = True   # index row cap hit: not the whole history
+            for r in wb.get("records", []):
+                key = (r["kind"], r["value"])
+                records[key] = {**r, "sources": {"wayback"}}
+            if meta["wayback_snapshots"]:
+                meta["sources"].append("wayback")
     except Exception as e:
         print(f"  deep_archive wayback error for {host}: {e}", file=sys.stderr)
 

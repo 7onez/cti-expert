@@ -3,8 +3,9 @@
 
 A poll-based stand-in for certstream: certstream is a websocket firehose (needs a
 websocket client library), which breaks the WebPivot "core needs nothing beyond the
-Python 3 stdlib" contract. Instead we POLL Certificate Transparency via crt.sh (with a
-Certspotter fallback), remember which certs we've already seen in a state file, and on
+Python 3 stdlib" contract. Instead we POLL Certificate Transparency through the shared wp_ct
+client (crt.sh → PostgreSQL → keyless backups for a domain; crt.sh LIKE for a keyword),
+remember which certs we've already seen in a state file, and on
 each run report only the NEWLY-ISSUED certs for a brand keyword or domain. Run it on a
 loop or cron for continuous brand monitoring — the fresh SANs become new WebPivot seeds.
 
@@ -20,71 +21,35 @@ import argparse
 import json
 import os
 import sys
-import urllib.parse
-import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from wp_common import _secret   # shared skill-root .env loader (+ installs cti-proxy)
-except Exception:                   # noqa: BLE001 — degrade to env-only
-    def _secret(*names):
-        for _n in names:
-            _v = os.environ.get(_n)
-            if _v:
-                return _v
-        return None
-
-DEFAULT_UA = "Mozilla/5.0 (WebPivot ct_monitor)"
+import wp_ct  # noqa: E402 — the one CT client (loads the skill .env, installs cti-proxy)
 
 
-def _get_json(url: str, timeout: int = 45, headers: dict = None):
-    h = {"User-Agent": DEFAULT_UA, "Accept": "application/json"}
-    if headers:
-        h.update(headers)
-    req = urllib.request.Request(url, headers=h)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+def _identities(cert):
+    """Every identity a cert can be recognised by across sources and runs. The bare crt.sh id is
+    kept unprefixed so state files written before the shared client still match."""
+    keys = []
+    if cert.get("crtsh_id"):
+        keys.append(str(cert["crtsh_id"]))
+    if cert.get("serial"):
+        keys.append("serial:" + cert["serial"])
+    if cert.get("sha256"):
+        keys.append("sha256:" + cert["sha256"])
+    return keys or [str(cert.get("id"))]
 
 
-def crtsh(pattern: str, timeout: int = 45):
-    """crt.sh issuances for a domain or %keyword%. Returns (certs, error)."""
-    q = pattern if any(c in pattern for c in "%.") else f"%{pattern}%"
-    # keep the SQL-LIKE '%' wildcard literal — urlencoding it to %25 breaks keyword search
-    url = f"https://crt.sh/?q={urllib.parse.quote(q, safe='%.*-_')}&output=json"
-    try:
-        data = _get_json(url, timeout)
-    except Exception as e:
-        return None, str(e)
-    certs = []
-    for row in data if isinstance(data, list) else []:
-        names = sorted({n.strip().lstrip("*.").lower()
-                        for n in str(row.get("name_value", "")).splitlines()
-                        if n.strip() and "@" not in n})
-        certs.append({"id": str(row.get("id")), "names": names,
-                      "not_before": row.get("not_before"),
-                      "issuer": row.get("issuer_name", "")})
-    return certs, None
-
-
-def certspotter(pattern: str, timeout: int = 45):
-    """Certspotter fallback (domains only; crt.sh is frequently overloaded)."""
-    if "%" in pattern:
-        return None, "certspotter needs a domain, not a keyword"
-    dom = pattern.strip(".%")
-    url = ("https://api.certspotter.com/v1/issuances?domain=" + urllib.parse.quote(dom)
-           + "&include_subdomains=true&expand=dns_names&expand=not_before&expand=issuer")
-    key = _secret("CERTSPOTTER_API_KEY")   # authenticated = higher rate limit; keyless still works
-    hdrs = {"Authorization": "Bearer %s" % key} if key else None
-    try:
-        data = _get_json(url, timeout, headers=hdrs)
-    except Exception as e:
-        return None, str(e)
-    certs = []
-    for row in data if isinstance(data, list) else []:
-        names = sorted({n.lstrip("*.").lower() for n in row.get("dns_names", [])})
-        certs.append({"id": str(row.get("id")), "names": names,
-                      "not_before": row.get("not_before"),
-                      "issuer": (row.get("issuer") or {}).get("name", "")})
-    return certs, None
+def poll(pattern: str):
+    """One pattern → (certs, status, completeness_line, sources). A dotted value without '%' is a
+    DOMAIN (full fallback chain); anything else is a crt.sh LIKE keyword ('%kw%'), web only."""
+    if "." in pattern and "%" not in pattern:
+        r = wp_ct.ct_search(pattern.strip(".").lower(), max_certs=None, max_subdomains=None)
+        crt = r["ct_status"].get("crt.sh", {}).get("status")
+        return r["certs"], crt, r["completeness_line"], r.get("sources") or []
+    q = pattern if "%" in pattern else f"%{pattern}%"
+    r = wp_ct.crtsh_keyword(q)
+    line = ("crt.sh unreachable — keyword poll incomplete" if r["status"] == "degraded"
+            else "crt.sh keyword search")
+    return r["rows"], r["status"], line, ["crt.sh"] if r["status"] != "degraded" else []
 
 
 def load_state(path: str) -> dict:
@@ -109,30 +74,33 @@ def save_state(path: str, state: dict) -> None:
 
 
 def watch(patterns, state_path):
-    """Poll each pattern; return (new_certs, baselined) where new_certs excludes those
-    already seen. On a pattern's first-ever run we baseline (record ids) and DON'T alert."""
+    """Poll each pattern; return (new_certs, baselined) where new_certs excludes those already
+    seen. A pattern's first-ever run baselines and does NOT alert — but never on a degraded crt.sh:
+    a partial baseline would make the certs it missed alert as "new" once crt.sh is back. A later
+    degraded run still alerts on (and records) what the backups saw; a cert nobody saw stays unseen
+    and alerts when crt.sh returns."""
     state = load_state(state_path)
     new_certs, baselined = [], []
     for pat in patterns:
         seen = set(state.get(pat, []))
-        certs, err = crtsh(pat)
-        source = "crt.sh"
-        if certs is None:
-            certs, err2 = certspotter(pat)
-            source = "certspotter"
-            if certs is None:
-                print(f"[!] {pat}: both CT sources failed (crt.sh: {err}; certspotter: {err2})",
-                      file=sys.stderr)
-                continue
+        certs, crt_status, line, sources = poll(pat)
         first_run = pat not in state
-        fresh = [c for c in certs if c["id"] not in seen]
+        if crt_status == "degraded":
+            print(f"[!] {pat}: {line}", file=sys.stderr)
+            if first_run:
+                print(f"[!] {pat}: baseline postponed until crt.sh answers", file=sys.stderr)
+                continue
+        fresh = [c for c in certs if not any(k in seen for k in _identities(c))]
         # keep the most recent 5000 ids per pattern so state doesn't grow unbounded
-        state[pat] = sorted(set(seen) | {c["id"] for c in certs})[-5000:]
+        state[pat] = sorted(seen | {k for c in certs for k in _identities(c)})[-5000:]
         if first_run:
             baselined.append((pat, len(certs)))
         else:
             for c in fresh:
-                new_certs.append({"pattern": pat, "source": source, **c})
+                new_certs.append({"pattern": pat, "source": "+".join(c.get("sources") or sources),
+                                  "id": c.get("id"), "names": [n.lstrip("*.") for n in c["names"]],
+                                  "not_before": c.get("not_before"), "issuer": c.get("issuer") or "",
+                                  "ct_status": crt_status})
     save_state(state_path, state)
     return new_certs, baselined
 
@@ -172,7 +140,7 @@ def main():
     seeds = set()
     print(f"[+] {len(new_certs)} NEW certificate(s):\n")
     for c in new_certs:
-        print(f"  • [{c['pattern']}] crt id {c['id']}  {c.get('not_before','')}  {c.get('issuer','')[:48]}")
+        print(f"  • [{c['pattern']}] {c['source']} {c['id']}  {c.get('not_before') or ''}  {c.get('issuer','')[:48]}")
         for n in c["names"]:
             print(f"      SAN: {n}")
             seeds.add(n)

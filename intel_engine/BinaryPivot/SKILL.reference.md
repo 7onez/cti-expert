@@ -126,7 +126,7 @@ python3 "$BP/tools/bp_anyrun.py" report <task-uuid> [--iocs]    # one task's rep
 python3 "$BP/tools/analyze_artifact.py" <target> --anyrun       # lookups inside an analysis
 ```
 
-### 🛑 Submitting is ALWAYS the analyst's call — ask, every time
+### Sandbox submission: automatic for keyed case runs, ask-first for direct calls
 
 ```bash
 python3 "$BP/tools/bp_anyrun.py" submit ./sample.bin            # prints the briefing, REFUSES
@@ -147,18 +147,15 @@ that is a live OPSEC failure mode, not a theoretical one:
 - **Third-party data handling.** The sample may carry victim PII or client data. Uploading it is a
   disclosure decision, sometimes a legal one.
 
-**The rule:** never submit as a side effect of "analyze this". Run the static analysis, look for an
-**existing** detonation of the hash (TI Lookup if licensed, VirusTotal, MalwareBazaar, Triage,
-Koodous — someone has often already run it), and if it still must be detonated, **put the risks in
-front of the analyst and get an explicit yes for that submission.** Prefer detonating the downloaded
-**file** over the live **URL** where that answers the question. The code enforces this: `submit()`
-returns the risk briefing and sends nothing unless `confirm=True`; privacy defaults to `owner`
-(only you) with `public` refused unless separately authorized; a free-plan submission is **refused
-rather than silently downgraded** to a public one; and the gate lives in the function signature, so
-editing `references/anyrun.json` can tighten it but never switch it off. MCP tool: `anyrun_submit`
-— call it once *without* `confirm` to get the briefing, ask, then call again with `confirm=true`.
-**Never put a case ID or an analyst/client name in `--tags` or the filename** (RULE 1 crossing an
-API boundary).
+**Case pipeline:** a configured `ANYRUN_API_KEY` authorizes automatic file submission in spending
+runs after downloading and statically analysing a discovered APK/installer. The complete local file
+is saved under `cases/<case>/bin/<sha256>.<extension>` and its task UUID under
+`cases/<case>/anyrun/submissions.json`. `--free-only`, case `no_spend`, default free-only `loop`
+(unless `--full`), or hostile/no-direct-contact posture suppresses submission. The plan gate still
+refuses accounts without private quota unless `ANYRUN_ALLOW_PUBLIC=1` authorizes world-readable tasks.
+**Direct CLI/MCP calls** remain ask-first: `submit()` returns a briefing without `confirm=True`.
+Run static analysis and search for an existing detonation before requesting a manual upload.
+Never put case IDs or analyst/client names in tags or submitted filenames.
 
 ### Reading the lookup side
 
@@ -184,15 +181,20 @@ API boundary).
 
 ## Workflow — APK/binary in a scam funnel
 
-1. **WebPivot flags the file.** Running `pivot_extract.py` on the scam site emits `app:apk` /
-   `app:desktop_installer` pivots whose first query is the exact BinaryPivot command to run.
-2. **Acquire + extract.** Run `analyze_artifact.py <url>` from non-attributable egress. Save the
-   file (`--keep`) and the JSON (`-o "$CASE/raw/<host>.json"`).
+1. **WebPivot flags the file.** `pivot_extract.py` emits `app:apk` / `app:desktop_installer`
+   pivots. The `/cti` case pipeline downloads and statically analyzes them automatically.
+2. **Manual acquire + extract.** Outside that pipeline, run `analyze_artifact.py <url>` from
+   non-attributable egress. Save the bytes under `$CASE/bin/` (`--keep`) and the JSON under
+   `$CASE/bin/analysis/` (`-o`); never overwrite `$CASE/raw/<host>.json` with binary evidence.
 3. **Pivot the identifiers.** Start with the signing cert (Koodous `cert:`), then package name,
    Firebase project, then each embedded backend host — **invoke the `WebPivot` skill** on those
    hosts (`pivot_extract.py https://<backend-host> --leads`) to map their web infrastructure.
-4. **Corroborate + cluster.** Ingest into the KB; a shared signing cert **and** a shared backend host
-   between two apps (or an app and a website) is high-confidence common ownership.
+4. **Corroborate + cluster.** Ingest manual binary JSON explicitly with
+   `tools/kb/ingest_webpivot.py --kb knowledge "$CASE/bin/analysis/<file>.json"`. The KB records
+   signing certs and other identifiers on the file hash; it joins the web domain only when
+   that same self-hosted origin was collected as a site. Shared file hosts are provenance, not
+   ownership. Corroborate app-to-app links with a cert and backend host before attribution.
+
 5. **Report at the cluster level.** Roll the app + its web siblings into one assessment with WebPivot's
    `evidence_report.py` (see WebPivot `Workflows/Reporting.md`) — trigger: *"output full report for
    that cluster"*.

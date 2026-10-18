@@ -25,6 +25,7 @@ Usage:
 # ///
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -53,17 +54,36 @@ def _get(url, timeout=25, as_json=True):
         return None, type(e).__name__
 
 
+def _wp_ct():
+    """The shared CT client (intel_engine/WebPivot/tools/wp_ct.py) — or None outside the repo."""
+    tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "..", "..", "intel_engine", "WebPivot", "tools"))
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import wp_ct
+        return wp_ct
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ct_names(res):
+    """A wp_ct source result → (names, status). `ok` only for a complete answer (crt.sh ok/empty,
+    a backup complete); partial/capped answers are kept but named, so the gap stays visible."""
+    names = {n.lstrip("*.") for c in res.get("rows") or [] for n in c.get("names") or []}
+    names |= {n.lstrip("*.") for n in res.get("hostnames") or []}
+    st = res.get("status")
+    if st in ("ok", "empty", "complete"):
+        return names, "ok"
+    detail = "; ".join(res.get("errors") or []) or st
+    return names, (f"{st} ({detail})" if st in ("partial", "capped") else f"unavailable ({detail})")
+
+
 def src_certspotter(domain):
-    url = ("https://api.certspotter.com/v1/issuances?domain=" + urllib.parse.quote(domain)
-           + "&include_subdomains=true&expand=dns_names")
-    d, err = _get(url)
-    if err or d is None:
-        return set(), f"unavailable ({err})"
-    names = set()
-    for row in d if isinstance(d, list) else []:
-        for n in row.get("dns_names") or []:
-            names.add(n.lower().lstrip("*."))
-    return names, "ok"
+    ct = _wp_ct()
+    if ct is None:
+        return set(), "unavailable (wp_ct not found)"
+    return _ct_names(ct.certspotter_fetch(domain))
 
 
 def src_hackertarget(domain):
@@ -78,16 +98,10 @@ def src_hackertarget(domain):
 
 
 def src_crtsh(domain):
-    d, err = _get("https://crt.sh/?q=" + urllib.parse.quote("%." + domain) + "&output=json")
-    if err or d is None:
-        return set(), f"unavailable ({err})"
-    names = set()
-    for row in d if isinstance(d, list) else []:
-        for n in str(row.get("name_value", "")).split("\n"):
-            n = n.strip().lower().lstrip("*.")
-            if n:
-                names.add(n)
-    return names, "ok"
+    ct = _wp_ct()
+    if ct is None:
+        return set(), "unavailable (wp_ct not found)"
+    return _ct_names(ct.crtsh_fetch(domain))
 
 
 SOURCES = [("certspotter", src_certspotter), ("hackertarget", src_hackertarget),
@@ -130,7 +144,9 @@ def main():
             flagged.append({"host": s, "label": first,
                             "why": "leftmost label marks an operator/back-office host"})
 
-    live = [n for n, v in status.items() if v["status"] == "ok"]
+    # partial/capped answered (their names are kept) but still leave a named collection gap
+    live = [n for n, v in status.items() if v["status"] == "ok"
+            or v["status"].startswith(("partial", "capped"))]
     dead = [n for n, v in status.items() if v["status"] != "ok"]
     out = {"domain": dom, "subdomains": flagged if a.sensitive_only else subs,
            "count": len(subs), "sensitive": flagged, "sources": status,

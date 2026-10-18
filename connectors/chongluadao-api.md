@@ -33,7 +33,7 @@ direct `/webpivot` fetch, and quieter than a world-readable urlscan submit.
 
 ## Timeouts & failure handling
 
-- **30-minute ceiling.** Every call defaults to `--timeout 1800`; async jobs poll up to that
+- **~83-minute ceiling.** Every call defaults to `--timeout 5000`; async jobs poll up to that
   budget. This is deliberate — premium data-leak/export searches are slow, and the point is to
   **get all the data** for pivoting, not to time out early. Lower it per call with
   `--timeout N` (placed **after** the subcommand).
@@ -47,8 +47,8 @@ direct `/webpivot` fetch, and quieter than a world-readable urlscan submit.
 
 ## Rate limits & quota posture
 
-CLD publishes no per-endpoint quota in the OpenAPI spec, and the premium key is metered by
-account, so treat it as a **paid, finite** resource:
+CLD usage is **unlimited** — there is no per-call credit or account quota, so no local spend gate
+applies (it runs under `--free-only` and `no_spend`). The only real limit is transport politeness:
 
 - **Cheap & safe to spam:** `checkurl`, `checkphone`, `whois`, `burner`, `onion`, `vulns/vuln`,
   `denylist` (fast, keyed, low cost). Use freely during Acquire.
@@ -59,18 +59,25 @@ account, so treat it as a **paid, finite** resource:
   (`/cti-recall`) keep you from re-querying the same seed. A 429 or a quota rejection surfaces as
   a non-2xx error → log a gap, back off, continue keyless; never hammer-retry.
 
+Each CLI/MCP request still records one `chongluadao` usage row, including every `route`
+endpoint and async start/poll, so a run's CALL count is auditable. Because usage is unlimited,
+`scripts/cld/references/cld_usage.json` prices every endpoint at **0 units** — the ledger logs a
+call, never spend. The output `usage` block reports calls and polls with `billable_units: 0` and
+`basis: unlimited`. (If the file is missing/malformed the loader falls back to 1 unit — conservative
+over-report, never a silent free pass.)
+
 ## Two APIs, one client
 
 | API | Base URL | What it serves |
 |---|---|---|
 | **Feeds** | `https://feeds.chongluadao.vn` | URL / phone / WHOIS / burner checks, denylist search, deep AI URL analysis |
-| **Threat-Intel** | `https://api-ti.chongluadao.vn` | IoC analyzers, full Data-Leaks module (incl. async jobs), Brand-Protection, Threat-Feeds (CVE/KEV, actors, onion), STIX/MISP/TAXII feeds |
+| **Threat-Intel (Shield)** | `https://api-ti.chongluadao.vn` | IoC analyzers, Data-Leaks (incl. internal documents), Brand-Protection, ransomware victims, ClickFix / PhaaS / Telegram, Threat-Feeds, STIX/MISP/TAXII. Same `X-API-Key` as Feeds. |
 
 ## Subcommands (`uv run scripts/cld/cld_api.py <op> … [--timeout N] [--pretty]`)
 
 | Op | Endpoint | Notes |
 |---|---|---|
-| `route <target>` | auto | classify → best call (cve/onion/asn/email/hash/ip/phone/domain-url); the `/cld` entry point |
+| `route <target>` | both, by type | domain/url: Feeds `checkurl` + Shield IoC + ransomware + ClickFix + PhaaS + internal-leaks. A list row counts only when its host is the target (`hit`, `matched`). email: burner + IoC. phone: checkphone + IoC. `t.me/<handle>`: Telegram posts, not a domain lookup. hash/ip/asn: IoC only. |
 | `checkurl <url>` | POST feeds `/external/checkurl` | verdict `safe`/`malicious`/`no result` vs ~20M denylist+allowlist |
 | `analyze <url> [--lang en\|vi] [--fresh]` | GET feeds `/api/v1/analyze-deep` | deep AI: `risk_score` 1–10 + `key_findings` |
 | `denylist <search> [--type][--status][--page][--limit]` | GET feeds `/external/denylists/search` | search denylist → sibling scam URLs (campaign clustering) |
@@ -88,6 +95,9 @@ account, so treat it as a **paid, finite** resource:
 | `actors [--q][--type]` | GET ti `.../threat-actors` | threat-actor directory |
 | `onion <hostname>` | GET ti `.../onion-blocklist/check` | `.onion` abuse-blocklist check |
 | `feed <stix2\|misp\|stix1> [--limit][--type][--observed-after]` | GET ti `/ioc/external/feeds/...` | CLD indicator feed export |
+| `ransomware <q> [--group][--country]` | GET ti `/ransomware/external/victims` | Shield: victim published by a ransomware group |
+| `internal-leaks <search> [--severity]` | GET ti `/data-leaks/external/internal-leaks` | Shield: leaked internal documents |
+| `clickfix [--q]` / `phaas [--q]` / `telegram [--q][--handle]` | GET ti `/threat-feeds/external/{clickfix,phaas,telegram/posts}` | Shield: lure sites, phishing kits, intercepted posts |
 | `probe` | GET feeds `/external/checkburneremail` | fast key-validity check |
 
 Envelope (every op): `{"tool":"chongluadao","op","input","ok","status","skipped","result","error"}`.
@@ -131,5 +141,5 @@ graph — the feed is CLD's org-wide curated IOC set, so folding it into the cas
 ## Latency
 
 `checkurl`/`checkphone`/`whois`/`burner`/`vulns`/`onion` <5 s. `analyze` and `ioc url/ip` ~10–30 s.
-`exposure`/`leaks`/`breaches`/datasets and the async jobs can take minutes — hence the 30-min
+`exposure`/`leaks`/`breaches`/datasets and the async jobs can take minutes — hence the ~83-min
 ceiling. On any error the call degrades to the keyless path for that command; log a gap, never block.

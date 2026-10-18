@@ -81,7 +81,7 @@
 | [**Netlas**](https://netlas.io) | Chỉ mục tài sản Internet độc lập — các bộ sưu tập DNS, phản hồi quét, WHOIS và chứng chỉ sau một key; `domains a:<origin-ip>` đảo ngược một origin không qua CDN ra mọi apex kèm ngày tháng | Nguồn MO-neighbour của `/webpivot` · `intel.py netlas` · thăm dò quyền hạn gói |
 
 > [!IMPORTANT]
-> **Tra cứu ANY.RUN là chỉ-đọc; việc kích nổ được gác chặt.** `anyrun_lookup` tra cứu TI Lookup cho các hash **đã** được kích nổ từ trước. `anyrun_submit` có thể kích nổ một file hoặc URL, nhưng chỉ sau khi vượt qua: xác nhận của analyst cho **từng lần nộp** (xem bản tóm tắt rủi ro rồi mới gọi lại với `confirm=true`), quyền riêng tư mặc định là riêng tư và `public` bị từ chối, kiểm tra gói dịch vụ theo nguyên tắc fail-closed (đọc hạn mức riêng tư trong `/user` của chính tài khoản — bằng 0 là từ chối thẳng, xác nhận của analyst cũng không vượt qua được; nếu không có thì cần một task riêng tư trước đó, hoặc analyst phải xác nhận rõ ràng đang dùng gói trả phí), đọc lại quyền riêng tư sau khi nộp để thu hồi và cảnh báo nếu task vẫn bị công khai, và harness từ chối nếu không có `HARNESS_ALLOW_SUBMIT=1`. Một task sandbox công khai là ai cũng đọc được và không thể thu hồi; cơ chế gác được bảo vệ bằng một bài kiểm thử hồi quy ([`tests/test_no_sample_submission.py`](tests/test_no_sample_submission.py)), chứ không chỉ bằng quy ước.
+> **ANY.RUN: tra cứu chỉ-đọc; tự động nộp file khi chạy case có key.** `/cti` tải APK/installer tìm được vào `cases/<case>/bin/` và phân tích tĩnh; khi có `ANYRUN_API_KEY` và lượt chạy cho phép chi phí, file hoàn chỉnh được nộp lên sandbox (mặc định riêng tư). `--free-only`, `no_spend`, `loop` mặc định (trừ `--full`) và chế độ không liên hệ trực tiếp đều chặn việc nộp. Nếu gói không cho phép task riêng tư, hệ thống từ chối trừ khi `ANYRUN_ALLOW_PUBLIC=1`; task công khai có thể bị mọi người xem và không thể thu hồi. Lệnh `anyrun_submit` gọi trực tiếp vẫn cần xác nhận từng lần và `HARNESS_ALLOW_SUBMIT=1`. Xem [`SKILL.md`](SKILL.md).
 
 <sub>Việc liệt kê ở đây thể hiện sự hỗ trợ dành cho dự án và <b>không</b> hàm ý liên kết, chứng thực hay bất kỳ sự kiểm định nào của các tổ chức được nêu đối với công cụ này. Các tích hợp đánh dấu ở trên đều là tùy chọn và cần API key — <b>mọi kỹ thuật cốt lõi vẫn chạy được mà không cần key nào</b>. Luôn tôn trọng điều khoản dịch vụ của từng nhà cung cấp. Danh sách đầy đủ các dự án mã nguồn mở và dịch vụ công cộng miễn phí mà skill này dựa vào nằm ở phần <a href="#-lời-cảm-ơn--ghi-nhận">Lời cảm ơn &amp; Ghi nhận</a>.</sub>
 
@@ -166,6 +166,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 | Hạng mục | Có gì mới | Chi tiết |
 |----------|-----------|---------|
+| **Vòng auto-pivot đa kiểu** | Mọi kiểu selector đều là nút frontier; chi tiêu metered đứng sau một lần duyệt gắn digest | Nút có kiểu (`selector_types` + `rungs.json` owner/kit/neighbour) → `case_state.propose` → pha Plan bắt buộc (`PLAN_TOOLS`, chỉ đọc) → pivot free/urlscan tự chạy khi ≤ **N=25** hit, còn lại `proposal.json` gác bởi `audit.gate` (`harness approve` · `case_approve` · TTY). Op dispatcher `propose` + `corpus-search` (công cụ `corpus_search`). Assessment thêm `kit_siblings` / `neighbours` / `mentions` — thu thập, không quy thuộc. Ray: thu thập ≠ quy thuộc |
 | **Pivot MO-neighbour** | Đảo ngược một origin không qua CDN ra các đồng cư dân — và chỉ gieo seed khi có khóa nối registrant | `wp_mo_neighbours.discover` đảo ngược IP origin không qua CDN của estate (kể cả origin MX) qua **Netlas · Validin · urlscan**, xác minh WHOIS từng apex ứng viên, rồi phân loại `same_registrant` (chỉ khóa nối e-mail/điện thoại registrant hiện tại — bản ghi proxy **không** đóng góp số điện thoại) / `same_mo` (chính sách từ dữ liệu tham chiếu) / `unrelated` / `unverifiable`. **Chỉ `same_registrant` mới gieo vào frontier**; các persona cùng-MO hiển thị thành bảng *Related personas* bậc 10 trong báo cáo (`--mask-personas` để gộp). Cổng chống bulk-hosting kích hoạt *trước* mọi khoản chi; khóa theo origin + cache trên đĩa + sổ WhoisXML theo lượt chạy giữ vững qua các tiến trình con của collector, nên một origin chỉ mua một lần mỗi vụ việc. Thanh chắn RULE 5 nguyên vẹn: chỉ ingest KB dạng fact, không bao giờ là edge, không bao giờ là `operator_lead` |
 | **Các kỷ WHOIS · vòng đời urlscan Pro** | Dòng thời gian nay biết ai từng giữ tên miền *trước* nhà vận hành này | Lịch sử WHOIS là `--whois-history purchase` tường minh, giới hạn ở seed và thành viên cụm (đường render không bao giờ mua); báo cáo house hiển thị bảng **Registrant eras** (gộp các lần đổi trong cùng ngày, phân loại placeholder của registrar) và lấy mốc bắt đầu kỷ hiện tại làm ngưỡng cắt cho ảnh chụp lưu trữ. urlscan **Pro** cung cấp chỉ mục vòng đời hostname — các kỷ A/NS, lần đầu xuất hiện trong CT và zonefile, cắt trái khi duyệt bị chặn — nuôi phần xem theo thời gian; hàng verdict chỉ xuất hiện khi có tín hiệu, và API key chỉ gửi tới urlscan.io |
 | **Quyền hạn gói được đo, không giả định** | Key đo ra *free* sẽ bỏ qua các lệnh gọi sẽ trả 403 | `wp_capabilities.discover_plans` thăm dò **endpoint tài khoản miễn phí** của từng nhà cung cấp (hạn mức urlscan, gói Netlas, mức dùng SecurityTrails/DNSLytics, IntelX `/authenticate/info`, Validin `/api/paths`) một lần mỗi vụ việc vào `cases/<id>/capability_plans.json`; `enrich_live` đọc kho này và chỉ chặn **khi có kết luận `free` rõ ràng** — chưa rõ thì giữ lệnh gọi hữu ích làm chính bước thăm dò. Censys search tự ghi verdict của mình. Thăm dò thất bại được báo trong lượt này và không bao giờ bị đóng băng, nên tiến trình kế tiếp đo lại |
@@ -177,6 +178,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 | **ChongLuaDao trong pipeline · subdomain · một trần timeout** | Feed first-party chấm điểm mọi host, subdomain sống tham gia vụ việc, và không lệnh gọi nào treo lượt chạy | `wp_cld.py` chạy trên mỗi host đã thu thập bên trong `enrich_live` — verdict denylist + phân tích IoC hạ cánh thành **fact uy tín** (không bao giờ là cạnh cụm) và WHOIS CLD là **nguồn chính cho tên `.vn`**. `subdomain_enum` hợp nhất subfinder (tự lấy key từ `.env`), amass, assetfinder và findomain, xác minh DNS các tên vào `cases/<id>/subenum/<apex>.json`, và frontier xếp hàng những tên **sống** cho vòng kế (plumbing của hoster là fact, không phải seed). Một trần duy nhất cho mỗi lệnh gọi — `CTI_CALL_TIMEOUT`, mặc định **1800 s** từ `WebPivot/references/timeouts.json` — sàn mọi fetch, lệnh gọi vendor, collector và subprocess renderer; probe DNS/TLS thô giữ biên fail-fast của chúng, và MCP server đang chạy giữ giá trị của nó cho đến khi restart |
 | **Apex có thể đăng ký · IP landlord · binder kit** | Frontier và KB thống nhất apex là gì và IP nào là landlord | Một **Public Suffix List** được vendor (`public_suffix_list.json`, `wp_psl_update.py`) điều khiển một reducer `_registrable()`, nên `shop.id.vn` và `panel.co.uk` gập về đúng apex ở mọi nơi — frontier, ingest, report, Blueprint. `shared_hosting_max_cohosts` (12) là **một** con số đánh dấu IP là hosting chia sẻ/hàng loạt: các cạnh `hosted_on` của nó trở thành fact, phân vùng cụm bỏ qua chúng, và co-tenant bị giữ lại làm lead. Độ sâu mở rộng được neo: host liên kết chủ sở hữu với một *hop trước* là `related_hosts`, không bao giờ là member. Liên kết mạng xã hội cào được phân giải về **tài khoản** — đường dẫn dành riêng theo mạng, router segment thứ hai và tài khoản credit thư viện/vendor là dữ liệu tham chiếu, và apex nền tảng trần (`t.me`, `facebook.com`) không bao giờ là handle |
 | **Blueprint gập xuống mức apex** | Estate hàng trăm host không còn âm thầm làm rơi tab kiến trúc của báo cáo HTML | Kiểu architecture của Archify vẽ ≤ 12 node · 18 cạnh, nên [`cti_archify.py`](scripts/cti_archify.py) giờ **gom host dưới apex có thể đăng ký** (`Estate · N hosts`), gập đuôi dài thành `+N more apexes`, xếp các apex mang finding lên trước và đặt hub nhà vận hành giữa hàng với nan hoa phía trên và dưới. `CTI_ARCHIFY=1` (tự động: đồ thị đầy đủ nếu vừa, không thì gập) · `force` (lưới 25 node rộng nhất) · `0`; `--plan` in cả hai kết quả offline, và mọi xuất HTML giờ xác nhận chế độ Blueprint trước (Bước C — `--yolo` giữ Auto). Được khóa bởi [`tests/test_archify_blueprint.py`](tests/test_archify_blueprint.py) |
+| **`/cti` trên mọi tác nhân lập trình** | Một bước đăng ký gắn các lệnh vào mọi tác nhân trên máy, không chỉ Claude Code | [`scripts/register_agents.py`](scripts/register_agents.py) (được `register.sh` gọi) đăng ký 9 lệnh với **omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf** và cài `/cti` thành skill dùng chung `~/.agents/skills/cti` cho **Cursor · Copilot CLI** (`/cti`), **Codex** (`$cti` — Codex đã bỏ custom prompt từ bản 0.117, nên tệp cũ `codex/cti-expert.md` đã bị gỡ) và **ứng dụng ChatGPT desktop** (`@cti`). Mỗi tệp là một stub trỏ về bản clone này, nên một lần `git pull` cập nhật mọi tác nhân cùng lúc. Cài đặt và `--uninstall` chỉ đụng tới những gì chính nó đã ghi — stub có đánh dấu, và các symlink trong `~/.claude` trỏ vào repo này — không bao giờ đụng tới lệnh hay skill cùng tên của bạn. Khóa bằng [`tests/test_register_agents.py`](tests/test_register_agents.py) |
 
 <details>
 <summary><b>Có gì mới trong v2.11</b></summary>
@@ -504,19 +506,21 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 ---
 
-### Bước 3 &mdash; Đăng ký các lệnh với Claude Code
+### Bước 3 &mdash; Đăng ký các lệnh với Claude Code và mọi tác nhân khác
 
-`install.sh` cài các *công cụ* OSINT. Bước một lần này gắn **skill, 9 lệnh slash `/cti*`, và các công cụ MCP** vào Claude Code để chúng hoạt động ngay từ một prompt lạnh trong bất kỳ dự án nào — nó tạo symlink `commands/*.md` vào `~/.claude/commands/` và ghi tệp `.mcp.json` riêng cho từng máy. Bước này idempotent, nên chạy lại sau một `git pull` là an toàn.
+`install.sh` cài các *công cụ* OSINT. Bước một lần này gắn **skill, 9 lệnh slash `/cti*`, và các công cụ MCP** vào Claude Code để chúng hoạt động ngay từ một prompt lạnh trong bất kỳ dự án nào — nó tạo symlink `commands/*.md` vào `~/.claude/commands/` và ghi tệp `.mcp.json` riêng cho từng máy. Sau đó nó đăng ký `/cti` với mọi tác nhân lập trình khác phát hiện được trên máy (xem mục *Dùng trong các tác nhân khác* bên dưới). Bước này idempotent, nên chạy lại sau một `git pull` là an toàn.
 
 ```bash
-# Register the skill + 9 commands + write the per-machine .mcp.json
+# Register the skill + 9 commands + write the per-machine .mcp.json + other detected agents
 bash ~/.claude/skills/cti-expert/scripts/register.sh
 
 # Recommended: install the built-in deep-pipeline (intel_engine) deps once
 cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
 ```
 
-> **Windows (PowerShell bản địa):** hãy chạy `register.sh` từ **Git Bash hoặc WSL** — nó dùng symlink. Sau đó, trên mọi nền tảng, hãy **khởi động lại Claude Code** để skill và các lệnh được nạp lúc khởi động.
+> **Windows (PowerShell bản địa):** hãy chạy `register.sh` từ **Git Bash** — `~` của Git Bash chính là `%USERPROFILE%`, nơi các tác nhân chạy bản địa trên Windows (Claude Code, Codex, Cursor, Gemini …) đọc cấu hình. **Không dùng WSL:** trong WSL, `~` là thư mục home của Linux, nên chạy trong WSL chỉ đăng ký cho các tác nhân cũng chạy bên trong WSL. Mặc định `ln -s` của Git Bash âm thầm sao chép tệp, nên `register.sh` yêu cầu symlink Windows thật (cần **Developer Mode** hoặc shell quản trị) và, nếu Windows từ chối, sẽ ghi stub con trỏ thay thế — cách nào thì các lệnh cũng theo kịp `git pull`; bật Developer Mode rồi chạy lại để nâng stub thành liên kết. Stub và các tác nhân khác cần Python 3.10+ — `.venv` của repo (`.venv\Scripts\python.exe`), `python3`, `python` hoặc trình khởi chạy `py`, thử theo thứ tự đó; nếu không cái nào chạy được, `register.sh` in **Registration INCOMPLETE** và thoát với mã 1 thay vì báo thành công. Riêng bước đăng ký các tác nhân khác cũng chạy trực tiếp được bằng `py scripts\register_agents.py`. Sau đó, trên mọi nền tảng, hãy **khởi động lại từng tác nhân** để skill và các lệnh được nạp lúc khởi động.
+
+> **Gỡ cài đặt:** `bash scripts/register.sh --uninstall` gỡ các liên kết Claude Code trỏ vào bản clone này và mọi stub do `register_agents.py` ghi. Lệnh hay skill cùng tên do bạn tự viết không bao giờ bị đụng tới — dù là lúc cài hay lúc gỡ.
 
 ---
 
@@ -528,26 +532,38 @@ claude              # open Claude Code CLI, then type:
 /cti example.com    # …or just start investigating
 ```
 
-> `/cti-status` xác nhận backend, các công cụ MCP và số dư tín dụng API chỉ trong một lượt. Nếu các lệnh `/cti*` không được nhận diện, hãy chạy lại **Bước 3** (`register.sh`) rồi khởi động lại Claude Code. Bạn cũng có thể gõ `/cti-expert` để nạp skill trực tiếp, sau đó mô tả mục tiêu của bạn bằng lời thường.
+> `/cti-status` xác nhận backend, các công cụ MCP và số dư tín dụng API chỉ trong một lượt. Nếu các lệnh `/cti*` không được nhận diện, hãy chạy lại **Bước 3** (`register.sh`) rồi khởi động lại tác nhân; `python3 scripts/register_agents.py --list` cho biết tác nhân nào được phát hiện và lệnh của từng tác nhân nằm ở đâu. Trong Codex, lệnh là `$cti`. Bạn cũng có thể gõ `/cti-expert` (Claude Code) để nạp skill trực tiếp, sau đó mô tả mục tiêu của bạn bằng lời thường.
 
 ---
 
-### Dùng trong ChatGPT / Codex (đa tác nhân)
+### Dùng trong các tác nhân khác (Codex · ChatGPT · Cursor · Gemini · omp · pi …)
 
-CTI Expert có tính di động: phần logic phân tích là Markdown thuần và các script là Python/shell tự nhận diện hệ điều hành, nên nó chạy được trên **OpenAI Codex** (và các tác nhân khác hiểu [`AGENTS.md`](AGENTS.md)), chứ không chỉ Claude Code.
+CTI Expert có tính di động: phần logic phân tích là Markdown thuần và các script là Python/shell tự nhận diện hệ điều hành, nên nó chạy được trên mọi tác nhân lập trình hiểu [`AGENTS.md`](AGENTS.md), chứ không chỉ Claude Code. [`scripts/register_agents.py`](scripts/register_agents.py) (được `register.sh` gọi) đăng ký `/cti` với mọi tác nhân nó phát hiện được:
+
+| Tác nhân | Đăng ký dưới dạng | Gọi |
+|---|---|---|
+| oh-my-pi (omp) | `~/.omp/agent/commands/cti*.md` | `/cti example.com` |
+| pi | `~/.pi/agent/prompts/cti*.md` | `/cti example.com` |
+| OpenCode | `~/.config/opencode/commands/cti*.md` | `/cti example.com` |
+| Gemini CLI | `~/.gemini/commands/cti*.toml` | `/cti example.com` |
+| Qwen Code | `~/.qwen/commands/cti*.md` | `/cti example.com` |
+| Factory droid | `~/.factory/commands/cti*.md` | `/cti example.com` |
+| Windsurf | `~/.codeium/windsurf/global_workflows/cti*.md` | `/cti example.com` |
+| Cursor · GitHub Copilot CLI | agent skill `~/.agents/skills/cti/` | `/cti example.com` |
+| OpenAI Codex (CLI / IDE) | cùng agent skill đó | `$cti example.com` — Codex đã bỏ custom prompt từ bản 0.117 và gọi skill bằng `$`, không bao giờ bằng `/` |
+| Ứng dụng ChatGPT desktop | cùng agent skill đó | `@cti example.com` |
 
 ```bash
-# 1. Clone the skill anywhere
-git clone https://github.com/7onez/cti-expert.git
-
-# 2a. In-repo: open Codex inside the clone — it auto-loads AGENTS.md. Then ask it to follow SKILL.md.
-# 2b. Slash command: copy the bundled Codex prompt so /cti-expert works in the Codex CLI/IDE
-cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: copy to %USERPROFILE%\.codex\prompts\
+python3 scripts/register_agents.py --list            # which agents are detected, and where each stub goes
+python3 scripts/register_agents.py --host all        # register for every agent, installed or not
+python3 scripts/register_agents.py --host gemini,pi  # just these
+python3 scripts/register_agents.py --uninstall       # remove every stub this script wrote
 ```
 
+- Các tác nhân dùng tệp lệnh nhận đủ 9 lệnh; các tác nhân dùng skill chung nhận `/cti` (điểm vào duy nhất). Mỗi stub chỉ là một con trỏ ngắn tới `commands/<cmd>.md` và `SKILL.md` của bản clone này theo đường dẫn tuyệt đối, nên một lần `git pull` cập nhật mọi tác nhân cùng lúc — chỉ cần chạy lại khi di chuyển bản clone hoặc thêm lệnh mới. Tệp cùng tên do bạn tự viết không bao giờ bị ghi đè hay xóa.
 - **[`AGENTS.md`](AGENTS.md)** là hợp đồng runtime đa tác nhân (phát hiện OS, uv, đường dẫn). Codex tự nối nó từ gốc repo; bạn cũng có thể tham chiếu từ `~/.codex/AGENTS.md`.
-- **`codex/cti-expert.md`** là một prompt tùy chỉnh sẵn sàng sao chép → cho Codex một lệnh slash `/cti-expert <target>`.
-- **ChatGPT thuần (không thực thi mã):** phần suy luận, sinh truy vấn và soạn thảo báo cáo đều chạy được (nạp `SKILL.md`/`AGENTS.md` làm chỉ dẫn hoặc kiến thức Custom-GPT); chỉ các bước cục bộ (dựng DOCX, chạy công cụ CLI) mới cần một môi trường có khả năng thực thi mã như Codex hoặc Claude Code.
+- **Công cụ MCP** cho Codex và omp: `python3 scripts/backend/intel.py mcp --host codex|omp|all --write`. Không có chúng, mọi lệnh vẫn chạy qua CLI dispatcher (Tier 2).
+- **ChatGPT trên web (không thực thi mã):** không có cơ chế đăng ký lệnh slash; phần suy luận, sinh truy vấn và soạn thảo báo cáo đều chạy được (nạp `SKILL.md`/`AGENTS.md` làm chỉ dẫn hoặc kiến thức Custom-GPT); chỉ các bước cục bộ (dựng DOCX, chạy công cụ CLI) mới cần một môi trường có khả năng thực thi mã.
 
 > Đường dẫn được phân giải tương đối với thư mục skill (thư mục chứa `SKILL.md`), nên không có gì giả định vị trí `~/.claude/skills/` riêng của Claude.
 
@@ -574,13 +590,14 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 
    ```bash
    bash ~/.claude/skills/cti-expert/scripts/install.sh      # OSINT tools
-   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 9 commands + MCP
+   bash ~/.claude/skills/cti-expert/scripts/register.sh     # skill + 9 commands + MCP + other agents
    ```
 
-   Hoặc trên Windows PowerShell (chỉ phụ thuộc Python; hãy chạy `register.sh` từ Git Bash/WSL):
+   Hoặc trên Windows PowerShell (phụ thuộc Python + các tác nhân khác; hãy chạy `register.sh` từ Git Bash — không phải WSL — để tạo liên kết cho Claude Code):
 
    ```powershell
    pip3 install -r "$env:USERPROFILE\.claude\skills\cti-expert\scripts\requirements.txt"
+   py "$env:USERPROFILE\.claude\skills\cti-expert\scripts\register_agents.py"   # /cti for the other agents
    ```
 
 5. **Khởi động lại Claude Code Desktop** &mdash; Đóng và mở lại ứng dụng
@@ -617,9 +634,9 @@ cp cti-expert/codex/cti-expert.md ~/.codex/prompts/cti-expert.md   # Windows: co
 # 1 — cài công cụ (Linux/macOS): Python + ffmpeg + Node + toàn bộ công cụ OSINT
 git clone https://github.com/7onez/cti-expert.git ~/.claude/skills/cti-expert
 bash ~/.claude/skills/cti-expert/scripts/install.sh
-# 2 — đăng ký skill + 9 lệnh /cti* + MCP với Claude Code, rồi KHỞI ĐỘNG LẠI Claude Code
+# 2 — đăng ký skill + 9 lệnh /cti* + MCP với Claude Code và mọi tác nhân khác tìm thấy, rồi KHỞI ĐỘNG LẠI chúng
 bash ~/.claude/skills/cti-expert/scripts/register.sh
-#     (Windows: chạy register.sh trong Git Bash / WSL — nó dùng symlink. Khởi động lại Claude Code sau đó.)
+#     (Windows: chạy register.sh trong Git Bash, không dùng WSL — ~ của WSL là home Linux. Codex: lệnh là $cti.)
 # 3 — điều tra bất cứ thứ gì (không key, chạy đến khi khép kín):
 /cti example.com
 # 4 — tùy chọn: mở khóa reverse pivot + thị giác ảnh (đã có fallback không key)
@@ -627,13 +644,13 @@ bash ~/.claude/skills/cti-expert/scripts/register.sh
 /apikeys set gemini <KEY>     # OCR ảnh, đọc biển hiệu/địa danh, bóc băng A-V
 ```
 
-Biến thể Windows, `--all` và Codex: xem [Cài đặt](#cài-đặt).
+Biến thể Windows, `--all` và các tác nhân khác (Codex · ChatGPT · Cursor · Gemini · omp · pi …): xem [Cài đặt](#cài-đặt).
 
 ### Cách các lệnh hoạt động — đọc phần này trước
 
 Chỉ có **một lệnh cần nhớ: `/cti <mục-tiêu>`.** Nó nhìn vào thứ bạn đưa cho nó — một tên miền, IP, email, username, số điện thoại, ví, hash hay APK — và chạy đúng chuỗi kỹ thuật một cách tự động. Thường thì thế là đủ.
 
-Bên dưới nó là **9 lệnh đã đăng ký** mà Claude Code nhận ra ngay từ một prompt lạnh trong bất kỳ dự án nào (không cần nạp skill trước):
+Bên dưới nó là **9 lệnh đã đăng ký** mà Claude Code và mọi tác nhân dùng tệp lệnh do `register.sh` gắn (omp · pi · OpenCode · Gemini CLI · Qwen Code · Factory droid · Windsurf) nhận ra ngay từ một prompt lạnh trong bất kỳ dự án nào, không cần nạp skill trước. Cursor, Copilot CLI, Codex (`$cti`) và ứng dụng ChatGPT desktop (`@cti`) nhận chính điểm vào `/cti`:
 
 | Lệnh | Chức năng |
 |---------|--------------|
@@ -1275,7 +1292,7 @@ cti-expert/
 ├── SKILL.md                    The single skill entrypoint — commands & tradecraft
 ├── README.md                   This file  ·  README.vi.md · README.zh-CN.md
 ├── STRUCTURE.md                Authoritative layout + anti-drift rules
-├── AGENTS.md                   Cross-agent runtime contract (Claude Code + Codex)
+├── AGENTS.md                   Cross-agent runtime contract (every AGENTS.md-aware coding agent)
 ├── CLAUDE.md                   Contributor rules (loads only when building the repo)
 │
 ├── commands/                   9 registered slash commands — work from a cold prompt
@@ -1293,6 +1310,7 @@ cti-expert/
 │   ├── generate-cti-iocs.py    IOC / selector export (STIX 2.1 · flat · CSV · JSONL)
 │   ├── generate-cti-docx-hybrid.py   Dashboard DOCX/PDF (charts, diagrams, cover page)
 │   ├── iban_analyze.py · redact.py · stealer_log_parse.py · pivot_orchestrator.py
+│   ├── register.sh · register_agents.py   /cti for Claude Code · every other coding agent
 │   ├── install.sh · install.ps1      All-in-one cross-platform installer
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
@@ -1307,7 +1325,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (79 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (87 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)

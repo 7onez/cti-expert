@@ -14,7 +14,7 @@ try:
     if _ENGINE_TOOLS not in _sys.path:
         _sys.path.insert(0, _ENGINE_TOOLS)
     from wp_timeouts import CALL_TIMEOUT, floor  # noqa: F401
-except Exception:  # noqa: BLE001 — engine absent: env → skill-root .env → 1800
+except Exception:  # noqa: BLE001 — engine absent: env → skill-root .env → 5000
     _SKILL_ENV = _os.environ.get("CTI_API_KEYS_ENV") or _os.path.join(
         _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), ".env")
 
@@ -36,7 +36,7 @@ except Exception:  # noqa: BLE001 — engine absent: env → skill-root .env →
             pass
         return None
 
-    CALL_TIMEOUT = _positive(_os.environ.get("CTI_CALL_TIMEOUT")) or _positive(_from_env_file()) or 1800
+    CALL_TIMEOUT = _positive(_os.environ.get("CTI_CALL_TIMEOUT")) or _positive(_from_env_file()) or 5000
     _os.environ["CTI_CALL_TIMEOUT"] = str(CALL_TIMEOUT)
 
     def floor(timeout):

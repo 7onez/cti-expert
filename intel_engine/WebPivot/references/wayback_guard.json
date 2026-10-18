@@ -1,0 +1,26 @@
+{
+  "_comment": "wp_wayback_guard — the run-scoped circuit breaker on Wayback Machine / archive.org calls, plus the machine-wide egress pacer and cooldown. Never a usage cap (successful calls stay unlimited; project rule: no CTI-wide local usage caps) — fail_limit/adhoc_window only bound how long a run keeps retrying an archive that is not answering at all (network error, timeout, connection refused/reset, proxy CONNECT failure, HTTP 429, HTTP 5xx); pace/cooldown only SPACE requests so the archive never firewalls this IP. A valid answer that there is simply no capture never counts as a failure and never touches these thresholds.",
+  "fail_limit": {
+    "_comment": "Consecutive Wayback FAILURES (never a valid 'no capture' answer) within one run before the breaker trips and every further Wayback call site in that run returns its normal tri-state skip without making a request. Overridable per-process with env WAYBACK_FAIL_LIMIT.",
+    "value": 20
+  },
+  "adhoc_window_seconds": {
+    "_comment": "When no $INTEL_RUN_ID is set at all — a Wayback-touching script invoked directly by hand, not through an entry point that exports one — the breaker keys its counter on a coarse time window instead of a run id, so an ad-hoc session still recovers on its own once the window rolls over.",
+    "value": 1800
+  },
+  "archive_user_agent": {
+    "_comment": "User-Agent sent to archive.org hosts ONLY (web.archive.org index/playback/Save Page Now) — an exception to the project's Android-UA rule, which still governs every target-facing request. archive.org's bot filter (tightened Sept 2026) flags a browser UA sent by a non-browser client: measured 2026-10-13 from one IP at 6 s spacing, a spoofed Chrome UA drew HTTP 429 'suspected abusive bot traffic' on 2 of 4 snapshot fetches while an honest client UA drew none. archive.org is a third party, not the target, so an honest UA exposes nothing to the operator.",
+    "value": "cti-expert/1.0 (OSINT archive client; python-urllib)"
+  },
+  "pace": {
+    "_comment": "Minimum seconds between two requests to one archive host on one lane FROM ONE EXIT (the archive limits per IP), shared by every process on this machine (lock-protected slot file MEMORY/wayback_pace.json; env WAYBACK_PACE_STATE relocates it, WAYBACK_MIN_INTERVAL overrides every lane, 0 disables). Separate exits (direct, each proxy, WARP, Tor) get separate slots, so N exits run N× in parallel. Measured 2026-09-28 from the direct IP: ~17 playback (/web/<ts>id_/) fetches in ~40s made web.archive.org refuse every TCP connection from that IP for ~8 minutes, while one request per ~5s per exit ran clean on all six exits. index = /cdx/search/cdx and /web/timemap; playback = /web/<ts>… fetches, the id_ redirect resolver and Save Page Now; an unknown lane takes the playback spacing.",
+    "index": 1.5,
+    "playback": 4.0
+  },
+  "cooldown": {
+    "_comment": "Egress-wide pause after the archive pushes back: `throttled` after an HTTP 429 (a Retry-After header wins when present), `refused` after a refused TCP connection (the archive's firewall block — measured ~8 min on a first offence). Doubled for each repeat offence within 15 minutes of the previous cooldown ending (the archive doubles its own block the same way), never above `max`. During a cooldown every call site returns its normal skip without touching the network — retrying into a firewall block is what extends it.",
+    "throttled": 60,
+    "refused": 300,
+    "max": 3600
+  }
+}

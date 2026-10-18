@@ -8,12 +8,13 @@ names sibling domains outright.
 
 Keyless (default), all via stdlib:
   * live-fetches the leaf cert of a domain and computes its SHA-1 / SHA-256 fingerprint
-  * queries crt.sh (JSON) for the cert history + extracts SAN sibling hostnames
+  * reads the domain's CT history through the shared wp_ct client (crt.sh → PostgreSQL →
+    keyless backups, per-source status) + extracts SAN sibling hostnames
   * emits copy-paste pivot queries + clickable deep-links for crt.sh / Shodan / Censys / FOFA
 
 Premium (auto-fires only when keys are set, strictly additive):
   * SHODAN_API_KEY               → ssl.cert.fingerprint pivot → hosts
-  * CENSYS_API_ID + _API_SECRET  → leaf_data.fingerprint_sha256 pivot → hosts
+  * CENSYS_API_KEY (+ CENSYS_ORG_ID) → Censys Platform cert.fingerprint_sha256 search → hosts
 
 Usage:
   uv run cert_pivot.py suspicious-site.top --pretty
@@ -102,11 +103,30 @@ def _secret(*names):
     return None
 
 
-def _get(url, timeout=1800, headers=None, retries=4, backoff=3):
+def _ceiling():
+    """Per-call ceiling via cti_timeouts (env CTI_CALL_TIMEOUT → skill-root .env →
+    references/timeouts.json → 5000), so a standalone run still honours the analyst's setting."""
+    import os as _o, sys as _s
+    _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))  # -> scripts/
+    try:
+        from cti_timeouts import CALL_TIMEOUT
+        return int(CALL_TIMEOUT)
+    except Exception:
+        try:
+            v = int(_o.environ.get("CTI_CALL_TIMEOUT") or 0)
+        except ValueError:
+            v = 0
+        return v if v > 0 else 5000
+
+
+_CALL_TIMEOUT = _ceiling()
+
+
+def _get(url, timeout=_CALL_TIMEOUT, headers=None, retries=4, backoff=3):
     """GET → (text, error). Never raises.
 
     `timeout` is a TOTAL wall-clock budget across ALL retries + backoff (not per
-    attempt), so the 30-min ceiling holds even though crt.sh is frequently overloaded
+    attempt), so the resolved per-call ceiling holds even though crt.sh is frequently overloaded
     and retried. Transient failures (429/5xx, timeouts, resets, empty bodies) retry;
     non-retryable 4xx bail early.
     """
@@ -137,89 +157,191 @@ def _get(url, timeout=1800, headers=None, retries=4, backoff=3):
     return None, last or "request failed"
 
 
+# ------------------------------------------------------------------ egress (one rail)
+def _proxy_layer():
+    try:
+        import cti_proxy
+        return cti_proxy
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _egress_socket(host, port, timeout):
+    """The ONLY way this script dials a target or hit IP. Through cti_proxy.proxied_connection: an
+    HTTP proxy tunnels (refused tunnel RAISES), a SOCKS pool needs its hook, `None` means the proxy
+    layer judged direct safe. Without the proxy layer we refuse — never a silent direct leak."""
+    cp = _proxy_layer()
+    if cp is None:
+        raise OSError("proxy layer (cti_proxy) unavailable — refusing a direct connection")
+    sock = cp.proxied_connection(host, port, timeout)
+    return sock or socket.create_connection((host, port), timeout=timeout)
+
+
+def _configured_proxy():
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        if os.environ.get(k):
+            return os.environ[k]
+    return None
+
+
+def _harness_module(name):
+    """intel_engine/harness/<name> (audit, case_scope — both stdlib-only), or None."""
+    hdir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "..", "intel_engine", "harness"))
+    if hdir not in sys.path:
+        sys.path.append(hdir)                      # append: never shadow WebPivot modules
+    try:
+        return __import__(name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _case_id():
+    d = os.environ.get("WP_CASE_DIR")
+    return os.environ.get("INTEL_CASE") or (os.path.basename(os.path.normpath(d)) if d else None)
+
+
+def _case_hostile(case):
+    """The case's intake posture (cases/<case>/scope.json → case_scope.is_hostile); None when no
+    case is in scope, so audit falls back to HARNESS_HOSTILE. A scope that cannot be read is
+    treated as hostile — guessing 'safe to touch' is the expensive mistake."""
+    if not case:
+        return None
+    cs = _harness_module("case_scope")
+    if cs is None:
+        return True
+    scope = cs.load(case)
+    return None if scope is None else (cs.is_hostile(scope) or None)
+
+
+def egress_gate(domain, passive=False):
+    """(allowed, reason) for ANY live contact this run makes — the target's leaf certificate, its
+    page, and the Host-header probe of each hit IP. Decided ONCE, before the first byte:
+      passive                        → not run
+      no proxy layer                 → not run (never a direct fallback)
+      audit.gate('cert_pivot', …)    → the same egress policy every outbound tool obeys: a
+                                       HOSTILE case / HARNESS_HOSTILE without a proxy is denied
+                                       (and ledgered); a configured proxy makes it allowed
+      gate unavailable               → allowed only through a configured proxy."""
+    if passive:
+        return False, "passive posture (--passive / --no-live): live contact not run"
+    if _proxy_layer() is None:
+        return False, "proxy layer (cti_proxy) unavailable: live contact not run (no direct fallback)"
+    proxy = _configured_proxy()
+    audit = _harness_module("audit")
+    if audit is None:
+        return ((True, "") if proxy else
+                (False, "egress gate unavailable and no proxy configured: live contact not run"))
+    case = _case_id()
+    ok, why = audit.gate("cert_pivot", {"domain": domain, "stage": "live-contact",
+                                        "proxy": bool(proxy)},
+                         case=case, hostile=_case_hostile(case))
+    return ok, why
+
+
 # ---------------------------------------------------------------- live cert fetch
 def fetch_leaf_fingerprints(host, port=443, timeout=15):
-    """Return {'sha1','sha256'} of the served leaf cert (DER), or {'error':...}.
+    """Return {'sha1','sha256','sans','issuer'} of the served leaf cert, or {'error':...}.
 
-    verify_mode is disabled on purpose — hostile/expired/self-signed infra still
-    serves a cert worth fingerprinting.
+    Dials through _egress_socket only. A validating handshake yields the parsed SANs + issuer; a
+    cert that does not validate (hostile/expired/self-signed infra still serves one worth
+    fingerprinting) is re-read unverified for the DER — fingerprints + DER-scanned SANs, no issuer.
     """
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    try:
-        # Respect a configured proxy — a raw socket here would leak the real IP to
-        # the target. proxied_connection tunnels via CONNECT (HTTP proxy) or returns
-        # None when going direct is safe (no proxy, or SOCKS already hooks sockets).
-        sock = None
-        _cp = None
-        try:
-            import cti_proxy as _cp
-        except Exception:
-            _cp = None              # proxy layer absent -> connect directly, as before
-        if _cp is not None:
-            try:
-                sock = _cp.proxied_connection(host, port, timeout)
-            except Exception as e:  # proxy configured but tunnel failed -> do NOT leak
-                return {"error": f"proxy tunnel failed: {type(e).__name__}: {e}"}
-        if sock is None:
-            sock = socket.create_connection((host, port), timeout=timeout)
+    def _handshake(ctx):
+        sock = _egress_socket(host, port, timeout)
         with sock:
             with ctx.wrap_socket(sock, server_hostname=host) as ss:
-                der = ss.getpeercert(binary_form=True)
-        if not der:
-            return {"error": "no certificate presented"}
-        return {
-            "sha1": hashlib.sha1(der).hexdigest(),
-            "sha256": hashlib.sha256(der).hexdigest(),
-        }
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"{type(e).__name__}: {e}"}
+                return ss.getpeercert(binary_form=True), ss.getpeercert()
 
-
-# ------------------------------------------------------------------------ crt.sh
-def crtsh_history(domain, timeout=1800, cap=40):
-    """crt.sh JSON → recent certs (id/serial/validity/issuer) + SAN sibling hostnames."""
-    url = f"https://crt.sh/?q={quote(domain)}&output=json"
-    text, err = _get(url, timeout=timeout)
-    if err or not text:
-        return {"certs": [], "san_siblings": [], "error": err or "empty response"}
     try:
-        rows = json.loads(text)
-    except Exception:
-        # crt.sh occasionally returns concatenated objects — wrap into an array
         try:
-            rows = json.loads("[" + text.replace("}\n{", "},{") + "]")
-        except Exception as e:  # noqa: BLE001
-            return {"certs": [], "san_siblings": [], "error": f"parse: {e}"}
+            der, parsed = _handshake(ssl.create_default_context())
+        except ssl.SSLCertVerificationError:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            der, parsed = _handshake(ctx)
+    except Exception as e:  # noqa: BLE001 — tunnel refused / no proxy layer: do NOT leak
+        return {"error": f"egress refused or failed: {type(e).__name__}: {e}"}
+    if not der:
+        return {"error": "no certificate presented"}
+    out = {"sha1": hashlib.sha1(der).hexdigest(), "sha256": hashlib.sha256(der).hexdigest()}
+    if parsed:
+        out["sans"] = [v.lower() for t, v in parsed.get("subjectAltName", ()) if t.lower() == "dns"]
+        iss = {k: v for rdn in parsed.get("issuer") or () for k, v in rdn}
+        out["issuer"] = iss.get("organizationName") or iss.get("commonName")
+    else:
+        rec = _engine_module("wp_recon")
+        out["sans"] = list(rec._der_sans(der)) if rec and hasattr(rec, "_der_sans") else []
+        out["issuer"] = None
+    return out
 
-    certs, siblings, seen = [], set(), set()
+
+# ------------------------------------------------------------- engine modules
+def _engine_module(name):
+    """A canonical engine module from intel_engine/WebPivot/tools (wp_ct, wp_censys), or None."""
+    tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          "..", "..", "intel_engine", "WebPivot", "tools"))
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        return __import__(name)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# ------------------------------------------------------------------------ CT history
+def crtsh_history(domain, cap=40):
+    """CT history through the shared client (wp_ct: crt.sh → PostgreSQL → keyless backups) →
+    newest `cap` certs, every SAN sibling hostname, and the per-source status + completeness line.
+    A capped listing records cert_total + truncated; an outage is an error, never "no certs"."""
+    ct = _engine_module("wp_ct")
+    if ct is None:
+        return {"certs": [], "san_siblings": [], "error": "wp_ct unavailable (intel_engine not found)"}
+    r = ct.ct_search(domain, max_certs=cap, max_subdomains=None)
+    certs = [{
+        "crtsh_id": c.get("crtsh_id") or "",
+        "serial_number": c.get("serial") or "",
+        "sha256": c.get("sha256") or "",
+        "not_before": c.get("not_before") or "",
+        "not_after": c.get("not_after") or "",
+        "issuer": (c.get("issuer") or "")[:120],
+        "sources": c.get("sources") or [],
+        "confidence": c.get("confidence"),
+    } for c in r.get("certs") or []]
     tgt = domain.lower().lstrip("*.")
-    for row in rows[:cap] if isinstance(rows, list) else []:
-        cid = str(row.get("id", "")).strip()
-        if cid and cid not in seen:
-            seen.add(cid)
-            certs.append({
-                "crtsh_id": cid,
-                "serial_number": str(row.get("serial_number", "")).strip(),
-                "not_before": row.get("not_before", ""),
-                "not_after": row.get("not_after", ""),
-                "issuer": (row.get("issuer_name", "") or "")[:120],
-            })
-        for name in str(row.get("name_value", "")).splitlines():
-            n = name.strip().lower().lstrip("*.")
-            if n and n != tgt and "." in n and not n.endswith(".arpa"):
-                siblings.add(n)
-    return {"certs": certs, "san_siblings": sorted(siblings)}
+    siblings = sorted(n for n in r.get("subdomains") or []
+                      if n != tgt and "." in n and not n.endswith(".arpa"))
+    out = {"certs": certs, "san_siblings": siblings, "cert_total": r.get("cert_total", 0),
+           "truncated": bool(r.get("truncated")), "ct_status": r.get("ct_status") or {},
+           "completeness": r.get("completeness"), "completeness_line": r.get("completeness_line")}
+    if r.get("error"):
+        out["error"] = r["error"]
+    return out
 
 
 # ---------------------------------------------------- passive links + engine queries
+def _wp_censys():
+    """The canonical Censys Platform client (intel_engine/WebPivot/tools/wp_censys.py), or None."""
+    return _engine_module("wp_censys")
+
+
+def _censys_cenql(sha256):
+    """Hosts SERVING the cert: the `web.` (hostname:port) and `host.` (IP) templates, OR'd into one
+    search. The `cert.` template matches the certificate record itself, which carries no IP/host."""
+    cen = _wp_censys()
+    q = [t for t in (cen.cenql_for("tls_cert:fingerprint_sha256", sha256) if cen else [])
+         if t.startswith(("web.", "host."))]
+    q = q or [f"web.cert.fingerprint_sha256={sha256}", f"host.services.cert.fingerprint_sha256={sha256}"]
+    return " or ".join(q)
+
+
 def build_queries(sha1, sha256):
     q = {}
     if sha256:
         # Shodan's ssl.cert.fingerprint matches the SHA-256 fingerprint on modern data.
         q["shodan"] = f"ssl.cert.fingerprint:{sha256}"
-        q["censys"] = f'services.tls.certificates.leaf_data.fingerprint_sha256="{sha256}"'
+        q["censys"] = _censys_cenql(sha256)
         q["fofa"] = f'cert="{sha256}"'
     if sha1:
         q["shodan_sha1"] = f"ssl.cert.fingerprint:{sha1}"
@@ -240,9 +362,11 @@ def passive_links(domain, sha1, sha256, crtsh_id="", serial=""):
     if sha256:
         links.append({"engine": "shodan_web", "label": "Shodan cert fingerprint (SHA-256)",
                       "url": f"https://www.shodan.io/search?query=ssl.cert.fingerprint%3A{sha256}"})
-        links.append({"engine": "censys_web", "label": "Censys host cert fingerprint (SHA-256)",
-                      "url": ("https://search.censys.io/search?resource=hosts&q="
-                              "services.tls.certificates.leaf_data.fingerprint_sha256%3D" + sha256)})
+        cen = _wp_censys()
+        cenql = _censys_cenql(sha256)
+        links.append({"engine": "censys_web", "label": "Censys cert fingerprint (SHA-256)",
+                      "url": (cen.censys_ui_url(cenql) if cen
+                              else "https://platform.censys.io/search?q=" + quote(cenql, safe=""))})
         fofa_b64 = base64.b64encode(f'cert="{sha256}"'.encode()).decode()
         links.append({"engine": "fofa_web", "label": "FOFA cert fingerprint (SHA-256)",
                       "url": f"https://en.fofa.info/result?qbase64={fofa_b64}&full=true"})
@@ -261,7 +385,7 @@ def shodan_pivot(sha256, sha1, cap=20):
     for fp in [f for f in (sha256, sha1) if f]:
         url = (f"https://api.shodan.io/shodan/host/search?key={key}"
                f"&query=ssl.cert.fingerprint:{fp}")
-        text, err = _get(url, timeout=1800)
+        text, err = _get(url, timeout=_CALL_TIMEOUT)
         if err or not text:
             continue
         try:
@@ -271,7 +395,8 @@ def shodan_pivot(sha256, sha1, cap=20):
         for m in (data.get("matches") or [])[:cap]:
             ip = m.get("ip_str", "")
             hits.append({"engine": "shodan", "query": f"ssl.cert.fingerprint:{fp}",
-                         "matched_ip": ip, "matched_host": "",
+                         "matched_ip": ip, "matched_host": (m.get("hostnames") or [""])[0],
+                         "scan_date": str(m.get("timestamp") or "")[:10] or None,
                          "url": f"https://www.shodan.io/host/{ip}" if ip else ""})
         if hits:
             break  # sha256 succeeded; don't double-count with sha1
@@ -279,46 +404,140 @@ def shodan_pivot(sha256, sha1, cap=20):
 
 
 def censys_pivot(sha256, cap=20):
-    # Accept either classic v2 basic auth (CENSYS_API_ID + CENSYS_API_SECRET) or a
-    # Censys Platform personal-access-token bearer (CENSYS_API_KEY) — matches /apikeys.
-    cid, csec = _secret("CENSYS_API_ID"), _secret("CENSYS_API_SECRET")
-    bearer = _secret("CENSYS_API_KEY")
-    if not sha256 or (not (cid and csec) and not bearer):
-        return [], "no CENSYS_API_ID/SECRET or CENSYS_API_KEY (skipped)"
-    q = f'services.tls.certificates.leaf_data.fingerprint_sha256="{sha256}"'
-    url = f"https://search.censys.io/api/v2/hosts/search?q={quote(q)}&per_page={cap}"
-    if cid and csec:
-        auth = base64.b64encode(f"{cid}:{csec}".encode()).decode()
-        headers = {"Authorization": f"Basic {auth}"}
-    else:
-        headers = {"Authorization": f"Bearer {bearer}"}
-    text, err = _get(url, timeout=1800, headers=headers)
-    if err or not text:
-        return [], err or "empty response"
-    try:
-        data = json.loads(text)
-    except Exception as e:  # noqa: BLE001
-        return [], f"parse: {e}"
+    """Censys Platform search (PAT bearer + X-Organization-ID) via the canonical wp_censys client,
+    which owns the spend guard, the credit ledger and the Free-plan 403 -> UI-link degradation."""
+    if not sha256:
+        return [], None
+    cen = _wp_censys()
+    if cen is None:
+        return [], "wp_censys unavailable (intel_engine not found) (skipped)"
+    if not cen.censys_configured():
+        return [], "no CENSYS_API_KEY / CENSYS_PAT (skipped)"
+    q = _censys_cenql(sha256)
+    res = cen.censys_search(q, page_size=max(1, min(100, cap)))
+    if not res or res.get("skipped") or res.get("error"):
+        res = res or {}
+        why = res.get("skipped") or res.get("error") or "no response"
+        return [], f"{why}" + (f" — run by hand: {res['ui_url']}" if res.get("ui_url") else "")
     hits = []
-    for h in ((data.get("result") or {}).get("hits") or [])[:cap]:
-        ip = h.get("ip", "")
-        hits.append({"engine": "censys", "query": q, "matched_ip": ip,
-                     "matched_host": "", "url": f"https://search.censys.io/hosts/{ip}" if ip else ""})
+    for h in (res.get("hits") or [])[:cap]:
+        ip = h.get("ip") or ""
+        host = h.get("hostname") or ""
+        if not (ip or host):
+            continue                     # e.g. a certificate record: names, but no serving host
+        hits.append({"engine": "censys", "query": q, "matched_ip": ip, "matched_host": host,
+                     "url": (cen.censys_ui_url((cen.cenql_for("ip", ip) or [f"host.ip={ip}"])[0]) if ip
+                             else cen.censys_ui_url(f'web.hostname="{host}"') if host else "")})
     return hits, (None if hits else "no results")
 
 
+# ---------------------------------------------------------- origin check (1): Host-header probe
+def _https_body(connect_host, sni_host, timeout, max_bytes=524288):
+    """GET / from `connect_host`:443 with SNI + `Host:` = `sni_host`, through the same egress policy
+    as the leaf fetch (cti_proxy tunnel when configured, never a silent direct leak). → (status,
+    sha256 of the body) or raises."""
+    import http.client
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    def _sock():
+        return _egress_socket(connect_host, 443, timeout)
+
+    class _Conn(http.client.HTTPSConnection):
+        def connect(self):
+            self.sock = ctx.wrap_socket(_sock(), server_hostname=sni_host)
+
+    conn = _Conn(connect_host, 443, timeout=timeout, context=ctx)
+    try:
+        conn.request("GET", "/", headers={"Host": sni_host, "User-Agent": _UA, "Accept": "*/*"})
+        resp = conn.getresponse()
+        return resp.status, hashlib.sha256(resp.read(max_bytes)).hexdigest()
+    finally:
+        conn.close()
+
+
+def origin_probe(target, ips, max_ips=10, timeout=15):
+    """Origin check (1): does each hit IP serve the TARGET's content for `Host: <target>`? Compares
+    the body hash with the target's own answer. Active, so it runs only with live collection; every
+    failure is recorded as such, never as a match. → {ip: {ran, match, status, error}}"""
+    out = {}
+    try:
+        base_status, base_hash = _https_body(target, target, timeout)
+    except Exception as e:  # noqa: BLE001
+        return {ip: {"ran": False, "match": False, "error": f"target baseline: {type(e).__name__}"}
+                for ip in ips[:max_ips]}
+    for ip in ips[:max_ips]:
+        try:
+            st, h = _https_body(ip, target, timeout)
+            out[ip] = {"ran": True, "match": h == base_hash and st == base_status, "status": st}
+        except Exception as e:  # noqa: BLE001 — unreachable is UNKNOWN (check not run), never a "no"
+            out[ip] = {"ran": False, "match": False, "error": f"{type(e).__name__}: {e}"[:120]}
+    return out
+
+
+def grade_hits(domain, sha256, hits, leaf=None, probe=None):
+    """Active-pivot hits → graded "Related hosts (unverified)" rows (shared contract: wp_related).
+    Check (2) passes only when `leaf` (the target's live certificate) IS the pivoted one, is not
+    CDN-managed and names the target; (3) history needs a case and is `not run` here."""
+    wr = _engine_module("wp_related")
+    if wr is None or not domain:
+        return []
+    leaf = leaf or {}
+    leaf_sha = str(leaf.get("fingerprint_sha256") or "").lower()
+    leaf_ok = (bool(sha256) and leaf_sha == sha256.lower()
+               and not wr._cdn_cert(leaf.get("issuer"))
+               and any(wr._san_covers(n, domain.lower()) for n in leaf.get("sans") or []))
+    rows, seen = [], {}
+    for h in hits:
+        ip, host = h.get("matched_ip") or None, (h.get("matched_host") or "").lower() or None
+        if host == domain.lower():
+            continue
+        key = (host, ip)
+        if key in seen:
+            seen[key]["engines"] = sorted(set(seen[key]["engines"]) | {h["engine"]})
+            continue
+        checks = {c: "n/a" for c in wr.CHECKS}
+        if ip:
+            pr = (probe or {}).get(ip) or {}
+            checks["host_header"] = "pass" if pr.get("match") else "fail" if pr.get("ran") else "not run"
+            checks["cert_san"] = "pass" if leaf_ok else ("fail" if leaf else "not run")
+            checks["history"] = "not run"
+            cls = wr._classify(ip)
+            checks["non_cdn"] = "pass" if cls == "origin" else "fail" if cls else "not run"
+        passed, rung = wr.grade(checks)
+        seen[key] = {"host": host, "ip": ip, "target": domain.lower(), "engines": [h["engine"]],
+                     "shared_kind": "tls_cert:fingerprint_sha256", "shared_value": sha256,
+                     "scan_date": h.get("scan_date"), "checks": checks, "passed": passed, "rung": rung}
+        rows.append(seen[key])
+    rows.sort(key=lambda r: (-len(r["passed"]), r["host"] or "", r["ip"] or ""))
+    return rows
+
+
 # --------------------------------------------------------------------------- driver
-def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20):
+def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20, passive=False):
     result = {"target": domain, "fingerprints": {}, "crtsh": {},
               "passive_links": [], "queries": {}, "active_pivots": [],
               "new_hosts": [], "notes": [], "summary": {}}
 
-    if domain and live and not (sha1 or sha256):
+    # ONE egress decision before the first byte to the target or any hit IP (leaf certificate,
+    # page baseline, Host-header probe). Denied or passive → every live check reads `not run`.
+    leaf = {}
+    if domain:
+        ok, why = egress_gate(domain, passive=passive or not live)
+        result["egress"] = {"allowed": ok, "reason": why or None}
+        if not ok:
+            live = False
+            result["notes"].append(f"live contact not run: {why}")
+    if domain and live:
         fp = fetch_leaf_fingerprints(domain)
         if "error" in fp:
             result["notes"].append(f"live cert fetch: {fp['error']}")
         else:
-            sha1, sha256 = fp["sha1"], fp["sha256"]
+            leaf = {"fingerprint_sha256": fp["sha256"], "issuer": fp.get("issuer"),
+                    "sans": fp.get("sans") or []}
+            if not (sha1 or sha256):
+                sha1, sha256 = fp["sha1"], fp["sha256"]
     result["fingerprints"] = {"sha1": sha1, "sha256": sha256}
 
     crtsh_id = serial = ""
@@ -326,7 +545,9 @@ def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20):
         ch = crtsh_history(domain)
         result["crtsh"] = ch
         if ch.get("error"):
-            result["notes"].append(f"crt.sh: {ch['error']}")
+            result["notes"].append(f"CT: {ch['error']}")
+        elif ch.get("completeness") not in (None, "full"):
+            result["notes"].append(f"CT: {ch['completeness_line']}")
         if ch.get("certs"):
             crtsh_id = ch["certs"][0].get("crtsh_id", "")
             serial = ch["certs"][0].get("serial_number", "")
@@ -342,9 +563,22 @@ def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20):
         if note:
             result["notes"].append(note)
     for h in result["active_pivots"]:
-        ip = h.get("matched_ip")
-        if ip and ip not in result["new_hosts"]:
-            result["new_hosts"].append(ip)
+        for v in (h.get("matched_ip"), h.get("matched_host")):
+            if v and v not in result["new_hosts"]:
+                result["new_hosts"].append(v)
+
+    # Every hit is a RELATED host until origin checks agree — never the target's hosting or origin.
+    # Check (1) is an active Host-header request: only when the egress gate allowed live contact.
+    probe = {}
+    if domain and result["active_pivots"]:
+        if live:
+            wr = _engine_module("wp_related")
+            ips = sorted({h["matched_ip"] for h in result["active_pivots"] if h.get("matched_ip")})
+            cfg = wr.CFG if wr else {"probe_max_ips": 10, "probe_timeout_seconds": 15}
+            probe = origin_probe(domain, ips, max_ips=int(cfg["probe_max_ips"]),
+                                 timeout=int(cfg["probe_timeout_seconds"]))
+        result["origin_probe"] = probe
+        result["related_hosts"] = grade_hits(domain, sha256, result["active_pivots"], leaf, probe)
 
     result["new_hosts"] = sorted(set(result["new_hosts"]))
     result["summary"] = {
@@ -362,7 +596,12 @@ def main():
     ap.add_argument("domain", nargs="?", help="domain to fetch + pivot (e.g. site.top)")
     ap.add_argument("--sha1", default="", help="pivot an explicit SHA-1 fingerprint (hex)")
     ap.add_argument("--sha256", default="", help="pivot an explicit SHA-256 fingerprint (hex)")
-    ap.add_argument("--no-live", action="store_true", help="skip live cert fetch")
+    ap.add_argument("--no-live", action="store_true",
+                    help="no live contact with the target or hit IPs (same as --passive)")
+    ap.add_argument("--passive", action="store_true",
+                    help="passive posture: CT + third-party indexes only; live checks read `not run`")
+    ap.add_argument("--proxy", default="",
+                    help="route every live contact (leaf cert, page, Host-header probe) via this proxy")
     ap.add_argument("--no-crtsh", action="store_true", help="skip crt.sh history + SAN pivot")
     ap.add_argument("--cap", type=int, default=20, help="max results per active pivot query")
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON")
@@ -372,8 +611,11 @@ def main():
     if not args.domain and not (args.sha1 or args.sha256):
         ap.error("provide a domain, or --sha1/--sha256")
 
+    if args.proxy:
+        os.environ["HTTPS_PROXY"] = args.proxy        # read by cti_proxy.proxied_connection
     result = run(domain=args.domain, sha1=args.sha1.lower(), sha256=args.sha256.lower(),
-                 live=not args.no_live, use_crtsh=not args.no_crtsh, cap=args.cap)
+                 live=not args.no_live, use_crtsh=not args.no_crtsh, cap=args.cap,
+                 passive=args.passive)
 
     s = result["summary"]
     print(f"cert_pivot: fingerprint={'yes' if s['have_fingerprint'] else 'no'}; "

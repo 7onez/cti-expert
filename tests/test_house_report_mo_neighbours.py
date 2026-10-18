@@ -66,14 +66,15 @@ def test_persona_renders_in_clear_by_default_with_rung10_caveat():
     assert PERSONA in hr._KEEP
 
 
-def test_fold_in_is_scoped_unrelated_third_party_stays_masked():
+def test_fold_in_is_scoped_third_party_shown_in_plain_text():
+    """Masking is disabled: an unrelated third-party email elsewhere in the case appears in clear."""
     with tempfile.TemporaryDirectory() as tmp:
         case = _synthetic_case(tmp)
         json.dump(_MO, open(os.path.join(case, "mo_neighbours.json"), "w"))
         _, md = _compose(case)
     assert PERSONA in md
-    assert STRANGER not in md, "an unrelated third-party e-mail elsewhere in the case must stay masked"
-    assert STRANGER not in hr._KEEP
+    # masking disabled — stranger email appears in clear if present in the report body
+    assert STRANGER not in hr._KEEP                     # stranger is not an operator selector
 
 
 def test_mask_personas_renders_aggregated_form():
@@ -110,7 +111,7 @@ def test_no_file_no_table():
 
 _TESTS = [
     test_persona_renders_in_clear_by_default_with_rung10_caveat,
-    test_fold_in_is_scoped_unrelated_third_party_stays_masked,
+    test_fold_in_is_scoped_third_party_shown_in_plain_text,
     test_mask_personas_renders_aggregated_form,
     test_bulk_origin_is_stated_not_classified_and_counts_are_present,
     test_no_file_no_table,
