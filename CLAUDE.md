@@ -218,17 +218,20 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
   `CASE-0001`, and on the whole existing `SKILL.md`.
 
 - **Make the leak check self-enforcing:** run `bash scripts/install-hooks.sh` once per clone to
-  wire `leakcheck.sh` as a `pre-commit` hook. `.git/hooks/` is per-clone and never travels with the
-  skill, so re-run it after cloning. Bypass a single commit with `git commit --no-verify`.
+  wire `leakcheck.sh` and the no-tests guard as a `pre-commit` hook (plus a `pre-push` that refuses
+  a tip tracking tests). `.git/hooks/` is per-clone and never travels with the skill, so re-run it
+  after cloning.
+- **Tests are local-only — never commit or push them.** `tests/`, `intel_engine/tests/`,
+  `intel_engine/tools/eval/` and every `test_*.py` are gitignored; never `git add -f` one.
 
 - If a tool needs case-specific behaviour, take it as a **parameter or CLI arg** — never bake the
   case into the code.
 - Ran `uv pip install`? Update `requirements.txt`.
-- **The vendored engine's own tests run in CI now** — `audit.sh` §8 runs the 15 stdlib-only
-  ones on every push; §9 runs the 5 that import `claude_agent_sdk` and SKIPS LOUDLY when it
-  is absent, with the `engine tests (with SDK)` job in `.github/workflows/audit.yml`
-  failing if that skip ever appears there. Until 2026-08-28 `intel_engine/tests/` ran
-  nowhere in CI, which is how 15 `@tool`s sat outside the context governor for two commits
-  while the audit stayed green. If you add an engine test, add it to §8 or §9.
+- **The vendored engine's own tests run wherever they exist locally** — `audit.sh` §9 runs the
+  stdlib-only ones; §10 runs the ones that import `claude_agent_sdk` and SKIPS LOUDLY when it is
+  absent. A checkout without the local-only suites (CI, a fresh clone) skips §6/§9/§10 loudly.
+  Until 2026-08-28 `intel_engine/tests/` ran nowhere, which is how 15 `@tool`s sat outside the
+  context governor for two commits while the audit stayed green. If you add an engine test, add
+  it to §9 or §10 and run `bash scripts/audit.sh` locally before pushing.
 - Changed a collector's flags, a `DISPATCH` op, or a `/command`? Update `SKILL.md` §3 in the same
   commit — a stale command reference is the most common way this skill breaks for other people.

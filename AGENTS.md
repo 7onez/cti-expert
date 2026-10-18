@@ -210,6 +210,9 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 
 ## Testing & QA
 
+- **Tests are local-only.** Every suite below, the eval harness and its fixtures are gitignored and
+  never committed or pushed (`scripts/install-hooks.sh` installs pre-commit/pre-push guards); run
+  `bash scripts/audit.sh` locally, where they exist. A checkout without them skips the test sections.
 - Framework: plain scripts, no pytest dependency. Root `tests/test_<subject>.py` hold a `_TESTS`
   list + `check() -> (passed, failed, lines)` and end with `raise SystemExit(bool(failed))`.
   Engine/eval modules (`intel_engine/tests/`, `intel_engine/tools/eval/test_*.py`) expose the same
@@ -227,5 +230,6 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   need both a managed-provider and a self-hosted-NS case (`CLAUDE.md` Rule 5).
 - Live verification (real vendors, real case) is a separate, non-gating smoke on a case copy; record
   its diff under `intel_engine/cases/<id>/report/`, never under `plans/`.
-- CI: `.github/workflows/audit.yml` runs `bash scripts/audit.sh`; `smoke.yml` runs installer +
-  `scripts/smoke-test.sh` on fresh machines.
+- CI: `.github/workflows/audit.yml` runs `bash scripts/audit.sh` (structural + leak sections; the
+  local-only tests are absent there); `smoke.yml` runs installer + `scripts/smoke-test.sh` on fresh
+  machines.

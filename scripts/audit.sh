@@ -12,6 +12,11 @@ root="$(git rev-parse --show-toplevel)"; cd "$root"
 fail=0
 note(){ printf '  %s\n' "$1"; }
 bad(){ printf '  FAIL: %s\n' "$1"; fail=1; }
+# TESTS ARE LOCAL-ONLY: tests/, intel_engine/tests/, intel_engine/tools/eval/ and every test_*.py
+# are gitignored and never pushed. A checkout without them (CI, a fresh clone) skips the test
+# sections LOUDLY; a working copy that has them runs every one and still fails on a missing file.
+has_root_tests=0;   [ -d tests ] && has_root_tests=1
+has_engine_tests=0; [ -d intel_engine/tests ] && has_engine_tests=1
 
 echo "== 1. leak check (RULE 1) =="
 # Two passes, because they answer different questions.
@@ -42,8 +47,14 @@ import re, os, sys
 src = open("scripts/backend/intel.py").read()
 m = re.search(r"DISPATCH\s*=\s*\{(.*?)\n\}", src, re.S)
 ops = re.findall(r'"([a-z-]+)":\s*\("([^"]+)"', m.group(1))
-miss = [(o, s) for o, s in ops if not os.path.isfile(os.path.join("intel_engine", s))]
-print(f"  {len(ops)} ops, {len(ops) - len(miss)} resolve to a real script")
+# Ops backed by the local-only eval harness resolve only where that harness exists.
+local_only = [(o, s) for o, s in ops if s.startswith("tools/eval/")
+              and not os.path.isdir("intel_engine/tools/eval")]
+miss = [(o, s) for o, s in ops if (o, s) not in local_only
+        and not os.path.isfile(os.path.join("intel_engine", s))]
+print(f"  {len(ops)} ops, {len(ops) - len(miss) - len(local_only)} resolve to a real script")
+for o, s in local_only:
+    print("  SKIPPED (local-only test harness absent):", o, "->", s)
 for o, s in miss:
     print("  FAIL missing:", o, "->", s)
 sys.exit(1 if miss else 0)
@@ -113,6 +124,9 @@ export CTI_CALL_TIMEOUT=10
 export WAYBACK_GUARD_STATE="$(mktemp -d)/wayback_breaker.json"
 export WAYBACK_PACE_STATE="$(mktemp -d)/wayback_pace.json"
 export WAYBACK_MIN_INTERVAL=0
+if [ "$has_root_tests" = 0 ]; then
+  note "SKIPPED (tests/ is local-only and absent from this checkout)"
+else
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py tests/test_binary_auto.py \
          tests/test_email_permute.py tests/test_hooks.py \
@@ -148,6 +162,7 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
   # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.
   if ! grep -qE 'SystemExit\(|sys\.exit\(' "$t"; then bad "$t has no nonzero-exit path (SystemExit/sys.exit) — it can never redden this gate"; fi
 done
+fi
 # …and prove the shape works: a deliberately failing file MUST redden the same check.
 _smoke="$(mktemp)"; printf 'raise SystemExit(1)\n' > "$_smoke"
 if python3 "$_smoke" >/dev/null 2>&1; then bad "§6 exit-contract smoke: a failing test file did NOT exit nonzero"; else note "§6 exit-contract smoke: a failing file reddens the gate"; fi
@@ -199,7 +214,10 @@ echo "== 9. vendored-engine tests (stdlib-only subset) =="
 # These 15 live in intel_engine/tests/ and ran NOWHERE in CI until 2026-08-28. That gap let 15
 # newly-registered @tools sit outside the context governor across two phases: audit.sh was green
 # the whole time because it simply never executed the suite that checks governance. They cost ~1s
-# total, so there is no reason for them to be optional.
+# total, so there is no reason for them to be optional — wherever the local-only suite exists.
+if [ "$has_engine_tests" = 0 ]; then
+  note "SKIPPED (intel_engine/tests/ is local-only and absent from this checkout)"
+else
 for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py \
          intel_engine/tests/test_docmeta.py intel_engine/tests/test_engage.py \
          intel_engine/tests/test_exhaustion.py intel_engine/tests/test_impersonation.py \
@@ -222,14 +240,16 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
   if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
   if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
 done
+fi
 
 echo "== 10. vendored-engine tests needing claude_agent_sdk =="
 # test_context_budget.py is the one that catches an @tool escaping the context governor, and
 # test_tool_gate.py guards the egress rails — both import the SDK, which the fast path does not
-# have. They are RUN when the SDK is importable and SKIPPED LOUDLY when it is not, so a bare
-# CI job stays green while the job that installs deps still enforces them. A skip is reported,
-# never silent: a silently-skipped guard is the same as no guard.
-if python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
+# have. They are RUN when the SDK is importable and SKIPPED LOUDLY when it is not. A skip is
+# reported, never silent: a silently-skipped guard is the same as no guard.
+if [ "$has_engine_tests" = 0 ]; then
+  note "SKIPPED (intel_engine/tests/ is local-only and absent from this checkout)"
+elif python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
   for t in intel_engine/tests/test_context_budget.py intel_engine/tests/test_tool_gate.py \
            intel_engine/tests/test_references.py intel_engine/tests/test_case_scope.py \
            intel_engine/tests/test_openai_backend.py intel_engine/tests/test_spend_rails.py \
@@ -240,7 +260,6 @@ if python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
 else
   note "SKIPPED (claude_agent_sdk not importable) — 8 tests incl. the context-governor check."
   note "  Run them with the venv: .venv/bin/python intel_engine/tests/test_context_budget.py"
-  note "  CI enforces them in the 'engine tests (with SDK)' job in .github/workflows/audit.yml"
 fi
 
 echo

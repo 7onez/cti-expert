@@ -14,7 +14,8 @@ the map, and the rules that keep the two from drifting.
   `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
   `assets/`, `output/`
 - `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
-  indicator classification + the shared collector core (`collect_core`)
+  indicator classification + the shared collector core (`collect_core`). **Local-only:** gitignored,
+  never pushed (same for `intel_engine/tests/`, `intel_engine/tools/eval/` and every `test_*.py`)
 - `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports,
   `@tool` count matches CLAUDE.md, compile, tests, every registered hook resolves);
   `scripts/install-hooks.sh` wires `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via
@@ -57,7 +58,8 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
   the repo has exactly one `SKILL.md`, at the root)
 - `intel_engine/tests/` — the vendored engine's own gates (`test_tool_registry` RULE 2,
   `test_tool_gate` submission approval, `test_engage`, …); `run_eval.py` puts both this
-  directory and the repo-root `tests/` on the path so neither suite silently stops running
+  directory and the repo-root `tests/` on the path so neither suite silently stops running.
+  Local-only, like `tests/`
 - `intel_engine/knowledge/` + `intel_engine/cases/` — **local runtime data, gitignored** (a fresh KB; the old data stays in the archive)
 
 ## Anti-drift rule — single source per collector (do NOT create a second copy)
