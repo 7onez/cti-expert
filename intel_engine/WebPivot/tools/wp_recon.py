@@ -48,6 +48,13 @@ def fofa_search(query: str, size: int = 100,
     body) that were live in the past and later scrubbed. Requires a FOFA tier that
     permits full/historical search; on lower tiers FOFA ignores or rejects it.
     """
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.fofa_key(query))
+        if _hit is not None:
+            return dict(_hit, query=query)
+    except Exception:  # noqa: BLE001 — a reuse miss must never block the real call
+        pass
     key = _secret("FOFA_KEY", "FOFA_API_KEY")
     if not key:
         return None
@@ -200,6 +207,13 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
     max_results caps how many domains to accumulate (default 1000 with a key, 100 keyless).
     `free_only=True` FORBIDS spending the credential (urlscan is a metered index): no API-Key,
     single anonymous page — analytically keyless."""
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.urlscan_key(query))
+        if _hit is not None:
+            return dict(_hit, query=query)
+    except Exception:  # noqa: BLE001
+        pass
     headers = {"User-Agent": DEFAULT_UA}
     key = None if free_only else _secret("URLSCAN_API_KEY")
     if key:
@@ -249,6 +263,72 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
     # consumer must never read it as a domain count unless truncated is True.
     return {"query": query, "total": total if total is not None else len(doms),
             "domains": doms[:max_results], "pages": pages, "truncated": more}
+
+
+# --------------------------------------------------------------------------- urlscan field query / count
+# Lucene field builder for Pro content-index pivots (page.title, text.content, filename, …).
+# Escaping is conservative: every Lucene reserved character is backslash-escaped so a selector
+# that happens to contain `:` or `"` cannot rewrite the query. urlscan_count is the cheap
+# size=1 probe the cross-type proposer uses before deciding auto-vs-approval.
+_LUCENE_SPECIAL_RE = re.compile(r'([+\-&|!(){}\[\]^"~*?:\\/])')
+
+
+def _lucene_escape(value: str) -> str:
+    """Escape Lucene special characters inside a urlscan field value."""
+    return _LUCENE_SPECIAL_RE.sub(r"\\\1", str(value or ""))
+
+
+def urlscan_field_query(field: str, value: str) -> str:
+    """Build a Lucene `field:"value"` (or `field:value` for bare hashes) query string.
+
+    Returns "" when field or value is empty. Does not validate that `field` is a known Pro
+    index key — that lives in references/urlscan_endpoints.json field_search.fields."""
+    f = (field or "").strip()
+    v = str(value or "").strip()
+    if not f or not v:
+        return ""
+    esc = _lucene_escape(v)
+    # Hash / identifier bare tokens are safer unquoted (urlscan accepts both); quoted form
+    # still works for title/text/filename which may contain spaces.
+    if f in ("hash", "dom.hash", "text.hash") or f.endswith(".hash"):
+        return f"{f}:{esc}"
+    return f'{f}:"{esc}"'
+
+
+def urlscan_count(query: str, timeout: int = 30, free_only: bool = False):
+    """Cheap hit-count probe: size=1 search, read `total`. Returns int or None. Never raises.
+
+    `free_only=True` forces the keyless path (no API-Key header) so a no-spend posture never
+    burns a Pro search credit on a count probe. Each call is ledgered via api_usage."""
+    q = str(query or "").strip()
+    if not q:
+        return None
+    headers = {"User-Agent": DEFAULT_UA}
+    key = None if free_only else _secret("URLSCAN_API_KEY")
+    if key:
+        headers["API-Key"] = key
+    api = f"https://urlscan.io/api/v1/search/?q={quote(q)}&size=1"
+    rem = lim = None
+    try:
+        req = urllib.request.Request(api, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if api_usage:
+                rem, lim = api_usage.rl_headers(r)
+            data = json.load(r)
+    except Exception:  # noqa: BLE001 — count probe must never raise
+        if api_usage:
+            api_usage.record("urlscan", "count", credits=0, query=q, ok=False)
+        return None
+    if api_usage:
+        api_usage.record("urlscan", "count", credits=1, query=q, remaining=rem, limit=lim)
+    total = data.get("total") if isinstance(data, dict) else None
+    if isinstance(total, int):
+        return total
+    try:
+        return int(total)
+    except (TypeError, ValueError):
+        results = (data or {}).get("results") if isinstance(data, dict) else None
+        return len(results) if isinstance(results, list) else None
 
 
 def urlscan_similar(host: str, timeout: int = 30, limit: int = 60, free_only: bool = False):
@@ -462,304 +542,34 @@ def fetch_jarm(host: str, port: int = 443, timeout: int = 8):
     except Exception as e:                    # never propagate to the caller
         return {"host": host, "port": port, "error": str(e)}
 
-def _crtsh_fetch(value: str, timeout: int = 25):
-    """Fetch crt.sh JSON rows for a search value, resilient to crt.sh flakiness.
-
-    crt.sh's `?q=` endpoint frequently returns an nginx 502 HTML page (not JSON);
-    its `?identity=` endpoint is more stable. Try `q` first, then fall back to
-    `identity` for the same value. Returns a list of rows (possibly empty) or
-    raises the last error so the caller can record it.
-    """
-    last_err = None
-    for param in ("q", "identity"):
-        api = "https://crt.sh/?" + urlencode({param: value, "output": "json"})
-        try:
-            req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                body = r.read().decode("utf-8", "ignore").strip()
-            if not body:
-                last_err = "empty response"
-                continue
-            data = json.loads(body)          # a 502 returns HTML → JSONDecodeError → try next form
-            return data if isinstance(data, list) else []
-        except Exception as e:
-            last_err = str(e)
-            continue
-    raise RuntimeError(last_err or "crt.sh unavailable")
-
-def crtsh_search(domain: str, timeout: int = 25):
-    """Certificate-transparency (SSL) search via crt.sh for `domain`.
-
-    Enumerates every CT-logged certificate covering the registrable domain and
-    its subdomains — including **wildcard** certs — via two queries merged:
-    `%.<domain>` (subdomains) and the apex `identity`. Each cert's issuer +
-    validity window + serial is kept so the CT result carries the SSL detail an
-    analyst needs (issuance timeline, wildcard scope) without a second lookup.
-
-    Keyless. Returns {'query','total','subdomains','wildcards','certs',...} or
-    {'error':...}. crt.sh is frequently overloaded — errors are returned, never raised.
-    """
-    query = f"%.{domain}"
-    rows = []
-    err = None
-    for value in (query, domain):            # subdomains, then the apex cert(s)
-        try:
-            rows.extend(_crtsh_fetch(value, timeout=timeout))
-        except Exception as e:
-            err = str(e)
-    if not rows and err:
-        return {"query": query, "error": err}
-
-    subs, wildcards, certs, seen_cert = set(), set(), [], set()
-    for row in rows:
-        names = []
-        for name in str(row.get("name_value", "")).splitlines() + [row.get("common_name", "")]:
-            name = name.strip().lower()
-            if not name or "@" in name:
-                continue
-            names.append(name)
-            if name.startswith("*."):
-                wildcards.add(name)
-            bare = name.lstrip("*.")
-            if bare and bare != domain.lower():
-                subs.add(bare)
-        cid = row.get("id")
-        if cid and cid not in seen_cert:          # one entry per logged certificate
-            seen_cert.add(cid)
-            certs.append({
-                "id": cid,
-                "issuer": row.get("issuer_name"),
-                "common_name": row.get("common_name"),
-                "names": uniq(names),
-                "not_before": row.get("not_before"),
-                "not_after": row.get("not_after"),
-                "serial": row.get("serial_number"),
-            })
-    certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
-    ordered = sorted(subs)
-    return {
-        "query": query,
-        "total": len(ordered),
-        "subdomains": ordered,                   # full set; ct_search caps once after the merge
-        "wildcards": sorted(wildcards),          # *.domain certs (broad-scope reuse signal)
-        "cert_count": len(certs),
-        "certs": certs[:40],                     # newest-first, issuer + validity + serial
-    }
-
-def shodan_ctl_search(domain: str, timeout: int = 25):
-    """Certificate-transparency search via Shodan's keyless CTL mirror of the crt.sh DB.
-
-    crt.sh's own endpoint is frequently overloaded (502s); Shodan's CTL API serves the
-    same CT data from a steadier host, so it's our resilient second CT source. Two keyless
-    endpoints:
-      GET /api/v1/domain/<d>/hostnames -> flat JSON array of every hostname seen for <d>
-      GET /api/v1/domain/<d>           -> cert objects {hash, subject_cn, issuer_cn,
-                                          not_before/after (unix epoch), san_dns_names}
-
-    Returns the SAME shape as crtsh_search (subdomains/wildcards/certs/cert_count) so it
-    drops in as a merge/fallback, or {'error':...}. Never raises.
-    """
-    import datetime
-    base = f"https://ctl.shodan.io/api/v1/domain/{quote(domain)}"
-
-    def _json(url):
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8", "ignore"))
-
-    def _iso(epoch):
-        try:
-            return datetime.datetime.utcfromtimestamp(int(epoch)).strftime("%Y-%m-%dT%H:%M:%S")
-        except Exception:
-            return None
-
-    subs, wildcards, certs, err = set(), set(), [], None
-    try:
-        for name in _json(base + "/hostnames"):
-            name = str(name).strip().lower()
-            if not name or "@" in name:
-                continue
-            if name.startswith("*."):
-                wildcards.add(name)
-            bare = name.lstrip("*.")
-            if bare and bare != domain.lower():
-                subs.add(bare)
-    except Exception as e:
-        err = str(e)
-    try:
-        for row in _json(base):                    # cert objects
-            cn = str(row.get("subject_cn", "")).strip().lower()
-            if cn.startswith("*."):
-                wildcards.add(cn)
-            names = [str(n).strip().lower() for n in (row.get("san_dns_names") or []) if n]
-            for n in names + ([cn] if cn else []):
-                bare = n.lstrip("*.")
-                if bare and bare != domain.lower():
-                    subs.add(bare)
-            certs.append({
-                "id": row.get("hash"),
-                "issuer": row.get("issuer_cn"),
-                "common_name": row.get("subject_cn"),
-                "names": uniq(names),
-                "not_before": _iso(row.get("not_before")),
-                "not_after": _iso(row.get("not_after")),
-                "serial": None,
-            })
-    except Exception as e:
-        err = err or str(e)
-    if not subs and not certs and err:
-        return {"query": domain, "error": err, "source": "shodan-ctl"}
-    certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
-    ordered = sorted(subs)
-    return {
-        "query": domain, "source": "shodan-ctl",
-        "total": len(ordered), "subdomains": ordered,   # full set; ct_search caps once after merge
-        "wildcards": sorted(wildcards), "cert_count": len(certs), "certs": certs[:40],
-    }
-
-def _ct_hostlist_search(domain: str, source: str, url: str, timeout: int = 25):
-    """Shared client for keyless AGGREGATED subdomain indexes that reply with a PLAINTEXT,
-    newline-delimited hostname list (one host per line) — crt.name and agniops.
-
-    These are NOT pure certificate-transparency logs: they union CT with Common Crawl /
-    CZDS / Chaos / HaGeZi (crt.name) and feeds of UNDISCLOSED provenance (agniops), so a name they
-    return is NOT CT-log-attributable evidence and MUST be validated before it enters a
-    report (see handbook/pivot-services.md §4). They also expose the target apex to an
-    unknown third-party operator, so ct_search only calls them as a FALLBACK. Returns
-    {'query','source','aggregated':True,'total','subdomains','wildcards'} or
-    {'error',...}. Never raises."""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read().decode("utf-8", "ignore").strip()
-    except Exception as e:
-        return {"query": domain, "error": str(e), "source": source}
-    if not body or body[0] == "<":            # empty or an HTML error page, not a host list
-        return {"query": domain, "error": body[:120] or "empty response", "source": source}
-    dom = domain.lower()
-    subs, wildcards = set(), set()
-    for line in body.splitlines():
-        name = line.strip().lower().lstrip(".")   # tolerate a leading '.' artifact (.x.com)
-        if not name or " " in name or "@" in name:   # skip blanks / prose / email SANs
-            continue
-        bare = name.lstrip("*.")
-        if bare != dom and not bare.endswith("." + dom):   # in-scope hosts only
-            continue
-        if name.startswith("*."):
-            wildcards.add(name)                            # only in-scope wildcards
-        if bare and bare != dom:
-            subs.add(bare)
-    ordered = sorted(subs)
-    return {
-        "query": domain, "source": source, "aggregated": True,
-        "total": len(ordered), "subdomains": ordered, "wildcards": sorted(wildcards),  # full; fallback caps once
-    }
-
-def crtname_search(domain: str, timeout: int = 25):
-    """Subdomain enumeration via crt.name — a keyless AGGREGATED index (CT logs PLUS Common
-    Crawl / ICANN CZDS / ProjectDiscovery Chaos / HaGeZi), 100/IP/day. `apex` must be an
-    eTLD+1; default response is text one-per-line. Ranked BELOW crt.sh: a hit is not
-    CT-log-attributable — tag `source:crt.name(aggregated)` and verify before reporting.
-    OPSEC: discloses the apex to a third-party operator. Never raises."""
-    url = "https://crt.name/v1/search?" + urlencode({"apex": domain})
-    return _ct_hostlist_search(domain, "crt.name(aggregated)", url, timeout)
-
-def agniops_search(domain: str, timeout: int = 25):
-    """Subdomain enumeration via agniops — a keyless AGGREGATED index of UNDISCLOSED provenance.
-    Same posture
-    as crt.name: not CT-log-attributable, ranked below crt.sh, tag `source:agniops(aggregated)`,
-    verify before reporting, and it discloses the apex to a third-party operator. Never raises."""
-    url = "https://app.agniops.in/v1/search?" + urlencode({"domain": domain})
-    return _ct_hostlist_search(domain, "agniops(aggregated)", url, timeout)
-
-def ct_aggregated_fallback(domain: str, timeout: int = 25):
-    """Keyless AGGREGATED subdomain fallback — crt.name + agniops, run concurrently and
-    unioned. Fires only when the certificate-transparency peers (crt.sh + Shodan CTL) return
-    nothing, so the third-party apex disclosure happens only when it buys coverage. Returns
-    {'query','aggregated':True,'sources','total','subdomains','wildcards'} (names ONLY — no
-    cert metadata) or {'error',...}. Never raises."""
-    fns = (crtname_search, agniops_search)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
-        results = [f.result() for f in [ex.submit(fn, domain, timeout) for fn in fns]]
-    good = [r for r in results if not r.get("error")]
-    if not good:
-        return {"query": domain, "aggregated": True,
-                "error": next((r.get("error") for r in results if r.get("error")), "unavailable"),
-                "sources_tried": ["crt.name", "agniops"]}
-    subs, wildcards = set(), set()
-    for r in good:
-        subs.update(r.get("subdomains", []))
-        wildcards.update(r.get("wildcards", []))
-    ordered = sorted(subs)
-    return {"query": domain, "aggregated": True,
-            "sources": [r.get("source") for r in good],
-            "total": len(ordered), "subdomains": ordered[:200], "wildcards": sorted(wildcards)}
-
-def ct_search(domain: str, timeout: int = 25):
-    """Merged certificate-transparency view over BOTH CT sources — crt.sh and Shodan's CTL
-    mirror — run concurrently and unioned. Two independent CT indexes each miss certs the
-    other has, and crt.sh alone 502s often; querying both maximises subdomain enumeration
-    and survives either source being down. Same return shape as crtsh_search.
-
-    When BOTH CT peers come back with no subdomains, falls back to the keyless AGGREGATED
-    indexes (crt.name + agniops) — their names are attached SEPARATELY under
-    `aggregated_subdomains`/`aggregated_sources` (never merged into the CT-attributable
-    `subdomains`), because an aggregated hit is not CT-log evidence and must be validated
-    before it enters a report (handbook/pivot-services.md §4)."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        a = ex.submit(crtsh_search, domain, timeout)
-        b = ex.submit(shodan_ctl_search, domain, timeout)
-        r1, r2 = a.result(), b.result()
-    good = [r for r in (r1, r2) if not r.get("error")]
-    subs, wildcards, certs, seen = set(), set(), [], set()
-    for r in good:
-        subs.update(r.get("subdomains", []))
-        wildcards.update(r.get("wildcards", []))
-        for c in r.get("certs", []):
-            key = c.get("id") or (c.get("common_name"), c.get("not_before"))
-            if key not in seen:
-                seen.add(key)
-                certs.append(c)
-    # No CT-attributable names at all → reach for the aggregated fallback (tagged separately).
-    if not subs:
-        fb = ct_aggregated_fallback(domain, timeout)
-        if not good and fb.get("error"):
-            return {"query": domain, "error": (r1.get("error") or r2.get("error") or fb.get("error")),
-                    "sources_tried": ["crt.sh", "shodan-ctl", "crt.name", "agniops"]}
-        if not fb.get("error"):
-            certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
-            return {
-                "query": domain, "sources": [r.get("source", "crt.sh") for r in good],
-                "total": 0, "subdomains": [], "wildcards": sorted(wildcards),
-                "cert_count": len(certs), "certs": certs[:40],
-                "aggregated_sources": fb.get("sources", []),
-                "aggregated_subdomains": fb.get("subdomains", []),
-                "aggregated_wildcards": fb.get("wildcards", []),
-            }
-    certs.sort(key=lambda c: c.get("not_before") or "", reverse=True)
-    ordered = sorted(subs)
-    return {
-        "query": domain, "sources": [r.get("source", "crt.sh") for r in good],
-        "total": len(ordered), "subdomains": ordered[:80],
-        "wildcards": sorted(wildcards), "cert_count": len(certs), "certs": certs[:40],
-    }
-
 def passivedns_search(domain: str, timeout: int = 25):
     """Passive-DNS subdomain/IP lookup via HackerTarget (keyless).
 
     Returns {'query','total','hosts':[{host,ip}],'ips':[...]} or {'error':...}.
     HackerTarget replies in plaintext CSV (`host,ip`) — 'no results'/'API count
     exceeded' come back as prose, so they are treated as errors, not parsed.
+
+    `domain` is normalized to a bare hostname first: HackerTarget's hostsearch answers
+    'error invalid host' for ANY query that is not a bare host — a scheme prefix, a
+    path/trailing slash after the host, a port suffix, or stray whitespace all trip it
+    (measured live 2026-09) — so a caller that hands over a URL or a whitespace-padded
+    value would otherwise fail on every domain, not just a malformed one.
     """
-    api = "https://api.hackertarget.com/hostsearch/?" + urlencode({"q": domain})
+    q_host = str(domain or "").strip()
+    if "://" in q_host:
+        q_host = urlparse(q_host).netloc or q_host.split("://", 1)[-1]
+    q_host = q_host.split("/", 1)[0].split(":", 1)[0].strip()
+    if not q_host:
+        return {"query": domain, "error": "empty host"}
+    api = "https://api.hackertarget.com/hostsearch/?" + urlencode({"q": q_host})
     try:
         req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", "ignore").strip()
     except Exception as e:
-        return {"query": domain, "error": str(e)}
+        return {"query": q_host, "error": str(e)}
     if not body or "," not in body or "error" in body.lower() or "no results" in body.lower():
-        return {"query": domain, "error": body[:120] or "no results"}
+        return {"query": q_host, "error": body[:120] or "no results"}
     hosts, ips = [], set()
     for line in body.splitlines():
         parts = line.split(",")
@@ -768,8 +578,30 @@ def passivedns_search(domain: str, timeout: int = 25):
             hosts.append({"host": host, "ip": ip})
             if ip:
                 ips.add(ip)
-    return {"query": domain, "total": len(hosts),
+    return {"query": q_host, "total": len(hosts),
             "hosts": hosts[:80], "ips": sorted(ips)[:40]}
+
+def reverseip_search(ip: str, timeout: int = 25):
+    """Reverse-IP via HackerTarget (keyless, rate-limited): hostnames whose A record pointed at `ip`.
+
+    Returns {'query','total','domains':[...]} or {'error':...}. Like hostsearch, quota exhaustion
+    and empty answers come back as prose ('API count exceeded', 'No DNS A records found'), so any
+    line with a space or no dot is treated as an error/note, never as a hostname."""
+    q = str(ip or "").strip()
+    if not q:
+        return {"query": ip, "error": "empty ip"}
+    api = "https://api.hackertarget.com/reverseiplookup/?" + urlencode({"q": q})
+    try:
+        req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", "ignore").strip()
+    except Exception as e:
+        return {"query": q, "error": str(e)}
+    lines = [ln.strip().lower().rstrip(".") for ln in body.splitlines() if ln.strip()]
+    names = [ln for ln in lines if "." in ln and " " not in ln and ln != q]
+    if not names:
+        return {"query": q, "error": body[:120] or "no results"}
+    return {"query": q, "total": len(names), "domains": sorted(set(names))[:200]}
 
 def pdns_search(query: str, timeout: int = 25):
     """Passive-DNS lookup via a CIRCL-style COF endpoint (HTTP Basic auth).
@@ -1057,6 +889,64 @@ def parse_dmarc(records):
     return {"raw": d, "p": tags.get("p") or None, "sp": tags.get("sp") or None,
             "rua": _addrs("rua"), "ruf": _addrs("ruf")}
 
+# Apex TXT verification tokens (rung class txt.verification). DATA: references/txt_verification.json.
+# Fallback is the conservative minimum: UUID tokens only, one known provider zone — fewer tokens
+# extracted and more of them left "unchecked" (lead facts), never more owner edges.
+_TXTV_FALLBACK = {
+    "token_shapes": [r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"],
+    "provider_zones": {"spacemail": "spacemail.com"},
+    "ignored_prefixes": ["v=spf1", "v=dmarc1"],
+}
+_TXTV_REF = load_ref(ref_path(__file__, "txt_verification.json"), _TXTV_FALLBACK)
+TXT_TOKEN_SHAPES = tuple(re.compile(p, re.I) for p in _TXTV_REF["token_shapes"])
+TXT_PROVIDER_ZONES = {str(k).lower(): str(v).lower() for k, v in _TXTV_REF["provider_zones"].items()}
+TXT_IGNORED_PREFIXES = tuple(str(p).lower() for p in _TXTV_REF["ignored_prefixes"])
+
+
+def classify_txt_verifications(records, mx_hosts=(), lookup=None, timeout: int = 8):
+    """Verification tokens in a domain's apex TXT records, each judged against its provider's
+    OWN zone: [{"record", "token", "provider_zone", "check"}] where check is
+      "owner"             — the provider zone resolved and does NOT carry the token (owner link);
+      "provider_constant" — the provider zone carries the same token (provider-wide, never emitted);
+      "unchecked"         — no provider zone known, or it returned nothing (a lead fact, not an edge).
+    The provider is the record label's keyword (`spacemail-verification=…`), else an MX host under
+    a listed provider zone. `lookup(name) -> [txt, …]` is the resolver seam (default _txt_records)."""
+    lookup = lookup or (lambda name: _txt_records(name, timeout=timeout))
+    mx = [str(h).lower().rstrip(".") for h in (mx_hosts or ())]
+    zone_txt, out, seen = {}, [], set()
+    for rec in records or ():
+        low = str(rec or "").strip().lower()
+        if not low or low.startswith(TXT_IGNORED_PREFIXES):
+            continue
+        toks = uniq([m.group(0).lower() for p in TXT_TOKEN_SHAPES for m in p.finditer(low)])
+        if not toks:
+            continue
+        segs = set(re.split(r"[^a-z0-9]+", low.split("=", 1)[0])) if "=" in low else set()
+        zones = uniq([z for k, z in TXT_PROVIDER_ZONES.items() if k in segs])
+        if not zones:
+            zones = uniq([z for z in TXT_PROVIDER_ZONES.values()
+                          if any(h == z or h.endswith("." + z) for h in mx)])
+        for z in zones:
+            if z not in zone_txt:
+                try:
+                    zone_txt[z] = [str(r).lower() for r in (lookup(z) or [])]
+                except Exception:  # noqa: BLE001 — an unresolvable zone leaves the token unchecked
+                    zone_txt[z] = []
+        for tok in toks:
+            if tok in seen:
+                continue
+            seen.add(tok)
+            checked = [z for z in zones if zone_txt.get(z)]
+            if any(tok in r for z in checked for r in zone_txt[z]):
+                check = "provider_constant"
+            elif checked:
+                check = "owner"
+            else:
+                check = "unchecked"
+            out.append({"record": str(rec)[:300], "token": tok,
+                        "provider_zone": ",".join(zones) or None, "check": check})
+    return out
+
 def _classify_spf_include(host: str):
     """Return an ESP name (via the MX map) for a known SPF include, else None (=custom)."""
     h = host.lower().rstrip(".")
@@ -1090,7 +980,8 @@ def detect_mail_provider(host: str, timeout: int = 8):
             m365_tenant = ex[: -len(".mail.protection.outlook.com")] or None
             break
     # --- SPF (apex TXT) + DMARC (_dmarc TXT): authorized senders + reporting contacts ---
-    spf = parse_spf(_txt_records(host, timeout=timeout))
+    apex_txt = _txt_records(host, timeout=timeout)
+    spf = parse_spf(apex_txt)
     if spf:
         # an include matching no big ESP is the operator's own / bespoke sending infra
         spf["custom_includes"] = [i for i in spf["includes"] if not _classify_spf_include(i)]
@@ -1114,6 +1005,9 @@ def detect_mail_provider(host: str, timeout: int = 8):
         "no_mx": not mx_hosts,
         "spf": spf,
         "dmarc": dmarc,
+        # apex TXT verification tokens, each checked against its provider's own zone
+        # (owner | provider_constant | unchecked) — ingest edges only "owner"
+        "txt_verifications": classify_txt_verifications(apex_txt, mx_hosts, timeout=timeout),
     }
 
 

@@ -1,0 +1,21 @@
+{
+  "_comment": "Reference data for tools/evidence_import.py (`intel.py evidence import <case> <findings.json>` / the evidence_import @tool). An analyst's graded findings are stored under cases/<case>/evidence/imported/ and written into the KB with the provenance tag below so assessments can cite them. Rung semantics come from rungs.json (owner = edge; kit / neighbour = fact only, RULE 5) — this file only holds the grading vocabulary and provenance labels. RULE 1: grading vocabulary only, never case data.",
+
+  "admiralty": {
+    "_comment": "Admiralty (NATO) grade accepted on an imported finding: source reliability A-F + information credibility 1-6, e.g. B2. `pattern` is matched against the grade after upper-casing and stripping spaces / hyphens. A finding with no grade, or one that does not match, is REJECTED with a message — an ungraded claim cannot be cited.",
+    "pattern": "^[A-F][1-6]$"
+  },
+
+  "reliability_confidence": {
+    "_comment": "Source-reliability letter -> KB confidence word (knowledge_base.CONF_WORDS) for the facts and edges an imported finding writes. A/B are reliable sources, C fairly reliable, D-F not usually reliable / unreliable / cannot be judged.",
+    "entries": {"A": "high", "B": "high", "C": "medium", "D": "low", "E": "low", "F": "low"}
+  },
+
+  "provenance": {
+    "_comment": "KB provenance labels: `source` is the tag every fact/edge carries (the harness assessment cites imported evidence by it); `collector` names this importer; `fact_attribute` is the attribute an indicator's finding is stored under; `default_rel` labels an owner selector_link that gave no rel.",
+    "source": "analyst_import",
+    "collector": "evidence_import",
+    "fact_attribute": "analyst_finding",
+    "default_rel": "analyst_link"
+  }
+}

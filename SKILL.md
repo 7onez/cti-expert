@@ -39,11 +39,19 @@ Every investigation follows four phases:
 | Phase | What Happens |
 |-------|-------------|
 | **Acquire** | Collect raw data — `/sweep`, `/query`, `/username`, `/phone`, `/email-deep`, `/breach-deep`, `/subdomain`, `/webpivot` + `/icp` (domain/URL targets), `/dork-sweep` · `/docleak` · `/github-osint`/`/secrets`, `/cn-corp` · `/iban` · `/hash-id` on discovery |
-| **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) treats every discovered identifier as a new seed and expands the graph hop-by-hop (`/branch`, `/crossref`, `/link-subjects`, `/signatures`) **automatically until the frontier is exhausted**, no approval prompts (`autonomy=auto`). Each discovered identifier auto-fires its leak/breach/OSINT/dork legs — email→`/breach-deep`+`/intelx` (breach dumps·**infostealer logs**·pastes·darknet), username→`/username`+socials, name→`/dork-sweep`+`/docleak`, apex→`/intelx --phonebook`+`/secrets`+`/github-osint` — see §"Leak / breach / infostealer auto-fire" + the Dork/GitHub auto-fire matrices. Acquire↔Enrich iterate, not run once. |
+| **Enrich** | **Recursive pivot loop** — the [pivot orchestration engine](engine/pivot-orchestration.md) tracks candidate identifiers hop-by-hop; `/cti` executes each matching enrichment leg and re-enters **verified owner-linked** yields as seeds. Registrant email→`/email-deep` (not a second `/breach-deep` or `/intelx` on the same selector), username→`/username`, name→`/dork-sweep`+`/docleak`, apex→`intelx phonebook`+`/secrets`+`/github-osint` when keyed and allowed. The deterministic pipeline covers infrastructure; the slash-command agent runs the remaining identity/exposure legs and closes each frontier lead with evidence. Never treat a generated query or shared infrastructure as an operator link. Acquire↔Enrich iterate until the applicable frontier is addressed. |
 | **Assess** | Score and verify — `/exposure`, `/threat-model`, `/validate`, `/coverage`, `/verify-finding`. Judgments carry **likelihood terms**, coverage gets the **5W1H pass**, attributions get an **ACH matrix** ([`handbook/analytic-standards.md`](handbook/analytic-standards.md)). **If the case has not converged** (frontier still open after the pivot loop + deterministic pipeline) and posture is active, `/case` **auto-escalates to the `/harness` deepening loop** — keyless-first (the CLI's own model), egress hard-gated on hostile infra; `--no-harness` opts out |
 | **Deliver** | Package output — `/report`, `/brief`, `/render`, `/workspace save` — **first ASKS whether to import more evidence from manual investigation** (merged into the report JSON before anything is built), **always auto-saves the base data bundle (.md + .json + .csv + IOC bundle: .stix.json/.txt/.csv/.jsonl), then ASKS which presentation report to render — (a) PDF · (b) DOCX · (c) HTML · (d) all** (both prompts skipped under `--yolo`/guided-auto, which default to HTML). When `CHONGLUADAO_API_KEY` is set, the IOC bundle also attaches CLD's **STIX + MISP indicator feed** as companion artifacts (`cld_api.py feed stix2\|misp --raw` → loadable bundle, not merged into the case graph). **Deep-layer persist (automatic, ZERO extra egress):** when `/backend` is live, `/case` **reuses the pivots it already collected** — never re-fetches — to persist the versioned case at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` and correlate it cross-case; see the auto-chain note below. See [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md) |
 
 Run `/progress` at any point to see which phase you're in and what's pending.
+
+> **Intake before Acquire (`/cti` driver).** `intel.py cti <target>` scopes the case **before any
+> collection** (Quarry included): at a terminal it asks the **target class** and **purpose** (the
+> `case_scope` fields — classes from `WebPivot/references/intake.json`) and persists the answers to
+> `cases/<case>/scope.json`; a case that already has a stated scope is not re-asked. Scripted runs
+> (no TTY, `--yes`, `INTEL_NO_PROMPT`, or nested inside a harness phase) never block on input:
+> pass `--class <class>` / `--purpose <purpose>`, otherwise the run proceeds on the default
+> (`unknown` / `triage`) and prints `[scope] DEFAULTED …`. The summary JSON carries `target_class`.
 
 > **`/case` and web-infra pivoting.** For a **domain or URL** target, `/case` includes
 > web-infrastructure pivoting (`/webpivot`) in the Acquire phase. It runs **keyless by default**
@@ -63,6 +71,37 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > `/webpivot` can fetch the target directly, for hostile infrastructure it prefers passive capture
 > (urlscan/Wayback) — see [`techniques/web-pivot.md`](techniques/web-pivot.md). It is **not** run for
 > username/phone/person targets.
+>
+> **Historical origin-IP sweep (automatic, offline join).** Every A/AAAA record any source ever saw
+> for a collected host or subdomain — CIRCL/HackerTarget passive DNS, SecurityTrails history,
+> Validin, urlscan's hostname index, Webamon servers, passive-SSL cert→IP, keyless urlscan scans — is
+> merged into one dated `origin_history` block on the domain pivot and classified: **CDN / WAF /
+> DDoS-protection edge** (CIDR index *plus* the ASN / org the source named: Cloudflare, Akamai,
+> Imperva, Sucuri …), **parking**, **bogon**, **ambiguous** (DDoS-Guard / StackPath — they sell both
+> proxying and servers), or **origin** (customer Google Cloud VMs included). The loop and the harness
+> then collect each **origin** and **ambiguous** IP as an IPPivot seed (ASN + abuse contact,
+> ports/banners, PTR, self-hosted MX, passive-SSL certificates, co-hosted domains — keyless
+> reverse-IP under `--free-only`). Rails: an address last seen **before the current registration**
+> is the previous owner's (lead, never collected); the **current co-tenants** of a
+> `historical`/`undated` origin or of an `ambiguous` network are held as dated leads, never seeds or
+> KB edges; a recent origin's co-tenants pass the usual shared-hosting guard and stay
+> neighbour-rung. The box's own IP lookup is checked again after collection, so an edge or
+> DDoS-Guard network the history could not name still holds its tenants. On a **cloud/VPS** network
+> (Google Cloud, DigitalOcean, OVH, Hetzner, Vultr …) up to **10** co-tenants are queued and linked
+> automatically — counted the same way by the frontier and the KB, with the reverse index's own total
+> so a truncated list never hides a big shared host; above that **every** domain goes to analyst
+> approval (harness: `proposal.json` / `case_approve`; loop: an *APPROVAL REQUIRED* gap and
+> `/approve-cohost`) and nothing is collected or linked until approved. Approval is **per domain**
+> (a shared-platform tenant such as `kit.pages.dev` counts on its own, never the whole platform) and
+> is the evidence: exactly the approved sites are seeded, linked, and may bind the cluster with the
+> case host past both the shared-hosting bound and the clustering cap of 8 domains per indicator;
+> automatically linked sites keep that cap. Every unapproved site on the box stays a held lead,
+> never automatic. Every held origin-sweep lead lists all its domains. Without the CDN range
+> cache an address is `undetermined` and never collected.
+> Caps and the edge/ambiguous/parking lists live in
+> `intel_engine/WebPivot/references/origin_history.json`; the assessment renders a *Historical
+> Origin IPs* table (with tenancy overlap for shared boxes), the house report a *Historical origin
+> hosting* table, and `/origin-history <case>` prints the dated history on demand.
 >
 > **⭐ ChongLuaDao is the first-party premium upgrade.** With `CHONGLUADAO_API_KEY` set
 > (`/apikeys set chongluadao <KEY>`), Acquire/Enrich fold CLD's own datasets into `/scam-check`,
@@ -112,6 +151,12 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 >    prior-overlap (`/recall`) → risk (`/risk`) → shared cluster seeds → `clusters.json` →
 >    `case_graph.json` → ICD-203 `assessment.md`. Every step is a KB/local read: zero egress, zero
 >    metered calls.
+> 3. In a full `/cti` (not `--quick`), run `intel.py enrich <CASE-ID>` next. It reads stored
+>    raw pivots, performs matching third-party identity/OSINT lookups, checkpoints results
+>    in `cases/<CASE-ID>/enrichment/` (including `index.json`), and prints recorded credit
+>    units per leg. `--free-only`/`no_spend` leave metered leads OPEN for a later full run;
+>    passive posture forbids direct target contact, not third-party metered lookups. This
+>    phase has third-party egress and can spend credits, unlike the reuse-mode handoff.
 >
 > **The persisted case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` — `raw/`, `shared.txt`,
 > `clusters.json`, `case_graph.json`, `assessment.md` — NOT the current working directory**, and it
@@ -121,13 +166,25 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > report. Tier 3 (stateless), or a person/username/phone target with no host seeds → the handoff is
 > **skipped silently** and the tier noted; broad collection + report are unaffected.
 >
-> **Collecting `pipeline open` (no `--no-collect`) stays MANUAL — `/case` never runs it.**
-> `intel.py pipeline open` without the flag re-fetches every seed directly (`collect_many` on
-> `https://<host>`; the egress gate at `collect_core.py:169` only fires when `hostile` is set, which
-> the `open` path never sets), so a blind auto-`open` would be a **second live round** against infra
-> `/case` may have just classified hostile/no-touch — which is why the automatic handoff uses
-> `--no-collect`. Run collecting mode by hand only for a **fresh** case with no prior collection,
-> after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive`).
+> **A collecting run never starts without the analyst's go-ahead.** `/case`'s handoff stays
+> `--no-collect`, and `/cti`'s default engine — the cross-type harness loop (`intel.py cti
+> <target>`) — collects live. So **confirm before launching it**: target, case id, rounds,
+> spend posture. `intel.py pipeline open` without `--no-collect` re-fetches every seed directly
+> (`collect_many` on `https://<host>`; the egress gate at `collect_core.py:169` only fires when
+> `hostile` is set, which the `open` path never sets). A blind auto-collect would therefore be a
+> **second live round** against infra `/case` may have just classified hostile/no-touch.
+> Collect only for a **fresh** case with no prior collection, after setting the egress posture
+> (`/scope`, `/cti-proxy`, or `--passive`). `--passive` always takes the pipeline path (no chase
+> loop, no live contact), never the harness.
+>
+> **Quarry, when enabled, runs before any vendor spend.** A configured Quarry
+> (`QUARRY_MCP_URL` + `QUARRY_API_KEY`, `QUARRY_ENABLED=on|off|ask`) holds the vendor answers this
+> skill would otherwise pay for again. `ask` (the default) asks once per case and remembers the
+> answer; `--quarry` / `--no-quarry` override it. The driver reuses a finished scan for free, or
+> starts one and **waits for it with no time limit** — hours or days on a large estate, resuming if interrupted —
+> before the harness loop or pipeline collects. A no-spend or no-contact case reuses only.
+> Imported rows go through the rung table: owner links become edges, co-tenancy and kit matches
+> become facts only. Ask the user before the first scan of a case.
 >
 > **`/harness` deepening AUTO-ESCALATES on non-convergence** (`--no-harness` opts out). After the
 > `--no-collect` pipeline, if the case has **not converged** — `intel.py convergence <case>`
@@ -199,30 +256,63 @@ Six traps, all of which have produced real false clusters:
 > uninvolved business is the most damaging error this skill can produce. When a cluster rests on a
 > single rung-7-or-below indicator, label it *candidate, single-indicator* — not a cluster member.
 
-### Never submit the case's own sample to a public sandbox (CRITICAL)
 
-`/anyrun` is **lookup-only**: it reads detonations that already happened (`anyrun_lookup`). The
-engine *does* carry a detonation path — `anyrun_submit` (T1) / `bp_anyrun.py submit` — but it is
-**gated four ways**, and every gate is code, not convention:
+### Attribution rails — collecting ≠ attributing (RULE 5)
 
-1. **Per-submission analyst confirmation.** `anyrun_submit` without `confirm=true` returns the
-   risk briefing and sends nothing; `bp_anyrun.submit()` refuses unless `confirm=True` is passed
-   (a function parameter — `references/anyrun.json` can only make the policy *stricter*). Show the
-   briefing, ask, and only on an explicit *yes to this submission* call again with `confirm=true`.
-   Consent to "analyze this sample" is **not** consent to detonate it.
-2. **Private by default, public refused.** Privacy defaults to `owner`; `public` is refused even
+Provider-level / same-MO evidence (shared kit, IP co-tenancy, exchange-wallet flow) is ingested as
+`add_fact` only, never `operator_lead`, never an edge. The harness **cross-type loop** MAY collect
+such hosts (source `kit:` / `cotenant:` / `cpty:`) — typed nodes, `propose`, Plan phase with
+read-only `PLAN_TOOLS`, auto free/urlscan pivots with ≤ N=25 hits, otherwise a digest-bound
+`proposal.json` gated by `audit.gate` (`harness approve`, `case_approve`, TTY) — but they never
+cluster, never attribute, and render as **kit siblings** / **neighbours** with a rung caveat
+(`Assessment.kit_siblings` / `neighbours` / `mentions`). Owner-link classes only
+(WHOIS registrant email/phone, exact cert, analytics GA/GTM/gtag/FB/TikTok/Metrica, telegram
+bot-token, discord webhook, non-exchange wallet) may enter `cluster`. Rung table:
+`intel_engine/tools/kb/references/rungs.json`. Dispatcher ops `propose` and `corpus-search`
+(`corpus_search` MCP tool) feed the loop without elevating kit/neighbour hits.
+
+
+### Binary downloads and ANY.RUN sandbox submissions (CRITICAL)
+
+When `/cti` discovers an `app:apk` or `app:desktop_installer` URL, the pipeline downloads it to
+`cases/<case>/bin/<sha256>.<extension>` and runs BinaryPivot static analysis. It writes the result
+under `cases/<case>/bin/analysis/<sha256>.json`, explicitly ingested into the KB without adding a
+file-host row to the web estate, even without an ANY.RUN key. `--no-collect` skips this step;
+a hostile/no-direct-contact posture blocks the direct fetch. Failed, truncated or non-binary
+downloads are neither ingested nor submitted to the sandbox.
+
+Binary hashes and extracted identifiers attach to the file in the KB. Only a matching
+already-collected **self-hosted** web origin receives owner-specific identifier edges; a shared
+CDN/download host remains a provenance fact, never an operator cluster join. Consequence: when an
+APK is served off-site (a CDN, a file-locker), its signing cert / backend links live on the
+`file_hash` node, and `shared_indicators` (domain-sourced only) will not surface them — read the
+`file_hash` entity directly to corroborate two apps by a common cert or backend.
+
+**A configured ANYRUN_API_KEY authorizes automatic submission of complete downloaded binaries in
+spending runs.** `--free-only`, `scope.json` `no_spend`, and the loop's default free-only mode suppress
+uploads; `loop --full` permits them. A case-local `anyrun/submissions.json` records attempts and
+task UUIDs by SHA-256; an ambiguous POST result is not retried on resume. This is outbound and
+irreversible: the operator may see a public task and rotate its infrastructure. Leave the key unset
+or use a no-spend run when that disclosure is unacceptable.
+
+`/anyrun` remains **lookup-only**. Direct `anyrun_submit` (T1) / `bp_anyrun.py submit` calls still
+require a per-submission risk briefing and analyst confirmation. The automatic pipeline is the
+explicit key-configured exception: it calls the same `bp_anyrun.submit(confirm=True)` after static
+analysis and spend/egress checks. The sandbox client's remaining gates apply unchanged:
+
+1. **Private by default, public refused.** Privacy defaults to `owner`; `public` is refused even
    with `confirm` unless `allow_public` is separately authorised — per call, or as the analyst's
    standing `ANYRUN_ALLOW_PUBLIC=1` in the gitignored `.env`. With that set, a plan that *cannot*
-   go private (gate 3 `denied`) is downgraded to a public task **explicitly** — the result carries
+   go private (`denied`) is downgraded to a public task **explicitly** — the result carries
    `public_task`, `downgraded_from`, `public_authorized_by` — never silently, and never when the
    plan can go private. Auto-delete defaults to a week.
-3. **Free plan fails closed.** Pre-flight, before any POST, the engine checks the key's own
+2. **Free plan fails closed.** Pre-flight, before any POST, the engine checks the key's own
    account record: `/user` → `limits.private` (observed live; `0` in any window = **denied**,
    and the analyst attestation below cannot override that positive evidence; `-1`/positive =
    entitled), else a prior non-public task in the account's history. Neither → `refused` +
    `plan_evidence`, unless the analyst explicitly attests to a paid plan
    (`allow_unverified_plan=true` / `--i-have-a-paid-plan`) — never set it on your own.
-4. **Post-submit read-back.** The task record carries no privacy while the sandbox is running
+3. **Post-submit read-back.** The task record carries no privacy while the sandbox is running
    (observed live: a `status: "in progress"` stub for ~2 min), so after the POST the engine polls
    the report — bounded to `sandbox timeout + 60 s`, max 240 s — and, once finished, reads the
    privacy ANY.RUN actually applied. A forbidden mode is withdrawn (task deleted) and the result
@@ -232,14 +322,11 @@ engine *does* carry a detonation path — `anyrun_submit` (T1) / `bp_anyrun.py s
    this is *detected*, not *prevented*: deletion does not un-publish what the feed already
    showed, so treat the infrastructure as tipped.
 
-The harness adds a fifth: `audit.gate()` denies `anyrun_submit` outright unless the run was
-launched with `HARNESS_ALLOW_SUBMIT=1`. `tests/test_no_sample_submission.py` asserts the gate is
-both marked and enforced and that no upload machinery exists outside it;
-`intel_engine/tools/eval/test_intelx_anyrun.py` §7b–7c exercises every refusal, the plan proof,
-the attestation path and the read-back.
-
-**Do not work around any of it.** Uploading the case's own APK / installer / archive to ANY.RUN —
-or VirusTotal, or any public sandbox — is an **outbound, irreversible** act:
+Direct MCP `anyrun_submit` still requires `HARNESS_ALLOW_SUBMIT=1`; the pipeline does not use that
+tool and instead calls `bp_anyrun.submit()` after its own key, spend, file, and egress checks.
+`tests/test_no_sample_submission.py` protects the manual confirmation gate;
+`tests/test_binary_auto.py` covers the automatic path. Neither route bypasses private-plan proof
+or the post-submit privacy check. Uploads are **outbound and irreversible**:
 
 - A public task is **world-readable**: the file, its hash, screenshots and full network log.
 - **Operators watch for their own samples.** The standard response is to rotate the backend,
@@ -249,12 +336,10 @@ or VirusTotal, or any public sandbox — is an **outbound, irreversible** act:
 - A URL detonation **fetches the live target** from published sandbox egress: the operator learns
   it was sandboxed, and a "clean" verdict may be the decoy served to datacenter IPs.
 
-Try first, and say what you tried: static `analyze_artifact`, then an **existing** detonation of the
-hash (`anyrun_lookup`, VirusTotal, MalwareBazaar, Triage, Koodous). Prefer the downloaded FILE over
-the live URL. Never put a case ID or an analyst/client name in tags or the filename. Never on
-standing permission inferred from an earlier approval, never as a side effect of a pivot. The same
-reasoning governs `--submit` (urlscan/Wayback): a public urlscan scan of a live scam funnel is
-visible to the operator too.
+For a manual submission, try static `analyze_artifact` and an existing detonation of the hash
+(`anyrun_lookup`, VirusTotal, MalwareBazaar, Triage, Koodous) first. The pipeline always submits
+the downloaded FILE rather than the live URL and names it by hash (never a case ID or client).
+`--submit` (urlscan/Wayback) is a separate action with its own approval policy.
 
 ### A permuted email is a hypothesis, never a finding (CRITICAL)
 
@@ -364,14 +449,20 @@ uv run scripts/proxy/proxy.py disable                 # back to the real IP
 ### 3.0 Entry point & registered commands
 
 **`/cti <target>` is the single entry to this skill.** It routes any target type — domain, IP,
-email, username, phone, wallet, hash, APK — through recall → collect → cluster → assess. Plain
-English works identically ("analyze example.com and pivot the infrastructure"); the command form
-just removes ambiguity.
+email, username, phone, wallet, hash, APK, Telegram handle, filename or string — through recall
+→ the **cross-type harness loop** (default engine: typed pivots, a read-only Plan phase, and
+per-round analyst approval of every metered pivot; the analyst's typed seeds collect keyed, found
+hosts free-only) → assess. `--pipeline`/`--quick`, or no available LLM backend, falls back to the
+deterministic pipeline. Plain English works identically ("analyze example.com and pivot the
+infrastructure"); the command form just removes ambiguity.
 
 **`/case <target>` is an alias of `/cti <target>`** — the same full pipeline run; `/cti` is the canonical entry (and the only form that works from a cold prompt). Prefer `/cti`.
 
 Nine commands are **registered with Claude Code** by `bash scripts/register.sh` and work from a
-cold prompt in any project:
+cold prompt in any project. The same run calls `scripts/register_agents.py`, which registers them
+with every other detected agent (omp, pi, OpenCode, Gemini CLI, Qwen Code, Factory droid,
+Windsurf) and installs `/cti` as the `cti` agent skill for Cursor and Copilot CLI (`/cti`), Codex
+(`$cti`) and the ChatGPT desktop app (`@cti`):
 
 | Command | Does | Equivalent T2 op | Equivalent T1 tool |
 |---|---|---|---|
@@ -413,24 +504,24 @@ Commands grouped by AEAD phase.
 | `/query [subject]` | Builds 12–15 advanced search operator queries **T2:** `intel.py query <indicator>` | `/query example.com` |
 | `/username [handle]` | Enumerate handle across 3000+ platforms **T2:** `intel.py username <handle>`. **T1:** `username_enum` — HYPOTHESES, not findings | `/username johndoe` |
 | `/phone [number]` | Carrier, line type, reputation, public associations, **infostealer exposure** (Hudson Rock); **VN scam-phone reports (ChongLuaDao)** when keyed **T2:** `intel.py phone +<E164>`. **T1:** `phone_osint` — carrier/line-type NOT determined | `/phone +84901234567` |
-| `/email-deep [email]` | Accounts, breach history, infrastructure; **breach/exposure records (ChongLuaDao data-leaks)** when keyed **T2:** `intel.py email-deep <email>`. **T1:** `deep_profile` — metered steps planned, not fired | `/email-deep u@domain.com` |
+| `/email-deep [email]` | Accounts, breach history, infrastructure. When keyed, this command itself searches Hudson Rock, ZoneCruncher, IntelX (one stealer-log search), and WhoisXML reverse-WHOIS (preview, then purchase only if the count is not bulk). It does not buy WHOIS history. HIBP only if `HIBP_API_KEY` is set **T2:** `intel.py email-deep <email>` | `/email-deep u@domain.com` |
 | `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` **T2:** `intel.py subdomain <domain>` (keyless certspotter + hackertarget + crt.sh; names any source that was down) · `intel.py subenum <apex>` (subfinder auto-keyed from `.env`, amass, assetfinder, findomain → `cases/<id>/subenum/<apex>.json`). **T1:** `subdomain_enum` — the case-persisting form; live names are queued for the next collection round by `case_frontier` | `/subdomain example.com` |
-| `/breach-deep [email]` | Multi-source breach lookup with context — Hudson Rock, IntelX, **ChongLuaDao data-leaks/exposure** when keyed **T2:** `intel.py breach-deep <email>`. **T1:** `deep_profile` (mode=breach) | `/breach-deep u@domain.com` |
+| `/breach-deep [email]` | Multi-source breach lookup — Hudson Rock + ZoneCruncher fire when keyed; ChongLuaDao when keyed. IntelX is the separate `/intelx` step, not this command **T2:** `intel.py breach-deep <email>`. **T1:** `deep_profile` (mode=breach) | `/breach-deep u@domain.com` |
 | `/traffic [domain]` | Traffic estimation, ranking, audience data **T2:** `intel.py traffic <domain>`. **T1:** `traffic_rank` — Tranco only; no paid-panel estimates | `/traffic example.com` |
 | `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics **T2:** `intel.py visitors <url>`. **T1:** `pivot_extract` (trackers) | `/visitors example.com` |
 | `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) **T2:** `intel.py techstack <url>`. **T1:** `pivot_extract` (tech_fingerprint) | `/techstack example.com` |
 | `/competitors [domain]` | Competitor & related site discovery **[unimplemented]** | `/competitors example.com` |
 | `/secrets [target]` | Exposed credentials in repos and paste sites **T2:** `intel.py secrets <target>`. **T1:** `github_osint` (secrets=true) — code search needs auth, so queries are EMITTED | `/secrets github.com/org` |
 | `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks. **Deterministic committer-identity harvest built in** — `wp_github.py <login|org|owner/repo|commit URL>` reads each repository's history and fetches `<commit>.patch`, whose `From:` line is git's own record of the author name + e-mail (personal mailbox, company address, or the `<id>+<login>@users.noreply.github.com` form that binds a user id to a login and exposes a **former login** after a rename). Sampling: >10 commits → **first 2 + last 2** (founder + current maintainer), else every commit. For an **organisation**: about-profile (e-mail, website, socials, location), public members, top contributors' profile selectors, then every repo. Rails: fork-only identities are upstream authors (never pivots), bots dropped, a commit e-mail identifies the committer, not the repo owner. Output is a pivot JSON `kb_ingest` joins on the `email` node. **T2:** `intel.py github <target>` (the harvest) · `intel.py github-osint <target>` (profile + repos + commit-author e-mails, keyless 60 req/h, rate-limit state always reported). **T1:** `github_harvest` (case-writing harvest) · `github_osint` (quick recon) | `/github-osint github.com/org/repo` |
-| `/cld [target]` ⭐ | **ChongLuaDao first-party premium connector** (`scripts/cld/cld_api.py`, needs `CHONGLUADAO_API_KEY`). **Now also wired into the deterministic `pipeline open`**: `wp_cld.py` runs per collected domain host in `enrich_live` — the denylist `checkurl` verdict + IoC-URL analyzer land in `live_results["cld"]` and ingest as **reputation FACTS** (`cld_verdict`/`cld_denylisted`/`cld_reputation_score`, never a cluster edge; an empty-evidence label is flagged, not adopted), and for **`.vn` hosts CLD WHOIS is the PRIMARY source** (WhoisXML has no .vn coverage; RDAP/port-43 fall back) so the Domain Summary registrar/registrant/dates fill in. Metered → gated by `--free-only`/`no_spend`; CLD fetches the target server-side (posture-safe). Auto-routes any indicator (url/domain/ip/hash/email/phone/asn/CVE/.onion; non-indicators are skipped, never a blind metered call) to CLD's own datasets: URL verdict vs a ~20M denylist, deep **AI URL analysis** (risk 1–10 + findings), IoC verdict+evidence, denylist/brand-lookalike search, data-leak/breach **exposure + full data-leak module** (machines, stolen/exposed creds, cookies, leaked-accounts, devices, full-export — async start→poll), CVE/KEV + actor feeds, STIX/MISP export. Your client connects **only to CLD, never to the target**; CLD fetches server-side. **30-min timeout ceiling** (`--timeout`); **403/404 → skip, not fail**. Subcmds: `route\|checkurl\|analyze\|denylist\|checkphone\|whois\|burner\|ioc\|exposure\|leaks\|breaches\|machines\|stolen-credentials\|exposed-credentials\|cookies\|leaked-accounts\|devices\|device-detail\|device-credentials\|full-export\|brand-domains\|vulns\|actors\|onion\|feed`. See `connectors/chongluadao-api.md` | `/cld https://scam-site.top` |
+| `/cld [target]` ⭐ | **ChongLuaDao first-party premium connector** (`scripts/cld/cld_api.py`, needs `CHONGLUADAO_API_KEY`). **Now also wired into the deterministic `pipeline open`**: `wp_cld.py` runs per collected domain host in `enrich_live` — the denylist `checkurl` verdict + IoC-URL analyzer land in `live_results["cld"]` and ingest as **reputation FACTS** (`cld_verdict`/`cld_denylisted`/`cld_reputation_score`, never a cluster edge; an empty-evidence label is flagged, not adopted), and for **`.vn` hosts CLD WHOIS is the PRIMARY source** (WhoisXML has no .vn coverage; RDAP/port-43 fall back) so the Domain Summary registrar/registrant/dates fill in. **Unlimited** (no per-call credit/quota) → runs even under `--free-only`/`no_spend`, like Validin/Webamon; CLD fetches the target server-side (posture-safe). Auto-routes any indicator (url/domain/ip/hash/email/phone/asn/CVE/.onion; non-indicators are skipped, never a blind call) to CLD's own datasets: URL verdict vs a ~20M denylist, deep **AI URL analysis** (risk 1–10 + findings), IoC verdict+evidence, denylist/brand-lookalike search, data-leak/breach **exposure + full data-leak module** (machines, stolen/exposed creds, cookies, leaked-accounts, devices, full-export — async start→poll), CVE/KEV + actor feeds, STIX/MISP export. Your client connects **only to CLD, never to the target**; CLD fetches server-side. **~83-min timeout ceiling** (`--timeout`, 5000s); **403/404 → skip, not fail**. Subcmds: `route\|checkurl\|analyze\|denylist\|checkphone\|whois\|burner\|ioc\|exposure\|leaks\|breaches\|machines\|stolen-credentials\|exposed-credentials\|cookies\|leaked-accounts\|devices\|device-detail\|device-credentials\|full-export\|brand-domains\|vulns\|actors\|onion\|feed`. See `connectors/chongluadao-api.md` | `/cld https://scam-site.top` |
 | `/threat-check [target]` | IP/domain/URL/hash threat intelligence — **ChongLuaDao IoC verdict + evidence** (registration, reputation, threat feeds/reports) when keyed **T2:** `intel.py threat-check <indicator>`. **T1:** `threat_check` | `/threat-check 185.1.1.1` |
 | `/scam-check [domain]` | Phishing/scam/malicious domain check — upgraded by **ChongLuaDao** `checkurl` (20M-URL denylist verdict) + `analyze` (deep AI, risk 1–10); client talks only to CLD, which fetches the target server-side **T2:** `intel.py scam-check <domain>`. **T1:** `threat_check` (mode=scam) | `/scam-check susp-site.xyz` |
 | `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) **T2:** `intel.py webpivot <url>`. **T1:** `pivot_extract` | `/webpivot https://scam-site.top` |
 | *(automatic — no flag)* | Four layers now run on **every** collection and need no command. **Asset layer:** fetches the page's own JS bundles and re-runs every extractor over the source — the fix for SPA/white-label kits where the shell HTML is empty; yields off-apex `api_endpoint`/`websocket_endpoint` (the backend survives a front-end re-skin), `build_env:<KEY>` tenant tokens, `js_bundle_sha256`, and via `sourceMappingURL` the operator's own `dev_username`/`dev_project`. **SPA route table:** reads the app's router literals — `spa_route:admin`, `spa_route:funnel`, and a `spa_route_signature` that survives a re-skin. Zero extra requests, routes are leads only and are never fetched. **Well-known/policy files:** a fixed standards list (never a wordlist, no path brute-forcing) → `adstxt_publisher`, `apple_team_id`, `security_contact`. **JARM:** TLS-stack fingerprint of the server. Suppress with `--no-assets` / `--no-well-known`; cap fetches with `--assets-max N` | *(runs inside `/cti-pivot`)* |
 | `/capabilities` | **Run this first, and again before reporting any "nothing found".** Which optional API keys are configured, and for each absent one the *evidence class that went unqueried* plus the free path that substitutes. A keyless run extracts every artifact but cannot **reverse** most of them — so "no sibling domains" with no FOFA/urlscan key is a fact about the credentials, not about the operator. Every collection also records this in `meta.capability`; carry the limitation statement into the assessment and cap confidence accordingly. T2: `capabilities` · T1: `capability_check` | `/capabilities` |
 | `/impersonate [domain]` | Hunt **lookalike / typosquat** domains of a seed — typosquat permutations (omission, insertion, adjacent-key, transposition, homoglyph, hyphenation, combosquat) + a curated scam-heavy TLD sweep + a crt.sh keyword hunt, then existence-checked by live DNS. Output separates **confirmed registered lookalikes** (each an `impersonation:candidate` — run `/cti-pivot` on it and compare) from an unregistered **monitoring watchlist**. FREE (crt.sh + DNS); `--fofa` / `--urlscan` add the metered sweeps. Never live-fetches the lookalike infra. Tune the TLDs/affixes per campaign in `intel_engine/WebPivot/references/impersonation.json`. T2: `impersonate` · T1: `impersonation_hunt` | `/impersonate example.com` |
-| `/search-pivot [indicator]` | Multi-engine **search-engine** pivot — the general-web complement to FOFA/PublicWWW, which only see served HTML. Takes any indicator (domain, slogan, tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded dork queries across Google/Yandex/DuckDuckGo/Bing/Brave. It does **not** scrape: fire the queries with WebSearch, or WebFetch the DuckDuckGo html URL, then feed new hosts back into `/cti-pivot`. FREE, no keys. T2: `search-pivot` · T1: `search_pivot` | `/search-pivot "distinctive slogan"` |
-| `/censys [mode] [value]` | Censys Platform — the **server-side** view FOFA/urlscan don't give. `cert <sha256>` returns every hostname on that exact leaf certificate (near-decisive cross-brand same-operator evidence, and it works on a **free** plan); `host <ip>`, `webproperty <host>` also free-plan. `query <kind> <value>` builds the CenQL **offline and keyless**; `budget` reports the balance. ⚠️ **100 credits/MONTH per account, no rollover** — a lookup is 1, a search 5, and running the emitted CenQL in the web UI costs the same 5. Prefer handing the analyst the query over spending a search. Needs `CENSYS_PAT`. T2: `censys` · T1: `censys` | `/censys cert 1a2b3c…` |
+| `/search-pivot [indicator]` | Multi-engine **search-engine** pivot — the general-web complement to FOFA/PublicWWW, which only see served HTML. Takes any indicator (domain, slogan, tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded dork queries across Google/Yandex/DuckDuckGo/Bing/Brave. By default it does **not** fetch: fire the queries with WebSearch, or WebFetch the DuckDuckGo html URL, then feed new hosts back into `/cti-pivot`. `--run` executes them itself: DuckDuckGo HTML first (free, per query); only queries the free path cannot answer (bot challenge, HTTP error, unparseable page, or 0 hits on an operator DDG ignores: `intext:`/`after:`/`before:`) fall back to **SerpApi Google** (1 metered search each, needs `SERPAPI_KEY`; `--free-only` never spends). `related:` is never bought (retired by Google) → NOT ANSWERED. T2: `search-pivot` · T1: `search_pivot` (`run=true`, `free_only=true`) | `/search-pivot "distinctive slogan"` |
+| `/censys [mode] [value]` | Censys Platform — the **server-side** view FOFA/urlscan don't give. `cert <sha256>` returns every hostname on that exact leaf certificate (near-decisive cross-brand same-operator evidence, and it works on a **free** plan); `host <ip>`, `webproperty <host>` also free-plan. `query <kind> <value>` builds the CenQL **offline and keyless**; `budget` reports the balance. ⚠️ configured **2000 credits/MONTH, 50/run** (free plan grants 100, no rollover) — a lookup is 1, a search 5, and running the emitted CenQL in the web UI costs the same 5. Prefer handing the analyst the query over spending a search. Needs `CENSYS_PAT`. T2: `censys` · T1: `censys` | `/censys cert 1a2b3c…` |
 | `/intelx [selector]` | **Intelligence X** — search ONE strong selector across a corpus nothing else here indexes: breach dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS. Takes an email / domain (`*.apex` wildcard ok) / URL / IP / phone / wallet / IBAN — **never a brand or person name** (soft terms are refused *and still cost a unit*; `classify_selector()` blocks them locally). `--phonebook <domain>` inventories every email, subdomain and URL under an apex — the highest-value call, PAID-only. **Grading is not optional:** a hit in a breach dump or stealer log is **EXPOSURE**, flagged NOT clusterable — two addresses in one combolist share *victims*, not an operator. Only `whois` / `pastes` / darknet hits may carry a same-operator edge. Keyless ≈ 50%: it still types the selector and hands you the intelx.io URL. T2: `intelx` · T1: `intelx_search` | `/intelx registrant@example.com` |
 | `/anyrun [indicator]` | **ANY.RUN TI Lookup — READ-ONLY.** What samples carrying this indicator *did* when **other people** detonated them: contacted domains/IPs/URLs/ports, family label, Suricata context, public task links. Run it after `/binary` on the sample's sha256, backend host or `ip:port`. It is the **only** way to recover a **packed** sample's real endpoints — those exist only at runtime, so a thin string sweep plus a `binary:protection` finding is exactly the cue. A shared *family* is same-KIT, never attribution on its own. Keyless ≈ 50%: composes the query + UI link. **⚠️ This tool never submits a sample — see the box below.** T2: `anyrun` · T1: `anyrun_lookup` | `/anyrun <sha256>` |
 | `/webamon [domain\|url]` | **Webamon scan corpus** — the seed's latest sandbox scan (server IPs, certs, resources, risk score) and its **kit fingerprints**: one query per fingerprint key (`dom_band`/`dom`/`links`/`scripts`/`dom_structure`) returns the other lures built from the same template, with per-key agreement as corroboration and a per-key prevalence guard. Plus reverse-IP hosting eras (`servers` index), NRD/removed-feed dates, and a **count-only** infostealer exposure. `pivot_extract` runs all of this automatically when `WEBAMON_API_KEY` is set. **Same kit ≠ same operator**: siblings are `related_leads` / `add_fact` — never a frontier seed, never an edge, never corroboration. `scan <url>` submits to Webamon's sandbox behind the **same two-step gate as `/anyrun`** (`--confirm-submission` / `confirm=true`, `HARNESS_ALLOW_SUBMIT=1`): the fetch is Webamon's egress (posture-safe), but the scan is **PUBLIC and permanent** in the corpus. Starter plan: `/search` only — campaigns/clusters need research_lab. T2: `webamon` · T1: `webamon_scan` (submit; the read-only layer rides `pivot_extract`) | `/webamon scam-site.top` · `/webamon scan https://scam-site.top/login` |
@@ -451,11 +542,11 @@ Commands grouped by AEAD phase.
 | `/sharelink [url]` | Extract sharer identity from share link **T2:** `intel.py sharelink <url>`. **T1:** `sharelink_resolve` — contacts the final host | `/sharelink https://vm.tiktok.com/ABC` |
 | `/binary [file\|url]` | **Built-in.** Static IOC extraction from a scam/fraud binary (sideloaded APK, desktop trading `.exe`/`.dmg`, bundled `.jar`) via the in-repo `BinaryPivot/` — signing-cert SHA-256, package name/permissions, embedded C2/backend hosts, Firebase/S3 tenants, wallets, Telegram/WhatsApp handles. Output is WebPivot-shaped → clusters the app with web infra in the shared KB. See `connectors/intel-backend.md` §7 | `/binary ./trader.apk` |
 <!-- dork-integration:phase-05 start -->
-| `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Zero-auth dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier fallback cascade **T2:** `intel.py dork-sweep <target>` | `/dork-sweep example.com --filetype` |
+| `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier free fallback cascade, then Tier 5 SerpApi Google (metered, `SERPAPI_KEY`) only for a query every free tier failed on: `wp_serp.py web '<query>'` **T2:** `intel.py dork-sweep <target>` (`--run` executes: DDG per query, SerpApi for the failed ones) | `/dork-sweep example.com --filetype` |
 | `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW) **T2:** `intel.py docleak "<target>"`. **T1:** `dork_builder` — emits queries, never runs them | `/docleak "Acme Corp"` |
 <!-- dork-integration:phase-05 end -->
 | `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS **T2:** `intel.py dns-history <domain>`. **T1:** `wayback_ga` | `/dns-history example.com` |
-| `/cert-history [domain]` | SSL/TLS certificate timeline from CT logs (crt.sh) **T2:** `intel.py cert-history <domain>`. **T1:** `passive_ssl` | `/cert-history example.com` |
+| `/cert-history [domain]` | Certificate-transparency timeline with **per-source status** and one completeness line: crt.sh (web, then its public PostgreSQL) → only when crt.sh is degraded/empty: keyless Shodan CTL + CertSpotter, CertKit/CertIndex when keyed, Netlas only when crt.sh failed, Censys last. "Full CT history" only when crt.sh answered; a degraded crt.sh is never "no certificates". Historic cert → IP is `/pssl`. **T2:** `intel.py cert-history <domain>` (`--all` uncapped, `--json`). **T1:** `cert_pivot` (`crtsh` block: certs, `ct_status`, `completeness_line`) | `/cert-history example.com` |
 | `/proton-check [email]` | Proton Mail account creation date via PGP key **[unimplemented]** | `/proton-check user@proton.me` |
 | `/pgp-lookup [email]` | PGP key search — creation date, UIDs, signatures **[unimplemented]** | `/pgp-lookup dev@example.com` |
 | `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net **T2:** `intel.py wifi "<ssid>"`. **T1:** `wifi_ssid` — needs a WiGLE account; discloses the gap | `/wifi "HomeNetwork"` |
@@ -474,6 +565,8 @@ Commands grouped by AEAD phase.
 | `/email-permute [name\|handle]` | Derive email **candidates** from a person name or username against case domains. VN/CN/KR family-name-first aware; folds diacritics Unicode won't. `--verify` = MX gate + Gravatar. **Output is hypotheses — see the rule below** | `/email-permute "Nguyen Van A" --domain example.com --verify` |
 | `/rank-relations` | Score + rank same-operator relations across analyzed pages (noise-filtered). Mechanizes **one artifact = lead, two = cluster** — run it before asserting a cluster. **T2:** `intel.py rank-relations cases/<CASE>/raw/*.json`. **T1:** `rank_relations` | `/rank-relations` |
 | `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot. **T2:** `intel.py crypto-balance <addr>`. **T1:** `crypto_balance` | `/crypto-balance 1ExampleBitcoinAddressDoNotUse` |
+| `/sellers [pub-id…]` | AdSense publisher id → the **legal payee** name/domain/seller type in Google's public sellers.json (keyless, free; the ~110 MB file is cached under `intel_engine/cache/` and refreshed after its TTL). A **named payee is an owner-rung signal** (`ads.payee`) — the pub id alone stays kit; a confidential row has no name. **T2:** `intel.py sellers ca-pub-0000000000000000 --json`. **T1:** `sellers_lookup` | `/sellers ca-pub-0000000000000000` |
+| `/app-developer [package\|app-id]` | App-store **developer account** behind an app (keyless). Play package / play.google.com URL → listing developer name, *About the developer* **legal name**, contact email, website, and the account's other apps; App Store id / apps.apple.com URL (bundle id with `--store appstore`) → iTunes `artistName`, `artistId`, `sellerName`, `sellerUrl`, other apps. A developer website whose registrable domain equals a case domain is an **owner link** (`app.developer_url`); the email and any off-case website are seed **candidates** (`auto_seed: false`) — a listing is self-declared. Mach-O binaries through `analyze_artifact` also emit the Apple **team ID** from the signing identity as `apple_team` (`app.apple_team`, owner). **T2:** `intel.py app-developer com.example.app --case <id> --json`. **T1:** `app_developer` | `/app-developer com.example.app` |
 | `/timeline [subject]` | Assemble dated event sequence | `/timeline Company Inc` |
 | `/crossref` | Detect shared identifiers across subjects **T2:** `intel.py crossref [--case <id>]`. **T1:** `kb_crossref` | `/crossref` |
 | `/link-subjects [A] [B]` | Define a connection between two subjects **[model]** | `/link-subjects John Jane` |
@@ -553,19 +646,23 @@ Commands grouped by AEAD phase.
 | `/kb [query]` | **Built-in.** Query the shared knowledge base. **T2:** `intel.py kb --stats`/`--entity <v>`/`--cluster <domain>`/`--shared --min N`; `intel.py operators list`. **T1:** `kb_entity`/`kb_cluster`/`kb_query_shared` | `/kb --entity example.com` |
 | `/recall [seed]` | **Built-in.** "Have I seen this before?" — check a seed against every prior case before collecting. **T1:** `which_cases`/`domain_verdict` (typed MCP). **T2:** `intel.py recall <seed>` (query.py `--entity`; which_cases/domain_verdict are MCP-only). Surfaces known operators up front | `/recall scam-site.top` |
 | `/risk [case]` | **Built-in.** Score a case's hosts for **NRD / bulletproof-hosting / money-trail** red flags. **T2:** `intel.py risk --case <id>` (or `--file <pivot.json>`). **T1:** `risk_signals` | `/risk CASE-0001` |
+| `/evidence import <case> <findings.json>` | **Built-in.** Import the analyst's **graded findings** (JSON list of `{claim, source_url, rung, rung_class, admiralty, indicators:[{type,value}], selector_links:[{from,to,rel}]}`) into the case: stored under `cases/<case>/evidence/imported/`; an **owner** finding (owner rung AND a `rung_class` rungs.json grades owner) writes its `selector_links` as KB edges, everything else is facts only (RULE 5 — a weaker class demotes the claim, with a note). Every row is tagged source `analyst_import` so the assessment can cite it; entries missing a claim or an admiralty grade (A-F + 1-6) are rejected with a message. Never writes `assessment.md`/`.json`. **T2:** `intel.py evidence import CASE-0001 findings.json`. **T1:** `evidence_import` | `/evidence import CASE-0001 findings.json` |
 | `/reverse-whois [email\|name]` | **Built-in.** Reverse-WHOIS a registrant identity → only high-value pivots; refuses privacy/registrar terms, flags bulk resellers as noise. **T2:** `intel.py reverse-whois --reverse-email <e> --search-type historic --json`. **T1:** `reverse_whois` | `/reverse-whois owner@x.com` |
-| `/cert-overlap [d1 d2 …]` | **Built-in.** KB-aware TLS/SAN same-operator **verdict** (SHARED-CERT / SIBLING-OVERLAP / NO-CT-OVERLAP) across 2+ domains — corroborates a cluster at the TLS layer. Complements the keyless `/cert-pivot`. **T2:** `intel.py cert-overlap a.com b.com`. **T1:** `cert_overlap` | `/cert-overlap a.com b.com` |
+| `/cert-overlap [d1 d2 …]` | **Built-in.** KB-aware TLS/SAN same-operator **verdict** (SHARED-CERT / SIBLING-OVERLAP / NO-CT-OVERLAP / INCONCLUSIVE-CT-DEGRADED — crt.sh unreachable, not a negative) across 2+ domains — corroborates a cluster at the TLS layer. Complements the keyless `/cert-pivot`. **T2:** `intel.py cert-overlap a.com b.com`. **T1:** `cert_overlap` | `/cert-overlap a.com b.com` |
 | `/reference [check\|add\|list]` | **Built-in.** Curated **false-positive control** ledger — is a fingerprint BENIGN (common logo/CDN → don't cluster), SIGNAL (distinctive, prior-case → pivot), or UNKNOWN. **T2:** `intel.py reference check <value>`. **T1:** `reference_check`/`reference_add` | `/reference check favicon:123` |
 | `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **`--no-collect`** = reuse mode: skip the live fetch and run the whole chain over pivot JSONs already in `cases/<case>/raw/` — the zero-egress handoff `/case` uses (it re-fetches nothing). **T2:** `intel.py pipeline open <case> seeds.txt [--no-collect] [--no-graph]` | `/pipeline open case1 seeds.txt` |
-| `/harness [open\|continue\|status]` | **Built-in.** The **agent-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence. **Auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription; `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
+| `/harness [open\|continue\|status]` | **Built-in.** The **agent-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence. Cross-type loop: typed seeds → `propose` → Plan (`PLAN_TOOLS`) → auto ≤25 free/urlscan hits else digest-bound `proposal.json` (`harness approve` / `case_approve` / TTY); `corpus_search`; kit/neighbour hits collect-only. **Auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription; `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. **T2:** `intel.py harness open CASE-0001 <seeds…>` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
 | `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **Use it whenever a case has a graph** — any `/case`, `/pipeline`, `/harness` or multi-node `/report` — not only on request; it degrades to a note if the `dot`/mermaid renderer is absent. **⚠ Fidelity check FIRST:** `case_graph.json` holds only **raw-backed hosts** — clusters attributed via KB/reverse-WHOIS (no raw pivot) are **absent**, so an auto-render can silently under-represent the finding; compare its node count against the attributed cluster count (`operators.jsonl` / `/clusters`) and, if KB clusters are missing, hand-scope the figure (Mermaid/DOT of the real clusters) or caption it as the raw-backed subset. **Large infra:** above `--max-nodes` (default 45) the MAIN figure is reduced to a **readable, representative subset** (operator anchor + one hub per cluster + top-degree nodes; fan-out infra dropped first) so the picture never collapses into a hairball, and the figure title says so — **the full indicator set stays in the IOC bundle (CSV/Excel · Markdown · JSONL)**. `--full` forces the whole graph; `--split-clusters` emits one figure per cluster. **T2:** `intel.py graph <case_graph.json> <out-stem> --legend [--max-nodes N \| --full]`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
 | `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF + DOCX** in the **same editorial house style** (slate/steel/ochre/brick palette, serif body + sans headings, cover/TOC/figures, VN-safe) — the DOCX now uses a matching `reference.docx` so the Word file reads as the same document as the PDF. Rebuild that reference with `IntelReport/scripts/make_reference_docx.py`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
 | `/clusters [case]` | **Built-in.** Partition a case into same-operator clusters **before** judging it — the unit of judgment is the cluster, not the case. Shows each binding indicator's KB-wide prevalence, so an indicator that binds 3 domains here but sits on 400 KB-wide reads as noise. Pure KB read. **T2:** `intel.py clusters <case>`. **T1:** `case_clusters` | `/clusters CASE-0001` |
-| `/frontier [case]` | **Built-in.** The case's unresolved gaps — free next seeds already discovered (crt.sh SAN, passive-DNS co-host, TLS co-SAN, CORS, reverse-WHOIS), the **deferred metered leads** held for approval, **and OPEN enrichment leads** (per registrant email + apex: `/intelx`·`/breach-deep`·`/dork-sweep`·`/github-osint` — leak/breach/OSINT/dork legs the infra pipeline never runs). A case is **not done** while enrichment leads remain; close each after running it with `intel.py enrichment-done <case> --key <key>`. `reopen` re-opens a converged case on new seeds. **T2:** `intel.py frontier <case>` · `intel.py enrichment-done <case> --key <k>` · `intel.py reopen <case> <seed…>`. **T1:** `case_frontier`/`case_reopen` | `/frontier CASE-0001` |
+| `/frontier [case]` | **Built-in.** Next free apex seeds, deferred metered owner pivots, and OPEN identity/OSINT leads. `open` and `loop` run structured machine-executable leads (registrant email/phone, CLD phone/Telegram/actor/org, IntelX phonebook, linked GitHub account) and persist evidence under `enrichment/index.json`. Missing keys, no-spend posture, and retryable errors leave metered legs (email-deep, IntelX) OPEN; **CLD is unlimited and runs regardless of posture**; query-only dork/secret and apex-level GitHub leads need `/cti` review. **T2:** `intel.py frontier <case>` · `intel.py enrichment-done <case> --key <k>` · `intel.py reopen <case> <seed…>`. **T1:** `case_frontier`/`case_reopen` | `/frontier CASE-0001` |
+| `/enrich [case]` | **Built-in.** Resume matching machine-executable enrichment from stored raw pivots without re-fetching hosts. Persists each actual vendor result under `cases/<case>/enrichment/`; completed lookups close, while missing-key, held and retryable legs remain OPEN for later full runs. `--free-only` defers metered calls (email-deep, IntelX), `--passive` restricts direct target contact but still permits metered third-party sources, and `scope.json no_spend` defers spending regardless of flags; **ChongLuaDao is unlimited and runs under every posture**. `pipeline open --no-collect` preserves zero egress: invoke `/enrich` afterward. **T2:** `intel.py enrich <case> [--free-only] [--passive]`. **T1:** `case_enrich` | `/enrich CASE-0001` |
 | `/loop [case]` | **Built-in.** Collect → assess repeatedly until the case converges, instead of stopping at an arbitrary depth. **T2:** `intel.py loop <case>`. **T1:** `case_loop` | `/loop CASE-0001` |
 | `/scope [case]` | **Built-in.** Case **intake**: the no-touch class, victim ownership and the egress gate, derived up front rather than assumed mid-run. A defaulted value is never rendered as an answer. **T2:** `intel.py scope <case>`. **T1:** `case_scope` | `/scope CASE-0001` |
 | `/liveness [domain]` | **Built-in.** Is it actually alive? A 200 parking/default/suspended/soft-404 page is **not** live and a 404/403/5xx/bot-wall is **not** dead — only NXDOMAIN reports dead, and every still-controlled name sets `reuse_watch`. **T2:** `intel.py liveness <domain>`. **T1:** `domain_liveness` | `/liveness scam-site.top` |
 | `/pssl [domain\|cert]` | **Built-in.** Passive SSL — the historical **cert → IP** direction that recovers an origin from behind a CDN, with the base-rate rail that keeps a shared CDN certificate out of the clustering. Free (same CIRCL account as passive DNS), so it is on by default in the pipeline. **T2:** `intel.py pssl <target>`. **T1:** `passive_ssl` | `/pssl example.com` |
+| `/origin-history [case] [--host H]` | **Built-in.** Every address each collected host has **ever** resolved to — merged passive DNS / DNS history / web-scan / passive-SSL rows, CDN / WAF / parking / bogon suppressed, origins dated with their era (`current` · `recent` · `historical` · `undated` · `previous_owner`) and marked collected or not. The read-only view of the loop's origin-IP sweep; offline, no credits. **T2:** `intel.py origin-history <case>`. **T1:** `origin_history` | `/origin-history CASE-0001` |
+| `/approve-cohost [case] [ip] [domain…\|--all]` | **Built-in, ANALYST-RUN** (no MCP tool — the model cannot approve for you). Approve named co-tenants of a cloud/VPS origin IP listed under an *APPROVAL REQUIRED* gap (`vps co-tenancy — approve`); `--all` approves the list as it stands now (sites that appear later need a new approval); with neither it refuses. Recorded per domain in `state.json → approved_cohosts`: the next round seeds exactly those as neighbours (never attributed), ingest links them to the IP, and the cluster partition lets only their edges (and the case hosts that led to the box) bind. Approving harness proposal items records the same, per item that ran. **T2:** `scripts/backend/intel.py approve-cohost <case> <ip> <domain…>` | `/approve-cohost CASE-0001 198.51.100.40 site-a.example` |
 | `/paths [url]` | **Built-in.** The URL **path** as a clustering indicator (`path_kit:`) — for an operator who rotates disposable hosts and selects the branded template by directory instead. A generic path (`/login`, `/assets`) emits nothing; the base-rate denylist is the whole reason this is safe. **T2:** `intel.py paths <url>`. **T1:** `url_paths` | `/paths https://host/kitname/` |
 | `/serp [domain]` | **Built-in.** The **advertising** layer — Google Ads Transparency (who *paid*: a verified, billed advertiser identity) plus the cloaking probe with its falsification control. Opt-in per run: it spends a SerpApi search per host. **T2:** `intel.py serp <domain>`. **T1:** `serp_ads` | `/serp scam-site.top` |
 | `/docmeta [url\|file]` | **Built-in.** Document/image metadata — PDF `/Info` + XMP, EXIF (incl. GPS), PNG chunks — the author string an operator forgot to strip. Base-rate filtered on both the pivot and ingest paths. **T2:** `intel.py docmeta <target>`. **T1:** `doc_metadata` | `/docmeta https://site/brochure.pdf` |
@@ -739,13 +836,13 @@ Reference directory: `techniques/`
 | `fx-http-fingerprint.md` | HTTP fingerprinting and server signature analysis |
 | `fx-leak-monitoring.md` | Leak and breach monitoring, paste site search |
 <!-- dork-integration:phase-05 start -->
-| `fx-dork-sweep.md` | Zero-auth Google/Bing dork sweeps — Telegram ecosystem, doc-hosts, filetype families + 4-tier fallback cascade (WebSearch → Bing → DDG → agent-browser) |
+| `fx-dork-sweep.md` | Google/Bing dork sweeps — Telegram ecosystem, doc-hosts, filetype families + 4-tier free fallback cascade (WebSearch → Bing → DDG → agent-browser) + Tier 5 SerpApi (metered, failed queries only) |
 | `fx-document-leak-hunt.md` | 18-platform document leak discovery with severity classification, paywall handling, auto-snapshot |
 <!-- dork-integration:phase-05 end -->
 | `username-osint.md` | 3000+ platform enumeration with pivot extraction |
 | `phone-osint.md` | Carrier lookup, VoIP detection, spam databases, FreeCNAM CallerID, WhoCalld, USPhoneBook reverse lookup |
 | `email-osint.md` | Full email investigation: accounts, breaches, infra, Proton API, PGP keys, permutation, manual reference tools |
-| `fx-dns-cert-history.md` | Historical DNS records (passive DNS, A/NS/MX changes), SSL certificate timeline (crt.sh CT logs) |
+| `fx-dns-cert-history.md` | Historical DNS records (passive DNS, A/NS/MX changes), CT certificate timeline (crt.sh + backup chain, per-source status, completeness line), pivot hits as "Related hosts (unverified)" + origin checks |
 | `threat-intel.md` | AbuseIPDB, GreyNoise, OTX, VirusTotal, **URLScan.io**, **CIRCL CVE**, **NVD API**, **ransomware.live** |
 | `web-traffic-analysis.md` | SimilarWeb/Semrush estimation, audience data |
 | `secret-scanning.md` | Credential/secret detection in repos and pastes |
@@ -841,7 +938,7 @@ Re-run the Step 1 build / dash-normalizer after merging, then continue. Only onc
 
 | Choice | Format | Builder |
 |--------|--------|---------|
-| **a** | **PDF** — the **editorial house report** (IntelReport: cover, Roman-numbered sections I–XI, Methodology with the Admiralty × ICD-203 scales, relationship graph, entity relationship map, attribution inference chain, temporal view, registration heatmap + domain × shared-indicator matrix, ICD-203 × Admiralty confidence scatter, a captured landing page per estate host inline in the cluster section, per-domain dossiers, Appendices A–E incl. glossary). For a case dir this is **deterministic**: `python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>` writes `cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,md}` + figures. **Egress caveat:** hosts with no screenshot on disk are rendered in headless Chromium through the research-egress proxy policy (proxied, or direct only if the store allows it; blocked → stated in the report, never forced); when the live page will not render or renders empty, a public web-scan screenshot or a rendered web-archive snapshot stands in — captioned as such, dated by the archive, linked in Appendix B, and flagged as a previous owner's page when it predates the current registration; `--no-screenshots` keeps the build fully offline, `--no-archive-fallback` disables the stand-in, `--max-screenshots N` / `--screenshot-timeout S` bound it. The four analytic charts are the dashboard's own (`scripts/cti_report_figures.py`, shared with `generate-cti-docx-hybrid.py`), drawn from `report/report-data.json` that `build_report_data.py` derives from the case dir. No case dir → `generate-cti-docx-hybrid.py … --pdf` (dashboard style) | `intel.py house-report` · fallback `generate-cti-docx-hybrid.py --pdf` |
+| **a** | **PDF** — the **editorial house report** (IntelReport: cover, Roman-numbered sections I–XI, Methodology with the Admiralty × ICD-203 scales, relationship graph, entity relationship map, attribution inference chain, temporal view, registration heatmap + domain × shared-indicator matrix, ICD-203 × Admiralty confidence scatter, a captured landing page per estate host inline in the cluster section, per-domain dossiers, Appendices A–E incl. glossary). For a case dir this is **deterministic**: `python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>` writes `cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,house.md}` + figures. **Egress caveat:** hosts with no screenshot on disk are rendered in headless Chromium through the research-egress proxy policy (proxied, or direct only if the store allows it; blocked → stated in the report, never forced); when the live page will not render or renders empty, a public web-scan screenshot or a rendered web-archive snapshot stands in — captioned as such, dated by the archive, linked in Appendix B, and flagged as a previous owner's page when it predates the current registration; `--no-screenshots` keeps the build fully offline, `--no-archive-fallback` disables the stand-in, `--max-screenshots N` / `--screenshot-timeout S` bound it. The four analytic charts are the dashboard's own (`scripts/cti_report_figures.py`, shared with `generate-cti-docx-hybrid.py`), drawn from `report/report-data.json` that `build_report_data.py` derives from the case dir. No case dir → `generate-cti-docx-hybrid.py … --pdf` (dashboard style) | `intel.py house-report` · fallback `generate-cti-docx-hybrid.py --pdf` |
 | **b** | **DOCX** — the editable twin of (a), emitted by the same `house-report` run; dashboard-style alternative (charts + confidence matrix + heatmaps) via `generate-cti-docx-hybrid.py` | `intel.py house-report` · alt `generate-cti-docx-hybrid.py` |
 | **c** | **HTML** — interactive, self-contained, OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search); the primary human-facing deliverable | `generate-cti-html.py` |
 | **d** | **All** — build PDF **and** DOCX **and** HTML | all of the above |
@@ -1358,7 +1455,7 @@ cti-expert/
 │   ├── html_visibility_analysis.py  Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen text (PEP 723, zero-dep)
 │   ├── apk_permission_scope.py      APK permission-scope risk scoring (BinaryPivot ext) — combo-based on-device-fraud capability; UTF-8/UTF-16 AXML decode (PEP 723, zero-dep)
 │   ├── kit_template_fingerprint.py  Phishing kit/template structural fingerprint + similarity + commodity-trap grading (PEP 723, zero-dep)
-│   ├── render_confirm.py            Renderer-level confirmation — reconciles static + rendered ClickFix/visibility evidence (PEP 723; optional Playwright/agent-browser)
+│   ├── render_confirm.py            Renderer-level confirmation — reconciles static + rendered ClickFix/visibility evidence (PEP 723; optional Moli/Chromium/agent-browser)
 │   ├── phishtrace_features.py       PhishTrace dynamic-feature characterization from a runtime trace → verdict + exfil IOCs (PEP 723, zero-dep)
 │   ├── cld/cld_api.py               ChongLuaDao premium API client — IoC / denylist / breach + full data-leak module (async jobs) / AI URL analysis / STIX-MISP feeds (PEP 723 / `uv run`, zero-dep, X-API-Key)
 │   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
@@ -1434,8 +1531,8 @@ Which techniques activate per target type in a `/case` run:
 | `/username` | ✅ | — | ✅* | ✅ | — | — |
 | `/email-deep` | ✅ | — | ✅* | — | ✅ | — |
 | `/phone` | ✅ | — | ✅* | — | — | — |
-| `/breach-deep` (LeakCheck + HudsonRock) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/intelx` (breach dumps · **infostealer logs** · pastes · darknet · historic WHOIS; `--phonebook` apex inventory) | — | ✅ | ✅* | — | ✅ | ✅ |
+| `/breach-deep` (separate breach-focused command; NOT re-run on an email already sent through `/email-deep`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `/intelx` (strong selectors only; `phonebook <apex>` for apex inventory, keyed and spend-gated) | — | ✅ | ✅* | — | ✅* | ✅ |
 | `/subdomain` | — | ✅ | ✅ | — | — | — |
 | `/traffic` | — | ✅ | ✅ | — | — | — |
 | `/threat-check` | — | ✅ | ✅ | — | — | ✅ |
@@ -1559,15 +1656,23 @@ back via `--ingest`.
   deepening loop** (posture-gated, keyless-first; `--no-harness` opts out) before Deliver, per the
   deep-layer note above.
 
-Legacy one-hop note (still true, now a subset of the loop): if `/sweep` on a domain finds an
-email, `/email-deep` and `/breach-deep` trigger on it automatically.
+Legacy one-hop domain collection may expose a registrant email: the collector runs the keyed
+CLD email IoC, then `/cti` runs `/email-deep` once with `--case`; it does not duplicate that
+selector in `/breach-deep` or `/intelx`.
+
+> **Canonical source:** the Step 1 (target→route) and Step 2c (discovered-identifier→auto-fire)
+> tables live in `commands/cti.md`; the leak/breach, GitHub-OSINT and dork sub-sections below add
+> per-topic detail on top of them and must not be read as a second, independent trigger matrix.
 
 **Leak / breach / infostealer auto-fire in `/case`:**
-- **Every discovered email** → `/breach-deep` + `/email-deep` (LeakCheck·HudsonRock·CLD), then `/intelx <email>` for breach dumps, **infostealer logs**, pastes and darknet mirrors (logs-first pass is ~50% keyless). A stealer-log hit that ties the credential to a machine also holding the registrar/hosting/CMS login is **direct attribution**, not a self-declared WHOIS assertion — the single highest-value deanonymization pivot.
-- **Every discovered domain/apex** → `/intelx --phonebook <apex>` to inventory every email, subdomain and URL IntelX has seen under it (recovers selectors the live site scrubbed).
-- **Every discovered phone / wallet / IBAN** → `/intelx <selector>` (strong selectors only; a name is refused locally and still costs a unit).
+- **Every discovered registrant email** → `/email-deep` with `--case`. That one command sends Hudson Rock, ZoneCruncher, one IntelX stealer-log search, and reverse-WHOIS (preview, purchase only if the count is not bulk). A stealer-log hit tying the credential to a machine that also holds the registrar/hosting/CMS login is **direct attribution**. Do **not** also run `/breach-deep` or `/intelx` on that email.
+- **Every discovered domain/URL** → the collector already sent Feeds and host-matched Shield. Do not re-run those. A registrant org that is not a privacy proxy still gets `intel.py cld ransomware <org>` and `internal-leaks <org>`.
+- **A registrant phone** → `/phone` + `intel.py cld route <phone>`. A number scraped from page text is not this lead.
+- **A Telegram handle** → `intel.py cld route t.me/<handle>`. Do not treat `t.me` as the target domain.
+- **A file hash** → `/hash-id` first. Shield IoC only if hash-id says it is a file hash. Never a favicon, JARM, or cert fingerprint.
+- **Every discovered wallet / IBAN** → `/intelx <selector>` (strong selectors only; a name is refused locally and still costs a unit).
 - **A local infostealer-log folder** → `/stealer-log` for family attribution, victim-vs-operator profiling and IOC extraction.
-- These are the leak/breach legs the deterministic infra pipeline does **not** run; they are **required** for a full `/cti`, gated only by `--quick` (skips) and `--passive` (keyless corpora only — IntelX/Wayback never touch the target). Results (new emails, machines, credentials, siblings) re-enter the recursive pivot loop as seeds. State credits spent.
+- Domain ChongLuaDao (Feeds + host-matched Shield) and keyed registrant-email IoC run inside the collector. Full `pipeline open` then executes structured case leads for registrant email/phone, Telegram, organization, IntelX phonebook, and public GitHub links; `--no-collect` preserves zero egress and leaves enrichment for `intel.py enrich <case>`. The `/cti` agent still executes/reviews query-only dork/secret leads and newly verified owner links. Apply `--quick`/`--free-only`/`no_spend` and passive/hostile posture before calls; do not close a lead as `ran` if only its query was generated. State credits spent and capability gaps.
 - **Pipeline auto-fire (deterministic path):** `intel.py pipeline open` now appends `--intelx` to the collector whenever an IntelX key is present and the case is not a `no_spend` posture; `pipeline loop` appends it **only under `--full`** — the default loop stays free-only and never spends an IntelX search on its own.
 
 **GitHub OSINT auto-fire in `/case`:**

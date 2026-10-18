@@ -268,5 +268,21 @@
         "libapkprotect.*\\.so$"
       ]
     }
-  }
+  },
+  "apple_signing_identity_prefixes": {
+    "_comment": "Apple code-signing certificate common-name prefixes. A Mach-O's embedded signature carries the signing certificate's CN as plain bytes, shaped '<prefix>: <Name> (<TEAMID>)' — e.g. 'Developer ID Application: Example Person (ABCDE12345)'. The 10-char TEAMID is Apple's developer-account id: every binary that account signs carries it, so analyze_artifact emits it as indicator apple_team (rung class app.apple_team -> owner). Apple's own platform-signing CNs carry no team id and never match. Extend when Apple adds a certificate type.",
+    "values": [
+      "Developer ID Application",
+      "Developer ID Installer",
+      "Apple Distribution",
+      "Apple Development",
+      "iPhone Distribution",
+      "iPhone Developer",
+      "Mac Developer",
+      "3rd Party Mac Developer Application",
+      "3rd Party Mac Developer Installer"
+    ]
+  },
+  "android_user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+  "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }

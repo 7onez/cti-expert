@@ -1,0 +1,138 @@
+{
+  "_comment": "HISTORICAL ORIGIN-IP SWEEP (wp_origin_history.py). Every A/AAAA record any collector has ever seen for a host (CIRCL/COF passive DNS, HackerTarget, SecurityTrails history, Validin, urlscan's hostname index, Webamon's servers index, passive-SSL cert->IP) is merged into ONE list, and each address is classified: `origin` (a plausible box the operator rented — worth an IP pivot), `cdn` (a shared CDN / WAF / DDoS-protection edge — its tenants are strangers), `parking` (a registrar/aftermarket parking farm), or `bogon` (non-routable). Only `origin` addresses are collected as IP seeds by the loop and the harness. The CIDR index (cdn_ranges.json) catches the providers that publish ranges; the groups below catch the edge networks that do NOT (Akamai, Imperva, Sucuri, DDoS-Guard …) by the ASN / org name the history source itself reported. A generic VPS/cloud ASN (OVH, Hetzner, DigitalOcean, AWS EC2, Linode) is deliberately NOT here: a rented VPS is exactly the origin this sweep exists to find, and shared hosting on it is caught downstream by the co-tenant count guard (noise_filters.shared_hosting_max_cohosts), not by provider name.",
+
+  "edge_asns": {
+    "_comment": "ASN -> edge provider. An address whose history row (or IPPivot lookup) names one of these ASNs is a shared edge, never an origin. Only networks that run NOTHING BUT edge/WAF/scrubbing service belong here — an ASN that also sells VPS (Akamai Connected Cloud AS63949, G-Core, Datacamp/CDN77 AS60068) must stay out or real origins on it are discarded. Keys are 'AS<number>'.",
+    "entries": {
+      "AS13335": "cloudflare",
+      "AS209242": "cloudflare",
+      "AS54113": "fastly",
+      "AS20940": "akamai",
+      "AS16625": "akamai",
+      "AS21342": "akamai",
+      "AS32787": "akamai_prolexic",
+      "AS35994": "akamai",
+      "AS12222": "akamai",
+      "AS19551": "imperva_incapsula",
+      "AS30148": "sucuri",
+      "AS15133": "edgecast",
+      "AS22822": "limelight"
+    }
+  },
+
+  "edge_org_markers": {
+    "_comment": "Case-insensitive WHOLE-WORD names in the org / ASN-name string a history source reports. Used when the source gives a name but no ASN. Keep to names that are unambiguously edge-only: never bare 'akamai' (Linode VPS now reports 'Akamai Connected Cloud' — only the CDN's legal names below), never 'amazon'/'google'/'microsoft' (their compute is real origin space; their CDN ranges are in cdn_ranges.json).",
+    "values": [
+      "akamai technologies",
+      "akamai international",
+      "akamaiedge",
+      "akamai-as",
+      "cloudflare",
+      "fastly",
+      "incapsula",
+      "imperva",
+      "sucuri",
+      "cdn77",
+      "edgecast",
+      "limelight",
+      "qrator",
+      "stormwall",
+      "cloudfront",
+      "bunnycdn"
+    ]
+  },
+
+  "parking_markers": {
+    "_comment": "Case-insensitive WHOLE-WORD names in the org / ASN-name of domain-PARKING and aftermarket farms ('sedo' matches 'Sedo GmbH', never 'Sedona Hosting'). A parked or for-sale era answers on an address shared by millions of parked names — never an operator origin, and usually the previous owner's or the registrar's era, not this operator's.",
+    "values": [
+      "sedo",
+      "bodis",
+      "parkingcrew",
+      "above.com",
+      "team internet",
+      "parklogic",
+      "voodoo.com"
+    ]
+  },
+
+  "ambiguous_asns": {
+    "_comment": "ASN -> provider for networks that sell BOTH DDoS-protection proxying AND plain VDS/dedicated hosting (DDoS-Guard, StackPath/Highwinds). An address there may be a shared protection edge (other customers behind it) or the operator's own rented box — both are common for scam infrastructure. Classified `ambiguous`: the IP IS collected (ASN, abuse contact, ports, certificates are evidence either way) but its co-tenants are ALWAYS held as leads, never seeded, and no domain->IP clustering edge is written.",
+    "entries": {
+      "AS57724": "ddos_guard",
+      "AS262254": "ddos_guard",
+      "AS33438": "stackpath",
+      "AS12989": "stackpath"
+    }
+  },
+
+  "ambiguous_org_markers": {
+    "_comment": "Whole-word org / ASN-name markers for the same proxy-or-host networks as ambiguous_asns, used when a history source gives a name but no ASN.",
+    "values": [
+      "ddos-guard",
+      "ddos guard",
+      "stackpath",
+      "highwinds"
+    ]
+  },
+
+  "ad_edge": {
+    "_comment": "AD-NETWORK / AD-CDN EDGE on a hyperscaler (seen live: an Ezoic-fronted site answering on a rotating set of Amazon AS16509 addresses in many regions at once). One host that resolves, within `window_days` of its most recent sighting, to at least `min_ips` addresses on one of `asns` (or inside `region_cidrs`) spread across at least `min_regions` distinct regions is NOT an operator box: it is the ad network's edge pool, shared by every publisher on that network. All those rows are reclassified `cdn` (provider `provider`) so they are never collected as IP seeds and never write a hosted_on edge — two unrelated publishers on the same ad network must never cluster. `region_cidrs` is a curated subset of the largest EC2 prefixes per region from https://ip-ranges.amazonaws.com/ip-ranges.json (service EC2, refreshed 2026-10-18); an AS16509 row outside them still counts toward `min_ips`, but only a CIDR hit names a region. Provider-level data only (RULE 1).",
+    "provider": "aws_ad_edge",
+    "asns": ["AS16509"],
+    "min_ips": 6,
+    "min_regions": 3,
+    "window_days": 30,
+    "region_cidrs": {
+      "us-east-1": ["44.192.0.0/11", "3.80.0.0/12", "3.208.0.0/12", "3.224.0.0/12", "34.192.0.0/12", "34.224.0.0/12"],
+      "us-east-2": ["3.136.0.0/13", "3.144.0.0/13", "13.184.0.0/13", "3.16.0.0/14", "3.20.0.0/14", "3.132.0.0/14"],
+      "us-west-1": ["18.144.0.0/15", "52.52.0.0/15", "54.176.0.0/15", "3.101.0.0/16", "13.52.0.0/16", "13.56.0.0/16"],
+      "us-west-2": ["44.224.0.0/11", "34.208.0.0/12", "35.80.0.0/12", "32.184.0.0/13", "35.160.0.0/13", "54.184.0.0/13"],
+      "ca-central-1": ["3.96.0.0/15", "3.98.0.0/15", "15.156.0.0/15", "15.222.0.0/15", "16.54.0.0/15", "35.182.0.0/15"],
+      "sa-east-1": ["15.228.0.0/15", "54.20.0.0/15", "18.228.0.0/16", "18.229.0.0/16", "18.230.0.0/16", "18.231.0.0/16"],
+      "eu-west-1": ["3.248.0.0/13", "34.240.0.0/13", "34.248.0.0/13", "52.208.0.0/13", "108.128.0.0/13", "52.48.0.0/14"],
+      "eu-west-2": ["3.8.0.0/14", "13.40.0.0/14", "18.132.0.0/14", "18.168.0.0/14", "13.134.0.0/15", "35.176.0.0/15"],
+      "eu-west-3": ["13.36.0.0/14", "15.236.0.0/15", "15.188.0.0/16", "15.224.0.0/16", "35.180.0.0/16", "35.181.0.0/16"],
+      "eu-central-1": ["3.64.0.0/12", "63.184.0.0/13", "99.200.0.0/13", "3.120.0.0/14", "3.124.0.0/14", "18.156.0.0/14"],
+      "eu-north-1": ["13.48.0.0/15", "13.60.0.0/15", "13.62.0.0/15", "16.168.0.0/15", "16.170.0.0/15", "86.112.0.0/15"],
+      "ap-south-1": ["3.108.0.0/14", "13.204.0.0/14", "13.232.0.0/14", "65.0.0.0/14", "3.6.0.0/15", "13.126.0.0/15"],
+      "ap-southeast-1": ["47.128.0.0/14", "3.0.0.0/15", "13.212.0.0/15", "13.214.0.0/15", "13.228.0.0/15", "13.250.0.0/15"],
+      "ap-southeast-2": ["3.24.0.0/14", "3.104.0.0/14", "13.236.0.0/14", "13.54.0.0/15", "13.210.0.0/15", "16.178.0.0/15"],
+      "ap-northeast-1": ["35.72.0.0/13", "3.112.0.0/14", "13.112.0.0/14", "13.196.0.0/14", "52.196.0.0/14", "57.180.0.0/14"],
+      "ap-northeast-2": ["3.36.0.0/14", "43.200.0.0/14", "3.34.0.0/15", "15.164.0.0/15", "54.116.0.0/15", "54.180.0.0/15"]
+    }
+  },
+
+  "no_owner_verdict": {
+    "_comment": "DETERMINISTIC VERDICT for IP-only clusters (harness/orchestrator.py run_case_parallel). A judged cluster whose members are only IPs (plus provider hostnames) where EVERY address classifies as one of `class_confidence`'s keys, and no member carries an owner-rung signal, gets a fixed `inconclusive` verdict instead of an LLM assess phase. `class_confidence` is the confidence of that inconclusive judgment per class (the cluster takes the lowest of its members'); a class missing here sends the cluster to the LLM. Classes: cdn / parking / bogon (origin-history classification), ad_edge (the ad_edge rule above), shared-hosting (the box answers for more than noise_filters.SHARED_HOSTING_MAX_COHOSTS sites), platform (a noise-flagged hosting network answering for more than sweep_policy.vps_auto_max_cotenants sites — a small VPS is a plausible operator box and goes to the LLM). `provider_host_suffixes`: hostnames under these are the provider's own names (default PTRs, edge names, parking hosts), never an operator asset. `benign_ip_pivot_kinds`: the only IP-raw pivot kinds that are NOT an owner signal (an ip:ptr under a provider suffix is benign too; a certificate, self-hosted MX, misconfig leak or distinctive PTR is not). `owner_pivot_prefixes`: pivot kinds on a provider hostname's raw that are owner-rung (rungs.json owner classes).",
+    "class_confidence": {
+      "cdn": "high",
+      "bogon": "high",
+      "parking": "high",
+      "ad_edge": "moderate",
+      "shared-hosting": "moderate",
+      "platform": "low"
+    },
+    "provider_host_suffixes": [
+      "amazonaws.com", "cloudfront.net", "awsglobalaccelerator.com", "akamaiedge.net",
+      "akamaitechnologies.com", "edgekey.net", "edgesuite.net", "cloudflare.net", "cloudflare.com",
+      "fastly.net", "fastlylb.net", "googleusercontent.com", "1e100.net", "azurewebsites.net",
+      "cloudapp.net", "cloudapp.azure.com", "linodeusercontent.com", "ip.linodeusercontent.com",
+      "vultrusercontent.com", "your-server.de", "ovh.net", "contaboserver.net", "sedoparking.com",
+      "bodis.com", "parkingcrew.net", "above.com", "ezoic.net", "ezoic.com", "incapdns.net",
+      "sucuri.net", "b-cdn.net", "ddos-guard.net", "stackpathdns.com"
+    ],
+    "benign_ip_pivot_kinds": ["ip", "ip:information", "ip:asn", "ip:ports"],
+    "owner_pivot_prefixes": [
+      "tracker:", "whois:registrant_email", "whois:registrant_phone", "tls_cert:fingerprint",
+      "token", "crypto", "wallet", "ip:mx", "ip:misconfig"
+    ]
+  },
+
+  "sweep_policy": {
+    "_comment": "Breadth of the sweep. `max_ips_per_host`: origin addresses one host may contribute to the frontier per round (ranked live-first, then by how many independent sources saw it, then most recent). `max_ip_seeds_per_round`: origin IPs the loop collects per round across the whole case. `recent_tenancy_days`: an address the case host has NOT used within this many days is a HISTORICAL origin — still collected (its ASN, ports, PTR and certificates are evidence), but its CURRENT co-tenants may have moved in after our host left, so they are held back as leads instead of seeded. `vps_auto_max_cotenants`: on a recent origin whose network the IP lookup flags as cloud/VPS hosting (Google Cloud, DigitalOcean, OVH, Hetzner, Vultr …), up to this many co-hosted apexes are queued as neighbours and linked to the IP automatically; above it they become an analyst-approval lead that lists EVERY domain, and nothing is collected or linked until approved.",
+    "max_ips_per_host": 6,
+    "max_ip_seeds_per_round": 8,
+    "recent_tenancy_days": 180,
+    "vps_auto_max_cotenants": 10
+  }
+}

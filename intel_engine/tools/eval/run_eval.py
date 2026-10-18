@@ -273,11 +273,20 @@ def main():
         ("test_reverse_phone", "reverse-WHOIS phone + preview-first / confirm-if-large gate"),
         ("test_whois_parallel", "whois_summary parallelizes current+history (speed)"),
         ("test_frontier_guards", "frontier co-tenancy guards — multi-tenant cert / shared IP / bulk registrant"),
+        ("test_frontier_golden", "frontier() golden — byte-identical output after typed-proposer changes"),
+        ("test_propose", "typed propose() — wallet/GTM rungs, filename never domain, co-tenancy est_hits, pivoted dedup"),
+        ("test_propose_page_selectors", "propose() on a contact-directory page — no reverse-WHOIS on page-scraped "
+                                        "phones, kit selectors capped per type before any count probe"),
+        ("test_origin_history", "historical origin-IP sweep — CDN/WAF/parking/bogon classify, eras + previous-owner "
+                                "hold, ips_pending caps + leaf anchor, stale co-tenants held, KB edge veto"),
         ("test_mo_neighbours_classify", "MO-neighbour pivot — bulk-origin guard / per-origin memo / classified-only "
                                         "frontier seeding / privacy + unverifiable buckets / facts-only KB ingest"),
         ("test_webamon_same_kit", "Webamon layer — keyless safety, tri-state + 429 latch, same-kit normaliser + "
                                   "prevalence guard, count-only infostealers, same-kit = related_lead never seed, "
                                   "facts-only ingest"),
+        ("test_pivot_routes", "cross-type corpus routes — urlscan field query + identifier rungs, "
+                               "wayback collection parse, ingest_typed owner-edge vs kit-fact, "
+                               "publicwww no-key skip, counterparties exchange flag, free_only"),
         ("test_assets_layer", "asset layer — JS bundle select / sourcemap dev-identity / API+build-env / well-known"),
         ("test_censys", "Censys layer — CenQL not Legacy Search / = vs : / MD5 favicon / "
                         "free-plan degradation / monthly credit guard"),
@@ -291,6 +300,11 @@ def main():
                          "magic-byte dispatch, base-rate filter on both the pivot and ingest paths"),
         ("test_tool_registry", "tool registry (RULE 2) — every @tool served by an SDK server and "
                                "allowlisted, so Claude Code and the SDK harness cannot diverge"),
+        ("test_whois_eras", "WHOIS ownership eras — prior owners of a drop-caught apex are facts, never owner "
+                            "links / seeds / leads; apex-normalised WHOIS spend"),
+        ("test_vncorp_parser", "VN business-registry parser — tri-state fields with source URLs from mirror HTML"),
+        ("test_whois_current_parse", "whois_current — registrar abuse contact never becomes the registrant; text-block "
+                                     "registrant recovery"),
         ("test_paths_capture", "URL-path layer + raw-evidence capture — kit extraction, the "
                                "base-rate control (a generic path clusters NOTHING), template "
                                "normalisation, cross-host patterns, manifest hashing + tamper "
@@ -350,6 +364,68 @@ def main():
                         "engagement gate holds in code (no confirm -> preflight, non-synthetic "
                         "persona / direct egress refused, CAPTCHA stops it); the mission harvest "
                         "pulls wallets/bank/upload-path and drops a bare number with no bank context"),
+        ("test_enrichment_run", "case enrichment — keyed matching, no-key/no-spend leads stay open "
+                                "until a keyed run, passive is egress not spend, retryable partial "
+                                "org, per-step memo hides paid steps, and CLD is never double-ledgered"),
+        ("test_crtsh_seed_guard", "CT seeding — the flat crt.sh name list seeds only the case's own "
+                                  "subdomains (foreign apexes from unexamined certs become leads), and "
+                                  "a foreign co-apex on a narrow cert seeds only when the cert postdates "
+                                  "the current registration (previous-owner / unknown-date certs are held)"),
+        ("test_assessment_kb_registrant", "assessment registrant — the rendered BLUF agrees with the KB "
+                                          "registered_by binding clusters use (redacted current WHOIS no "
+                                          "longer reads as 'no shared identity'), role mailboxes never bind"),
+        ("test_convergence_failed_rounds", "convergence — a round with failed collection never counts as "
+                                           "zero growth, legacy rounds converge as before, and the cti "
+                                           "driver's open_leads keeps metered + open enrichment leads"),
+        ("test_harness_phase_isolation", "CLI harness — concurrent phases get isolated host configs with "
+                                         "a shared session store, and one failed cluster judge neither "
+                                         "aborts the run nor shifts other clusters' _cN suffixes"),
+        ("test_whois_rdap_vcard", "WHOIS RDAP vCard — a record whose structured contacts are empty "
+                                  "but whose rawText is the registrar's RDAP JSON yields the registrant "
+                                  "vCard; registrar/abuse roles and privacy placeholders never do"),
+        ("test_next_actions", "next actions — candidate action synthesis, non-interactive "
+                              "NEXT_ACTIONS JSON emission, and interactive menu dispatch"),
+        ("test_archive_api", "archive API — collecting historical Wayback API endpoints and ingesting "
+                             "payment, company, and download facts into the KB with engine provenance"),
+        ("test_mcp_protocol", "MCP stdio server — in-flight replies drained at EOF, JSON-RPC envelope "
+                              "validation, protocol negotiation, annotations served, every handler "
+                              "argument declared, and a ledger that never fails or leaks a secret"),
+        ("test_cti_intake", "cti intake — target class + purpose asked at a terminal and persisted "
+                            "before collection; scripted runs use --class/--purpose or a disclosed "
+                            "default and never block on input"),
+        ("test_sellers_lookup", "sellers.json payee lookup — known pub id → payee name/domain, unknown → "
+                                "None, corrupt cache re-downloaded never raised, free-call ledger, "
+                                "ads.payee is an owner rung"),
+        ("test_evidence_import", "analyst evidence import — owner-rung link becomes an edge, kit / "
+                                 "demoted links stay facts (RULE 5), ungraded or claim-less entries "
+                                 "rejected with a message, assessment.md never touched"),
+        ("test_timeline_inputs", "case_timeline input resolution — a case's raw/*.json is read as an "
+                                 "unexpanded glob, relative or absolute path, a space-joined string, "
+                                 "and the docs' out/ spelling"),
+        ("test_render_mermaid_flags", "render_mermaid — only flags the installed mmdc advertises are "
+                                      "passed (mermaid-cli 12 rejects -w/-f)"),
+        ("test_previous_owner_era", "WHOIS era rule — a registrant contact observed before the current "
+                                    "registration's creation is an approval-required previous_owner_era "
+                                    "item (both dates in the reason), never a normal seed, never deleted; "
+                                    "post-creation / undated contacts unaffected; rejection is permanent"),
+        ("test_ledger_cost_classes", "api-usage cost classes — free / quota / metered subtotals from "
+                                     "api_cost_classes.json, total labelled estimated units; reverse-"
+                                     "WHOIS auto-buy cap read from reverse_whois.json (stub 60 flips it)"),
+        ("test_appdev", "app-store developer lookup — Play name/legal name/email/website/other apps, iTunes "
+                        "artist/seller/other apps, website on the case apex = owner link, email a candidate; "
+                        "malformed pages → None; Mach-O signing identity → apple_team (owner rung)"),
+        ("test_ip_no_owner_verdict", "IP-only clusters — cdn/parking/ad-edge/shared-hosting addresses with no "
+                                     "owner-rung signal get a deterministic inconclusive verdict (zero LLM "
+                                     "assess); an owner-rung member still goes to the judge; an 8-region "
+                                     "AWS ad-edge set never clusters two publishers"),
+        ("test_loop_hygiene", "cross-type loop hygiene — quarry page.phone/page.email are KB facts not "
+                              "nodes (0 phone pivots), Plan drops persist until reopen, unkeyed / "
+                              "anyrun-on-IP routes never offered, social platforms + their edge IPs "
+                              "never seed"),
+        ("test_whois_txt_indicators", "WHOIS/TXT owner indicators — privacy-proxy customer id parsed and "
+                                      "shared across domains as one owner link, provider-constant TXT "
+                                      "verification token never emitted (unchecked = lead fact), NIC-staff "
+                                      "mailbox + RDDS notice never registrant terms"),
     ]
     # tests/ modules follow the same check() contract; make them importable here too. cti-expert
     # nests the engine one level deeper than upstream, so BOTH suites must be on the path: the

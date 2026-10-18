@@ -32,7 +32,7 @@ from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
                            is_noise_social_handle, is_bulk_registrant, is_noise_phone,
                            is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS,
-                           is_shared_hosting_ip, social_handle)
+                           is_shared_hosting_ip, social_handle, is_whois_notice)
 
 # reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
 try:
@@ -50,12 +50,43 @@ except Exception:
     def _registrable(host):
         parts = (host or "").lower().strip(".").split(".")
         return ".".join(parts[-2:]) if len(parts) >= 2 else (host or "")
+# the single place WHOIS history becomes OWNER links (whois_eras.py — RULE 5): a domain that
+# dropped and was re-registered has every earlier registrant's contacts recorded as facts, never
+# as a `registered_by` edge. Fail-open falls back to the LIVE registrant field only (no history
+# correlation) rather than ever risk a prior owner becoming a clustering edge.
+try:
+    import whois_eras as _whois_eras  # noqa: E402
+except Exception:
+    class _whois_eras:
+        _LIVE = {"email": "registrant_email", "name": "registrant_name",
+                 "phone": "registrant_phone", "org": "registrant_org"}
+
+        @staticmethod
+        def owner_values(whois, kind):
+            v = (whois or {}).get(_whois_eras._LIVE.get(kind, ""))
+            return [v] if v else []
+
+        @staticmethod
+        def prior_values(whois, kind):
+            return []
 # CLD verdict parser — reuse the collector's one implementation (RULE 4); fail-open to a no-op
 try:
     from wp_cld import verdict_of as _cld_verdict_of  # noqa: E402
 except Exception:
     def _cld_verdict_of(_block):
         return None
+
+
+def _cld_list_count(block):
+    """Host-matched Shield rows only. A bare API count is a substring page, not a hit."""
+    if not isinstance(block, dict) or block.get("error"):
+        return 0
+    if "matched" in block:
+        return int(block["matched"] or 0)
+    for key in ("items", "data", "results", "victims"):
+        if isinstance(block.get(key), list):
+            return len(block[key])
+    return 0
 
 # The document/image metadata base-rate filter, reused from the collector so BOTH paths agree on
 # what is a tool and what is an operator. It must be re-applied here and not merely trusted from
@@ -250,7 +281,7 @@ def _day(iso):
     return (iso or "")[:10] or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _resolved_ip_edges(kb, host, lr, observed, ev):
+def _resolved_ip_edges(kb, host, lr, observed, ev, approved=None):
     """Emit `domain host --hosted_on--> indicator ip:<ip>` for the domain's resolved IPs, so a
     domain graph-links to the IP box (and thus to its co-tenants). Carries the hosting time window
     when passive DNS supplies it. CDN/cloud edge IPs are dropped (not the operator's host). Merges
@@ -296,14 +327,49 @@ def _resolved_ip_edges(kb, host, lr, observed, ev):
         if not _is_ipaddr(ip) or _ip_is_cdn(ip):
             continue
         _note(ip, today, today, "passivedns")
+    # MERGED ORIGIN HISTORY (enrich_live → wp_origin_history): SecurityTrails / Validin / urlscan
+    # hostname index / Webamon / passive-SSL / keyless urlscan scans, already classified. Its `origin`
+    # rows add dated hosting windows; its cdn / parking / bogon verdicts (ASN- and org-aware, so they
+    # catch Akamai / Imperva / DDoS-Guard / parking farms the CIDR index misses) veto an edge any
+    # other source above proposed. A raw collected before the sweep existed has no stored block — it
+    # is computed from the same raw blocks (wp_origin_history.block_for), so older cases keep the
+    # ASN/org-aware veto too. `undetermined` (no CDN range cache) and `invalid` never veto: an
+    # unavailable classifier is not evidence that an address is shared.
+    try:
+        import wp_origin_history  # noqa: WPS433
+        oh = wp_origin_history.block_for(lr, None, host)
+    except Exception:  # noqa: BLE001
+        oh = lr.get("origin_history") if isinstance(lr.get("origin_history"), dict) else {}
+    not_origin = set()
+    for row in oh.get("ips") or []:
+        ip = str(row.get("ip") or "").strip()
+        if not _is_ipaddr(ip):
+            continue
+        if row.get("status") != "origin":
+            if row.get("status") in ("cdn", "parking", "bogon", "ambiguous"):
+                not_origin.add(ip)
+            continue
+        _note(ip, row.get("first_seen"), row.get("last_seen"),
+              "history:" + "+".join(s for s in row.get("sources") or [] if s != "live_dns"))
 
     # SHARED HOSTING: the same pivot's IP-reverse blocks (FOFA / passive-DNS / DNSLytics) say how many
     # apexes answer on each IP. Above the shared-hosting bound the IP is a landlord — co-tenancy, not
     # ownership — so it is recorded as a FACT on the domain (kept as evidence, never a cluster edge).
     # Same number the frontier uses to hold co-tenants back (noise_filters.SHARED_HOSTING_MAX_COHOSTS).
-    landlords = _shared_hosting_ips_from_lr(lr)
+    # an edge the analyst's approval covers (this host is an approved co-tenant, or a case host of an
+    # approved box) is not held back by the landlord rule — the approval is the evidence
+    _ok = lambda ip: False  # noqa: E731
+    if approved:
+        try:
+            import wp_origin_history  # noqa: WPS433
+            _ok = lambda ip: wp_origin_history.approval_allows(approved, host, ip)  # noqa: E731
+        except Exception:  # noqa: BLE001
+            pass
+    landlords = {k: v for k, v in _shared_hosting_ips_from_lr(lr).items() if not _ok(k)}
     n = 0
     for ip, m in ips.items():
+        if ip in not_origin:
+            continue
         if ip in landlords:
             kb.add_fact("domain", host, "shared_hosting_ip",
                         f"{ip} ({landlords[ip]} co-tenant apexes) — shared/bulk hosting, not an owner link",
@@ -401,14 +467,54 @@ def _ingest_ip(kb, d, meta, ip, observed, day):
         if nd and not _is_ip_host(nd) and nd not in seen:
             seen.add(nd)
             cohosts.append(nd)
+    # Two more reasons co-tenancy is not ownership: more distinct apexes than the shared-hosting bound
+    # (the same number the frontier uses), and origin_context's hold flag — a box the case's hosts used
+    # only HISTORICALLY (today's tenants may have moved in after ours left) or a DDoS-proxy-or-host
+    # network (`ambiguous`: the tenants may be other customers behind one protection edge).
+    ctx = meta.get("origin_context") or {}
+    stale = bool(ctx.get("hold_cotenants", ctx.get("stale")) or ctx.get("ambiguous"))
+    # second look with the box's OWN network (the IP lookup's ASN/org): an edge, parking or
+    # proxy-or-host network that history sources could not name never links its tenants
+    try:
+        import wp_origin_history  # noqa: WPS433
+        if wp_origin_history.collected_verdict(ip, art).get("status") in ("cdn", "parking", "bogon", "ambiguous"):
+            stale = True
+        # a case ORIGIN on a cloud/VPS network the IP lookup flags as hosting: with a recent tenancy
+        # and no more than vps_auto_max_cotenants other apexes its tenants ARE linked (the analyst's
+        # rule); above that they stay facts until approved. Same count as the frontier.
+        if noise and ctx and not stale and wp_origin_history.is_vps_origin(ip, art):
+            _apx, count = wp_origin_history.cotenant_count(
+                art, cohosts, exclude=ctx.get("hosts") or (),
+                is_noise=lambda a: is_shared_infra_apex(a) or is_managed_dns(a))
+            if count <= wp_origin_history.VPS_AUTO_MAX_COTENANTS:
+                noise = False
+    except Exception:  # noqa: BLE001 — optional classifier: degrade to the flags above
+        pass
+    landlord = is_shared_hosting_ip(len({_registrable(c) for c in cohosts}))
+    # the analyst approved THESE co-tenants (state.json approved_cohosts): link exactly them, past the
+    # VPS and shared-hosting bounds — never past a stale / ambiguous / edge verdict. Every other site
+    # on the box keeps the rules above (the automatic decision was made on the WHOLE tenant set).
+    ok_domains = set(meta.get("cohost_approved_domains") or []) if not stale else set()
+    try:
+        import wp_origin_history  # noqa: WPS433
+        _unit = wp_origin_history._apex       # the approval record's own reduction (tenant-aware)
+    except Exception:  # noqa: BLE001
+        _unit = _registrable
+    if ctx:
+        kb.add_fact("indicator", ind, "origin_of",
+                    f"{', '.join(ctx.get('hosts') or [])} ({ctx.get('era')}, "
+                    f"{ctx.get('first_seen') or '?'}..{'now' if ctx.get('live') else ctx.get('last_seen') or '?'}"
+                    f"; via {', '.join(ctx.get('sources') or [])})",
+                    "webpivot", COLLECTOR, observed, "medium", ev)
+        n += 1
     for nd in cohosts:
-        if noise:
-            # shared provider — co-tenancy is not ownership; keep as a fact, never a cluster edge
-            kb.add_fact("indicator", ind, "co_tenant", nd, "webpivot", COLLECTOR, observed, "low", ev)
-        else:
-            # origin box — domains here are same-operator leads; cluster them on the ip: indicator
+        if _unit(nd) in ok_domains or not (noise or stale or landlord):
+            # origin box (or an approved co-tenant) — cluster it on the ip: indicator
             kb.add_edge("domain", nd, "hosted_on", "indicator", ind,
                         "fofa/urlscan", "webpivot/ip", observed, "medium", ev)
+        else:
+            # shared provider / stale tenancy / landlord — co-tenancy is not ownership; keep as a fact
+            kb.add_fact("indicator", ind, "co_tenant", nd, "webpivot", COLLECTOR, observed, "low", ev)
         n += 1
 
     # self-hosted mail domain (managed providers already filtered out in build_ip_result)
@@ -664,20 +770,102 @@ def _ingest_github(kb, d, meta, observed, day):
     return n
 
 
+def _ingest_binary(kb, d, path, meta, observed, day, sha):
+    """File identifiers belong to the sample, not its potentially shared download host."""
+    art = d.get("artifacts") or {}
+    host = meta.get("host")
+    parent = os.path.dirname(os.path.abspath(path))
+    case_dir = (os.path.dirname(os.path.dirname(parent))
+                if os.path.basename(parent) == "analysis" else os.path.dirname(parent))
+    ev = kb.save_evidence("binarypivot_" + sha, sha + "_" + os.path.basename(case_dir), d, day)
+    kb.touch("file_hash", sha, observed)
+    n = 0
+    if isinstance(host, str) and host and not host.startswith("artifact:"):
+        kb.add_fact("file_hash", sha, "served_from", host, "binarypivot",
+                    "binarypivot/analyze_artifact", observed, "low", ev)
+        n += 1
+
+    # Only a collected, self-hosted web seed may own an indicator also found in its binary.
+    # A download from a CDN/storage provider is co-tenancy, never an operator join.
+    raw = os.path.join(case_dir, "raw", host + ".json") if isinstance(host, str) and \
+        re.fullmatch(r"[a-zA-Z0-9.-]+", host) else None
+    owner = False
+    if (raw and os.path.basename(os.path.dirname(os.path.dirname(os.path.abspath(path)))) == "bin"
+            and not _is_ip_host(host) and not is_shared_infra_apex(host)):
+        try:
+            with open(raw, encoding="utf-8") as f:
+                owner = (json.load(f).get("meta") or {}).get("host", "").lower() == host.lower()
+        except (OSError, ValueError, AttributeError):
+            pass
+    for label, vals in (art.get("trackers") or {}).items():
+        rel, conf = REL.get(label, ("uses_tracker", "medium"))
+        for v in vals:
+            if is_noise_tracker(v):
+                kb.add_fact("file_hash", sha, "platform_tracker", str(v), "binarypivot",
+                            "binarypivot/analyze_artifact", observed, "low", ev)
+                n += 1
+                continue
+            ind = f"{label}:{v}"
+            kb.add_edge("file_hash", sha, rel, "indicator", ind, "binarypivot",
+                        "binarypivot/analyze_artifact", observed, conf, ev)
+            kb.add_fact("indicator", ind, "kind", label, "binarypivot",
+                        "binarypivot/analyze_artifact", observed, conf, ev)
+            n += 1
+            if owner:
+                kb.add_edge("domain", host, rel, "indicator", ind, "binarypivot",
+                            "binarypivot/analyze_artifact", observed, conf, ev)
+                n += 1
+    return n
+
+
+def _case_approvals(path):
+    """approved_cohosts ({ip: {domains, hosts}}) of the case a raw file belongs to
+    (cases/<id>/raw/<x>.json), else empty."""
+    rawdir = os.path.dirname(os.path.abspath(path))
+    if os.path.basename(rawdir) != "raw":
+        return {}
+    try:
+        import wp_origin_history  # noqa: WPS433
+        return wp_origin_history.approved_cohosts(os.path.dirname(rawdir))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def ingest_file(kb, path):
     d = json.load(open(path, encoding="utf-8"))
     meta = d.get("meta") or {}
     host = meta.get("host")
-    if not host:
-        return 0
     # observed_at: file mtime as ISO (collections don't carry their own timestamp)
     observed = datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat()
     day = _day(observed)
+    if str(meta.get("collector", "")).startswith("binarypivot/"):
+        sha = ((((d.get("artifacts") or {}).get("binary") or {}).get("hashes") or {})
+               .get("sha256"))
+        if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+            return 0
+        return _ingest_binary(kb, d, path, meta, observed, day, sha)
+    if not host:
+        return 0
     # GitHub committer harvest → account-shaped ingest (identities join on the email node)
     if meta.get("kind") == "github":
         return _ingest_github(kb, d, meta, observed, day)
     # IPPivot result → IP-shaped ingest (co-hosted domains cluster on the ip: indicator)
     if meta.get("kind") == "ip" or _is_ip_host(host):
+        _rec = _case_approvals(path).get(host)
+        if _rec:
+            meta = dict(meta, cohost_approved_domains=sorted(_rec["domains"]))
+        if not meta.get("origin_context"):
+            # an IP raw collected without WP_CASE_DIR carries no stamp — recompute it from the case's
+            # own raws (cases/<id>/raw/<ip>.json), so a stale tenancy can never write co-tenant edges
+            _rawdir = os.path.dirname(os.path.abspath(path))
+            if os.path.basename(_rawdir) == "raw":
+                try:
+                    import wp_origin_history  # noqa: WPS433
+                    _ctx = wp_origin_history.origin_context(os.path.dirname(_rawdir), host)
+                except Exception:  # noqa: BLE001
+                    _ctx = None
+                if _ctx:
+                    meta = dict(meta, origin_context=_ctx)
         return _ingest_ip(kb, d, meta, host, observed, day)
     art = d.get("artifacts") or {}
     ev = kb.save_evidence("webpivot", host, d, day)
@@ -743,6 +931,32 @@ def ingest_file(kb, path):
                             "label on empty evidence — not adopted as a finding",
                             "chongluadao", COLLECTOR, observed, "low", ev)
                 n += 1
+        for fact, block in (("cld_ransomware_victim", cld.get("ransomware")),
+                            ("cld_clickfix", cld.get("clickfix"))):
+            n_hits = _cld_list_count(block)
+            if n_hits:
+                kb.add_fact("domain", host, fact, str(n_hits),
+                            "chongluadao", COLLECTOR, observed, "high", ev)
+                n += 1
+        # Brand-label denylist search (wp_cld.cld_domain page_title=…): `estate` rows are denylist
+        # hits on THIS apex (reputation facts); `leads` are name-similar apexes — facts only (RULE 5:
+        # a similar name is not a link), never an edge, never a frontier seed, never an IOC.
+        dl = cld.get("denylist")
+        if isinstance(dl, dict):
+            for row in (dl.get("estate") or [])[:25]:
+                url = str((row or {}).get("url") or "").strip()
+                if url:
+                    kb.add_fact("domain", host, "cld_denylist_url",
+                                f"{url} [{(row or {}).get('url_type') or 'listed'}] {(row or {}).get('created_at') or ''}".strip(),
+                                "chongluadao", COLLECTOR, observed, "high", ev)
+                    n += 1
+            for row in (dl.get("leads") or [])[:25]:
+                apex = str((row or {}).get("_matched_apex") or (row or {}).get("domain") or "").strip().lower()
+                if apex and apex != host:
+                    kb.add_fact("domain", host, "cld_denylist_name_similar_lead",
+                                f"{apex} (name-similar denylisted apex — lead, not a link)",
+                                "chongluadao", COLLECTOR, observed, "low", ev)
+                    n += 1
         break
 
     # --- Webamon scan corpus (facts only — nothing here is an owner link) ---
@@ -1102,6 +1316,30 @@ def ingest_file(kb, path):
                         "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
 
+    # --- apex TXT verification tokens (wp_recon.classify_txt_verifications) ---
+    # Rung txt.verification is owner ONLY when the collector checked the provider's own zone and
+    # the token is absent there. A token present in the provider zone is a provider-wide constant
+    # (never emitted); a token the collector could not check is a lead fact, never an edge.
+    for tv in ((art.get("mail") or {}).get("txt_verifications") or [])[:12]:
+        tok = str((tv or {}).get("token") or "").strip().lower()
+        if not tok:
+            continue
+        check = (tv or {}).get("check")
+        if check == "owner":
+            ind = f"txt_verification:{tok}"
+            kb.add_edge("domain", host, "uses_txt_verification", "indicator", ind,
+                        "webpivot", COLLECTOR, observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "txt_verification", "webpivot", COLLECTOR,
+                        observed, "high", ev)
+            if tv.get("provider_zone"):
+                kb.add_fact("indicator", ind, "provider_zone_checked", str(tv["provider_zone"]),
+                            "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+        elif check != "provider_constant":
+            kb.add_fact("domain", host, "txt_verification_lead", tok, "webpivot", COLLECTOR,
+                        observed, "low", ev)
+            n += 1
+
     # --- WHOIS ---
     wh = art.get("whois") or {}
     if wh:
@@ -1109,9 +1347,16 @@ def ingest_file(kb, path):
             if wh.get(k) and not _is_privacy(wh[k]):
                 kb.add_fact("domain", host, f"whois_{k}", wh[k], "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
                 n += 1
-        emails = ([wh.get("registrant_email")] +
-                  ((wh.get("history") or {}).get("registrant_emails") or []))
+        # Ownership eras (whois_eras.py): only the CURRENT registration's contacts are owner
+        # links (registered_by edges, frontier seeds, cluster indicators). A domain that dropped
+        # and was re-registered has every earlier registrant recorded as a previous_registrant_*
+        # FACT instead — never an edge (SKILL.md RULE 5). `registrar_contact_email` (the
+        # registrar's own abuse mailbox) is never read here at all, so it is never ingested as
+        # a registrant.
+        emails = _whois_eras.owner_values(wh, "email")
         for em in emails:
+            if em and is_whois_notice(em):   # RDDS notice text in the email slot — not a contact
+                continue
             if em and not _is_privacy(em) and not is_noise_email(em):
                 kb.add_edge("domain", host, "registered_by", "email", em.lower(),
                             "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
@@ -1120,9 +1365,18 @@ def ingest_file(kb, path):
                 kb.add_fact("domain", host, "whois_role_email", em.lower(),
                             "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
                 n += 1
-        names = ([wh.get("registrant_name") or wh.get("registrant_org")] +
-                 ((wh.get("history") or {}).get("registrant_names") or []))
+        for prior in _whois_eras.prior_values(wh, "email"):
+            pv = str(prior.get("value") or "").strip()
+            if pv and not is_noise_email(pv):
+                kb.add_fact("domain", host, "previous_registrant_email",
+                            f"{pv.lower()} (era {prior.get('era_created')})",
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                n += 1
+        names = list(dict.fromkeys(_whois_eras.owner_values(wh, "name") +
+                                    _whois_eras.owner_values(wh, "org")))
         for nm in names:
+            if nm and is_whois_notice(nm):   # RDDS notice text in the name slot — not a contact
+                continue
             if nm and not _is_privacy(nm) and not _is_role_placeholder(nm):
                 kind = _name_kind(nm)          # org / person / None(junk label — skip)
                 if not kind:
@@ -1135,13 +1389,19 @@ def ingest_file(kb, path):
                 kb.add_fact("domain", host, "whois_role_name", nm.strip(),
                             "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
                 n += 1
+        for prior in (_whois_eras.prior_values(wh, "name") + _whois_eras.prior_values(wh, "org")):
+            pv = str(prior.get("value") or "").strip()
+            if pv and not _is_privacy(pv) and not _is_role_placeholder(pv) and not is_whois_notice(pv):
+                kb.add_fact("domain", host, "previous_registrant_name",
+                            f"{pv} (era {prior.get('era_created')})",
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                n += 1
         # Registrant PHONE — a strong correlatable selector (like email), so it must be a
         # queryable KB entity, not just a per-domain fact. Digits-only normalisation matches the
         # orchestrator's reverse-WHOIS key. Gated by is_noise_phone: a privacy/proxy provider
         # publishes ONE phone across every domain it fronts, so an unfiltered edge would merge
         # thousands of unrelated domains (see noise_filters.json §registrant-phone).
-        phones = ([wh.get("registrant_phone")] +
-                  ((wh.get("history") or {}).get("registrant_phones") or []))
+        phones = _whois_eras.owner_values(wh, "phone")
         _seen_ph = set()
         for ph in phones:
             if not ph:
@@ -1156,6 +1416,34 @@ def ingest_file(kb, path):
             else:
                 kb.add_edge("domain", host, "registered_by", "phone", digits,
                             "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+            n += 1
+        for prior in _whois_eras.prior_values(wh, "phone"):
+            pv = str(prior.get("value") or "").strip()
+            digits = "".join(c for c in pv if c.isdigit())
+            if digits and not is_noise_phone(pv, wh.get("registrant_email"), wh.get("registrant_org")):
+                kb.add_fact("domain", host, "previous_registrant_phone",
+                            f"{digits} (era {prior.get('era_created')})",
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                n += 1
+        # Privacy-service CUSTOMER id ("Contact Privacy Inc. Customer <digits>", whois_eras kind
+        # privacy_customer; rung whois.privacy_customer → owner). The proxy NAME is noise and is
+        # filtered above; the digits are one customer account, so domains sharing an id link.
+        # Current era only (prior-era ids are facts). Its population cannot be measured —
+        # reverse-WHOIS tokenises the term — so it is never reversed (see rungs.json caveats).
+        for cid in _whois_eras.owner_values(wh, "privacy_customer"):
+            ind = f"whois_privacy_customer:{cid}"
+            kb.add_edge("domain", host, "registered_via_privacy_customer", "indicator", ind,
+                        "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+            kb.add_fact("indicator", ind, "kind", "whois_privacy_customer",
+                        "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+            kb.add_fact("indicator", ind, "population_caveat",
+                        "unmeasurable: reverse-WHOIS tokenises the term; never reverse it",
+                        "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+            n += 1
+        for prior in _whois_eras.prior_values(wh, "privacy_customer"):
+            kb.add_fact("domain", host, "previous_privacy_customer",
+                        f"{prior.get('value')} (era {prior.get('era_created')})",
+                        "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
             n += 1
         for ns in wh.get("name_servers") or []:
             if is_managed_dns(ns):
@@ -1218,6 +1506,19 @@ def ingest_file(kb, path):
         # also fed by older raw files and by other collectors, and one registrar role mailbox
         # reversed here writes a `registered_by` edge per hit — hundreds of unrelated domains on
         # a shared abuse address. Re-check here, and apply the same base-rate cap as above.
+        # Era gate: a registrant-email pivot is only an OWNER selector when that email is in the
+        # host's current-era WHOIS (whois_eras.owner_values). Older raw files still carry pivots the
+        # collector built from the flat history — a previous owner's mailbox — and reversing it
+        # writes `registered_by` edges to that stranger's whole estate. Record it as a fact instead.
+        if kind == "whois:registrant_email" and piv.get("value"):
+            _own = {v.lower() for v in _whois_eras.owner_values(art.get("whois") or {}, "email")}
+            if art.get("whois") and piv["value"].lower() not in _own:
+                kb.add_fact("domain", host, "previous_registrant_email_pivot_skipped",
+                            f"{piv['value']} — not the current-era registrant; reverse-WHOIS results "
+                            f"not ingested as owner links", "whoisxml", "webpivot/whois_enrich",
+                            observed, "low", ev)
+                n += 1
+                continue
         if kind == "whois:registrant_email" and not is_noise_email(piv.get("value") or ""):
             # CLD ioc/email returns leak EXPOSURE (data.breaches / data.pastes), never a verdict —
             # record the exposure as a fact (never an edge); a verified breach is high confidence.
@@ -1265,7 +1566,7 @@ def ingest_file(kb, path):
     for piv in d.get("pivots") or []:
         if piv.get("kind") == "domain":
             lr = piv.get("live_results") or {}
-            n += _resolved_ip_edges(kb, host, lr, observed, ev)
+            n += _resolved_ip_edges(kb, host, lr, observed, ev, approved=_case_approvals(path))
             # urlscan Pro structure-similarity → cluster re-skinned kits on a structure:<host> anchor
             sim = (lr.get("urlscan_similar") or {}).get("similar_domains") or []
             if sim:

@@ -30,6 +30,7 @@ Needs headless Chrome for mmdc; if missing once, run:
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOUSE_CSS = os.path.normpath(os.path.join(HERE, "..", "references", "diagram.css"))
 
-# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 1800s). The engine's
+# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 5000s). The engine's
 # resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
@@ -46,10 +47,10 @@ try:
 except Exception:  # noqa: BLE001
     def _floor(t):
         try:
-            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
         except ValueError:
-            c = 1800
-        c = c if c > 0 else 1800
+            c = 5000
+        c = c if c > 0 else 5000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 
@@ -64,10 +65,26 @@ def find_mmdc():
     return None
 
 
+def mmdc_flags(mmdc):
+    """The option flags the INSTALLED mmdc accepts, read from its --help. mermaid-cli 12 dropped
+    `-w/--width` (and `-f/--pdfFit`; PDFs now fit by default) for `--size`, and rejects the old
+    flags with 'unknown option' — so never pass a flag the binary did not advertise. None when the
+    help text is unreadable: the caller then keeps the legacy flag set it always used."""
+    try:
+        r = subprocess.run([mmdc, "--help"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (r.stdout or "") + (r.stderr or "")
+    flags = set(re.findall(r"(?<![\w-])(--?[A-Za-z][\w-]*)", text))
+    return flags if "-i" in flags or "--input" in flags else None
+
+
 def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False, puppeteer=None):
     mmdc = find_mmdc()
     if not mmdc:
         sys.exit("mmdc not found. Install: npm i -g @mermaid-js/mermaid-cli")
+    flags = mmdc_flags(mmdc)
+    has = (lambda *names: True) if flags is None else (lambda *names: any(n in flags for n in names))
     outputs = []
     # (output, page width, device scale). The SVG is already vector, so scale is meaningless
     # there; the thumb is a contact print and does not need the density.
@@ -82,14 +99,16 @@ def render(mmd, stem, width, theme, background, scale=2, css=None, pdf=False, pu
         cmd = [mmdc, "-i", mmd, "-o", out, "-b", background]
         if theme in allowed_cli_themes:
             cmd += ["-t", theme]
-        if w:
+        if w and has("-w", "--width"):
             cmd += ["-w", str(w)]
+        elif w and out.endswith("_thumb.png") and has("--size"):
+            cmd += ["--size", str(w)]          # no layout width: cap the contact print instead
         if s and s != 1:
             cmd += ["-s", str(s)]
         if css:
             cmd += ["-C", css]
-        if out.endswith(".pdf"):
-            cmd += ["-f"]                      # --pdfFit: crop the page to the chart
+        if out.endswith(".pdf") and has("-f", "--pdfFit"):
+            cmd += ["-f"]                      # --pdfFit: crop the page to the chart (mmdc 12 fits by default)
         if puppeteer:
             cmd += ["-p", puppeteer]        # puppeteer config (e.g. --no-sandbox for root)
         try:

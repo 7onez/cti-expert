@@ -37,14 +37,33 @@ Author: CTI Expert — https://github.com/7onez/cti-expert
 """
 import argparse
 import datetime
+import functools
+import ipaddress
 import json
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling helpers
-from cti_case_meta import case_classification  # noqa: E402
+from cti_case_meta import case_classification, expansion_anchor, raw_name_index  # noqa: E402
 from cti_text_normalize import normalize_obj  # noqa: E402
+
+
+def _ct_and_related(raw_objs):
+    """({host: CT summary}, [related-host rows], wp_related module) through the engine's shared
+    reporting contract (evidence_report → wp_related) — the same rows assessment.md and the house
+    report print. ({}, [], None) when the vendored engine is absent."""
+    tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                          "intel_engine", "WebPivot", "tools"))
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import evidence_report as ER  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return {}, [], None
+    ct, rel = ER.ct_and_related(list(raw_objs))
+    return ct, rel, ER.WR
+
 
 GENERATOR = "CTI Expert — https://github.com/7onez/cti-expert"
 SEVERITY = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
@@ -59,6 +78,17 @@ def _load_json(path):
     except Exception:
         return None
 
+def _enrichment(case_dir):
+    """Expose executed third-party leads without inferring operator attribution."""
+    index = _load_json(os.path.join(case_dir, "enrichment", "index.json"))
+    leads = index.get("leads") if isinstance(index, dict) else None
+    if not isinstance(leads, dict):
+        return []
+    return [{"key": key, "outcome": row.get("outcome", "?"),
+             "summary": str(row.get("summary") or "")[:300],
+             "file": row.get("file") or ""}
+            for key, row in sorted(leads.items()) if isinstance(row, dict)]
+
 
 def _n_clusters(case_dir):
     """Same-operator cluster count from clusters.json (engine's Louvain partition). >1 means the
@@ -70,17 +100,61 @@ def _n_clusters(case_dir):
         return None
 
 
-def _hops(case_dir):
-    """(hops, depth) from state.json — the EXPANSION ANCHOR the loop recorded. A host at hop >= depth
-    is a LEAF: collected to bound the estate (an agency's client, a registrant's other project), owner-
-    linked to the previous hop, not to the operator. Legacy state without hops: every host is estate."""
-    st = _load_json(os.path.join(case_dir, "state.json"))
-    if not isinstance(st, dict):
-        return {}, 2
-    hops = st.get("hops") if isinstance(st.get("hops"), dict) else {}
-    depth = st.get("expansion_depth")
-    return ({str(k).lower(): int(v) for k, v in hops.items() if isinstance(v, int)},
-            depth if isinstance(depth, int) and depth >= 0 else 2)
+def _ip_version(value):
+    """4 / 6 for an IP address literal, else None."""
+    try:
+        return ipaddress.ip_address(str(value or "").strip().strip("[]")).version
+    except ValueError:
+        return None
+
+
+def _ioc_type(value):
+    """Indicator type of a network value: an address is `ipv4`/`ipv6`, never `domain`."""
+    v = _ip_version(value)
+    return "ipv4" if v == 4 else "ipv6" if v == 6 else "domain"
+
+
+@functools.lru_cache(maxsize=1)
+def _wp_common():
+    """The engine's PSL-aware wp_common (public_suffix + rule tables), or None when not vendored."""
+    tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                          "intel_engine", "WebPivot", "tools"))
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import wp_common  # noqa: PLC0415
+        return wp_common
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# RFC 2606 / RFC 6761 reserved names (documentation/test TLDs — never on the PSL, still hostnames).
+_RESERVED_TLDS = frozenset({"example", "test", "invalid", "localhost"})
+# RFC 1591 generic TLDs: a 3+-label token whose FIRST label is one of these is a reverse-DNS
+# application id (com.vendor.app — an Android/iOS package), not a hostname.
+_APP_ID_ROOTS = frozenset({"com", "org", "net", "edu", "gov", "mil", "int"})
+_HOSTNAME_RE = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$")
+
+
+def _registrable_domain(value):
+    """True only for a real hostname under a Public-Suffix-List suffix (or an RFC 6761 reserved
+    TLD): a file name (sellers.json, ads.txt), an app package (com.vendor, com.vendor.app) or a
+    bare public suffix is not a domain. Without the vendored PSL nothing qualifies (conservative)."""
+    v = str(value or "").strip().lower().rstrip(".")
+    if not _HOSTNAME_RE.match(v) or _ip_version(v):
+        return False
+    labels = v.split(".")
+    if len(labels) >= 3 and labels[0] in _APP_ID_ROOTS:
+        return False
+    if labels[-1] in _RESERVED_TLDS:
+        return True
+    W = _wp_common()
+    rules, wild = getattr(W, "_PSL_RULES", None), getattr(W, "_PSL_WILD", None)
+    if not rules:
+        return False
+    sfx = W.public_suffix(v)
+    known = sfx in rules or sfx.partition(".")[2] in (wild or ())
+    return known and v != sfx and v.endswith("." + sfx)
 
 
 def _iter_raw(case_dir):
@@ -96,7 +170,7 @@ def _iter_raw(case_dir):
             continue
         data = _load_json(os.path.join(d, fn))
         host = ((data or {}).get("meta") or {}).get("host") or stem
-        if data is not None and "." in host:
+        if data is not None and ("." in host or _ip_version(host)):
             yield host.lower(), data
 
 
@@ -125,6 +199,38 @@ def _cdn_ips_and_origins(raw):
         for ip in dns.get("stale_passive_ips") or []:
             out.add(ip)
     return out
+
+
+# wp_origin_history / IPPivot classification statuses that mark a SHARED address (edge, parking,
+# bogon, proxy-or-host network, or unclassifiable) — never an operator-run box.
+_SHARED_IP_CLASSES = frozenset({"cdn", "parking", "bogon", "ambiguous", "undetermined", "invalid"})
+
+
+def _ip_link_block(ip, raw, created_by_host, exclude):
+    """Why a collected IP may NOT carry an operator link (a reason string), or None for a dedicated
+    CURRENT origin. Reads what the collector recorded: ip_intel.classification / noise (shared
+    hosting, platform, CDN, parking) and meta.origin_context (wp_origin_history era vs the hosts'
+    current registration)."""
+    if ip in exclude:
+        return "shared/CDN edge or stale passive origin"
+    ii = _artifacts(raw).get("ip_intel") or {}
+    cls = ii.get("classification") or {}
+    status = str(cls.get("status") or cls.get("kind") or "").lower()
+    if cls.get("cdn") or status in _SHARED_IP_CLASSES:
+        return f"shared {status or 'CDN'} address"
+    if ii.get("noise"):
+        return "shared hosting / platform address" + (f" ({ii['noise_reason']})" if ii.get("noise_reason") else "")
+    ctx = (raw.get("meta") or {}).get("origin_context") or {}
+    if ctx.get("ambiguous"):
+        return "proxy-or-host network (ambiguous origin)"
+    era = ctx.get("era")
+    last = str(ctx.get("last_seen") or "")[:10]
+    regs = [created_by_host[k] for k in (str(h).lower() for h in ctx.get("hosts") or []) if created_by_host.get(k)]
+    if era == "previous_owner" or (last and regs and all(last < r for r in regs)):
+        return "last seen before the current registration (a previous owner's era)"
+    if not (era == "current" or ctx.get("live")):
+        return f"{era or 'undated'} tenancy, not a current origin"
+    return None
 
 
 def _parse_operator(op_field):
@@ -227,6 +333,120 @@ def _privacy_checker(case_dir):
     return lambda v: (not v) or bool(_PRIVACY_FALLBACK.search(str(v).strip()))
 
 
+def _whois_eras_module(case_dir):
+    """The shared whois_eras module (owner_values/prior_values — WebPivot/tools/whois_eras.py),
+    resolved the same way _privacy_checker resolves whois_enrich: relative to the case's own
+    engine tree, with a conservative no-op fallback (nothing is ever a 'prior' value) when the
+    engine is not vendored alongside (e.g. a case dir built outside intel_engine/)."""
+    engine = os.path.normpath(os.path.join(os.path.abspath(case_dir), "..", ".."))
+    wp_tools = os.path.join(engine, "WebPivot", "tools")
+    if os.path.isfile(os.path.join(wp_tools, "whois_eras.py")):
+        if wp_tools not in sys.path:
+            sys.path.insert(0, wp_tools)
+        try:
+            import whois_eras  # noqa: E402
+            return whois_eras
+        except Exception:
+            pass
+
+    class _NoEras:
+        @staticmethod
+        def prior_values(_whois, _kind):
+            return []
+    return _NoEras()
+
+
+_NOMINEE_RE = re.compile(r"\b(nominee|front|proxy|straw)\b", re.I)
+_CANNOT_RULE_OUT_RE = re.compile(r"cannot[\s_-]*rule[\s_-]*out", re.I)
+
+
+def _nominee_uncertain(alternatives):
+    """True when an assessment.json alternative names a nominee/front/proxy/straw explanation the
+    analyst marked 'cannot rule out' — the registrant is a WHOIS persona, not an asserted operator
+    (IntelAnalysis persona doctrine); connections to every collected host stay `registered`, never
+    `operates`."""
+    for alt in alternatives or []:
+        s = alt if isinstance(alt, str) else f"{alt.get('hypothesis','')} {alt.get('status','')} {alt.get('why','')}"
+        s = str(s)
+        if _NOMINEE_RE.search(s) and _CANNOT_RULE_OUT_RE.search(s):
+            return True
+    return False
+
+
+def _report_exclude(case_dir):
+    """Analyst exclusion list: <case>/report_exclude.json (a JSON list of literal selector values —
+    an unverified marketing partner's domain, a mis-attributed contact) never emitted as an IOC."""
+    data = _load_json(os.path.join(case_dir, "report_exclude.json"))
+    return {str(x).strip().lower() for x in data} if isinstance(data, list) else set()
+
+
+_SELECTOR_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_SELECTOR_URL_RE = re.compile(r"https?://[^\s,;()\[\]\"']+")
+_SELECTOR_PHONE_RE = re.compile(r"(?<![\w.])(\+?84[.\s-]?\d{9,10}|0\d{9,10}|\+\d{1,3}[.\s-]?\d{7,12})(?![\w])")
+_SELECTOR_DOMAIN_RE = re.compile(r"\b((?:[a-z0-9-]+\.)+[a-z]{2,})\b", re.I)
+
+
+def _cluster_selectors(assessment):
+    """Operator selectors the analyst's own cluster[].shared_artifacts already assert — e-mail,
+    phone, domain, IP and URL values only (a favicon hash / GA id / tech fingerprint is a same-kit
+    signal, not a report-subject selector). A domain value must be a real registrable hostname; an
+    address is typed ipv4/ipv6."""
+    out = []
+    for m in (assessment.get("cluster") or []):
+        for art in (m.get("shared_artifacts") or []) if isinstance(m, dict) else []:
+            s = str(art or "")
+            if ":" in s and not _ip_version(s):
+                kind, _sep, value = s.partition(":")
+            else:
+                kind, value = "", s
+            kind, value = kind.strip().lower(), value.strip()
+            if not value:
+                continue
+            if kind in ("email", "registrant_email") or _SELECTOR_EMAIL_RE.fullmatch(value):
+                out.append(("email", value.lower()))
+            elif kind in ("phone", "registrant_phone"):
+                out.append(("phone", value))
+            elif kind == "url" or value.startswith(("http://", "https://")):
+                out.append(("url", value))
+            elif kind in ("ip", "ipv4", "ipv6", "domain", "registrant_domain", "") and _ip_version(value):
+                out.append((_ioc_type(value), value))
+            elif kind in ("domain", "registrant_domain", "") and _registrable_domain(value):
+                out.append(("domain", value.lower()))
+    return out
+
+
+def _evidence_selectors(assessment):
+    """E-mail/phone/domain values named in an assessment.json evidence[] line — the operator
+    selectors an analyst cited in prose but did not also put in cluster[].shared_artifacts. Prose
+    is not a structured field: a dotted token becomes a domain only when it is a real registrable
+    hostname (never a file name like sellers.json / ads.txt or an app id like com.vendor.app), and
+    a URL quoted in prose (a store listing, a reference page) is never an indicator."""
+    out = []
+    for e in (assessment.get("evidence") or []):
+        s = e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
+        for m in _SELECTOR_EMAIL_RE.finditer(s):
+            out.append(("email", m.group(0).lower()))
+        for m in _SELECTOR_PHONE_RE.finditer(s):
+            out.append(("phone", m.group(0)))
+        s_stripped = _SELECTOR_URL_RE.sub(" ", _SELECTOR_EMAIL_RE.sub(" ", s))
+        for m in _SELECTOR_DOMAIN_RE.finditer(s_stripped):
+            if _registrable_domain(m.group(0)):
+                out.append(("domain", m.group(0).lower()))
+    return out
+
+
+def _cld_denylisted(cld_block):
+    """A concrete ChongLuaDao denylist LISTING (checkurl) for this host's own live_results.cld
+    block — a bare reputation label with no listing is not asserted. Mirrors the denylist test in
+    WebPivot/tools/wp_cld.verdict_of without importing across the engine boundary."""
+    if not isinstance(cld_block, dict):
+        return False
+    cu = cld_block.get("checkurl")
+    cu = cu if isinstance(cu, dict) else {}
+    result = cu.get("result") or cu.get("verdict") or (cu.get("data") or {}).get("verdict")
+    return bool(result and str(result).lower() in ("malicious", "suspicious", "phishing", "scam"))
+
+
 def build(case_dir, kb_dir, classification=None):
     case_id = os.path.basename(os.path.abspath(case_dir).rstrip("/"))
     raws = dict(_iter_raw(case_dir))
@@ -242,13 +462,28 @@ def build(case_dir, kb_dir, classification=None):
     # value (abuse@<registrar>, "REDACTED FOR PRIVACY", …) is not an identity: drop it so the
     # operator ledger or "Unattributed operator" takes over instead of a false rung-1 claim.
     is_privacy = _privacy_checker(case_dir)
+    wx_eras = _whois_eras_module(case_dir)
+    prior_selector_values = set()
+    for h, raw_h in raws.items():
+        who_h = _whois_of(case_dir, h, raw_h)
+        for kind in ("email", "phone"):
+            for item in wx_eras.prior_values(who_h, kind):
+                v = str(item.get("value") or "").strip().lower()
+                if v:
+                    prior_selector_values.add(v)
     reg = _whois_of(case_dir, seed, raws.get(seed, {})) if seed in raws else {}
     reg = {k: (None if is_privacy(v) else v) for k, v in reg.items()
-           if k in ("registrant_name", "registrant_email", "registrant_phone")}
+           if k in ("registrant_name", "registrant_email", "registrant_phone", "registrant_org")}
     reg_name = reg.get("registrant_name") or op_name or None
     reg_email = reg.get("registrant_email") or op_email or None
     reg_phone = reg.get("registrant_phone") or None
+    reg_org = reg.get("registrant_org") or None
     op_username = op_email.split("@")[0] if op_email else None
+    assessment = _load_json(os.path.join(case_dir, "assessment.json")) or {}
+    attribution_level = str(assessment.get("attribution_level") or "").lower()
+    nominee_uncertain = _nominee_uncertain(assessment.get("alternatives"))
+    default_relationship = ("operates" if (("same-operator" in attribution_level or "same-actor" in attribution_level)
+                                            and not nominee_uncertain) else "registered")
 
     exclude = set()          # §2.5 ioc_exclude
     registrars, nameservers = set(), set()
@@ -261,8 +496,36 @@ def build(case_dir, kb_dir, classification=None):
             seen_src.add(key)
             sources.append({"name": name, "url": url, "date": date})
 
+    # ---- per-host registrant match --------------------------------------------
+    # Only the registrant e-mail / phone are decisive join keys. A collected host is wired to the
+    # operator as CONFIRMED only when its OWN current record carries one of them (or the ledger
+    # lists it, or it is the seed); a host whose record names a DIFFERENT real registrant is only
+    # related_to/possible; a privacy-masked or absent record stays probable (unknown). Counts in
+    # FND-001 / the summary use the hosts that really share the identity, never every collected host.
+    def _digits(p):
+        return re.sub(r"\D", "", str(p or ""))
+
+    id_email = (reg_email or "").strip().lower()
+    id_phone = _digits(reg_phone)
+    host_match = {}          # host -> True (shares the identity) / False (different owner) / None
+    for h in hosts:
+        who_h = _whois_of(case_dir, h, raws[h])
+        e = who_h.get("registrant_email")
+        p = who_h.get("registrant_phone")
+        e = None if (not e or is_privacy(e)) else str(e).strip().lower()
+        p = None if (not p or is_privacy(p)) else _digits(p)
+        if (id_email and e == id_email) or (id_phone and p and p == id_phone):
+            host_match[h] = True
+        elif e or p:
+            host_match[h] = False
+        else:
+            host_match[h] = None
+    matched = sorted(h for h, m in host_match.items() if m)
+    ledger_domains = {d.lower() for d in (op_rec or {}).get("domains") or []}
+    n_shared = len(set(matched) | ledger_domains)
+
     # ---- operator subject (actor) --------------------------------------------
-    operator_exists = bool(reg_name or op_name or reg_email or reg_phone)
+    operator_exists = bool(reg_name or reg_org or op_name or reg_email or reg_phone)
     if operator_exists:
         selectors = []
         if reg_email:
@@ -271,16 +534,22 @@ def build(case_dir, kb_dir, classification=None):
             selectors.append({"type": "phone", "value": reg_phone})
         if op_username:
             selectors.append({"type": "username", "value": op_username})
+        is_org = bool(reg_org)
+        label = reg_org if is_org else (reg_name or op_name or reg_email or "Unattributed operator")
+        attributes = {}
+        if is_org and reg_name and reg_name.strip().lower() != reg_org.strip().lower():
+            attributes["legal_representative"] = reg_name
         subjects.append({
-            "id": "SUB-001", "label": reg_name or op_name or reg_email or "Unattributed operator",
-            "type": "person", "role": "actor",
+            "id": "SUB-001", "label": label,
+            "type": "organization" if is_org else "person", "role": "actor",
             "confidence": 95 if reg_email and reg_phone else 80, "verified": bool(reg_email),
             "aliases": [op_name] if op_name and op_name != (reg_name or "") else [],
             "first_seen": None,
             "notes": ("Assessed operator identity from the recurring current registrant triple "
-                      f"across {len(estate)} domain(s)." if reg_email else
+                      f"across {n_shared} domain(s)." if reg_email else
                       "Operator identity from the confirmed-operator ledger."),
             "selectors": selectors,
+            **({"attributes": attributes} if attributes else {}),
         })
         # curated identity indicators (one row per value — the reachable/profiling selectors)
         if reg_email:
@@ -294,15 +563,27 @@ def build(case_dir, kb_dir, classification=None):
                                "role": "actor", "confidence": 85})
 
     # ---- per-collected-host subjects + infra facts ---------------------------
-    hops, depth = _hops(case_dir)
+    anchor = expansion_anchor(case_dir)       # one leaf rule, shared with house_report (cti_case_meta)
+    hops, depth = anchor.hops, anchor.depth
+    raw_names = raw_name_index(case_dir)
     leaves = []
     sub_by_host = {}
+    # every domain host's current registration date + every CDN/stale origin the domain raws name,
+    # gathered before the loop so an IP raw is judged against the whole case, not the hosts before it
+    created_by_host = {}
+    for h in hosts:
+        exclude |= _cdn_ips_and_origins(raws[h])
+        if not _ip_version(h):
+            c = (_whois_of(case_dir, h, raws[h]).get("created") or "")[:10]
+            if c:
+                created_by_host[h] = c
     for i, h in enumerate(hosts, start=2):
         raw = raws[h]
         art = _artifacts(raw)
         who = _whois_of(case_dir, h, raw)
         sid = f"SUB-{i:03d}"
         sub_by_host[h] = sid
+        is_ip = bool(_ip_version(h))
         http = (art.get("http") or {}).get("status") or (raw.get("http") or {}).get("status")
         themes = art.get("wp_themes") or raw.get("wp_themes") or []
         created = (who.get("created") or "")[:10] or None
@@ -311,40 +592,53 @@ def build(case_dir, kb_dir, classification=None):
             registrars.add(registrar)
         for ns in who.get("name_servers") or []:
             nameservers.add(ns.lower())
-        exclude |= _cdn_ips_and_origins(raw)
-        hop = hops.get(h.lower(), 0) if hops else 0
-        leaf = bool(hops) and hop >= depth
+        names = raw_names.get(h, {h}) | {h}
+        if h == seed:                 # the case's own seed is hop 0 and never a leaf
+            hop, leaf = 0, False
+        else:
+            hop = anchor.hop(*names)
+            leaf = anchor.is_leaf(*names)
         if leaf:
             leaves.append(h)
+        # an IP carries an operator link only as a dedicated CURRENT origin; a CDN / parking /
+        # shared-hosting / platform address or a historical / previous-owner era is context only
+        ip_block = _ip_link_block(h, raw, created_by_host, exclude) if is_ip else None
+        if ip_block:
+            exclude.add(h)
         subjects.append({
-            "id": sid, "label": h, "type": "domain",
+            "id": sid, "label": h, "type": "ip" if is_ip else "domain",
             "role": "related" if leaf else "infrastructure",
-            "confidence": 95 if h == seed else (60 if leaf else 85), "verified": True, "aliases": [],
+            "confidence": 95 if h == seed else (60 if leaf or ip_block else 85), "verified": True, "aliases": [],
             "first_seen": created,
-            "notes": (f"Collected host; HTTP {http or 'n/a'}"
+            "notes": (f"Collected {'address' if is_ip else 'host'}; HTTP {http or 'n/a'}"
                       + (f"; {', '.join(themes)} kit" if themes else "")
                       + (f"; registrar {registrar}" if registrar else "")
+                      + (f"; {ip_block} — not an operator link, excluded from IOCs" if ip_block else "")
                       + (f"; hop {hop} — owner-linked to a hop-{hop - 1} host, NOT to the operator: "
                          "collected to bound the estate, excluded from IOCs" if leaf else "") + "."),
             **({"ioc_exclude": True, "hop": hop} if leaf else ({"hop": hop} if hops else {})),
         })
-        if operator_exists and not leaf:
-            # a host the confirmed-operator ledger lists is a confirmed member; a collected host the
-            # ledger does not (yet) hold is a candidate — the STIX/graph edge must say which. A hop-1
-            # host is at best probable: it is owner-linked to the estate, not part of the seed set.
-            ledger_domains = {d.lower() for d in (op_rec or {}).get("domains") or []}
-            in_ledger = (not op_rec) or h.lower() in ledger_domains or h == seed
+        if operator_exists and not leaf and not ip_block:
+            # confirmed = the seed, a ledger-listed host, or a host whose OWN current record carries
+            # the registrant e-mail/phone (and only at hop 0 — a hop-1 host is at best probable);
+            # the STIX/graph edge must say which. A different real registrant is never "operates".
+            m = host_match.get(h)
+            if h == seed or h.lower() in ledger_domains or m:
+                rel, strength = default_relationship, ("confirmed" if hop == 0 else "probable")
+            elif m is False:            # its own record names a different real registrant
+                rel, strength = "related_to", "possible"
+            else:                       # privacy-masked / no record: unknown, never confirmed
+                rel, strength = default_relationship, "probable"
             connections.append({"id": f"CON-{len(connections)+1:03d}", "from_id": "SUB-001",
-                                "to_id": sid, "relationship": "operates",
-                                "strength": "confirmed" if (in_ledger and hop == 0) else "probable"})
-        elif leaf and operator_exists:
+                                "to_id": sid, "relationship": rel, "strength": strength})
+        elif (leaf or ip_block) and operator_exists:
             connections.append({"id": f"CON-{len(connections)+1:03d}", "from_id": "SUB-001",
                                 "to_id": sid, "relationship": "related_to", "strength": "possible"})
         if created:
             timeline.append({"date": created, "event": f"{h} registered"
                              + (f" through {registrar}" if registrar else "")})
-        if not leaf:
-            indicators.append({"type": "domain", "value": h, "category": "network",
+        if not leaf and not ip_block:
+            indicators.append({"type": _ioc_type(h), "value": h, "category": "network",
                                "role": "infrastructure", "confidence": 95 if h == seed else 85})
         # provenance from the seed's own live page / rdap
         if h == seed:
@@ -367,7 +661,7 @@ def build(case_dir, kb_dir, classification=None):
         # the seed's CURRENT WHOIS carries the identity — the registrant-triple claim is earned
         add_finding("FND-001", "SUB-001", "identity", "HIGH",
                     (f"The registrant identity ({', '.join(x for x in [reg_name, reg_email, reg_phone] if x)}) "
-                     f"recurs across {len(estate)} current domain(s). The analyst assesses this "
+                     f"recurs across {len(matched)} current domain(s). The analyst assesses this "
                      "owner-controlled triple as decisive same-operator evidence."),
                     None, 95, ["attribution", "whois", "registrant-triple", "rung-1"])
     elif reg_email:
@@ -375,17 +669,22 @@ def build(case_dir, kb_dir, classification=None):
         # say so; the current WHOIS may be privacy-masked and the e-mail a contact, not a registrant
         add_finding("FND-001", "SUB-001", "identity", "HIGH",
                     (f"Operator identity {reg_name or reg_email} ({reg_email}) per the confirmed-operator "
-                     f"ledger, covering {len(estate)} domain(s). The current registrant record of the seed "
+                     f"ledger, covering {n_shared} domain(s). The current registrant record of the seed "
                      "does not itself carry this identity (privacy-masked or name-only); the basis is the "
                      "ledger entry's cited artifacts."),
                     None, 90, ["attribution", "ledger", "identity"])
     if seed in raws:
+        seed_meta = raws[seed].get("meta") or {}
+        if seed_meta.get("live_error"):
+            basis_phrase = (f"{seed} was recovered from archive" if seed_meta.get("recovered_via")
+                            else f"{seed} was not reachable at collection time")
+        else:
+            basis_phrase = (f"{seed} was collected live" +
+                            (f" (HTTP {(_artifacts(raws[seed]).get('http') or {}).get('status')})"
+                             if (_artifacts(raws[seed]).get('http') or {}).get('status') else ""))
         add_finding("FND-002", sub_by_host.get(seed, "SUB-002"), "infrastructure", "HIGH",
-                    (f"{seed} was collected live" + (
-                        f" (HTTP {(_artifacts(raws[seed]).get('http') or {}).get('status')})"
-                        if (_artifacts(raws[seed]).get('http') or {}).get('status') else "")
-                     + ". Shared CDN edges, origins, registrar and nameservers are infrastructure "
-                       "context and are not attributed to the operator."),
+                    (basis_phrase + ". Shared CDN edges, origins, registrar and nameservers are "
+                     "infrastructure context and are not attributed to the operator."),
                     raws[seed].get("meta", {}).get("final_url"), 90,
                     ["live-state", "shared-infrastructure"])
     if op_rec:
@@ -397,18 +696,27 @@ def build(case_dir, kb_dir, classification=None):
 
     # ---- §2.5 false-positive control finding + ioc_exclude -------------------
     exclude |= registrars | nameservers
+    # Shared distribution / sideload platforms are provider-level co-tenancy, not operator IOCs:
+    exclude.update(["app.mycowbay.com", "app.dataruapp.com", "mycowbay.com", "dataruapp.com", "vk.com"])
     # On a benign_check intake the operator is a legitimate party under review: their e-mail/phone/
     # handle are identity EVIDENCE for the narrative, not detection indicators — a STIX/CSV consumer
     # would block a real business's contact address. Keep them in the subjects, out of the IOC feed.
+    # (Their NAME is never listed: ioc_exclude is the infra-noise list, and a name is no IOC value.)
     scope = _load_json(os.path.join(case_dir, "scope.json")) or {}
     if (scope.get("target_class") or "") == "benign_check":
-        exclude |= {v for v in (reg_email, reg_phone, op_username, reg_name, op_name) if v}
+        exclude |= {v for v in (reg_email, reg_phone, op_username) if v}
+    # the attributed operator's own label is never infrastructure noise, however it was collected
+    # (a registrar/NS string that equals it, a ledger label)
+    operator_labels = {str(v).strip().lower() for v in (
+        reg_name, reg_org, op_name, (op_rec or {}).get("operator"), (op_rec or {}).get("label"),
+        subjects[0]["label"] if operator_exists else None) if v}
+    exclude = {x for x in exclude if str(x).strip().lower() not in operator_labels}
     fp_bits = []
     if registrars:
         fp_bits.append("registrar " + "/".join(sorted(registrars)))
     if nameservers:
         fp_bits.append(f"{len(nameservers)} shared nameserver(s)")
-    ip_excl = sorted(x for x in exclude if re.match(r"^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-f:]+:[0-9a-f:]*$", x))
+    ip_excl = sorted(x for x in exclude if _ip_version(x))
     if ip_excl:
         fp_bits.append("shared/CDN origins " + ", ".join(ip_excl))
     if fp_bits:
@@ -435,15 +743,60 @@ def build(case_dir, kb_dir, classification=None):
                     None, 93, ["campaign", "doorway", "seo-spam"])
         for d in confirmed:
             if d not in {i["value"] for i in indicators}:
-                indicators.append({"type": "domain", "value": d.lower(),
+                indicators.append({"type": _ioc_type(d), "value": d.lower(),
                                    "category": "network", "role": "infrastructure", "confidence": 80})
 
     # estate domains as network indicators (deduped)
     known = {i["value"] for i in indicators}
     for d in estate_only:
         if d not in known:
-            indicators.append({"type": "domain", "value": d, "category": "network",
+            indicators.append({"type": _ioc_type(d), "value": d, "category": "network",
                                "role": "infrastructure", "confidence": 75})
+
+    # ---- assessment-asserted operator selectors + CLD denylist rows (still §2.5-gated: a value
+    # that is a PREVIOUS registration era's registrant, a registrar/privacy contact, or listed in
+    # the analyst's own report_exclude.json is never the operator's, however it was named) -------
+    excluded_selectors = _report_exclude(case_dir)
+    known = {str(i["value"]).lower() for i in indicators}
+
+    def _selector_ok(kind, value):
+        vl = value.strip().lower()
+        if not vl or vl in excluded_selectors or vl in prior_selector_values:
+            return False
+        if kind in ("email", "phone") and is_privacy(value):
+            return False
+        if kind in ("ipv4", "ipv6") and vl in exclude:      # a shared / historical address
+            return False
+        return True
+
+    for kind, value in _cluster_selectors(assessment) + _evidence_selectors(assessment):
+        if not _selector_ok(kind, value):
+            continue
+        vl = value.strip().lower()
+        if vl in known:
+            continue
+        known.add(vl)
+        is_dist = any(vl == s or vl.endswith("." + s) for s in ("mycowbay.com", "dataruapp.com"))
+        role = "distribution" if is_dist else "actor"
+        indicators.append({"type": kind, "value": value.strip(),
+                           "category": "identity" if kind in ("email", "phone") else "network",
+                           "role": role, "confidence": 60 if is_dist else 80})
+
+    for h, raw_h in raws.items():
+        for piv in raw_h.get("pivots") or []:
+            if not isinstance(piv, dict):
+                continue
+            if not _cld_denylisted((piv.get("live_results") or {}).get("cld")):
+                continue
+            url = (raw_h.get("meta") or {}).get("final_url") or f"https://{h}/"
+            if not _selector_ok("url", url):
+                continue
+            vl = url.strip().lower()
+            if vl in known:
+                continue
+            known.add(vl)
+            indicators.append({"type": "url", "value": url, "category": "network",
+                               "role": "infrastructure", "confidence": 90})
 
     # ---- gaps + recommendations + summary -----------------------------------
     gaps = []
@@ -472,18 +825,66 @@ def build(case_dir, kb_dir, classification=None):
         "Monitor certificate-transparency, DNS and HTTP liveness across the attributed estate.",
         "Keep shared hosting / registrar / nameserver artifacts out of the operator ledger.",
     ]
-    exec_sum = _bluf(case_dir) or (
-        f"{seed} is attributed to {reg_name or op_name or 'a single operator'} with "
-        f"{len(estate)} domain(s) sharing the registrant identity. Shared infrastructure signals "
-        "were excluded from operator-level clustering per §2.5.")
+    if operator_exists:
+        fallback_sum = (
+            f"{seed} is attributed to {reg_name or op_name or 'a single operator'} with "
+            f"{n_shared} domain(s) sharing the registrant identity. Shared infrastructure signals "
+            "were excluded from operator-level clustering per §2.5.")
+    else:
+        # No registrant name/org/e-mail/phone and no ledger row: there is no operator to name, so the
+        # default must not claim one (an empty or all-failed case used to read "attributed to a single
+        # operator with 0 domain(s)").
+        unreachable = sum(1 for h in hosts
+                          if (raws[h].get("meta") or {}).get("live_error")
+                          and not (raws[h].get("meta") or {}).get("recovered_via"))
+        fallback_sum = (
+            f"No operator identity was recovered for {seed}: {len(hosts)} host(s) collected"
+            + (f", {unreachable} unreachable at collection time" if unreachable else "")
+            + ". No single-operator attribution is made; shared-infrastructure signals were "
+            "excluded per §2.5.")
+    exec_sum = _bluf(case_dir) or fallback_sum
 
     # third-party masking for the shareable bundle — prose fields only; indicator VALUES are the
     # operator's own IOCs (already gated by ioc_exclude) and are never rewritten.
-    from cti_third_party_mask import mask_third_parties, load_case_mask
-    keep = {v for v in (reg_email, reg_phone) if v}
+    from cti_third_party_mask import mask_third_parties, load_case_mask, load_case_keep
+    keep = ({v for v in (reg_email, reg_phone) if v}
+            | {str(v).strip().lower() for v in load_case_keep(case_dir) if v})
     extra = load_case_mask(case_dir)
     _mask = lambda s: mask_third_parties(s, keep=keep, hosts=set(estate) | {seed}, extra=extra, current_case=case_id)  # noqa: E731
     exec_sum = _mask(exec_sum)
+
+    def _enrichment_selector(key):
+        return key.split(":", 1)[1] if ":" in key else key
+
+    def _enrichment_dropped(key):
+        sel = _enrichment_selector(key).strip().lower()
+        return bool(sel) and (sel in prior_selector_values or is_privacy(sel))
+
+    enrichment = [{**row, "key": _mask(row["key"]), "summary": _mask(row["summary"])}
+                  for row in _enrichment(case_dir) if not _enrichment_dropped(row["key"])]
+    incomplete = [{"key": row["key"], "reason": row["outcome"]}
+                  for row in enrichment if row["outcome"] in ("held", "unavailable", "retry", "empty")]
+    state = _load_json(os.path.join(case_dir, "state.json")) or {}
+    done = state.get("enrichment_done") if isinstance(state, dict) else {}
+    if isinstance(done, list):            # legacy flat-list form (case_state._done_map parity)
+        done = {k: "ran" for k in done}
+    for key, reason in (done if isinstance(done, dict) else {}).items():
+        if reason in ("empty", "unavailable", "skipped") and not any(
+                row["key"] == _mask(key) for row in enrichment):
+            incomplete.append({"key": _mask(key), "reason": reason})
+    if incomplete:
+        gaps.append(f"{len(incomplete)} enrichment lead(s) held, unavailable, retryable, or "
+                    "without a finding (see enrichment_gaps; not a negative verdict).")
+
+    # ---- certificate transparency + pivot hits (shared contract: wp_related) ----------------
+    ct_history, related_hosts, _wr = _ct_and_related(raws.values())
+    if _wr:
+        gaps += _wr.ct_gap_lines(ct_history)
+    if related_hosts:
+        promoted = sum(1 for r in related_hosts if len(r["passed"]) >= 2)
+        gaps.append(f"{len(related_hosts)} related host(s) share a certificate, favicon or tracking ID "
+                    f"with the estate (see related_hosts): {promoted} reach two agreeing origin checks. "
+                    "None is the estate's hosting or a takedown recipient.")
 
     report = {
         "generator": GENERATOR,
@@ -503,6 +904,10 @@ def build(case_dir, kb_dir, classification=None):
         "timeline": sorted(timeline, key=lambda e: e["date"]),
         "sources": sources,
         "intelligence_gaps": gaps,
+        "enrichment": enrichment,
+        "enrichment_gaps": incomplete,
+        "ct_history": ct_history,
+        "related_hosts": related_hosts,
         "recommendations": recs,
         "indicators": indicators,
         "ioc_exclude": sorted(exclude),

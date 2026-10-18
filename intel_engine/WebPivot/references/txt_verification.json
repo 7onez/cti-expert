@@ -1,0 +1,33 @@
+{
+  "_comment": "APEX TXT VERIFICATION TOKENS (wp_recon.classify_txt_verifications). A site/mail verification value in a domain's TXT record (e.g. '<provider>-verification=<uuid>') is issued per customer account, so two domains carrying the same token are owner-link candidates (rung class txt.verification). Some providers instead publish ONE constant value for every customer — emitting that would cluster every tenant. So a token becomes an owner edge only after the provider's OWN zone was resolved and the token is absent there; a token present in the provider zone is a provider-wide constant and is never emitted; a token whose provider zone is unknown or unresolvable is ingested as a lead fact, not an edge. Add a provider to provider_zones when you see its verification record format.",
+  "token_shapes": {
+    "_comment": "Case-insensitive regexes for the token VALUE inside a TXT record: UUID-shaped and long hex (32+ chars). Anything else (base64 site-verification strings, SPF mechanisms) is out of scope here — page-level verification meta tags are handled by wp_extract.VERIFICATION_META.",
+    "values": [
+      "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
+      "\\b[0-9a-f]{32,}\\b"
+    ]
+  },
+  "provider_zones": {
+    "_comment": "Provider DENYLIST + zone map: provider keyword (matched as a whole segment of the TXT record's label before '=', or via an MX host under the zone) -> the provider's own zone whose TXT records are checked. A token that also appears in this zone is a provider-wide constant, never an owner link.",
+    "entries": {
+      "spacemail": "spacemail.com",
+      "spaceship": "spaceship.com",
+      "zoho": "zoho.com",
+      "protonmail": "protonmail.ch",
+      "titan": "titan.email",
+      "mailru": "mail.ru",
+      "yandex": "yandex.ru"
+    }
+  },
+  "ignored_prefixes": {
+    "_comment": "TXT record prefixes that are mail-policy records, never verification tokens (lowercase, matched at the start of the record).",
+    "values": [
+      "v=spf1",
+      "v=dmarc1",
+      "v=dkim1",
+      "v=bimi1",
+      "v=stsv1",
+      "v=tlsrptv1"
+    ]
+  }
+}

@@ -54,7 +54,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bp_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 import bp_anyrun  # noqa: E402 — ANY.RUN TI Lookup: query builder (keyless) + live lookups (--anyrun)
 # Per-call ceiling for helper binaries (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
-# 1800s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
+# 5000s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))), "WebPivot", "tools"))
@@ -62,10 +62,10 @@ try:
 except Exception:  # noqa: BLE001
     def _floor(t):
         try:
-            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 1800)
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
         except ValueError:
-            c = 1800
-        c = c if c > 0 else 1800
+            c = 5000
+        c = c if c > 0 else 5000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 # ---------------------------------------------------------------- reference data (RULE 3)
@@ -84,11 +84,19 @@ _BP_FALLBACK = {
                              "InstallShield": ["InstallShield"]},
     "android_protectors": {"Bangcle / SecNeo": [r"libsecexe\.so$", r"libsecmain\.so$"],
                            "Qihoo 360 Jiagu": [r"libjiagu.*\.so$"]},
+    "android_user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "apple_signing_identity_prefixes": ["Developer ID Application"],
 }
 _BP_REF = bp_refs.load_ref(bp_refs.ref_path(__file__, "binary_indicators.json"), _BP_FALLBACK)
 
-DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+ANDROID_UA = _BP_REF["android_user_agent"]
+DESKTOP_UA = _BP_REF["desktop_user_agent"]
+APPLE_IDENTITY_PREFIXES = [str(p) for p in _BP_REF["apple_signing_identity_prefixes"] if p]
+APPLE_TEAM_RUNG_CLASS = "app.apple_team"   # tools/kb/references/rungs.json -> owner
+DEFAULT_UA = ANDROID_UA
 MAX_DOWNLOAD = 400 * 1024 * 1024      # 400 MB cap — scam APKs/installers are well under this
 STRINGS_MIN = 5
 
@@ -123,16 +131,20 @@ def have(tool):
 
 
 # ----------------------------------------------------------------------------- download
-def acquire(target, keep_dir=None, timeout=60):
+def acquire(target, keep_dir=None, timeout=60, ua=None):
     """Return (raw_bytes, meta). `target` is a local path or an http(s) URL."""
     meta = {"source": target}
     if re.match(r"^https?://", target, re.I):
-        raw, dl_meta = _download(target, timeout)
+        raw, dl_meta = _download(target, timeout, ua or DEFAULT_UA)
         meta.update(dl_meta)
-        if keep_dir and raw:
+        if keep_dir and raw and not meta.get("truncated"):
             os.makedirs(keep_dir, exist_ok=True)
-            name = os.path.basename(urlparse(dl_meta.get("final_url", target)).path) or "artifact.bin"
-            dest = os.path.join(keep_dir, name)
+            name = os.path.basename(urlparse(dl_meta.get("final_url", target)).path)
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in (".apk", ".aab", ".exe", ".msi", ".dmg", ".pkg", ".jar",
+                           ".zip", ".deb", ".rpm", ".appimage"):
+                ext = ".bin"
+            dest = os.path.join(keep_dir, hashlib.sha256(raw).hexdigest() + ext)
             with open(dest, "wb") as f:
                 f.write(raw)
             meta["saved_to"] = dest
@@ -145,9 +157,9 @@ def acquire(target, keep_dir=None, timeout=60):
     return raw, meta
 
 
-def _download(url, timeout):
+def _download(url, timeout, user_agent):
     meta = {"host": urlparse(url).netloc.split("@")[-1].split(":")[0]}
-    headers = {"User-Agent": DEFAULT_UA, "Accept": "*/*"}
+    headers = {"User-Agent": user_agent, "Accept": "*/*"}
     try:
         import requests
         with requests.get(url, headers=headers, stream=True, timeout=timeout,
@@ -213,6 +225,16 @@ def detect_type(raw, meta):
         kind = "pdf"
     elif raw[:2] == b"\x1f\x8b":
         kind = "gzip"
+    elif raw[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        kind = "msi"         # OLE/CFB installer; some ordinary documents share the container
+    elif raw[:8] == b"!<arch>\n":
+        kind = "deb"
+    elif raw[:4] == b"\xed\xab\xee\xdb":
+        kind = "rpm"
+    elif raw[:4] == b"xar!":
+        kind = "pkg"
+    elif len(raw) >= 512 and raw[-512:-508] == b"koly":
+        kind = "dmg"
     if kind == "zip":
         try:
             names = set(zipfile.ZipFile(_bio(raw)).namelist())
@@ -827,6 +849,32 @@ def _macho_encrypted(raw):
     return False
 
 
+def apple_team_ids(raw):
+    """Apple developer TEAM IDs from the code-signing identities embedded in a Mach-O signature.
+
+    The signing certificate's CN sits in the signature blob as plain bytes, shaped
+    '<prefix>: <Name> (<TEAMID>)' (prefixes: references/binary_indicators.json ->
+    apple_signing_identity_prefixes). Returns [{"team_id", "identity", "rung_class"}] deduped by
+    team id in first-seen order; [] when none (unsigned, ad-hoc, or Apple platform-signed)."""
+    if not raw or not APPLE_IDENTITY_PREFIXES:
+        return []
+    alt = b"|".join(re.escape(p.encode("ascii", "ignore")) for p in APPLE_IDENTITY_PREFIXES)
+    pat = re.compile(rb"(?:" + alt + rb"): ([^\x00-\x1f()]{1,128}?) \(([A-Z0-9]{10})\)")
+    out, seen = [], set()
+    try:
+        for m in pat.finditer(raw):
+            team = m.group(2).decode("ascii")
+            if team in seen:
+                continue
+            seen.add(team)
+            out.append({"team_id": team,
+                        "identity": m.group(0).decode("utf-8", "replace"),
+                        "rung_class": APPLE_TEAM_RUNG_CLASS})
+    except Exception:  # noqa: BLE001 — a malformed blob yields nothing, never an exception
+        return out
+    return out
+
+
 def _protect_zip(raw, kind, det, ent, flag):
     try:
         zf = zipfile.ZipFile(_bio(raw))
@@ -1080,6 +1128,19 @@ def build_pivots(kind, hashes, art, iocs, meta):
             ], f"{label} support/recruitment handle baked into the app — a human pivot; often reused "
                "verbatim across an operator's whole portfolio.")
 
+    # --- Apple developer team id (Mach-O signing identity — the developer-account pivot) ---
+    for t in art.get("apple_team") or []:
+        tid = t.get("team_id")
+        if not tid:
+            continue
+        P("app:apple_team", tid, "high", [
+            {"service": "VirusTotal", "query": f'signature:"{tid}"'},
+            {"service": "Google", "query": f'"({tid})" "Developer ID"'},
+        ], f"Apple developer team ID from the code-signing identity ({t.get('identity', '?')}). "
+           f"Every binary the account signs carries it — an owner-rung link "
+           f"(rung class {APPLE_TEAM_RUNG_CLASS}) across the operator's macOS/iOS builds.")
+        pivots[-1]["rung_class"] = APPLE_TEAM_RUNG_CLASS
+
     # --- packing / obfuscation triage ---
     prot = art.get("protection") or {}
     if prot.get("packed") or prot.get("obfuscated") or prot.get("installer"):
@@ -1148,12 +1209,13 @@ def to_trackers(art, iocs):
                   if d["type"] in ("packer", "protector", "installer")
                   and not d["name"].lower().startswith(("high-entropy", "encrypted ", "mach-o "))]
     put("app_protector", protectors)
+    put("apple_team", [t.get("team_id") for t in art.get("apple_team") or []])
     return tr
 
 
 # ----------------------------------------------------------------------------- main analyze
-def analyze(target, keep_dir=None, timeout=60, anyrun=False):
-    raw, meta = acquire(target, keep_dir=keep_dir, timeout=timeout)
+def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None):
+    raw, meta = acquire(target, keep_dir=keep_dir, timeout=timeout, ua=ua)
     if not raw:
         return {"meta": meta, "artifacts": {}, "pivots": [],
                 "error": meta.get("download_error", "no bytes acquired")}
@@ -1178,6 +1240,10 @@ def analyze(target, keep_dir=None, timeout=60, anyrun=False):
     else:
         if kind == "pe":
             art["pe"] = pe_metadata(raw)
+        if kind == "macho":
+            teams = apple_team_ids(raw)
+            if teams:
+                art["apple_team"] = teams
         iocs = _merge_iocs(iocs, scan_iocs(strings_of(raw), label=kind))
 
     try:
@@ -1287,6 +1353,8 @@ def main():
     ap.add_argument("--keep", metavar="DIR", help="save the downloaded artifact into DIR")
     ap.add_argument("--case", help="case name (recorded in meta only)")
     ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument("--ua", choices=("android", "desktop"),
+                    help="user agent for URL downloads (default: Android; case installer pivots select desktop)")
     ap.add_argument("--anyrun", action="store_true",
                     help="RUN ANY.RUN Threat Intelligence Lookup live on this artifact's hashes "
                          "and endpoints — the domains/IPs samples like it actually contacted when "
@@ -1299,7 +1367,8 @@ def main():
 
     for _line in bp_anyrun.banner_lines():
         sys.stderr.write(_line + "\n")
-    result = analyze(args.target, keep_dir=args.keep, timeout=args.timeout, anyrun=args.anyrun)
+    result = analyze(args.target, keep_dir=args.keep, timeout=args.timeout, anyrun=args.anyrun,
+                     ua={"android": ANDROID_UA, "desktop": DESKTOP_UA}.get(args.ua))
     if args.case:
         result["meta"]["case"] = args.case
 

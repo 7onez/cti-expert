@@ -234,7 +234,7 @@
     "tags": 12
   },
   "parking_host_substrings": {
-    "_comment": "Host substrings marking parking / sinkhole / marketplace infra (not operator infra). Matched as a plain substring — keep entries distinctive enough not to hit real domains.",
+    "_comment": "Hosts marking parking / sinkhole / marketplace infra (not operator infra). Matched on DNS-label boundaries (noise_filters._listed): a dotted entry matches that exact domain or its subdomains (dan.com, ns1.dan.com — never jordan.com); a bare word matches only a whole dot/dash-delimited label (ns1.parkingcrew.net — never myparkingcrewshop.com).",
     "values": [
       "sedoparking.com",
       "sedo.com",
@@ -255,7 +255,7 @@
     ]
   },
   "role_email_localparts": {
-    "_comment": "Email local-parts that mark a registrar/registry ROLE mailbox rather than a registrant. Matched exactly, plus any local-part starting with 'abuse' and any address whose domain's FIRST LABEL is 'abuse' (abuse.<registrar>.com). Keep these role words exact — 'legal' as a substring would eat a legitimate registrant such as legalservices@…",
+    "_comment": "Email local-parts that mark a registrar/registry ROLE mailbox rather than a registrant. Matched exactly, plus any local-part starting with 'abuse' — but ONLY when the mail domain is a registrar / registry / privacy-proxy domain (registrar_email_domains, privacy_email_tokens, or a registry_email_labels label such as nic.<tld>). On the operator's own domain legal@ or abuse@ is the operator's mailbox and a real registrant lead. Any address whose domain's FIRST LABEL is 'abuse' (abuse.<registrar>.com) is noise whatever the local-part. Keep these role words exact — 'legal' as a substring would eat a legitimate registrant such as legalservices@…",
     "values": [
       "abuse",
       "registry-abuse",
@@ -313,11 +313,31 @@
       "pavietnam.vn",
       "nhanhoa.com",
       "matbao.com",
-      "zdns.vn"
+      "zdns.vn",
+      "sakura.ad.jp"
+    ]
+  },
+  "registrar_role_localparts": {
+    "_comment": "Email LOCAL-PARTS that are a registrar / ISP NIC-staff role mailbox WHEREVER the domain is (nic-staff@<registrar>.ad.jp style): the registrar stamps its own staff box into the registrant slot of every customer's record, so it is never the registrant and never a reverse-WHOIS term. Matched EXACTLY (lowercased) — unlike role_email_localparts these need no registrar-domain gate, so keep them to forms no operator uses for their own mailbox.",
+    "values": [
+      "nic-staff",
+      "nicstaff",
+      "nic-admin",
+      "nic-tech",
+      "jpnic-admin"
+    ]
+  },
+  "whois_notice_phrases": {
+    "_comment": "Literal WHOIS/RDDS NOTICE text a registry prints in place of a redacted contact ('Please query the RDDS service of the Registrar of Record identified in this output for information on how to contact the Registrant…'). Parsers land it in the registrant email/name/phone slot, where it would become a registrant term shared by every redacted domain. Case-insensitive substring of the whitespace-collapsed value; consumed by noise_filters.is_whois_notice / is_noise_email / is_noise_phone.",
+    "values": [
+      "please query the rdds service",
+      "rdds service of the registrar of record",
+      "registrar of record identified in this output",
+      "for information on how to contact the registrant"
     ]
   },
   "privacy_email_tokens": {
-    "_comment": "Substrings marking a WHOIS privacy-proxy email domain, whatever the provider — catches the long tail without enumerating every proxy. Also reused to detect a privacy-proxy registrant ORG string. Keep conservative so real consumer mail domains pass.",
+    "_comment": "Words marking a WHOIS privacy-proxy email domain (or registrant ORG string), whatever the provider — catches the long tail without enumerating every proxy. NEVER matched as raw substrings (that ate protectorsgroup.example and whoisthat.example): a token matches a whole DNS label, a run of hyphen-delimited segments (domain-contact), or a piece of a label that splits ENTIRELY into tokens plus privacy_label_fillers (withheldforprivacy, domainsbyproxy, whoissecure). Keep conservative so real consumer mail domains pass.",
     "values": [
       "privacy",
       "protect",
@@ -336,6 +356,52 @@
       "contactprivacy",
       "domainsbyproxy",
       "secureserver"
+    ]
+  },
+  "privacy_label_fillers": {
+    "_comment": "Connective words and inflections allowed to sit BESIDE a privacy_email_tokens word inside one label or org word (withheld|for|privacy, domains|by|proxy, whois|secure, protect|ed). A label made only of fillers is never privacy; a label with any leftover non-vocabulary text (protect|ors|group) is not privacy either. Adding a generic word here widens the privacy net — keep it to words that only ever glue privacy terms together.",
+    "values": [
+      "for",
+      "by",
+      "my",
+      "the",
+      "domain",
+      "domains",
+      "contact",
+      "service",
+      "services",
+      "secure",
+      "guard",
+      "guardian",
+      "data",
+      "identity",
+      "masked",
+      "masking",
+      "ed",
+      "ion",
+      "ing",
+      "ize",
+      "corp",
+      "group",
+      "inc",
+      "llc",
+      "ltd",
+      "perfect",
+      "super",
+      "private",
+      "registration",
+      "link",
+      "name",
+      "dns",
+      "agent"
+    ]
+  },
+  "registry_email_labels": {
+    "_comment": "Whole DNS labels / hyphen segments marking a registry or registrar mail domain (abuse@nic.<tld>, hostmaster@registry.<tld>). They only gate role_email_localparts: a role mailbox there is the provider's, while the same role mailbox on any other domain belongs to that domain's owner.",
+    "values": [
+      "nic",
+      "registry",
+      "registrar"
     ]
   },
   "privacy_proxy_phones": {
@@ -376,6 +442,8 @@
       "googletagmanager.com",
       "google-analytics.com",
       "googleusercontent.com",
+      "discordapp.com",
+      "mediafire.com",
       "goog.gl",
       "storage.googleapis.com",
       "doubleclick.net",
@@ -405,6 +473,8 @@
       "instagram.com",
       "twitter.com",
       "x.com",
+      "linkedin.com",
+      "tiktok.com",
       "t.co",
       "linktr.ee",
       "bit.ly",
@@ -962,6 +1032,28 @@
       "zalo.me",
       "line.me",
       "skype.com"
+    ]
+  },
+  "social_platform_ip_ranges": {
+    "_comment": "Published address ranges of the never-seed social platforms (Meta AS32934, X/Twitter AS13414, LinkedIn AS14413). An IP inside one is the platform's own edge: its reverse-IP co-tenants are every site that embeds the platform, so they are NEVER seeded (case_state co-tenancy guard) and a page-scraped IP here is not a co-tenant lead (quarry_bridge). CIDR strings; refresh from the operators' published prefixes. Fallback in code is empty (no extra blocking).",
+    "values": [
+      "31.13.24.0/21",
+      "31.13.64.0/18",
+      "66.220.144.0/20",
+      "69.63.176.0/20",
+      "69.171.224.0/19",
+      "129.134.0.0/16",
+      "157.240.0.0/16",
+      "173.252.64.0/18",
+      "179.60.192.0/22",
+      "185.60.216.0/22",
+      "204.15.20.0/22",
+      "104.244.40.0/21",
+      "192.133.76.0/22",
+      "199.16.156.0/22",
+      "199.59.148.0/22",
+      "108.174.0.0/20",
+      "185.63.144.0/22"
     ]
   }
 }

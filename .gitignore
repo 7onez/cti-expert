@@ -48,9 +48,11 @@ scripts/proxy/.proxy-health
 # CASE-YYYYMMDD-NN-seeds.txt, .json, .csv, .md) are case data and slip past /cases/. Ignore them.
 /intel_engine/CASE-*
 /intel_engine/MEMORY/
+# sellers.json cache (wp_sellers, ~110 MB public Google download) — runtime data, never commit
+/intel_engine/cache/
 /intel_engine/knowledge/entities/
 /intel_engine/knowledge/evidence/
-/intel_engine/knowledge/relationships/edges.jsonl
+/intel_engine/knowledge/relationships/
 /intel_engine/knowledge/*.jsonl
 # The IntelAnalysis output contract writes assessments to knowledge/reports/<case>/ — that path
 # holds finished case data (domains, IPs, registrants, wallets) and was NOT ignored, so a run
@@ -64,6 +66,7 @@ scripts/proxy/.proxy-health
 /knowledge/
 /cases/
 .subfinder-provider-config.yaml
+.spamhaus-token.json
 
 # Runtime report drops (real case PDFs/DOCX) — private, never tracked (RULE 2 / synthetic-only).
 .orca/

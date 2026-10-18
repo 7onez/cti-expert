@@ -1,0 +1,148 @@
+{
+  "_comment": "Cross-type auto-pivot ROUTE MAP for the SDK harness proposer (tools/selector_types.py). Each route names a collector query surface and the selector TYPES it accepts. auto_max_hits is the ceiling below which a free or urlscan (quota-backed) pivot may run without per-round approval; metered routes and unknown/oversized hit counts always need approval. filename_exts is the extension list the classifier uses to refuse seeding a file as a host (invoice.zip must never cost a WHOIS). Edit routes here when a new corpus field is wired — never hardcode a type→tool map in Python. RULE 1: no case data.",
+
+  "auto_max_hits": {
+    "_comment": "Free or quota-backed (urlscan Pro) pivots whose count_probe returns a hit count at or below this number run automatically. Above it, or when the count is unknown (null), the pivot goes into the digest-bound proposal.json for one approval per round. Lower to be stricter; raise only when the corpus is known-cheap. Fallback in code is 0 (everything needs approval).",
+    "max": 25
+  },
+
+  "max_typed_hops": {
+    "_comment": "Expansion bound for the cross-type node registry (state.json `nodes`): a typed node at or beyond this hop from the seeds is recorded but never pivoted again, so a chain email → domain → wallet → domain → filename → domain still converges. Each hop is one corpus pivot. Fallback in code is 2.",
+    "max": 6
+  },
+
+  "page_selector_cap": {
+    "_comment": "Per-type ceiling on kit/neighbour typed pivots (page-scraped phones/emails, kit tokens, co-tenant selectors) that case_state.propose() sizes with a count probe and offers in one round. Candidates are ranked first, so the best-corroborated survive; anything over the cap is never probed (no vendor count call) and never offered. Owner-rung pivots (registrant WHOIS contacts, analytics IDs, operator wallets) are never capped by this rule. Exists because a phone-directory page yields thousands of strangers' numbers. Fallback in code is 25.",
+    "max": 25
+  },
+
+  "propose_type_exclude": {
+    "_comment": "Route → selector types case_state.propose() must never OFFER on that route (a manual corpus-search may still run it). anyrun.lookup on an IP returns sandbox detonations that merely contacted the address — no ownership yield. Fallback in code: {anyrun.lookup: [ip]}.",
+    "entries": {
+      "anyrun.lookup": ["ip"]
+    }
+  },
+
+  "filename_exts": {
+    "_comment": "Final-extension tokens that mark a bare token as a FILENAME rather than a domain. Checked BEFORE the bare-domain regex so invoice.zip / setup.app / clip.mov never parse as PSL apexes and never get charged for WHOIS. A collector hint='domain' or an analyst 'domain:' prefix still forces domain. Add an extension here when a real TLD-collision seeds a host by mistake.",
+    "values": [
+      "zip", "apk", "exe", "msi", "dmg", "js", "php", "pdf",
+      "app", "mov", "rar", "7z", "jar", "html"
+    ]
+  },
+
+  "routes": {
+    "_comment": "Collector route key → {types, metered, count_probe, field?, mention_only?}. `types` is the selector kinds this route accepts. `metered` true means the call spends third-party credits and ALWAYS needs approval (even under auto_max_hits). `count_probe` names how hit-count is obtained before dispatch: size1 (urlscan size=1 probe), total (wayback collection total), preview (rwhois free preview count), none (unknown → forces approval). `field` is the corpus field the query targets. `mention_only` true means hits are stored as facts only, never edges/clusters/operator_leads.",
+
+    "urlscan.title": {
+      "types": ["string"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "page.title"
+    },
+    "urlscan.text_content": {
+      "types": ["string", "wallet", "phone"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "text.content"
+    },
+    "urlscan.filename": {
+      "types": ["filename"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "filename"
+    },
+    "urlscan.files": {
+      "types": ["filename"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "files.filename"
+    },
+    "urlscan.hash": {
+      "types": ["hash"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "hash"
+    },
+    "urlscan.identifier": {
+      "types": ["string", "wallet", "telegram"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "content.identifiers"
+    },
+    "urlscan.links": {
+      "types": ["domain"],
+      "metered": false,
+      "count_probe": "size1",
+      "field": "links.domains"
+    },
+    "wayback.telegram": {
+      "types": ["string", "wallet", "phone", "telegram"],
+      "metered": false,
+      "count_probe": "total"
+    },
+    "wayback.pdf": {
+      "types": ["string", "filename"],
+      "metered": false,
+      "count_probe": "total"
+    },
+    "wayback.news": {
+      "types": ["string", "domain"],
+      "metered": false,
+      "count_probe": "total",
+      "mention_only": true
+    },
+    "fofa.body": {
+      "types": ["string", "filename"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "publicwww.source": {
+      "types": ["string", "filename"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "webamon.corpus": {
+      "types": ["string", "hash", "filename"],
+      "metered": false,
+      "count_probe": "none"
+    },
+    "email.deep": {
+      "types": ["email"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "phone.osint": {
+      "types": ["phone"],
+      "metered": false,
+      "count_probe": "none"
+    },
+    "rwhois.purchase": {
+      "types": ["email", "phone"],
+      "metered": true,
+      "count_probe": "preview"
+    },
+    "crypto.counterparties": {
+      "types": ["wallet"],
+      "metered": false,
+      "count_probe": "none"
+    },
+    "anyrun.lookup": {
+      "types": ["hash", "domain", "ip"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "binary.analyze": {
+      "types": ["hash"],
+      "metered": false,
+      "count_probe": "none"
+    },
+    "enrich.host": {
+      "_comment": "FULL keyed enrichment of a host the loop already collected free-only (pivot_extract's enrich_live engines + the default reverse-WHOIS purchase). Loop-driven collects always run --free-only; this metered item is how a host gets the keyed layers — only after the analyst approves it. collected_only: proposed for collected hosts, never for KB-linked peers.",
+      "types": ["domain"],
+      "metered": true,
+      "count_probe": "none",
+      "collected_only": true
+    }
+  }
+}

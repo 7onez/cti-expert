@@ -10,6 +10,11 @@ count per billable action (1 = one query/request; urlscan_search records 1 per p
 the provider DOES expose quota (urlscan's `X-Rate-Limit-Remaining` header), we capture `remaining`
 so you see the authoritative balance. This is a usage LOG, not an invoice — treat credits as units.
 
+Cost classes: every row is classed free | quota | metered from WebPivot/references/
+api_cost_classes.json (RULE 3 — data, not code) and `report` prints one subtotal per class, so a
+free reverse-WHOIS preview or a keyless lookup is never read as a purchase. The overall total is
+labelled "estimated units" for the same reason.
+
 CLI:
   python3 api_usage.py report [--log PATH] [--case ID] [--since YYYY-MM-DD] [--last N]
 """
@@ -27,6 +32,48 @@ ROOT = os.path.dirname(os.path.dirname(HERE))          # repo root (WebPivot/too
 _ctx = {"case": None, "skill": None}
 _session = []
 _lock = threading.Lock()
+
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+try:
+    from wp_refs import load_ref as _load_ref, ref_path as _ref_path   # the shared RULE 3 loader
+except Exception:  # noqa: BLE001 — degrade, never block a report
+    _load_ref, _ref_path = None, None
+
+COST_CLASSES = ("free", "quota", "metered")
+# Conservative embedded fallback: everything unclassified is `metered` (over-states, never hides).
+_COST_FALLBACK = {
+    "rules": {"default_class": "metered", "zero_credit_is_free": True},
+    "action_classes": {"whoisxml:reverse-whois-preview": "free"},
+    "provider_classes": {},
+}
+
+
+def load_cost_classes(path=None):
+    """The cost-class reference (api_cost_classes.json), or the embedded fallback with a warning."""
+    if _load_ref is None:
+        print("[api_usage] WARNING: wp_refs unavailable; api_cost_classes.json not read — every "
+              "unlisted provider is classed metered.", file=sys.stderr)
+        return dict(_COST_FALLBACK)
+    return _load_ref(path or _ref_path(__file__, "api_cost_classes.json"), _COST_FALLBACK)
+
+
+def cost_class(rec, ref=None):
+    """Class one ledger row as 'free' | 'quota' | 'metered'. Order: provider:action override,
+    then the provider's class, then rules.default_class; a 0-credit row is free when
+    rules.zero_credit_is_free is set (keyless call or rejected request — nothing billed)."""
+    ref = ref if ref is not None else load_cost_classes()
+    rules = ref.get("rules") or {}
+    default = rules.get("default_class") if rules.get("default_class") in COST_CLASSES else "metered"
+    prov, act = rec.get("provider"), rec.get("action")
+    cls = (ref.get("action_classes") or {}).get(f"{prov}:{act}")
+    if cls not in COST_CLASSES:
+        cls = (ref.get("provider_classes") or {}).get(prov)
+    if cls not in COST_CLASSES:
+        cls = default
+    if cls != "free" and rules.get("zero_credit_is_free", True) and not (rec.get("credits") or 0):
+        cls = "free"
+    return cls
 
 
 def _log_path():
@@ -60,7 +107,12 @@ def record(provider, action, credits=1, query=None, results=None,
            "credits": (credits if ok else 0),
            "query": (str(query)[:200] if query else None), "results": results,
            "remaining": remaining, "limit": limit, "ok": ok,
-           "case": _ctx.get("case"), "skill": _ctx.get("skill")}
+           # In-process set_context() wins; otherwise fall back to the env vars the parent pipeline
+           # (tools/intel.py) exports before spawning this as a SEPARATE process (#23) — without
+           # this, every subprocess vendor client logged case=null and `api-usage --case X` found
+           # nothing for anything that wasn't the top-level collector itself.
+           "case": _ctx.get("case") or os.environ.get("INTEL_CASE"),
+           "skill": _ctx.get("skill") or os.environ.get("INTEL_SKILL")}
     with _lock:
         _session.append(rec)
         try:
@@ -109,11 +161,12 @@ def print_session_summary(file=sys.stderr):
                     if r["provider"] == prov and r.get("remaining") is not None), None)
         remtxt = f" · quota remaining≈{rem}" if rem is not None else ""
         print(f"  {prov:<10} {a['calls']:>3} call(s) · ~{a['credits']} credit(s){remtxt}", file=file)
-    print(f"  {'TOTAL':<10} ~{total} credit(s)   (ledger: {_log_path()})", file=file)
+    print(f"  {'TOTAL':<10} ~{total} estimated units   (ledger: {_log_path()})", file=file)
 
 
 # ---------------------------------------------------------------------------- CLI report
 def _report(argv):
+    ref = load_cost_classes()
     ap = argparse.ArgumentParser(description="Report licensed-API credit usage from the ledger.")
     ap.add_argument("cmd", nargs="?", default="report", choices=["report"])
     ap.add_argument("--log", default=_log_path())
@@ -144,10 +197,14 @@ def _report(argv):
     by_prov = collections.OrderedDict()
     by_day = collections.defaultdict(int)
     by_case = collections.defaultdict(int)
+    by_class = collections.OrderedDict((k, {"calls": 0, "credits": 0}) for k in COST_CLASSES)
     total = 0
     for r in rows:
         c = r.get("credits") or 0
         total += c
+        k = by_class[cost_class(r, ref)]
+        k["calls"] += 1
+        k["credits"] += c
         p = by_prov.setdefault(r["provider"], {"calls": 0, "credits": 0, "actions": collections.Counter()})
         p["calls"] += 1
         p["credits"] += c
@@ -156,8 +213,12 @@ def _report(argv):
         by_case[r.get("case") or "(none)"] += c
     scope = f" (case={a.case})" if a.case else ""
     scope += f" (since {a.since})" if a.since else ""
-    print(f"# Licensed-API usage{scope} — {len(rows)} calls, ~{total} credits\n")
-    print("By provider:")
+    print(f"# Licensed-API usage{scope} — {len(rows)} calls, ~{total} estimated units "
+          "(not a bill — see the cost classes below)\n")
+    print("By cost class:")
+    for cls, k in by_class.items():
+        print(f"  {cls:<10} {k['calls']:>4} calls · ~{k['credits']:>4} units")
+    print("\nBy provider:")
     for prov, p in sorted(by_prov.items(), key=lambda kv: -kv[1]["credits"]):
         acts = ", ".join(f"{k}×{v}" for k, v in p["actions"].most_common())
         print(f"  {prov:<10} {p['calls']:>4} calls · ~{p['credits']:>4} credits   [{acts}]")
@@ -173,7 +234,7 @@ def _report(argv):
         for r in rows[-a.last:]:
             rem = f" rem={r['remaining']}" if r.get("remaining") is not None else ""
             print(f"  {r['ts']}  {r['provider']}/{r.get('action')}  ~{r.get('credits')}cr"
-                  f"  {r.get('query') or ''}{rem}  [{r.get('case') or '-'}]")
+                  f" [{cost_class(r, ref)}]  {r.get('query') or ''}{rem}  [{r.get('case') or '-'}]")
     return 0
 
 

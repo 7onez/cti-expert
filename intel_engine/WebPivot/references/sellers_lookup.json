@@ -1,0 +1,11 @@
+{
+  "_comment": "wp_sellers — AdSense publisher id -> legal payee via Google's public sellers.json (IAB Tech Lab spec). The download URL, cache location, cache TTL and fetch profile live here (RULE 3). Nothing here is case data — a public Google URL and local cache settings.",
+  "settings": {
+    "_comment": "url = Google's public ad-exchange sellers.json (~110 MB, one JSON object). cache_path is relative to the engine root (intel_engine/) unless absolute; the default cache/ dir is gitignored — never commit the file. ttl_days = re-download when the cache is older than this. timeout_seconds = socket timeout for the one download. ua is an Android Chrome string (project decision).",
+    "url": "https://storage.googleapis.com/adx-rtb-dictionaries/sellers.json",
+    "cache_path": "cache/sellers.json",
+    "ttl_days": 7,
+    "timeout_seconds": 120,
+    "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  }
+}

@@ -6,8 +6,10 @@ One uniform entry point for every engine tool cti-expert shells to when the
 optional `intel_engine` backend is present (Tier 2 CLI). It resolves
 `$INTEL_HOME` via `backend.py`, runs the right engine script **from the engine
 root** (so the engine's own relative paths — `knowledge/`, `WebPivot/tools/…` —
-resolve), injects `--kb knowledge` where the tool needs it, and forwards every
-remaining argument verbatim. When the backend is absent it prints one clear
+resolve), injects `--kb knowledge` where the tool needs it, and forwards the
+remaining arguments — any that names an existing file or directory in the
+CALLER's cwd is rewritten to its absolute path first, so `loop CASE seeds.txt`
+reads the file you meant. When the backend is absent it prints one clear
 note and exits 3 — callers never hand-build `python3 $INTEL_HOME/…` paths.
 
 This is the CLI half of the backend. At Tier 1 the same operations are the typed
@@ -97,8 +99,18 @@ DISPATCH = {
                                                                       # CLUSTER, not the case
     "loop":          ("tools/intel.py",               ["loop"]),      # collect→assess to convergence
     "frontier":      ("tools/case_state.py",          ["frontier"]),  # unresolved free/metered gaps
+    "propose":       ("tools/case_state.py",          ["propose"]),   # cross-type typed candidates
+                                                                      # (read-only JSON, no spend)
+    "corpus-search": ("tools/pivot_routes.py",        []),            # one pivot_map route → typed
+                                                                      # rows into KB + case nodes
     "reopen":        ("tools/case_state.py",          ["reopen"]),    # re-open on new seeds
     "enrichment-done": ("tools/case_state.py",         ["enrichment-done"]),  # close leak/breach/dork leads
+    "approve-cohost": ("tools/case_state.py",         ["approve-cohost"]),  # analyst OK to seed + link an
+                                                                            # origin IP's co-tenants
+    "enrich":        ("tools/intel.py",               ["enrich"]),  # run structured identity/OSINT leads
+    "cti":           ("tools/intel.py",               ["cti"]),  # recall->collect->enrich->frontier/
+                                                                  # loop->JSON summary, one call
+    "quarry":        ("tools/quarry_bridge.py",       []),   # reuse or run a Quarry scan, wait, import
     "scope":         ("harness/case_scope.py",        []),   # intake: no-touch class, victim owner
     # ── acquire / collect (WebPivot engine collectors) ──────────────────
     "pivot-extract": ("WebPivot/tools/pivot_extract.py", []),
@@ -126,6 +138,8 @@ DISPATCH = {
                                                                # timestamped, hashed evidence
     "serp":          ("WebPivot/tools/wp_serp.py",    []),     # Ads Transparency + cloaking probe
     "pssl":          ("WebPivot/tools/wp_pssl.py",    []),     # passive SSL: historic cert -> IP
+    "origin-history": ("WebPivot/tools/wp_origin_history.py", []),  # every IP a host ever had,
+                                                                     # CDN/parking-classified + dated
     "liveness":      ("WebPivot/tools/wp_liveness.py", []),    # parked/soft-404 vs genuinely dead
     "exhaust":       ("WebPivot/tools/wp_exhaust.py", []),     # which collection layers actually
                                                                # RAN vs silently never fired
@@ -148,7 +162,9 @@ DISPATCH = {
                                                                # -path patterns (pure, no network)
     "wayback-fetch": ("../scripts/webpivot/wayback_fetch.py",   []),  # nearest snapshot + RAW content
     "wayback-harvest":("../scripts/webpivot/wayback_harvest.py",[]),  # full-IOC sweep of a domain's
-                                                               # whole Wayback history
+                                                               # whole Wayback history (sampled)
+    "wayback-exhaust":("WebPivot/tools/wp_wayback_exhaust.py", []),  # download EVERY distinct capture
+                                                               # across parallel exits, resumably
 
     # ── scripts/osint/ — Phase 2 builds. Commands SKILL.md documented for months with no
     # implementation behind them; each is keyless-first and discloses what it could NOT check.
@@ -169,11 +185,13 @@ DISPATCH = {
     "docleak":       ("../scripts/osint/dork_builder.py",    []),  # emits queries, never scrapes
     "icp":           ("../scripts/osint/cn_recon.py",        []),  # ICP filing + serial pivot
     "cn-corp":       ("../scripts/osint/cn_recon.py",        []),  # PRC registry chain (gated)
+    "vn-corp":       ("WebPivot/tools/wp_vncorp.py",          []),  # keyless VN business registry (MST / company)
     "crossref":      ("../scripts/osint/kb_crossref.py",     []),  # identifiers across CASES
     "drift":         ("../scripts/osint/case_drift.py",      []),  # what changed between runs
     "signatures":    ("../scripts/osint/signature_scan.py",  []),  # behavioural signature catalog
-    "email-deep":    ("../scripts/osint/deep_profile.py",    []),  # composition, not a collector
+    "email-deep":    ("../scripts/osint/deep_profile.py",    []),  # sends keyed lookups; --case dedups
     "breach-deep":   ("../scripts/osint/deep_profile.py",    ["--mode", "breach"]),
+    "cld":           ("../scripts/cld/cld_api.py",           []),  # Feeds + Shield, route by selector
     "wifi":          ("../scripts/osint/wifi_ssid.py",       []),  # WiGLE (keyed; discloses gap)
     "gdoc":          ("WebPivot/tools/wp_docmeta.py",        []),  # /gdoc == doc_metadata
     # Aliases surfaced by a recount: these commands only ever appear WITH arguments in
@@ -183,7 +201,8 @@ DISPATCH = {
     "techstack":     ("WebPivot/tools/pivot_extract.py",     []),  # tech_fingerprint layer
     "visitors":      ("WebPivot/tools/pivot_extract.py",     []),  # tracker / visitor-intel layer
     "saas-map":      ("WebPivot/tools/pivot_extract.py",     []),  # saas_ids.* layer
-    "cert-history":  ("WebPivot/tools/wp_pssl.py",           []),  # historic cert -> IP
+    "cert-history":  ("WebPivot/tools/wp_ct.py",             []),  # CT certificate timeline + per-source
+                                                               # status (passive SSL cert->IP = `pssl`)
     "dns-history":   ("../scripts/webpivot/wayback_ga.py",   []),  # historic records
     # ── aliases: the code already existed, only the documented NAME never resolved ──────
     "webpivot":      ("WebPivot/tools/pivot_extract.py",     []),  # /webpivot, the flagship verb
@@ -235,6 +254,8 @@ DISPATCH = {
     "report":        ("IntelReport/scripts/render_report.py",  []),
     "house-report":  ("tools/house_report.py",         []),   # case dir → editorial PDF+DOCX, deterministic
     "evidence-report": ("WebPivot/tools/evidence_report.py",   []),
+    "evidence":      ("tools/evidence_import.py",      []),   # import <case> <findings.json>: graded
+                                                               # analyst findings → evidence/imported/ + KB
     "timeline":      ("IntelGraph/scripts/case_timeline.py",   []),  # infrastructure lifecycle
     # ── disseminate (IntelShare) ─────────────────────────────────────────
     # sh_export builds the event locally and touches nothing. sh_misp `push` STAGES it on
@@ -257,17 +278,24 @@ DISPATCH = {
     "engage-report": ("Engage/tools/en_report.py",    []),   # shareable engagement write-up
     # ── eval / self-test ────────────────────────────────────────────────
     "eval":          ("tools/eval/run_eval.py",       []),
+    "sellers":       ("WebPivot/tools/wp_sellers.py", []),   # AdSense pub id -> legal payee (Google sellers.json, cached)
+    "app-developer": ("WebPivot/tools/wp_appdev.py", []),   # keyless Play / App Store developer account lookup
 }
 
 # One-line help shown by `intel.py list`.
 BLURB = {
     "pipeline": "deterministic case pipeline: open <case> domains.txt | status",
-    "harness": "LLM whole-case orchestration: open/continue/status",
+    "harness": "LLM whole-case orchestration: open/continue/status/doctor "
+               "(HARNESS_BACKEND=claude|codex|omp|openai|deepseek|kimi|local pins the backend doctor probes)",
     "clusters": "partition a case into same-operator clusters BEFORE judging",
     "loop": "collect → assess repeatedly until the case converges",
     "frontier": "unresolved gaps: free next seeds + deferred metered leads",
     "reopen": "re-open a converged case on newly discovered seeds",
     "enrichment-done": "close leak/breach/OSINT/dork leads (suppress from frontier once run)",
+    "approve-cohost": "approve a cloud/VPS origin IP's co-tenants (seeded + linked next round)",
+    "enrich": "execute case-matched identity/OSINT leads and record evidence + closure reasons",
+    "cti": "one-call driver: recall -> Quarry (when enabled) -> cross-type harness loop (default; --pipeline = open/enrich/loop) -> JSON summary",
+    "quarry": "Quarry scan bridge: sync --case ID --target DOMAIN [--quarry-scan] | status | lookup",
     "scope": "case intake: no-touch class, victim ownership, egress gate",
     "pivot-extract": "engine WebPivot collector → pivot JSON (--render/--leads)",
     "fallback": "fallback probe when a page won't render",
@@ -291,6 +319,7 @@ BLURB = {
     "screenshot": "rendered full-page PNG as timestamped, hashed evidence",
     "serp": "Ads Transparency (who PAID) + the cloaking probe",
     "pssl": "passive SSL: historic cert → IP, recovers an origin behind CDN",
+    "origin-history": "every IP a case host ever resolved to — CDN/WAF/parking dropped, origins dated (offline)",
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "exhaust": "which collection layers RAN vs silently never fired",
     "netlas": "Netlas index: reverse a NON-CDN origin IP / NS / SPF include to apexes (ip|ns|spf|domain|san|title|plan|raw; --count)",
@@ -302,9 +331,10 @@ BLURB = {
     "email-hygiene": "deterministic 0-100 + A-F email-domain hygiene grade",
     "sensitive-paths": "classify URLs against sensitive-path patterns (pure, no network)",
     "wayback-fetch": "nearest Wayback snapshot + RAW content (robots.txt-proof)",
-    "wayback-harvest": "full-IOC harvest across a domain's whole Wayback history",
+    "wayback-harvest": "full-IOC harvest across a domain's whole Wayback history (time sample)",
+    "wayback-exhaust": "download EVERY distinct capture across parallel exits, resumably (hours)",
     "hash-id": "identify a hash's algorithm BEFORE lookup (MD5 vs NTLM = submit vs never)",
-    "threat-check": "reputation for ip/domain/url/hash across keyless feeds (OTX, urlscan)",
+    "threat-check": "reputation for ip/domain/url/hash across keyless feeds (OTX, urlscan); Spamhaus SIA fallback",
     "scam-check": "the fraud reading of the same feeds, plus ransomware victim records",
     "vuln-check": "CVE lookup via CIRCL + NVD, both keyless; flags scorer disagreement",
     "msftrecon": "M365/Entra tenant id, federation and namespace — keyless and passive",
@@ -319,11 +349,13 @@ BLURB = {
     "docleak": "build document/leak-hunt queries across 18 hosts (emitted, never run)",
     "icp": "ICP filing via keyless mirrors + licence-serial sibling pivot",
     "cn-corp": "PRC corporate registry chain; names every CAPTCHA/geo gate it did not pass",
+    "vn-corp": "keyless VN business-registry lookup (MST tax code or company name) — corroborates a WHOIS registrant org/phone",
     "crossref": "identifiers appearing across MORE THAN ONE case (strongest operator signal)",
     "drift": "what changed in a case between two collections",
     "signatures": "evaluate observations against analysis/signature-catalog.md",
-    "email-deep": "compose the email profile from existing tools; plans the metered steps",
-    "breach-deep": "same chain, breach-weighted; states what went unqueried for want of a key",
+    "email-deep": "email profile: sends Hudson Rock, ZoneCruncher, one IntelX search, reverse-WHOIS preview when keyed",
+    "breach-deep": "same chain, breach-weighted; --free-only holds every metered send",
+    "cld": "ChongLuaDao Feeds + Shield. `route <selector>` fires only the endpoints that match",
     "wifi": "WiGLE SSID geolocation (needs a WiGLE account; discloses the gap without one)",
     "gdoc": "document/image metadata for a Google Doc/Sheet/Drive URL (= docmeta)",
     "archive-harvest": "full-IOC harvest across a domain's Wayback history (= wayback-harvest)",
@@ -331,7 +363,7 @@ BLURB = {
     "techstack": "CMS/framework/version fingerprint (pivot_extract's tech layer)",
     "visitors": "analytics/tracker IDs — the visitor-intelligence layer of pivot_extract",
     "saas-map": "SaaS/no-code operator tokens (pivot_extract's saas_ids layer)",
-    "cert-history": "historic certificate -> IP (passive SSL)",
+    "cert-history": "certificate-transparency timeline (crt.sh → PostgreSQL → backups) with per-source status + completeness line; cert → IP history is `pssl`",
     "dns-history": "historic DNS/analytics records from the archive",
     "webpivot": "the flagship verb — collect pivot artifacts from one page (= pivot-extract)",
     "iban": "validate + decompose a bank account as a selector (mod-97)",
@@ -377,6 +409,7 @@ BLURB = {
     "report": "IntelReport: assessment .md → PDF/DOCX (house style)",
     "house-report": "case dir → IntelReport editorial PDF+DOCX (I–XI + Appendices, figures) — no LLM",
     "evidence-report": "build an evidence report / MISP export for a case",
+    "evidence": "import <case> <findings.json> — graded analyst findings (claim + admiralty) → evidence/imported/; owner links → KB edges, kit/neighbour → facts (source analyst_import)",
     "timeline": "infrastructure lifecycle timeline + dated evidence ledger",
     "misp-export": "build a MISP event from the case (local only, no network)",
     "misp": "MISP: keycheck/budget/search/push (stage) /publish (IRREVERSIBLE)",
@@ -389,6 +422,8 @@ BLURB = {
     "engage-harvest": "read the members area behind the login",
     "engage-report": "shareable engagement write-up (no case store in it)",
     "eval": "run the engine's self-test / eval suite",
+    "sellers": "AdSense pub id → legal payee name/domain via Google's public sellers.json (cached, keyless); a named payee is an owner-rung signal",
+    "app-developer": "Play package / App Store id → developer name, legal name, email, website, other apps (keyless); website on a case domain = owner link",
 }
 
 
@@ -406,19 +441,51 @@ def _print_list():
     return 0
 
 
-def _cmd_mcp(rest):
-    """Enable Tier 1 — print (or --write) the `.mcp.json` that registers the engine's
-    `intel` MCP server ("the server"), using the resolved absolute command path."""
+def _merge_codex_toml_table(path, table_name, table_text):
+    """Replace ONLY `[table_name]` in a TOML file (a line-based edit — stdlib ships no TOML
+    WRITER) and leave every other table byte-for-byte untouched. Creates the file/parent dir if
+    absent; keeps a `.bak` of the previous content when the file already existed. Does not
+    special-case a nested sub-table under `table_name` (e.g. `[mcp_servers.intel.env]`) — this
+    tool only ever writes a flat table, so that shape is not expected in what it manages."""
+    header = f"[{table_name}]"
+    existed = os.path.isfile(path)
+    existing = ""
+    if existed:
+        with open(path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    lines = existing.splitlines(keepends=True)
+    start = None
+    end = len(lines)
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            start = i
+            end = len(lines)
+            for j in range(i + 1, len(lines)):
+                if lines[j].lstrip().startswith("["):
+                    end = j
+                    break
+            break
+    if start is None:
+        prefix = existing
+        if prefix and not prefix.endswith("\n"):
+            prefix += "\n"
+        if prefix:
+            prefix += "\n"
+        new_content = prefix + table_text
+    else:
+        new_content = "".join(lines[:start]) + table_text + "".join(lines[end:])
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    if existed:
+        with open(path + ".bak", "w", encoding="utf-8") as f:
+            f.write(existing)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return new_content
+
+
+def _mcp_host_claude(server, method, exe, rest):
+    """Unchanged pre-existing behaviour: the project-local `.mcp.json` (Claude Code)."""
     import json
-    root, method, _ = backend.resolve()
-    if not root:
-        print("intel.py mcp: backend not found — cannot locate the MCP server.\n"
-              "  set INTEL_HOME or see connectors/intel-backend.md.", file=sys.stderr)
-        return 3
-    server = os.path.join(root, "harness", "mcp-server")
-    if not os.path.isfile(server):
-        print(f"intel.py mcp: MCP server missing at {server}", file=sys.stderr)
-        return 4
     block = {"mcpServers": {"intel": {"command": server, "args": []}}}
     payload = json.dumps(block, indent=2)
     if "--write" in rest:
@@ -431,11 +498,109 @@ def _cmd_mcp(rest):
         print(f"wrote {dest}\n  → restart the client so it picks up the `intel` server (Tier 1).\n"
               "  NOTE: .mcp.json holds an absolute path — keep it gitignored (local-only).")
         return 0
-    exe = "✓ executable" if os.access(server, os.X_OK) else "⚠ not executable (chmod +x it)"
     print(f"MCP server: {server}  [{exe}]  (resolved via {method})")
     print("\nAdd this to the project's .mcp.json to enable Tier 1 (or run `intel.py mcp --write`):\n")
     print(payload)
     return 0
+
+
+def _mcp_host_codex(server, exe, rest):
+    """Codex CLI: merge a `[mcp_servers.intel]` table into $CODEX_HOME/config.toml (default
+    ~/.codex/config.toml), never touching any other table."""
+    table = ("[mcp_servers.intel]\n"
+             f'command = "{server}"\n'
+             "tool_timeout_sec = 1800\n"
+             "startup_timeout_sec = 60\n"
+             'default_tools_approval_mode = "approve"\n')
+    if "--write" in rest:
+        codex_home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+        dest = os.path.join(codex_home, "config.toml")
+        _merge_codex_toml_table(dest, "mcp_servers.intel", table)
+        print(f"wrote {dest}  (previous content backed up to {dest}.bak if it existed)\n"
+              "  → restart Codex so it picks up the `intel` server.")
+        return 0
+    print(f"Codex MCP server: {server}  [{exe}]")
+    print("\nAdd this table to $CODEX_HOME/config.toml (default ~/.codex/config.toml), or run "
+          "`intel.py mcp --host codex --write`:\n")
+    print(table)
+    return 0
+
+
+def _mcp_host_omp(server, exe, rest):
+    """omp: merge {"intel": …} into .omp/mcp.json's `mcpServers`, preserving every other
+    registered server in that file."""
+    import json
+    entry = {"intel": {"command": server, "timeout": 1800000}}
+    if "--write" in rest:
+        dest = os.path.join(os.getcwd(), ".omp", "mcp.json")
+        doc = {}
+        if os.path.isfile(dest):
+            try:
+                with open(dest, "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+            except Exception:
+                doc = {}
+        if not isinstance(doc, dict):
+            doc = {}
+        servers = doc.get("mcpServers")
+        if not isinstance(servers, dict):
+            servers = {}
+        servers.update(entry)
+        doc["mcpServers"] = servers
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(json.dumps(doc, indent=2) + "\n")
+        print(f"wrote {dest}  (merged with {len(servers) - 1} existing server(s))\n"
+              "  → restart omp so it picks up the `intel` server.")
+        return 0
+    print(f"omp MCP server: {server}  [{exe}]")
+    print("\nAdd this to .omp/mcp.json in the project (merge with mcpServers), or run "
+          "`intel.py mcp --host omp --write`:\n")
+    print(json.dumps({"mcpServers": entry}, indent=2))
+    return 0
+
+
+def _cmd_mcp(rest):
+    """Enable Tier 1 — print (or --write) the MCP registration for one or more hosts, using the
+    resolved absolute server path. --host claude (default, unchanged) | codex | omp | all."""
+    root, method, _ = backend.resolve()
+    if not root:
+        print("intel.py mcp: backend not found — cannot locate the MCP server.\n"
+              "  set INTEL_HOME or see connectors/intel-backend.md.", file=sys.stderr)
+        return 3
+    server = os.path.join(root, "harness", "mcp-server")
+    if not os.path.isfile(server):
+        print(f"intel.py mcp: MCP server missing at {server}", file=sys.stderr)
+        return 4
+
+    host = "claude"
+    if "--host" in rest:
+        i = rest.index("--host")
+        if i + 1 < len(rest):
+            host = rest[i + 1]
+        rest = rest[:i] + rest[i + 2:]
+    hosts = ("claude", "codex", "omp") if host == "all" else (host,)
+    unknown = [h for h in hosts if h not in ("claude", "codex", "omp")]
+    if unknown:
+        print(f"intel.py mcp: unknown --host '{unknown[0]}' (claude|codex|omp|all)", file=sys.stderr)
+        return 6
+
+    exe = "✓ executable" if os.access(server, os.X_OK) else "⚠ not executable (chmod +x it)"
+    rc = 0
+    for h in hosts:
+        if len(hosts) > 1:
+            print(f"--- host: {h} ---")
+        if h == "claude":
+            rc = _mcp_host_claude(server, method, exe, rest) or rc
+        elif h == "codex":
+            rc = _mcp_host_codex(server, exe, rest) or rc
+        else:
+            rc = _mcp_host_omp(server, exe, rest) or rc
+    print("\n  tip: `intel.py harness doctor [--backend claude|codex|omp|openai|deepseek|kimi|local]` "
+          "confirms which LLM backend a `harness` run on this host would actually use (probes auth) "
+          "before you rely on the registration above — HARNESS_BACKEND pins it if auto-detection "
+          "picks the wrong one.")
+    return rc
 
 
 def _cmd_cases(rest):
@@ -520,8 +685,65 @@ def _normalize_report_md(rest):
         return new_rest, tmp
     return rest, None
 
+# op -> callable(rest_after_op) -> case id, for ops whose FIRST positional argument (after any
+# subcommand token) is a case id (#23). Used only to propagate INTEL_CASE into the subprocess env
+# so api_usage.record() rows from that op — and anything IT spawns as a further subprocess — carry
+# the case, even though this dispatcher process is a single shot per invocation and never calls
+# api_usage.set_context() itself.
+_CASE_ARG = {
+    "pipeline":        lambda r: r[1] if len(r) > 1 and r[0] in ("open", "status") else None,
+    "loop":            lambda r: r[0] if r else None,
+    "clusters":        lambda r: r[0] if r else None,
+    "frontier":        lambda r: r[0] if r else None,
+    "reopen":          lambda r: r[0] if r else None,
+    "enrichment-done": lambda r: r[0] if r else None,
+    "enrich":          lambda r: r[0] if r else None,
+    "cti":             lambda r: None,   # `cti <target>` derives its OWN case; --case is explicit
+    "convergence":     lambda r: (r[1] if len(r) > 1 and r[0] in ("snapshot", "status")
+                                  else (r[0] if r else None)),
+    "house-report":    lambda r: r[0] if r else None,
+    "case":            lambda r: r[0] if r else None,
+    "sweep":           lambda r: r[0] if r else None,
+}
+
+
+def _case_for(op, rest):
+    """The case id `op` is operating on, from its own argv — or the explicit --case VALUE any op
+    may carry (email-deep, github-osint, deep_profile, …). Never a flag string, never raises."""
+    if "--case" in rest:
+        i = rest.index("--case")
+        if i + 1 < len(rest) and not str(rest[i + 1]).startswith("-"):
+            return rest[i + 1]
+    fn = _CASE_ARG.get(op)
+    if not fn:
+        return None
+    try:
+        v = fn(rest)
+    except Exception:
+        return None
+    return v if isinstance(v, str) and v and not v.startswith("-") else None
+
+
+def _absolutize_paths(rest, keep=()):
+    """The engine runs with cwd=<engine root>, so a caller-relative path (`loop CASE seeds.txt`,
+    `binary ./trader.apk`) would be looked up inside intel_engine/ — and a seeds file that is not
+    found there is silently read as a hostname. Rewrite every argument that names an existing file
+    or directory under the CALLER's cwd to its absolute path before the chdir. Flags and the case id
+    (`keep`) are never touched, even if a same-named entry exists here; a name that does not exist
+    here (an output stem, a domain) passes through unchanged."""
+    here = os.getcwd()
+    out = []
+    for a in rest:
+        if (isinstance(a, str) and a and not a.startswith("-") and a not in keep
+                and not os.path.isabs(a) and os.path.exists(os.path.join(here, a))):
+            a = os.path.abspath(a)
+        out.append(a)
+    return out
+
 
 def main(argv):
+    import uuid
+    os.environ.setdefault("INTEL_RUN_ID", uuid.uuid4().hex)   # wp_wayback_guard: one breaker per run
     dry = False
     if argv and argv[0] in ("--dry-run", "-n"):
         dry = True
@@ -559,6 +781,9 @@ def main(argv):
               file=sys.stderr)
         return 4
 
+    case = _case_for(op, rest)
+    rest = _absolutize_paths(rest, keep={case} if case else ())
+
     md_cleanup = None
     if op == "report" and not dry:
         rest, md_cleanup = _normalize_report_md(rest)
@@ -568,9 +793,10 @@ def main(argv):
         # Show it exactly as it would run (cwd matters for the engine's relative paths).
         print(f"cd {root} && {' '.join(cmd)}")
         return 0
+    env = dict(os.environ, INTEL_CASE=case) if case else None
     try:
         # Run FROM the engine root so knowledge/, WebPivot/tools/… resolve.
-        return subprocess.run(cmd, cwd=root).returncode
+        return subprocess.run(cmd, cwd=root, env=env).returncode
     except FileNotFoundError:
         print(f"intel.py: cannot exec {PY} — set INTEL_PY to a working interpreter.",
               file=sys.stderr)

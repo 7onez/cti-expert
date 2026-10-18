@@ -48,7 +48,8 @@
       "renewals@",
       "expiring@",
       "suspended@",
-      "pendingdelete@"
+      "pendingdelete@",
+      "nic-staff@"
     ]
   },
   "proxy_email_domains": {
@@ -113,7 +114,8 @@
       "identity-protect",
       "data-protected",
       "privacydotlink",
-      "privacyservice"
+      "privacyservice",
+      "rdds service"
     ]
   },
   "noise_name_substrings": {
@@ -137,7 +139,15 @@
       "registration private",
       "not available from registry",
       "ripe ncc",
-      "address block"
+      "address block",
+      "rdds service"
+    ]
+  },
+  "privacy_customer_patterns": {
+    "_comment": "Regexes (case-insensitive, ONE capture group = the account digits) that pull a privacy-service CUSTOMER ID out of a registrant name/org/email, e.g. 'Contact Privacy Inc. Customer 1234567890' (Google Domains / Squarespace / Tucows proxy). The proxy NAME stays privacy noise; the digits are one customer account, so domains sharing an id are owner-link candidates (rung class whois.privacy_customer). CAVEAT: the population of an id cannot be measured — reverse-WHOIS tokenises the term and returns every 'Contact Privacy' domain — so never reverse it. Consumed by whois_eras.privacy_customer_ids(); the embedded fallback is empty (no extraction) so a broken file never invents a link.",
+    "values": [
+      "contact\\s+privacy\\s+inc\\.?\\s+customer\\s+(\\d{6,})",
+      "contact\\s+privacy\\s+customer\\s+(\\d{6,})"
     ]
   }
 }

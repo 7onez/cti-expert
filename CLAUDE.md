@@ -60,7 +60,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (80 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (92 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an
@@ -111,6 +111,13 @@ therefore *weakens* clustering on purpose — that is correct, and it is why the
 
 **Any change to either file must come with a classification check** covering at least one managed
 provider and one self-hosted nameserver.
+
+The cross-type harness loop adds a third classification surface —
+`intel_engine/tools/kb/references/rungs.json` via `selector_types.rung_for`: **owner** may seed
+edges/`operator_lead`s; **kit** and **neighbour** are collected (`add_fact` only) and render as
+`kit_siblings` / `neighbours` with a rung caveat — never cluster members, never attributed.
+Collecting ≠ attributing. Changing a rung class is a classification change: ship a test.
+
 
 ---
 

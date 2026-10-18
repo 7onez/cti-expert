@@ -38,6 +38,7 @@ from urllib.parse import urlencode
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # importable from anywhere
 from wp_refs import ref_path, load_ref    # noqa: E402 — reference DATA in references/*.json
 from wp_timeouts import floor as _floor_timeout  # noqa: E402 — per-call ceiling (CTI_CALL_TIMEOUT)
+import whois_eras  # noqa: E402 — the single place that turns WHOIS history into OWNER eras (RULE 5)
 
 try:
     import api_usage                      # licensed-API credit ledger
@@ -178,12 +179,15 @@ def is_privacy(value):
     return any(m in s for m in _NOISE_NAME_SUBSTR)
 
 
-def _wx_action(url):
-    """WhoisXML endpoint → billable action label for the usage ledger (each charges credits)."""
+def _wx_action(url, mode=None):
+    """WhoisXML endpoint → action label for the usage ledger. A `mode=preview` call (count only,
+    not billed by WhoisXML) gets a `-preview` suffix so api_usage classes it as FREE
+    (WebPivot/references/api_cost_classes.json) instead of reading it as a purchase."""
+    suffix = "-preview" if mode == "preview" else ""
     if url == WHOIS_HISTORY_URL:
-        return "whois-history"
+        return "whois-history" + suffix
     if url == REVERSE_WHOIS_URL:
-        return "reverse-whois"
+        return "reverse-whois" + suffix
     return "whois"
 
 
@@ -193,7 +197,7 @@ def _get_json(url, params, timeout=30):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         out = json.load(r)
     if api_usage:
-        api_usage.record("whoisxml", _wx_action(url), credits=1,
+        api_usage.record("whoisxml", _wx_action(url, params.get("mode")), credits=1,
                          query=params.get("domainName") or params.get("terms") or params.get("q"))
     return out
 
@@ -206,7 +210,7 @@ def _post_json(url, payload, timeout=30):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         out = json.load(r)
     if api_usage:
-        api_usage.record("whoisxml", _wx_action(url), credits=1)
+        api_usage.record("whoisxml", _wx_action(url, payload.get("mode")), credits=1)
     return out
 
 
@@ -233,6 +237,37 @@ def _address(contact, country_override=None):
              contact.get("state"), contact.get("postalCode"), country]
     parts = [str(p).strip() for p in parts if p and str(p).strip()]
     return ", ".join(parts) or None
+
+
+# Some registrars/thin registries return an EMPTY registrantContact block but still print the
+# registrant in the raw text record ("Registrant Name/Organization/.../Email: …"). Parsing that
+# is the only way to recover the registrant at all for those records — the alternative is
+# `whois_current` falling back to `contactEmail`, which is the REGISTRAR's own abuse/role mailbox,
+# never the registrant's (SKILL.md RULE 5; the abuse-contact@registrar.example misparse).
+_REGISTRANT_TEXT_RE = re.compile(
+    r"(?im)^\s*Registrant\s+(Name|Organization|Street|City|Country|Phone|Email)\s*:\s*(.+?)\s*$")
+_REGISTRANT_TEXT_FIELD = {"name": "name", "organization": "organization", "street": "street1",
+                          "city": "city", "country": "country", "phone": "telephone", "email": "email"}
+_REGISTRANT_TEXT_JUNK = ("n/a", "not available", "redacted for privacy", "data protected")
+
+
+def _parse_registrant_text(rec):
+    """Parse a 'Registrant Name/Organization/Street/City/Country/Phone/Email:' block out of a
+    WhoisXML text record (`rawText`/`strippedText`/`cleanText`) when the structured
+    registrantContact is empty. Returns a `_contact()`-shaped dict, or {} if no registrant line
+    is found. Never reads `contactEmail` — that field is the registrar's, not the registrant's."""
+    if not isinstance(rec, dict):
+        return {}
+    text = rec.get("rawText") or rec.get("strippedText") or rec.get("cleanText") or ""
+    if not isinstance(text, str) or not text:
+        return {}
+    out = {}
+    for m in _REGISTRANT_TEXT_RE.finditer(text):
+        field = _REGISTRANT_TEXT_FIELD.get(m.group(1).strip().lower())
+        value = m.group(2).strip()
+        if field and value and value.strip().lower() not in _REGISTRANT_TEXT_JUNK:
+            out[field] = value
+    return out
 
 
 # Country reconciliation — data-driven (references/whois_geo.json), not a per-country special case.
@@ -338,8 +373,119 @@ def _reconcile_country(contact, rdap_cc=None):
     return None
 
 
+# Some registrars (VN resellers observed so far) ship an EMPTY registrantContact/registrant block
+# but embed the registrar's OWN RDAP JSON verbatim in rawText (top-level and/or registryData) —
+# a full RDAP domain object whose entities[] carries a "registrant"-rolled vCard (fn/org/email/
+# tel/adr) with the real owner. That vCard is the ONLY place the registrant exists for those
+# records; without this, whois_current() (and whois_summary/whois_summary_keyless downstream)
+# leaves registrant_name/email/phone/org null even though the record IS attributable, producing
+# a false "no shared identity" read. Reuses `_vcard_get`/`_vcard_param` (already used by
+# rdap_lookup for a live RDAP fetch) and the SAME junk-value list `_parse_registrant_text` uses,
+# so a privacy-proxied vCard is dropped exactly like a privacy-proxied text record.
+def _find_registrant_entity(data, _depth=0):
+    """Depth-first search of an RDAP object's `entities[]` (and each entity's own nested
+    `entities[]`, e.g. a registrar entity nesting its abuse contact) for the first whose `roles`
+    include "registrant". An entity that ALSO carries administrative/technical alongside
+    registrant still counts; a registrar/abuse/technical/administrative-ONLY entity never does."""
+    if not isinstance(data, dict) or _depth > 4:
+        return None
+    for ent in data.get("entities") or []:
+        if not isinstance(ent, dict):
+            continue
+        roles = [str(r).lower() for r in (ent.get("roles") or [])]
+        if "registrant" in roles:
+            return ent
+        nested = _find_registrant_entity(ent, _depth + 1)
+        if nested:
+            return nested
+    return None
+
+
+def _rdap_contact_from_vcard(vcard):
+    """An RDAP jCard → a `_contact()`-shaped dict (name/organization/email/telephone/country/
+    street1), dropping placeholder values ('REDACTED FOR PRIVACY', 'Data Protected', …) field by
+    field via the same `_REGISTRANT_TEXT_JUNK` list the raw-text parser uses. `tel` is a URI
+    ("tel:+84.…") per RFC 6350 — the "tel:" scheme is stripped the same way a `tel:` href is
+    (wp_extract.TEL_HREF_RE) before the value ever reaches `_phone()`."""
+    def _clean(v):
+        v = (v or "").strip()
+        return v if v and v.lower() not in _REGISTRANT_TEXT_JUNK else None
+    out = {}
+    name = _clean(_vcard_get(vcard, "fn"))
+    if name:
+        out["name"] = name
+    org = _clean(_vcard_get(vcard, "org"))
+    if org:
+        out["organization"] = org
+    email = _clean(_vcard_get(vcard, "email"))
+    if email:
+        out["email"] = email
+    tel = _vcard_get(vcard, "tel")
+    if tel:
+        tel = tel[4:] if tel.lower().startswith("tel:") else tel
+        tel = _clean(tel)
+        if tel:
+            # WhoisXML's structured `telephone` is bare digits ("84876264213"); a vCard carries the
+            # E.164-dotted form ("+84.876264213"). Emit the structured shape so the same number from
+            # the vCard and from WHOIS history is ONE selector, not two phone leads. RFC 3966 puts
+            # the extension in a `;ext=` parameter, so parameters are cut off before the digits are
+            # read; a legacy "x123" suffix is still honoured.
+            main, *params = tel.split(";")
+            ext = next((p.split("=", 1)[1] for p in params
+                        if p.strip().lower().startswith("ext=") and "=" in p), "")
+            if not ext:
+                main, _, ext = main.lower().partition("x")
+            digits = re.sub(r"\D", "", main)
+            ext = re.sub(r"\D", "", ext)
+            # A placeholder number ("+000000000", "+1.1111111111") is the privacy filler, not an
+            # owner: as a decisive phone join key it would bind every placeholder domain together.
+            if len(digits) >= 7 and len(set(digits)) > 1:
+                out["telephone"] = digits + (f"x{ext}" if ext else "")
+    cc = _vcard_param(vcard, "adr", "cc")
+    country = _clean((cc.upper() if cc else None) or _vcard_get(vcard, "country-name"))
+    if country:
+        out["country"] = country
+    addr = _clean(_vcard_get(vcard, "adr"))
+    if addr:
+        out["street1"] = addr   # single combined line; _address() just joins non-empty parts
+    return out
+
+
+def _rdap_registrant_contact(rec, reg_data):
+    """Registrant contact recovered from WhoisXML's embedded RDAP rawText (rec and/or
+    registryData) when the structured registrantContact is empty, or {} if none is found. Never
+    raises on malformed/non-RDAP JSON — every record without this shape (the vast majority) must
+    fall through unaffected."""
+    for src in (rec, reg_data):
+        if not isinstance(src, dict):
+            continue
+        for key in ("rawText", "strippedText"):
+            raw = src.get(key)
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw) if isinstance(raw, str) else raw
+            except (TypeError, ValueError):
+                continue
+            ent = _find_registrant_entity(data)
+            if not ent:
+                continue
+            vcard = (ent.get("vcardArray") or [None, []])[1]
+            contact = _rdap_contact_from_vcard(vcard)
+            if contact:
+                return contact
+    return {}
+
+
 def whois_current(domain, timeout=30, keep_raw=True):
     """Current WHOIS for a domain. Returns a normalized dict or {'error':...} / None.
+
+    Subdomains resolve to their registrable APEX before any request or cache lookup — every host
+    in an estate shares one owner registration, so `api.example.com`/`wss.example.com` must never
+    each buy their own current-WHOIS record. `res['domain']` is always the apex; `res['queried_host']`
+    is the literal input. Bought ONCE per case (wp_casememo under $WP_CASE_DIR) — the collector's
+    one-process-per-host and the domain-summary sidecar both land on the cached record instead of
+    a second purchase.
 
     With keep_raw (default), the FULL unmodified WhoisXML response is retained under
     the '_raw' key so the complete record is archived for later reference, not just
@@ -348,14 +494,32 @@ def whois_current(domain, timeout=30, keep_raw=True):
     if not key:
         return None
     try:
+        from wp_common import _registrable
+        apex = _registrable(domain) or domain
+    except Exception:  # noqa: BLE001
+        apex = domain
+    _memo_key = f"current|{apex.lower()}"
+    try:
+        import wp_casememo
+        _cached = wp_casememo.get("whoisxml", _memo_key)
+    except Exception:  # noqa: BLE001
+        wp_casememo, _cached = None, None
+    if _cached is not None:
+        out = dict(_cached)
+        if not keep_raw:
+            out.pop("_raw", None)
+        out["queried_host"] = domain
+        return out
+    try:
         data = _get_json(WHOIS_CURRENT_URL,
-                         {"apiKey": key, "domainName": domain,
+                         {"apiKey": key, "domainName": apex,
                           "outputFormat": "JSON"}, timeout=timeout)
     except Exception as e:
-        return {"error": str(e), "domain": domain}
+        return {"error": str(e), "domain": apex, "queried_host": domain}
     rec = data.get("WhoisRecord") or {}
     if not rec:
-        return {"error": "no WhoisRecord", "domain": domain, "_raw": data if keep_raw else None}
+        return {"error": "no WhoisRecord", "domain": apex, "queried_host": domain,
+                "_raw": data if keep_raw else None}
     # Many registrars (e.g. Hostinger/thin registries) populate dates + name servers
     # ONLY under the nested registryData, leaving the top-level fields empty. Read
     # each field from rec, then fall back to registryData so they aren't dropped.
@@ -368,21 +532,41 @@ def whois_current(domain, timeout=30, keep_raw=True):
                     return v
         return None
     reg = _contact(rec, "registrantContact", "registrant") \
-        or _contact(reg_data, "registrantContact", "registrant") or {}
+        or _contact(reg_data, "registrantContact", "registrant")
+    # The registrar's OWN abuse/role contact (WhoisXML top-level `contactEmail`) is never the
+    # registrant — archive it separately (SKILL.md RULE 5; the abuse-contact@registrar.example misparse, where
+    # a registrar's abuse mailbox was ingested as `registered_by`).
+    registrar_contact_email = (rec.get("contactEmail") or reg_data.get("contactEmail") or "").lower().strip() or None
+    if not reg:
+        # A thin/text-only record never populates registrantContact but DOES print
+        # "Registrant Name/Organization/.../Email:" lines in the raw text — parse those before
+        # falling back to nothing. Never falls back to contactEmail (the registrar's mailbox).
+        reg = (_parse_registrant_text(rec) or _parse_registrant_text(reg_data)
+               # Some VN-reseller records leave the text block empty too but embed the
+               # registrar's own RDAP JSON verbatim in rawText/registryData.rawText instead —
+               # the registrant lives only in its entities[] "registrant" vCard.
+               or _rdap_registrant_contact(rec, reg_data) or {})
     ns = ((rec.get("nameServers") or {}).get("hostNames")
           or (reg_data.get("nameServers") or {}).get("hostNames") or [])
     country_raw = reg.get("country") or reg.get("countryCode") or None
     country_override = _reconcile_country(reg, rdap_cc=_rdap_country_from_whois_record(rec))
+    registrant_email = (reg.get("email") or "").lower().strip() or None
+    if registrant_email and is_privacy(registrant_email):
+        # A registrar/abuse/role mailbox parsed as if it were the registrant (e.g. a thin text
+        # record whose only "Email:" line is the registrar's) — never surface it as the
+        # registrant; it is preserved only via registrar_contact_email above.
+        registrant_email = None
     res = {
-        "domain": domain,
-        "registrant_email": (reg.get("email") or rec.get("contactEmail")
-                             or reg_data.get("contactEmail") or "").lower() or None,
+        "domain": apex,
+        "queried_host": domain,
+        "registrant_email": registrant_email,
         "registrant_name": reg.get("name") or None,
         "registrant_org": reg.get("organization") or None,
         "registrant_country": country_override or country_raw,
         "registrant_phone": _phone(reg),
         "registrant_address": _address(reg, country_override=country_override),
         "registrar": _f("registrarName"),
+        "registrar_contact_email": registrar_contact_email,
         "created": _f("createdDateNormalized", "createdDate"),
         "updated": _f("updatedDateNormalized", "updatedDate"),
         "expires": _f("expiresDateNormalized", "expiresDate"),
@@ -390,79 +574,149 @@ def whois_current(domain, timeout=30, keep_raw=True):
     }
     if country_override:
         res["registrant_country_raw"] = country_raw
-    if keep_raw:
-        res["_raw"] = data   # full unmodified WhoisXML record, archived for later ref
+    res["_raw"] = data   # kept internally so the memo archives the full record regardless of keep_raw
+    if wp_casememo is not None:
+        wp_casememo.put("whoisxml", _memo_key, res)
+    if not keep_raw:
+        res.pop("_raw", None)
     return res
 
 
-def whois_history(domain, mode="purchase", timeout=40, keep_raw=True):
+def whois_history(domain, mode="purchase", timeout=40, keep_raw=True, current_created=None):
     """Historical WHOIS records. mode=preview (count only) or purchase (full).
 
-    Returns {'count','registrant_emails','registrant_names','registrars','records'}.
+    Subdomains resolve to their registrable APEX before any request or cache lookup (see
+    whois_current). `res['domain']` is the apex, `res['queried_host']` the literal input.
+
+    Returns {'count','registrant_emails','registrant_names','registrant_phones',
+    'registrant_addresses','registrars','records','prior_registrants','eras','era_basis'}.
+    The aggregate registrant_* fields are the CURRENT era ONLY (whois_eras.owner_values contract):
+    a domain that dropped and was re-registered must never have a previous owner's contacts
+    treated as this owner's. `current_created` is the live record's registration date, when the
+    caller has it (whois_summary does); a bare whois_history() call may not — split_eras then
+    falls back to the newest dated era. Previous owners land only in 'prior_registrants'/'eras'
+    (facts, never owner links, edges, frontier seeds or IOCs).
     With keep_raw (default), the full unmodified history response is kept under '_raw'.
     """
-    key = _key()
-    if not key:
-        return None
     try:
-        data = _get_json(WHOIS_HISTORY_URL,
-                         {"apiKey": key, "domainName": domain,
-                          "mode": mode, "outputFormat": "JSON"}, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        if e.code == 403:
-            body = ""
+        from wp_common import _registrable
+        apex = _registrable(domain) or domain
+    except Exception:  # noqa: BLE001
+        apex = domain
+    _reuse_records = None
+    try:
+        import wp_quarry_reuse as _qr
+        _hit = _qr.get(_qr.whois_history_key(apex))
+        if isinstance(_hit, dict) and isinstance(_hit.get("records"), list):
+            _reuse_records = _hit["records"]
+    except Exception:  # noqa: BLE001
+        pass
+    if _reuse_records is not None:
+        recs_built = _reuse_records
+        data_raw = None
+        count = len(recs_built)
+    else:
+        key = _key()
+        if not key:
+            return None
+        _memo_key = f"history|{mode}|{apex.lower()}"
+        try:
+            import wp_casememo
+            _cached = wp_casememo.get("whoisxml", _memo_key)
+        except Exception:  # noqa: BLE001
+            wp_casememo, _cached = None, None
+        if _cached is not None:
+            recs_built = _cached.get("_records") or []
+            data_raw = _cached.get("_raw")
+            count = _cached.get("count", len(recs_built))
+        else:
             try:
-                body = e.read().decode("utf-8", "replace")
-            except Exception:  # noqa: BLE001
-                pass
-            return {"error": _explain_403(WHOIS_HISTORY_URL, body), "domain": domain, "http": 403}
-        return {"error": str(e), "domain": domain}
-    except Exception as e:
-        return {"error": str(e), "domain": domain}
-    recs = data.get("records") or []
-    emails, names, registrars, phones, addresses, out = set(), set(), set(), set(), set(), []
-    for rec in recs:
-        reg = _contact(rec, "registrantContact", "registrant")
-        em = (reg.get("email") or "").lower().strip()
-        nm = (reg.get("name") or reg.get("organization") or "").strip()
-        rg = (rec.get("registrarName") or "").strip()
-        ph = _phone(reg)
-        country_raw = reg.get("country") or reg.get("countryCode") or None
-        country_override = _reconcile_country(reg, rdap_cc=_rdap_country_from_whois_record(rec))
-        ad = _address(reg, country_override=country_override)
-        if nm and any(0x80 <= ord(c) <= 0x9f for c in nm):
-            nm = ""  # drop C1-mojibake-corrupted names (double-encoding artifacts)
-        if em:
-            emails.add(em)
-        if nm:
-            names.add(nm)
-        if rg:
-            registrars.add(rg)
-        if ph:
-            phones.add(ph)
-        if ad:
-            addresses.add(ad)
-        item = {
-            "email": em or None, "name": nm or None, "registrar": rg or None,
-            "phone": ph, "address": ad, "country": country_override or country_raw,
-            "created": rec.get("createdDateNormalized") or rec.get("createdDateISO8601"),
-            "updated": rec.get("updatedDateNormalized"),
-            "expires": rec.get("expiresDateNormalized"),
-        }
-        if country_override:
-            item["country_raw"] = country_raw
-        out.append(item)
+                data = _get_json(WHOIS_HISTORY_URL,
+                                 {"apiKey": key, "domainName": apex,
+                                  "mode": mode, "outputFormat": "JSON"}, timeout=timeout)
+            except urllib.error.HTTPError as e:
+                if e.code == 403:
+                    body = ""
+                    try:
+                        body = e.read().decode("utf-8", "replace")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return {"error": _explain_403(WHOIS_HISTORY_URL, body), "domain": apex,
+                            "queried_host": domain, "http": 403}
+                return {"error": str(e), "domain": apex, "queried_host": domain}
+            except Exception as e:
+                return {"error": str(e), "domain": apex, "queried_host": domain}
+            recs = data.get("records") or []
+            recs_built = []
+            for rec in recs:
+                reg = _contact(rec, "registrantContact", "registrant")
+                em = (reg.get("email") or "").lower().strip()
+                nm = (reg.get("name") or reg.get("organization") or "").strip()
+                rg = (rec.get("registrarName") or "").strip()
+                ph = _phone(reg)
+                country_raw = reg.get("country") or reg.get("countryCode") or None
+                country_override = _reconcile_country(reg, rdap_cc=_rdap_country_from_whois_record(rec))
+                ad = _address(reg, country_override=country_override)
+                if nm and any(0x80 <= ord(c) <= 0x9f for c in nm):
+                    nm = ""  # drop C1-mojibake-corrupted names (double-encoding artifacts)
+                item = {
+                    "email": em or None, "name": nm or None, "registrar": rg or None,
+                    "phone": ph, "address": ad, "country": country_override or country_raw,
+                    "created": rec.get("createdDateNormalized") or rec.get("createdDateISO8601"),
+                    "updated": rec.get("updatedDateNormalized"),
+                    "expires": rec.get("expiresDateNormalized"),
+                }
+                if country_override:
+                    item["country_raw"] = country_raw
+                # "Contact Privacy Inc. Customer <id>" — the proxy name is noise, the id is one
+                # customer account (whois_eras kind privacy_customer → rung whois.privacy_customer).
+                # Read before is_privacy() drops the name; org/rawText carry it when name does not.
+                _pc = whois_eras.privacy_customer_ids(reg.get("name"), reg.get("organization"),
+                                                      reg.get("email"), reg.get("rawText"),
+                                                      rec.get("rawText"))
+                if _pc:
+                    item["privacy_customer"] = _pc[0]
+                recs_built.append(item)
+            data_raw = data
+            count = data.get("recordsCount", len(recs))
+            if wp_casememo is not None:
+                wp_casememo.put("whoisxml", _memo_key,
+                                {"_records": recs_built, "_raw": data_raw, "count": count})
+    # Ownership eras (whois_eras.py — the single place that turns history into OWNER values). A
+    # flat merge of every registrant this name has EVER had treats previous owners as the current
+    # one; the aggregate below is the current era only, recomputed fresh every call so a
+    # `current_created` supplied AFTER the (memoized) network fetch still applies correctly.
+    eras = whois_eras.split_eras({"records": recs_built}, current_created)
+    cur = eras["current"]
     res = {
-        "count": data.get("recordsCount", len(recs)),
-        "registrant_emails": sorted(emails),
-        "registrant_names": sorted(names),
-        "registrant_phones": sorted(phones),
-        "registrant_addresses": sorted(addresses),
-        "registrars": sorted(registrars),
-        "records": out if mode == "purchase" else [],
+        "domain": apex,
+        "queried_host": domain,
+        "count": count,
+        "registrant_emails": sorted(cur.get("emails") or []),
+        "registrant_names": sorted(cur.get("names") or []),
+        "registrant_phones": sorted(cur.get("phones") or []),
+        "registrant_addresses": sorted(cur.get("addresses") or []),
+        "registrars": sorted({it.get("registrar") for it in recs_built if it.get("registrar")}),
+        "records": recs_built if mode == "purchase" else [],
+        "prior_registrants": [
+            {"created": era.get("created"), "email": (era.get("emails") or [None])[0],
+             "name": (era.get("names") or [None])[0], "phone": (era.get("phones") or [None])[0],
+             "registrar": (era.get("registrars") or [None])[0]}
+            for era in eras["prior"]
+        ],
+        "eras": [{"created": cur.get("created"), "current": True,
+                  "emails": cur.get("emails") or [], "names": cur.get("names") or [],
+                  "phones": cur.get("phones") or [], "registrars": cur.get("registrars") or []}]
+               + [{"created": era.get("created"), "current": False,
+                   "emails": era.get("emails") or [], "names": era.get("names") or [],
+                   "phones": era.get("phones") or [], "registrars": era.get("registrars") or []}
+                  for era in eras["prior"]],
+        "era_basis": eras["basis"],
     }
+    if _reuse_records is not None:
+        res["reused"] = "quarry"
     if keep_raw:
-        res["_raw"] = data   # full unmodified history response, archived for later ref
+        res["_raw"] = data_raw   # full unmodified history response, archived for later ref
     return res
 
 
@@ -551,9 +805,16 @@ def _vcard_get(vcard, field):
             continue
         val = item[3]
         if field == "adr":
-            # value is a 7-element structured array (pobox, ext, street, city, region, code, country)
-            parts = [str(p).strip() for p in (val if isinstance(val, list) else [val])
-                     if p and str(p).strip()]
+            # value is a 7-element structured array (pobox, ext, street, city, region, code,
+            # country); RFC 7095 lets a component itself be a list (multi-line street), which
+            # registrars use — flatten it, or the street is stored as a Python list repr
+            def _flat(x):
+                if isinstance(x, list):
+                    for y in x:
+                        yield from _flat(y)
+                elif x is not None and str(x).strip():
+                    yield str(x).strip()
+            parts = list(_flat(val if isinstance(val, list) else [val]))
             return ", ".join(parts) or None
         return str(val).strip() or None
     return None
@@ -742,6 +1003,14 @@ def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
         _f_hist = _ex.submit(whois_history, domain, mode=history_mode, timeout=timeout, keep_raw=keep_raw)
         cur = _f_cur.result() or {}
         hist = _f_hist.result() or {}
+    # `hist` was fetched CONCURRENTLY with `cur`, so its era split ran without the live created
+    # date (falling back to the newest dated era). Recompute now that `cur` is known — cheap: the
+    # network fetch is memoized per-apex (wp_casememo), only the pure era split reruns.
+    if not hist.get("error") and cur.get("created"):
+        _fresh_hist = whois_history(domain, mode=history_mode, timeout=timeout, keep_raw=keep_raw,
+                                    current_created=cur.get("created"))
+        if _fresh_hist and not _fresh_hist.get("error"):
+            hist = _fresh_hist
     cur_raw = cur.pop("_raw", None)
     hist_raw = hist.pop("_raw", None)
     # WhoisXML sometimes returns "no WhoisRecord" for new/obscure TLDs. For `.vn` it has NO coverage
@@ -772,7 +1041,8 @@ def whois_summary(domain, history_mode="purchase", timeout=40, keep_raw=True):
     out.pop("_raw", None)
     out["history"] = {k: hist.get(k) for k in
                       ("count", "registrant_emails", "registrant_names",
-                       "registrant_phones", "registrant_addresses", "registrars")}
+                       "registrant_phones", "registrant_addresses", "registrars",
+                       "prior_registrants", "eras", "era_basis")}
     # The per-era record list is what case_timeline.whois_events() turns into registrant eras.
     # whois_history() returns it only under mode="purchase" ([] for preview) — carry it through
     # instead of dropping it, or every downstream era view stays empty.

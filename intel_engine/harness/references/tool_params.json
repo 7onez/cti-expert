@@ -1,7 +1,7 @@
 {
   "_comment": "OPTIONAL TOOL PARAMETERS, declared as SCHEMA instead of only as prose. Every tool's `@tool(...)` third argument lists only its REQUIRED params, and both schema builders (harness/mcp_server.py and harness/openai_backend.py) therefore emitted `required: [everything declared]` plus `additionalProperties: true` — so the 48 optional arguments the handlers actually read (`args.get(\"passive\")`, `args.get(\"free_only\")`, `args.get(\"mode\")` …) existed NOWHERE in the schema. They were documented only inside the tool's description paragraph. A strong model infers them from that prose reliably; a mid-size open-weight model largely does not, and the failure is expensive rather than loud — on a hostile run it never passes `passive=true`, on a budget run it never passes `free_only=true`, so the tool-call gate correctly DENIES the call and the run burns turns looping instead of adapting. Declaring these here fixes it for every front-end at once, and the `enum` lists matter most: a model that cannot see that `mode` accepts exactly six values will invent a seventh. THIS FILE ADDS NO CAPABILITY — every parameter below is already read by its handler; it only makes the existing contract visible. When you add an optional `args.get(\"x\")` to a handler, add it here too, or it stays invisible to the model. Types must match how the handler parses the value: `seeds`, `victims` and `paths` are SPACE-OR-COMMA-SEPARATED STRINGS, not arrays, because that is what the handler splits.",
   "optional_params": {
-    "_comment": "One entry per tool name, mapping optional parameter -> {type, description, enum?}. `type` is a JSON Schema primitive (string|integer|number|boolean). `description` is one line the model reads at call time — write it as an instruction, not a definition. `enum` pins the accepted values where the handler branches on a fixed set; omit it for free-form values. A tool absent from this map simply has no optional parameters.",
+    "_comment": "One entry per tool name, mapping optional parameter -> {type, description, enum?, required?}. `type` is a JSON Schema primitive (string|integer|number|boolean). `description` is one line the model reads at call time — write it as an instruction, not a definition. `enum` pins the accepted values where the handler branches on a fixed set; omit it for free-form values. An entry may also name a param the `@tool` schema already declares (it then adds the description/enum); `\"required\": false` on such an entry drops it from the schema's `required` list, for a declared param the handler actually defaults (kb_query_shared.min, reverse_whois.kind). EVERY key a handler reads from args must be declared either in its `@tool` schema or here — intel_engine/tests/test_mcp_protocol.py fails on an undeclared one. A tool absent from this map simply has no optional parameters.",
     "entries": {
       "pivot_extract": {
         "passive": {
@@ -35,6 +35,10 @@
         "docmeta_max": {
           "type": "integer",
           "description": "Cap how many hosted PDFs/images are downloaded for metadata extraction."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Run only keyless layers; hold every metered lookup (FOFA, urlscan Pro, WhoisXML …). Set this on a no-spend posture or when the gate asks you to re-call with free_only=true."
         }
       },
       "detect_login": {
@@ -168,20 +172,25 @@
       "reverse_whois": {
         "kind": {
           "type": "string",
-          "description": "Which selector to reverse.",
+          "description": "Which selector to reverse (default email).",
           "enum": [
             "email",
             "name",
             "phone"
-          ]
+          ],
+          "required": false
         },
         "max_domains": {
           "type": "integer",
-          "description": "Refuse the reverse if it would return more than this many domains — a huge result is a shared/bulk registrant, i.e. NOISE, not one operator. Default 150."
+          "description": "Refuse the reverse if it would return more than this many domains — a huge result is a shared/bulk registrant, i.e. NOISE, not one operator. Default: rwhois_auto_cap in harness/references/reverse_whois.json (150 unless an analyst changed it)."
         },
         "confirm": {
           "type": "boolean",
           "description": "Override the max_domains gate and run anyway. Only set this after judging that the large result really is one operator."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Return only the free PREVIEW count and never purchase the domain list. Set this on a no-spend posture or when the gate asks for free_only=true."
         }
       },
       "censys": {
@@ -235,6 +244,24 @@
         "logs_only": {
           "type": "boolean",
           "description": "Query ONLY the stealer-log buckets. IntelX returns a bounded page, so recycled public-breach rows otherwise fill it and truncate the one log record away."
+        },
+        "buckets": {
+          "type": "string",
+          "description": "mode=search: comma list of IntelX buckets to search, e.g. leaks.logs,pastes. Omit for the plan default."
+        },
+        "max": {
+          "type": "integer",
+          "description": "Cap on returned records."
+        },
+        "target": {
+          "type": "string",
+          "description": "mode=phonebook: which record type to list.",
+          "enum": [
+            "all",
+            "domains",
+            "emails",
+            "urls"
+          ]
         }
       },
       "url_paths": {
@@ -249,6 +276,10 @@
         "paths": {
           "type": "string",
           "description": "Space- or comma-separated URLs/paths to analyse together."
+        },
+        "min_hosts": {
+          "type": "integer",
+          "description": "mode=patterns: a path must recur on at least this many hosts to be reported as a kit."
         }
       },
       "serp_ads": {
@@ -266,6 +297,22 @@
         "region": {
           "type": "string",
           "description": "Two-letter region code to scope the ads query to."
+        },
+        "ad_params": {
+          "type": "string",
+          "description": "mode=cloak: the ad's own parameters — a full landing URL or 'k=v&k=v' — replayed as an ad click."
+        },
+        "details": {
+          "type": "integer",
+          "description": "mode=advertiser/creatives: also open N creatives for their destination link (extra searches)."
+        },
+        "gl": {
+          "type": "string",
+          "description": "mode=serp: country of the search, e.g. vn."
+        },
+        "hl": {
+          "type": "string",
+          "description": "mode=serp: interface language, e.g. vi."
         }
       },
       "capture_evidence": {
@@ -280,6 +327,14 @@
         "third_party": {
           "type": "boolean",
           "description": "Include third-party assets in the capture. They get a small byte allowance; anything dropped is listed in skipped_for_budget."
+        },
+        "case": {
+          "type": "string",
+          "description": "Write the capture under cases/<case>/evidence/captures/."
+        },
+        "outdir": {
+          "type": "string",
+          "description": "Explicit output directory (overrides the case layout)."
         }
       },
       "anyrun_lookup": {
@@ -299,6 +354,14 @@
         "limit": {
           "type": "integer",
           "description": "Cap the number of returned records."
+        },
+        "query": {
+          "type": "string",
+          "description": "A raw TI Lookup query string; overrides the query built from `indicator`."
+        },
+        "days": {
+          "type": "integer",
+          "description": "Only consider tasks from the last N days."
         }
       },
       "anyrun_submit": {
@@ -329,6 +392,20 @@
         "wait": {
           "type": "integer",
           "description": "With verify_task: seconds to keep polling for the task to finish before giving up (default 0 = a single read)."
+        },
+        "privacy": {
+          "type": "string",
+          "description": "Who can see the task. owner (default) is the only safe-by-construction choice; public is refused unless allow_public is set.",
+          "enum": [
+            "owner",
+            "byteam",
+            "bylink",
+            "public"
+          ]
+        },
+        "tags": {
+          "type": "string",
+          "description": "ANY.RUN user tags — NEVER put a case id or an analyst/client name here."
         }
       },
       "webamon_scan": {
@@ -377,6 +454,24 @@
         "max_new": {
           "type": "integer",
           "description": "Cap how many new seeds each round may add."
+        },
+        "seeds": {
+          "type": "string",
+          "description": "First run / added evidence: a domains-file path or a comma list of seeds. Omit to RESUME."
+        }
+      },
+      "case_enrich": {
+        "free_only": {
+          "type": "boolean",
+          "description": "Hold every metered leg (email-deep, IntelX, reverse-WHOIS) as an open lead; run only free legs. ChongLuaDao is unlimited and runs regardless. Use to avoid spending credits."
+        },
+        "passive": {
+          "type": "boolean",
+          "description": "Egress posture for hostile infrastructure; restricts direct target contact only. It does NOT hold spend — pair with free_only to avoid credits."
+        },
+        "reopen_legacy": {
+          "type": "boolean",
+          "description": "Reopen old held/unavailable closures that lack runner evidence and cannot be told apart from a deliberate analyst closure. Off by default."
         }
       },
       "case_reopen": {
@@ -385,10 +480,70 @@
           "description": "Space- or comma-separated additional seeds to reopen the case with."
         }
       },
+      "cti": {
+        "case": {
+          "type": "string",
+          "description": "Case id to use/create. Omit to derive one from the target."
+        },
+        "quick": {
+          "type": "boolean",
+          "description": "One collection pass only; leave enrichment and the chase loop OPEN for a later run. Mutually exclusive with deep/passive."
+        },
+        "deep": {
+          "type": "boolean",
+          "description": "Maps onto the loop step's own --full (metered engines) and --deep-archive, plus a deeper expansion --depth, instead of a single free-only pass. Mutually exclusive with quick/passive."
+        },
+        "passive": {
+          "type": "boolean",
+          "description": "No live contact with the target; skip the chase loop entirely. Mutually exclusive with quick/deep."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Spend no metered credits anywhere in the run."
+        },
+        "extend": {
+          "type": "boolean",
+          "description": "Continue even though recall already found a confirmed prior attribution for this target."
+        },
+        "pipeline": {
+          "type": "boolean",
+          "description": "Run the deterministic pipeline synchronously instead of the default cross-type harness loop (which starts in the background)."
+        },
+        "depth": {
+          "type": "integer",
+          "description": "Harness rounds (default 3; 6 with deep)."
+        },
+        "quarry": {
+          "type": "boolean",
+          "description": "Wait for the Quarry scan before any pivot. Ask the user first when QUARRY_ENABLED=ask. Backgrounds the run; the wait can take hours or days and resumes if interrupted."
+        },
+        "no_quarry": {
+          "type": "boolean",
+          "description": "Do not use Quarry for this case, whatever QUARRY_ENABLED says."
+        }
+      },
+      "quarry": {
+        "start": {
+          "type": "boolean",
+          "description": "Start a scan when Quarry has none. Crawls the target and spends the shared vendor accounts — ask the user first. Refused on a no-spend or no-contact case, and inside a harness phase."
+        },
+        "wait_minutes": {
+          "type": "integer",
+          "description": "How long this call waits for the scan (default 20). The job is persisted; call again to resume the same wait instead of scanning twice. The unbounded wait belongs to the cti driver."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Reuse a finished scan only — never start one."
+        }
+      },
       "victim_profile": {
         "victims": {
           "type": "string",
           "description": "Space- or comma-separated victim hostnames to profile the access vector from."
+        },
+        "exclude": {
+          "type": "string",
+          "description": "Comma list of hosts to leave out of the victim set (e.g. the operator's own domains)."
         }
       },
       "case_timeline": {
@@ -403,6 +558,38 @@
         "no_figure": {
           "type": "boolean",
           "description": "Skip rendering the swimlane figure; produce the evidence ledger only."
+        },
+        "title": {
+          "type": "string",
+          "description": "Figure title."
+        },
+        "subtitle": {
+          "type": "string",
+          "description": "Figure subtitle."
+        },
+        "lang": {
+          "type": "string",
+          "description": "Language of the generated figure furniture.",
+          "enum": [
+            "en",
+            "vi"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "description": "Caption source line."
+        },
+        "grading": {
+          "type": "string",
+          "description": "Caption Admiralty grading, e.g. B2."
+        },
+        "max_certs": {
+          "type": "integer",
+          "description": "Newest N certs drawn per host (default 12); the rest are counted, not hidden."
+        },
+        "max_lanes": {
+          "type": "integer",
+          "description": "Max hosts drawn in the figure (default 24)."
         }
       },
       "render_diagram": {
@@ -413,6 +600,20 @@
         "no_render": {
           "type": "boolean",
           "description": "Emit the editable Mermaid source only, without rendering PNG/SVG."
+        },
+        "title": {
+          "type": "string",
+          "description": "Diagram title."
+        },
+        "direction": {
+          "type": "string",
+          "description": "Mermaid flow direction (default LR).",
+          "enum": [
+            "LR",
+            "TB",
+            "RL",
+            "BT"
+          ]
         }
       },
       "render_report": {
@@ -435,6 +636,39 @@
             "en",
             "vi"
           ]
+        },
+        "title": {
+          "type": "string",
+          "description": "Report title on the cover."
+        },
+        "subtitle": {
+          "type": "string",
+          "description": "Report subtitle on the cover."
+        },
+        "report_ref": {
+          "type": "string",
+          "description": "EXTERNAL report reference shown on the cover/header — must differ from the internal case id (OPSEC). Auto-minted if omitted."
+        },
+        "audience": {
+          "type": "string",
+          "description": "Reader profile — stamps the cover subtitle and sets TOC depth (le = law enforcement).",
+          "enum": [
+            "technical",
+            "executive",
+            "le"
+          ]
+        },
+        "case_id": {
+          "type": "string",
+          "description": "INTERNAL case id — only a fallback for the displayed reference; prefer report_ref for shared reports."
+        },
+        "classification": {
+          "type": "string",
+          "description": "Handling caveat, e.g. TLP:AMBER."
+        },
+        "date": {
+          "type": "string",
+          "description": "Report date YYYY-MM-DD (default: UTC today)."
         }
       },
       "misp_export": {
@@ -553,6 +787,34 @@
           "description": "Print the requests that would be sent and send nothing."
         }
       },
+      "deep_profile": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "email",
+            "breach"
+          ],
+          "description": "email runs the full profile. breach is the same keyed sends without the subdomain step. Do not run both on one email — they bill the same vendors."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case directory. Sets WP_CASE_DIR so a second IntelX or reverse-WHOIS call hits the memo instead of buying the search again."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Hold every metered send (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS). Use on a no-spend posture."
+        }
+      },
+      "cld": {
+        "op": {
+          "type": "string",
+          "description": "cld_api subcommand. Default route, which fires only the endpoints that match the selector."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "Do not call ChongLuaDao. Return HELD. Set this on a no-spend posture."
+        }
+      },
       "collection_gaps": {
         "host": {
           "type": "string",
@@ -561,6 +823,631 @@
         "json": {
           "type": "boolean",
           "description": "Return the raw structure (verdict, ran, gaps) instead of the readable report."
+        }
+      },
+      "wayback_exhaust": {
+        "status": {
+          "type": "boolean",
+          "description": "Read the running/finished job's progress from its state file instead of starting it. No network, no spend."
+        },
+        "max_hours": {
+          "type": "number",
+          "description": "Run budget in hours for the detached job (default 7; 0 = unbounded). The job saves state and stops; call again to resume."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case id — store the job's state under cases/<case>/deep-archive/ and read the registration date from the case WHOIS sidecar."
+        },
+        "yfrom": {
+          "type": "string",
+          "description": "Earliest capture date (YYYY or YYYYMMDD) to bound the sweep to one era."
+        },
+        "yto": {
+          "type": "string",
+          "description": "Latest capture date (YYYY or YYYYMMDD)."
+        },
+        "created": {
+          "type": "string",
+          "description": "Override the domain's current registration date (YYYY-MM-DD) used to split prior-owner selectors."
+        },
+        "html_only": {
+          "type": "boolean",
+          "description": "Skip archived JS/JSON; HTML captures only."
+        },
+        "exits": {
+          "type": "string",
+          "description": "Comma list of egress routes: direct,pool,socks5h://host:port. Default: the reference list."
+        },
+        "state": {
+          "type": "string",
+          "description": "Explicit state-file path (to resume or check a specific job)."
+        }
+      },
+      "corpus_search": {
+        "free_only": {
+          "type": "boolean",
+          "description": "Hold metered routes (FOFA, PublicWWW, rwhois purchase, anyrun, email-deep keyed sends) and force urlscan onto the keyless path. Use on a no-spend posture."
+        },
+        "origin_type": {
+          "type": "string",
+          "description": "Selector type the pivot started from (domain/email/phone/wallet/ip/hash/string/filename/telegram). Defaults to string. Owner edges are drawn FROM this origin."
+        },
+        "origin_value": {
+          "type": "string",
+          "description": "Selector value the pivot started from. Defaults to query. Pass the bare selector (not the Lucene field query) so KB edges attribute correctly."
+        }
+      },
+      "case_approve": {
+        "confirm": {
+          "type": "boolean",
+          "description": "Omit/false = return the BRIEFING (proposal table) only. true = record the analyst's decision — only after they named the ids."
+        },
+        "only": {
+          "type": "string",
+          "description": "Comma-separated proposal ids the analyst approved."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Approve every item in the pending proposal (only when the analyst said so)."
+        },
+        "reject": {
+          "type": "string",
+          "description": "Comma-separated proposal ids the analyst rejected."
+        }
+      },
+      "github_harvest": {
+        "max_repos": {
+          "type": "integer",
+          "description": "Cap how many repositories are read (default 30)."
+        },
+        "max_contributors": {
+          "type": "integer",
+          "description": "Cap how many contributors are sampled per repository (default 10)."
+        },
+        "patches": {
+          "type": "boolean",
+          "description": "Set false to skip fetching <commit>.patch files — faster, but loses the git author e-mail, which is the point of this tool. Default true."
+        }
+      },
+      "subdomain_enum": {
+        "free_only": {
+          "type": "boolean",
+          "description": "Use keyless providers only — do not let subfinder spend metered keys. Applied automatically when the case scope says no_spend."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Per-tool enumeration timeout in seconds (default 240)."
+        }
+      },
+      "search_pivot": {
+        "engines": {
+          "type": "string",
+          "description": "Comma list of search engines to build/run queries for. Omit for the tool's default set."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Override indicator-kind auto-detection.",
+          "enum": [
+            "domain",
+            "keyword",
+            "handle",
+            "discord_id"
+          ]
+        },
+        "run": {
+          "type": "boolean",
+          "description": "Actually EXECUTE the queries (SerpApi fallback may spend credits). Default false = only emit the queries."
+        },
+        "free_only": {
+          "type": "boolean",
+          "description": "With run=true: use keyless engines only, never the metered SerpApi fallback."
+        },
+        "max_queries": {
+          "type": "integer",
+          "description": "With run=true: cap how many queries are executed."
+        }
+      },
+      "kb_query_shared": {
+        "min": {
+          "type": "integer",
+          "required": false,
+          "description": "Minimum number of domains an indicator must be shared by to be listed (default 2)."
+        }
+      },
+      "reference_add": {
+        "case": {
+          "type": "string",
+          "description": "Case id the fingerprint was learned from — keeps the provenance of a 'signal' entry."
+        },
+        "note": {
+          "type": "string",
+          "description": "Free-text note stored with the reference entry (why it is benign / why it matters)."
+        }
+      },
+      "api_usage": {
+        "case": {
+          "type": "string",
+          "description": "Scope the report to this case id."
+        },
+        "since": {
+          "type": "string",
+          "description": "Only count calls on or after this date (YYYY-MM-DD)."
+        },
+        "last": {
+          "type": "integer",
+          "description": "Also list the N most recent metered calls."
+        }
+      },
+      "case_scope": {
+        "target_class": {
+          "type": "string",
+          "description": "What the analyst believes the target is. Decides the fetch posture, the layers and whose artifacts these are.",
+          "enum": [
+            "confirmed_scam",
+            "suspected_scam",
+            "threat_actor_infra",
+            "victim_host",
+            "benign_check",
+            "unknown"
+          ]
+        },
+        "purpose": {
+          "type": "string",
+          "description": "What the run is for — e.g. triage, cluster expansion, attribution, takedown package, own-exposure check."
+        },
+        "claim": {
+          "type": "string",
+          "description": "What the requester asserted about the target, verbatim — the claim this run TESTS."
+        },
+        "basis": {
+          "type": "string",
+          "description": "What the belief rests on — victim complaint, takedown notice, vendor report, served ad, log entry, hunch."
+        },
+        "brand": {
+          "type": "string",
+          "description": "Brand, company or person being impersonated or targeted, and which side of it this host is."
+        },
+        "how": {
+          "type": "string",
+          "description": "How the target reached the analyst — ad/sponsored result, message/DM, download, redirect chain, referral from another case."
+        },
+        "window": {
+          "type": "string",
+          "description": "The date or date range that matters (incident, ad run, report publication)."
+        },
+        "falsifier": {
+          "type": "string",
+          "description": "The result that would show the target is NOT what is believed — what would make the analyst drop it."
+        },
+        "no_direct_contact": {
+          "type": "boolean",
+          "description": "Record that the target must not be contacted from analyst egress (passive collection only)."
+        },
+        "no_spend": {
+          "type": "boolean",
+          "description": "Record that no metered API credits may be spent on this case."
+        }
+      },
+      "tool_calls": {
+        "case": {
+          "type": "string",
+          "description": "Read this case's ledger. Omit for the interactive MEMORY ledger."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Read every case's ledger."
+        },
+        "denied": {
+          "type": "boolean",
+          "description": "Show only the calls the gate BLOCKED, with the reason."
+        },
+        "tool": {
+          "type": "string",
+          "description": "Follow one tool by name."
+        },
+        "since": {
+          "type": "string",
+          "description": "Only calls on or after this date (YYYY-MM-DD)."
+        },
+        "last": {
+          "type": "integer",
+          "description": "List the N most recent calls."
+        }
+      },
+      "email_permute": {
+        "username": {
+          "type": "boolean",
+          "description": "The subject is a handle, not a person's name."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Keyless corroboration: MX check per domain + Gravatar existence per address. Never probes the target's mail server."
+        },
+        "free": {
+          "type": "boolean",
+          "description": "Also permute against common free-mail providers (high noise — opt-in)."
+        },
+        "order": {
+          "type": "string",
+          "description": "Name order; auto detects family-first VN/CN/KR surnames.",
+          "enum": [
+            "auto",
+            "given-first",
+            "family-first"
+          ]
+        },
+        "max": {
+          "type": "integer",
+          "description": "Cap on emitted candidates (default 60)."
+        }
+      },
+      "passive_ssl": {
+        "mode": {
+          "type": "string",
+          "description": "origin (default) = recover origin IPs for a domain's cert; cert = which IPs served a sha1; ip = certs seen on an IP; budget = offline quota check.",
+          "enum": [
+            "origin",
+            "cert",
+            "ip",
+            "budget"
+          ]
+        },
+        "subject": {
+          "type": "string",
+          "description": "mode=cert: the certificate subject, used for the CDN base-rate check."
+        },
+        "sha1": {
+          "type": "string",
+          "description": "mode=origin: use this leaf-cert sha1 instead of a live handshake (no packet to the target)."
+        },
+        "known_ips": {
+          "type": "string",
+          "description": "mode=origin: comma list of IPs already known to front the host (CDN edges) — excluded from origin candidates."
+        }
+      },
+      "capture_screenshot": {
+        "case": {
+          "type": "string",
+          "description": "Write the screenshot under cases/<case>/evidence/screenshots/ and record it in the case manifest."
+        },
+        "outdir": {
+          "type": "string",
+          "description": "Explicit output directory (overrides the case layout)."
+        },
+        "proxy": {
+          "type": "string",
+          "description": "Research egress (http://host:port) — use on hostile infrastructure."
+        },
+        "label": {
+          "type": "string",
+          "description": "Short caption stored with the capture."
+        },
+        "click": {
+          "type": "string",
+          "description": "Before capturing, click the first element whose text contains this string (splash/enter gates) and re-wait."
+        },
+        "wait_selector": {
+          "type": "string",
+          "description": "Wait for this CSS selector to appear before capturing."
+        },
+        "wait_after": {
+          "type": "number",
+          "description": "Final settle time in seconds after load/click before the shot."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Re-hash an existing PNG/manifest given in `url` instead of capturing."
+        },
+        "full_page": {
+          "type": "boolean",
+          "description": "Set false to capture only the viewport, not the whole scrolled page. Default true."
+        }
+      },
+      "origin_history": {
+        "host": {
+          "type": "string",
+          "description": "Limit the history to this one host of the case."
+        }
+      },
+      "cert_pivot": {
+        "sha1": {
+          "type": "string",
+          "description": "Pivot on this leaf-cert sha1 fingerprint instead of fetching the live cert."
+        },
+        "sha256": {
+          "type": "string",
+          "description": "Pivot on this leaf-cert sha256 fingerprint instead of fetching the live cert."
+        },
+        "no_live": {
+          "type": "boolean",
+          "description": "No live contact with the target or hit IPs (same as passive)."
+        },
+        "passive": {
+          "type": "boolean",
+          "description": "Passive posture: CT + third-party indexes only; the leaf fetch and the Host-header origin probe read `not run`. Required under hostile posture unless a proxy is given."
+        },
+        "proxy": {
+          "type": "string",
+          "description": "Route every live contact (leaf cert, page baseline, Host-header probe of hit IPs) through this proxy URL."
+        },
+        "no_crtsh": {
+          "type": "boolean",
+          "description": "Skip the crt.sh lookup."
+        },
+        "cap": {
+          "type": "integer",
+          "description": "Max results per active pivot query (default 20)."
+        }
+      },
+      "rank_relations": {
+        "min_strength": {
+          "type": "integer",
+          "description": "Only report pairs whose summed strength is at least this (default 1)."
+        },
+        "include_weak": {
+          "type": "boolean",
+          "description": "Also list pairs linked only by weak artifacts."
+        },
+        "md": {
+          "type": "boolean",
+          "description": "Emit a markdown table instead of the plain view."
+        }
+      },
+      "pivot_suggest": {
+        "findings": {
+          "type": "string",
+          "description": "Path to a findings JSON to rank selectors from."
+        },
+        "usernames": {
+          "type": "string",
+          "description": "Comma list of usernames to rank (when no findings file exists yet)."
+        },
+        "emails": {
+          "type": "string",
+          "description": "Comma list of e-mail addresses to rank."
+        },
+        "names": {
+          "type": "string",
+          "description": "Comma list of person names to rank."
+        },
+        "domains": {
+          "type": "string",
+          "description": "Comma list of domains to rank."
+        },
+        "cjk": {
+          "type": "string",
+          "description": "Comma list of CJK-script names/strings to rank."
+        }
+      },
+      "crypto_balance": {
+        "coin": {
+          "type": "string",
+          "description": "Force the chain instead of auto-detecting it (btc/eth/ltc/trx/ada/dot/bch/doge/dash/zec/xmr)."
+        }
+      },
+      "sensitive_paths": {
+        "file": {
+          "type": "string",
+          "description": "Read the URL/CDX listing from this file instead of `urls`."
+        },
+        "severity": {
+          "type": "string",
+          "description": "Only return paths at this severity.",
+          "enum": [
+            "CRITICAL",
+            "HIGH",
+            "MEDIUM",
+            "LOW"
+          ]
+        }
+      },
+      "wayback_fetch": {
+        "near": {
+          "type": "string",
+          "description": "'latest' (default), 'earliest', or a YYYY / YYYYMMDD to pin an era."
+        },
+        "yfrom": {
+          "type": "string",
+          "description": "Lower bound of the snapshot range (YYYY or YYYYMMDD)."
+        },
+        "yto": {
+          "type": "string",
+          "description": "Upper bound of the snapshot range (YYYY or YYYYMMDD)."
+        },
+        "status": {
+          "type": "string",
+          "description": "HTTP status filter for snapshots (default 200; '' for any)."
+        },
+        "mime": {
+          "type": "string",
+          "description": "MIME-type filter for snapshots (default text/html; '' for any)."
+        },
+        "list": {
+          "type": "boolean",
+          "description": "List the available snapshots instead of fetching one."
+        },
+        "text": {
+          "type": "boolean",
+          "description": "Return the snapshot as extracted text instead of raw HTML."
+        }
+      },
+      "wayback_harvest": {
+        "max": {
+          "type": "integer",
+          "description": "Max snapshots sampled per domain (default 15)."
+        },
+        "yfrom": {
+          "type": "string",
+          "description": "Lower bound of the snapshot range (YYYY or YYYYMMDD) — target a registrant era."
+        },
+        "yto": {
+          "type": "string",
+          "description": "Upper bound of the snapshot range (YYYY or YYYYMMDD)."
+        },
+        "urlscan": {
+          "type": "boolean",
+          "description": "Also merge urlscan's historical scans of the domain."
+        },
+        "timeline": {
+          "type": "boolean",
+          "description": "Chronological output."
+        },
+        "indicators": {
+          "type": "boolean",
+          "description": "Emit the IOC roll-up."
+        }
+      },
+      "hash_id": {
+        "context": {
+          "type": "string",
+          "description": "Provenance of an ambiguous hash once known: 'file' (safe to submit to a corpus) or 'credential' (never submit).",
+          "enum": [
+            "file",
+            "credential"
+          ]
+        }
+      },
+      "threat_check": {
+        "mode": {
+          "type": "string",
+          "description": "'scam' adds ransomware victim records for the fraud reading. Default 'threat'.",
+          "enum": [
+            "threat",
+            "scam"
+          ]
+        }
+      },
+      "vuln_check": {
+        "cve": {
+          "type": "string",
+          "description": "One or more CVE ids (comma/space separated) to resolve."
+        },
+        "product": {
+          "type": "string",
+          "description": "Search advisories for this product/version instead of a CVE id."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "With product: max advisories returned (default 20)."
+        }
+      },
+      "username_enum": {
+        "platforms": {
+          "type": "string",
+          "description": "Comma-separated subset of the verified platforms to check."
+        }
+      },
+      "exposure_score": {
+        "indicators": {
+          "type": "string",
+          "description": "Collected indicator values as 'key=value,key=value'."
+        },
+        "infile": {
+          "type": "string",
+          "description": "Path to a JSON file of indicator values."
+        }
+      },
+      "github_osint": {
+        "secrets": {
+          "type": "boolean",
+          "description": "Also emit leaked-credential hunt queries (emitted, not run — code search needs auth)."
+        },
+        "repo": {
+          "type": "boolean",
+          "description": "Treat target as owner/repo and report on that repository."
+        }
+      },
+      "sharelink_resolve": {
+        "max_hops": {
+          "type": "integer",
+          "description": "Max redirects to follow (default 8)."
+        }
+      },
+      "dork_builder": {
+        "severity": {
+          "type": "string",
+          "description": "Only emit queries at this severity.",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ]
+        }
+      },
+      "cn_recon": {
+        "domain": {
+          "type": "string",
+          "description": "Domain whose ICP filing to look up."
+        },
+        "serial": {
+          "type": "string",
+          "description": "An ICP licence serial you already hold — reversed into sibling-domain queries."
+        },
+        "company": {
+          "type": "string",
+          "description": "A company name you already hold."
+        }
+      },
+      "vn_corp": {
+        "timeout": {
+          "type": "integer",
+          "description": "Per-mirror request timeout in seconds."
+        }
+      },
+      "app_developer": {
+        "store": {
+          "type": "string",
+          "enum": ["auto", "play", "appstore"],
+          "description": "auto (default): numeric/idNNN or apps.apple.com = App Store, else Play package. appstore with a dotted value = iOS bundle id."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case id — its collected domains scope the developer-website owner-link check."
+        },
+        "case_domains": {
+          "type": "string",
+          "description": "Comma-separated extra case domains for the owner-link check."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Per-request store timeout in seconds."
+        }
+      },
+      "kb_crossref": {
+        "case": {
+          "type": "string",
+          "description": "Only report identifiers appearing in this case (and at least one other)."
+        },
+        "min_cases": {
+          "type": "integer",
+          "description": "An identifier must appear in at least this many cases (default 2)."
+        }
+      },
+      "case_drift": {
+        "snapshot": {
+          "type": "boolean",
+          "description": "Store the current state as a snapshot and exit; diff against it after the next collection."
+        },
+        "against": {
+          "type": "string",
+          "description": "Explicit snapshot file to diff against (default: the latest stored snapshot)."
+        }
+      },
+      "signature_scan": {
+        "observations": {
+          "type": "string",
+          "description": "Measured values as 'key=value,key=value'."
+        },
+        "list": {
+          "type": "boolean",
+          "description": "Show the signature catalogue and the observation keys it accepts."
+        }
+      },
+      "sellers_lookup": {
+        "refresh": {
+          "type": "boolean",
+          "description": "Force a re-download of the cached sellers.json even when it is within its TTL."
         }
       }
     }

@@ -1,0 +1,8 @@
+{
+  "_comment": "Reverse-WHOIS purchase gate for the harness `reverse_whois` tool (harness/tools.py:_reverse_gate). Every reverse-WHOIS starts with a free mode=preview count. If the count is above rwhois_auto_cap, the term is treated as a shared reseller, agency or registrar term (noise, not one operator) and the purchase does not happen until the caller re-calls with confirm=true. A per-call max_domains argument still overrides this default. Lower the value to spend fewer WhoisXML credits without asking; raise it if your cases routinely hold large single-operator estates. The value is read on every call, so an edit applies to the next decision.",
+
+  "rwhois_auto_cap": {
+    "_comment": "Largest preview count that is purchased automatically (a count equal to the cap is still bought; anything above it asks first). Integer. Embedded fallback: 150.",
+    "value": 150
+  }
+}

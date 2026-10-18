@@ -13,7 +13,8 @@
       "censys",
       "serp_ads",
       "detect_login",
-      "engage_account"
+      "engage_account",
+      "cert_pivot"
     ]
   },
 
@@ -35,7 +36,9 @@
       "anyrun_submit",
       "serp_ads",
       "hunterhow",
-      "grayhatwarfare"
+      "grayhatwarfare",
+      "deep_profile",
+      "case_enrich"
     ]
   },
 
@@ -70,17 +73,47 @@
   "mutating_tools": {
     "_comment": "Tools that write to shared, cross-case state (the knowledge base, the benign/signal reference, the operator registry, a MISP instance). Never blocked, but flagged in the ledger: when a later case turns out to have clustered on a bad fingerprint — or when someone asks which indicators we put on the sharing platform and when — this is how you find the run and the round that did it.",
     "values": ["kb_ingest", "reference_add", "case_reopen", "case_loop", "misp_push",
-               "misp_publish"]
+               "misp_publish", "corpus_search", "case_approve", "quarry", "evidence_import"]
   },
 
   "redact_args": {
-    "_comment": "Argument names whose VALUE is never written to the ledger verbatim (replaced with '<redacted>'). Ledger files live under cases/, which is git-ignored, but a credential pasted into a tool argument should still never be persisted to disk in cleartext. Add any argument that could carry a key, token or password.",
-    "values": ["key", "api_key", "token", "password", "secret", "authorization", "cookie"]
+    "_comment": "Argument-name FRAGMENTS whose VALUE is never written to the ledger verbatim (replaced with '<redacted>'). Matched as SUBSTRINGS of the normalised name (lowercased, '_' and '-' removed), at any nesting depth — so 'key' covers apiKey, x_api_key and X-Api-Key, 'token' covers access_token, 'pass' covers password and passwd, 'auth' covers Authorization. Only the declared boolean parameters in redact_bool_switches keep a switch value (passive=true, secrets=true); any other secret-named argument is redacted whatever its value, so password='true' or token='1' never reaches disk. Independently of the name, every string value is scrubbed of URL userinfo (http://user:pass@host -> http://<redacted>@host), of query parameters whose name matches a fragment (?token=…&apikey=…), and of 'Bearer <token>' strings; the host, path and non-secret parameters stay readable. Ledger files live under cases/, which is git-ignored, but a credential pasted into a tool argument should still never be persisted to disk in cleartext. Add a fragment for any argument that could carry a key, token or password — and check it is not a substring of an ordinary argument name.",
+    "values": ["key", "token", "secret", "pass", "pwd", "auth", "cookie", "bearer", "credential", "session", "jwt"]
+  },
+
+  "redact_bool_switches": {
+    "_comment": "Declared BOOLEAN tool parameters whose names contain a redact_args fragment (passive ⊃ 'pass', secrets ⊃ 'secret'). Only these names keep a boolean value (true/false/yes/no/1/0) in the ledger, because the audit trail needs to show whether a call ran passive; any other secret-named argument is redacted even when its value looks boolean. Add a name here only when tool_params.json declares it type boolean.",
+    "values": ["passive", "secrets"]
   },
 
   "budget": {
     "_comment": "Per-run guard rails. max_metered_calls_per_run caps how many credit-spending calls ONE run may make before the gate starts denying them with an instruction to re-call free_only=true — the backstop against an agent loop that keeps re-querying FOFA on every round. Set generously: it exists to stop runaway loops, not to ration normal collection. Override at runtime with HARNESS_METERED_BUDGET. max_arg_chars truncates long argument values in the ledger so one HTML blob cannot bloat the audit trail.",
     "max_metered_calls_per_run": 60,
     "max_arg_chars": 200
+  },
+
+  "proposal_gated_tools": {
+    "_comment": "Cross-type loop approval gate (harness/proposal.py). While a case's loop is active (cases/<case>/proposal.json loop_active=true), a METERED call to one of these tools is DENIED unless it matches an item the analyst approved in that round's digest-current proposal — the per-round consent rule is enforced here, at the gate every front-end shares, not by the prompt. Outside an active loop the tools behave as before. These are the pivot tools the loop proposes; the collect phase's own collectors are not listed.",
+    "values": ["corpus_search", "reverse_whois"]
+  },
+
+  "route_metered_tools": {
+    "_comment": "Tools whose meteredness depends on a ROUTE argument: tool -> argument name. The route is looked up in harness/references/pivot_map.json routes.<route>.metered (urlscan routes are quota-backed and not metered; fofa/publicwww/rwhois purchase/anyrun are). An unknown route counts as metered.",
+    "entries": {"corpus_search": "route"}
+  },
+
+  "arg_metered_tools": {
+    "_comment": "Tools that spend ONLY when an argument is truthy: tool -> argument name. search_pivot builds dork URLs offline by default; with run=true it executes them, DuckDuckGo first (free) and SerpApi Google (1 metered search per query) for any query the free path could not answer. Counted as metered only then, and free_only=true keeps it on the free path (it is in free_only_capable_tools).",
+    "entries": {"search_pivot": "run", "quarry": "start"}
+  },
+
+  "operator_only_tools": {
+    "_comment": "The analyst's consent step for the cross-type loop. Denied whenever the call comes from a harness PHASE (collect/correlate/verify/assess/plan…), allowed only interactively — otherwise the loop could approve its own metered pivots.",
+    "values": ["case_approve"]
+  },
+
+  "free_only_capable_tools": {
+    "_comment": "Metered tools whose handler HONOURS free_only (has a keyless mode): pivot_extract → the collector's --free-only, reverse_whois → free preview count only, deep_profile / case_enrich → their own free-only legs, corpus_search → keyless urlscan + metered routes skipped. The gate classes a free_only call as not-metered and lets it through, so every OTHER metered tool refuses free_only=true instead of spending (harness/tools.py _free_only_refusal). Add a tool here only after its handler really honours the flag.",
+    "values": ["pivot_extract", "reverse_whois", "deep_profile", "case_enrich", "corpus_search", "search_pivot", "quarry"]
   }
 }

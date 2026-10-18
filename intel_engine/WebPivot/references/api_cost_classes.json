@@ -1,0 +1,50 @@
+{
+  "_comment": "Cost CLASS for every row of the licensed-API usage ledger (MEMORY/api_usage.jsonl), read by WebPivot/tools/api_usage.py `report`. The ledger counts roughly one unit per call for every provider, including free reverse-WHOIS previews and keyless lookups, so a single total reads like a bill when it is not one. Each row is put in exactly one class: `free` (nothing billed: previews, keyless/self-hosted calls, rejected requests), `quota` (a capped plan that resets on its own, like urlscan's daily/monthly allowance or a free-tier monthly credit pool; spending it costs throughput, not money), or `metered` (each call draws down purchased credits or is billed per request). The report prints one subtotal per class and labels the overall total 'estimated units'. Lookup order: `action_classes` (provider:action), then `provider_classes`, then `rules.default_class`. An unknown provider falls into `metered`, so it over-states cost and never hides it. Edit this file to reclassify a provider for your own plan; no code change is needed.",
+
+  "rules": {
+    "_comment": "default_class: the class for a provider not listed below (keep it `metered` so an unclassified spend is never under-stated). zero_credit_is_free: a row that recorded 0 credits (a keyless call, such as ipinfo with no token, or a rejected 4xx/5xx request that record() zeroes) counts as `free` whatever its provider.",
+    "default_class": "metered",
+    "zero_credit_is_free": true
+  },
+
+  "action_classes": {
+    "_comment": "Per-action overrides as `provider:action`. These are checked before provider_classes. WhoisXML reverse-WHOIS mode=preview returns only a count and is not billed, so whois_enrich._wx_action() labels it `reverse-whois-preview`. WHOIS-history preview is left at its provider's class (metered) because WhoisXML charges 1 DRS credit for it (see tools/domain_table.py --whois-history).",
+    "entries": {
+      "whoisxml:reverse-whois-preview": "free"
+    }
+  },
+
+  "provider_classes": {
+    "_comment": "Provider class, using the provider name passed to api_usage.record(). `metered` providers draw down purchased credits per call (WhoisXML DRS, FOFA points, DNSlytics, IntelX per-search credits). `quota` providers sit on a capped plan that resets (urlscan, Censys monthly pool, Shodan monthly query credits, SerpApi monthly searches, and others). `free` providers are keyless, self-hosted or log at 0 credits by design (crt.sh, CIRCL pSSL, RDAP, CertKit, CertIndex, GitHub, Quarry, MISP).",
+    "entries": {
+      "whoisxml": "metered",
+      "fofa": "metered",
+      "dnslytics": "metered",
+      "intelx": "metered",
+      "urlscan": "quota",
+      "censys": "quota",
+      "shodan": "quota",
+      "ipinfo": "quota",
+      "serpapi": "quota",
+      "securitytrails": "quota",
+      "validin": "quota",
+      "netlas": "quota",
+      "zoomeye": "quota",
+      "quake": "quota",
+      "hunterhow": "quota",
+      "webamon": "quota",
+      "publicwww": "quota",
+      "grayhatwarfare": "quota",
+      "anyrun": "quota",
+      "chongluadao": "quota",
+      "crt.sh": "free",
+      "circl_pssl": "free",
+      "rdap": "free",
+      "certkit": "free",
+      "certindex": "free",
+      "github": "free",
+      "quarry": "free",
+      "misp": "free"
+    }
+  }
+}

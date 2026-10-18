@@ -23,7 +23,8 @@ import sys
 import threading
 from typing import Any
 
-from claude_agent_sdk import ToolAnnotations, create_sdk_mcp_server, tool
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # harness/ on path for sdk_compat
+from sdk_compat import ToolAnnotations, create_sdk_mcp_server, tool  # noqa: E402 — backend-neutral
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # repo root (harness/..)
 PY = sys.executable
@@ -35,6 +36,7 @@ READONLY = ToolAnnotations(readOnlyHint=True)  # lets the model batch these in p
 # (below) as delegates so the rest of the file is untouched.
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import collect_core  # noqa: E402
+import binary_auto  # noqa: E402
 
 # knobs (env) — cheap/isolated smoke runs without touching the real KB:
 KB_DIR = os.environ.get("HARNESS_KB", "knowledge")        # e.g. HARNESS_KB=knowledge_scratch
@@ -216,6 +218,9 @@ def _governed(t):
     async def _wrapped(args, _h=h, _n=name):
         token = _CURRENT_TOOL.set(_n)
         try:
+            refused = _free_only_refusal(_n, args)
+            if refused:
+                return _err(refused)
             return await _h(args)
         finally:
             _CURRENT_TOOL.reset(token)
@@ -226,6 +231,23 @@ def _governed(t):
     except Exception:  # noqa: BLE001 — an immutable tool object still works, just at the default budget
         pass
     return t
+
+
+def _free_only_refusal(name: str, args) -> str:
+    """The gate treats free_only=true as 'not metered' and lets the call through, so a metered
+    tool that has NO keyless mode must refuse it rather than spend anyway. Data:
+    tool_policy.json metered_tools − free_only_capable_tools."""
+    try:
+        import audit as _a  # harness/audit.py — the policy data owner
+        if (name in _a.METERED_TOOLS and name not in _a.FREE_ONLY_CAPABLE
+                and _a._truthy(args or {}, _a.FREE_ONLY_ARGS)):
+            return (f"{name} has no keyless mode — with free_only=true it does not run (that would "
+                    f"spend metered credits). Use a keyless source, or propose it for the analyst's "
+                    f"approval on a case that allows spending.")
+    except Exception:  # noqa: BLE001 — policy unreadable: FAIL CLOSED when free_only was asked
+        return (f"{name}: spend policy unreadable — refusing free_only=true rather than risk a "
+                f"metered call." if (args or {}).get("free_only") else "")
+    return ""
 
 
 def _bounded(text: str, *, tool: str | None = None, budget: int | None = None,
@@ -267,6 +289,15 @@ def _err(text: str, *, tool: str | None = None) -> dict[str, Any]:
 
 def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any]:
     return {"content": [{"type": "text", "text": _bounded(text, tool=tool, where=where)}]}
+
+
+def _flag(args: dict[str, Any], name: str) -> bool:
+    """Read a boolean tool argument with the GATE's own rule (audit._truthy): "false", "no", "0",
+    "off", "none", "null", "" and None are NO. `bool("false")` is True, so a handler testing raw
+    truthiness would run the action (a sandbox detonation, a paid search) the gate had just
+    classified as a harmless briefing. Every flag a handler acts on is read through here."""
+    import audit as _a  # harness/audit.py — the policy data owner
+    return _a._truthy(args or {}, {name})
 
 
 # ---------------------------------------------------------------- COLLECT tools
@@ -326,7 +357,12 @@ def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any
     "keyless but it costs extra requests TO THE TARGET, so disable with no_docmeta=true or cap it "
     "with docmeta_max=<N>) OR a "
     "bare IP (IPPivot: passive IP recon — IPinfo ASN/abuse, FOFA ip= ports/services/co-hosted "
-    "domains, Shodan host, dig MX/NS/TXT/PTR; a shared CDN/hosting IP is marked information not a "
+    "domains, Shodan host, Censys host, Validin + keyless HackerTarget reverse-IP, CIRCL passive DNS "
+    "and the passive-SSL certificates seen ON the box, dig MX/NS/TXT/PTR; under free_only IPinfo "
+    "runs keyless and FOFA/Shodan/Censys/CIRCL are skipped. In a case it stamps meta.origin_context "
+    "— which case hosts resolved here, when, and whether that tenancy is stale or the network is a "
+    "DDoS-proxy-or-host (`ambiguous`): then the co-hosted domains are LEADS, never siblings. A "
+    "shared CDN/hosting IP is marked information not a "
     "same-operator pivot, and its ASN is banked to references/asn_registry.json. It also flags "
     "MISCONFIG TRIAGE leads read passively from the FOFA banner — an internal/RFC1918/loopback "
     "address leaking into the public result (a dual-homed operator box exposing its internal "
@@ -345,13 +381,14 @@ def _ok(text: str, *, tool: str | None = None, where: str = "") -> dict[str, Any
 )
 async def pivot_extract(args: dict[str, Any]) -> dict[str, Any]:
     res = collect_one(args["url"], args["case"], hostile=POLICY["hostile"],
-                      passive=args.get("passive", False), proxy=args.get("proxy"),
-                      force=bool(args.get("force")),
-                      no_assets=bool(args.get("no_assets")),
-                      no_well_known=bool(args.get("no_well_known")),
+                      passive=_flag(args, "passive"), proxy=args.get("proxy"),
+                      force=_flag(args, "force"),
+                      no_assets=_flag(args, "no_assets"),
+                      no_well_known=_flag(args, "no_well_known"),
                       assets_max=args.get("assets_max"),
-                      no_docmeta=bool(args.get("no_docmeta")),
-                      docmeta_max=args.get("docmeta_max"))
+                      no_docmeta=_flag(args, "no_docmeta"),
+                      docmeta_max=args.get("docmeta_max"),
+                      free_only=_flag(args, "free_only"))
     if res.get("error"):
         return _err(res["error"])
     blob = json.dumps(res.get("data") or {}, ensure_ascii=False)
@@ -370,7 +407,8 @@ async def pivot_extract(args: dict[str, Any]) -> dict[str, Any]:
 def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = False,
                 proxy: str | None = None, force: bool = False, no_assets: bool = False,
                 no_well_known: bool = False, assets_max: int | None = None,
-                no_docmeta: bool = False, docmeta_max: int | None = None) -> dict[str, Any]:
+                no_docmeta: bool = False, docmeta_max: int | None = None,
+                free_only: bool = False, allow_spend: bool = False) -> dict[str, Any]:
     """Collect ONE host end-to-end (cache-reuse → live fetch + enrichment → evidence capture →
     manifest) via the shared, single-sourced collect_core.collect_host — the SAME routine the
     deterministic pipeline (tools/intel.py) delegates to. This wrapper only supplies the harness's
@@ -392,6 +430,14 @@ def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = F
         extra.append("--no-docmeta")
     if docmeta_max is not None:
         extra += ["--docmeta-max", str(int(docmeta_max))]
+    # free_only → the collector's own --free-only: every metered enrichment engine (and the
+    # default reverse-WHOIS purchase) is held. ONE rule (proposal.collect_free_only): free-only on
+    # a no_spend case and, while the cross-type loop is active, for every host EXCEPT the analyst's
+    # own typed seeds and an approved `enrich.host` (allow_spend). Consent is per HOST, never per
+    # round — an agent reaching other hosts in the seed round collects them free-only.
+    import proposal as _P  # harness/proposal.py
+    if _P.collect_free_only(ROOT, case, url, free_only=free_only, allow_spend=allow_spend):
+        extra.append("--free-only")
     return collect_core.collect_host(
         url, case,
         root=ROOT, py=PY, render_py=RENDER_PY,
@@ -407,23 +453,36 @@ def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
     that scales to a big seed set without blowing one model session's context/turn budget. Same
     single-sourced fan-out (collect_core.collect_many) the deterministic pipeline uses; this
     wrapper only supplies the harness's config + evidence-manifest callback."""
-    return collect_core.collect_many(
-        seeds, case, max_workers=max_workers,
-        root=ROOT, py=PY, render_py=RENDER_PY,
-        collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
-        hostile=hostile, force=FORCE, smoke=SMOKE, no_archive=NO_ARCHIVE,
-        want_shot=SHOT, flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest)
+    import proposal as _P
+    keyed = [s for s in seeds if not _P.collect_free_only(ROOT, case, s)]
+    free = [s for s in seeds if s not in keyed]
+    out: list[dict[str, Any]] = []
+    for group, flags in ((keyed, ()), (free, ["--free-only"])):
+        if group:
+            out += collect_core.collect_many(
+                group, case, max_workers=max_workers,
+                root=ROOT, py=PY, render_py=RENDER_PY,
+                collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
+                hostile=hostile, force=FORCE, smoke=SMOKE, no_archive=NO_ARCHIVE,
+                want_shot=SHOT, flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest,
+                extra_flags=flags)
+    return out
 
 
 def ingest(case: str) -> tuple[bool, str]:
-    """Ingest a case's raw pivot JSON into the KB (sync). Run once after collect_many."""
-    raw = os.path.join(ROOT, "cases", case, "raw")
-    files = ([os.path.join(raw, f) for f in os.listdir(raw) if f.endswith(".json")]
-             if os.path.isdir(raw) else [])   # skip .DS_Store and other non-pivot files
-    if not files:
-        return False, f"no raw pivot JSON in {raw}"
-    r = _run([PY, os.path.join("tools", "kb", "ingest_webpivot.py"), "--kb", KB_DIR, *files])
-    return r.returncode == 0, (r.stdout + r.stderr) or "ingested"
+    """Ingest web hosts and binary files into the same case KB."""
+    case_dir = os.path.join(ROOT, "cases", case)
+    raw = os.path.join(case_dir, "raw")
+    files = ([os.path.join(raw, f) for f in os.listdir(raw)
+              if f.endswith(".json") and not f.startswith("bin_")]
+             if os.path.isdir(raw) else [])
+    r = (_run([PY, os.path.join("tools", "kb", "ingest_webpivot.py"),
+               "--kb", KB_DIR, *files]) if files else None)
+    binary_ok, binary_note = binary_auto.ingest(case_dir, os.path.join(ROOT, KB_DIR))
+    web_note = (r.stdout + r.stderr) if r else ""
+    ok = (bool(files or binary_note) and (r is None or
+          (r.returncode == 0 and "[skip]" not in r.stderr)) and binary_ok)
+    return ok, (web_note + binary_note) or f"no raw or binary JSON in {case_dir}"
 
 
 @tool(
@@ -431,10 +490,11 @@ def ingest(case: str) -> tuple[bool, str]:
     "LAST-RESORT probe — call this when pivot_extract returns ZERO/near-zero pivots or an "
     "empty-favicon/parked/NXDOMAIN page, i.e. WHOIS+FOFA+urlscan all came back empty. Never end "
     "a seed on a silent 'nothing found'. Keyless sweep of the corners that survive a dead front "
-    "page: crt.sh certs (SAN-sibling domains = strongest same-owner link), the full Wayback "
+    "page: CT certs via the shared wp_ct client (SAN-sibling domains = strongest same-owner link), the full Wayback "
     "capture TIMELINE (parked-today was often a live scam last year), archive.today mementos, "
     "ready-to-run search dorks, and the local KB (already known/attributed?). Returns a VERDICT: "
-    "PIVOTABLE (a lead survived) or NO-PIVOT-YET (genuinely cold + explicit next steps).",
+    "PIVOTABLE (a lead survived), NO-PIVOT-YET (genuinely cold + explicit next steps), or "
+    "INCONCLUSIVE-CT-DEGRADED (cold, but crt.sh was unreachable — CT not really swept; re-run).",
     {"domain": str},
     annotations=READONLY,
 )
@@ -555,8 +615,9 @@ async def subdomain_enum(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, os.path.join("WebPivot", "tools", "wp_subenum.py"), apex, "--case-dir", case_dir,
            "--timeout", str(int(args.get("timeout") or 240))]
     # keyless-only when asked, or when the case scope forbids spending metered credits
+    # (case_scope.resolve stores the flag under `constraints`, never at the top level)
     scope = _load_json(os.path.join(case_dir, "scope.json")) or {}
-    if args.get("free_only") or scope.get("no_spend"):
+    if _flag(args, "free_only") or (scope.get("constraints") or {}).get("no_spend"):
         cmd.append("--free-only")
     r = _run(cmd, timeout=900)
     out = os.path.join(case_dir, "subenum", apex + ".json")
@@ -644,14 +705,20 @@ async def domain_liveness(args: dict[str, Any]) -> dict[str, Any]:
     "(a numeric snowflake — decodes the account-creation date LOCALLY and emits the discord user-"
     "lookup mirrors), and 'keyword' (a slogan/tracking-ID/wallet — exact string + bilingual scam/"
     "fraud context + paste/code leaks). It emits ready-to-open, URL-encoded result URLs + the raw "
-    "dork queries across a switchable engine set (Google / Yandex / DuckDuckGo / Bing / Brave). It "
-    "does NOT scrape (SERPs are bot-walled) — FIRE the queries with Claude Code's WebSearch "
-    "(single-engine but free) and/or WebFetch the duckduckgo html URL (the one a plain fetch can "
-    "read; Google/Yandex bot-wall WebFetch), open the `directories` URLs directly, extract "
-    "candidate hosts/handles from the results, and feed the NEW ones back into pivot_extract to "
-    "close the keyword→search→infrastructure loop. Pass engines='google,yandex,duckduckgo' to pick "
-    "engines; kind='domain'|'keyword'|'handle'|'discord_id' to override auto-detection.",
-    {"indicator": str},  # engines:str (comma list), kind:str optional -> args.get()
+    "dork queries across a switchable engine set (Google / Yandex / DuckDuckGo / Bing / Brave). By "
+    "default it does NOT fetch — FIRE the queries with Claude Code's WebSearch (single-engine but "
+    "free) and/or WebFetch the duckduckgo html URL (Google/Yandex bot-wall WebFetch). Pass run=true "
+    "to EXECUTE them here instead: DuckDuckGo HTML first (free), per query; only a query the free "
+    "path could not answer (bot challenge, HTTP error, unparseable page, or 0 hits on an operator "
+    "DDG ignores: intext:/after:/before:) is re-run via SerpApi Google — 1 METERED search per such "
+    "query, ledgered. `related:` is never bought (Google retired it) and is reported NOT ANSWERED. "
+    "free_only=true (or no SERPAPI_KEY) never spends and "
+    "marks those queries NOT ANSWERED. max_queries caps execution. Open the `directories` URLs "
+    "directly, extract candidate hosts/handles from the results (`found_hosts` when run=true), and "
+    "feed the NEW ones back into pivot_extract to close the keyword→search→infrastructure loop. Pass "
+    "engines='google,yandex,duckduckgo' to pick engines; kind='domain'|'keyword'|'handle'|"
+    "'discord_id' to override auto-detection.",
+    {"indicator": str},  # engines:str, kind:str, run:bool, free_only:bool, max_queries:int optional
     annotations=READONLY,
 )
 async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
@@ -660,10 +727,64 @@ async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--engines", str(args["engines"])]
     if args.get("kind"):
         cmd += ["--kind", str(args["kind"])]
-    r = _run(cmd, timeout=30)
+    if _flag(args, "run"):
+        cmd.append("--run")
+        if _flag(args, "free_only"):
+            cmd.append("--free-only")
+        if args.get("max_queries"):
+            cmd += ["--max-queries", str(int(args["max_queries"]))]
+    r = _run(cmd, timeout=300 if _flag(args, "run") else 30)
     if r.returncode != 0:
         return _err(r.stderr or "search_pivot failed")
     return _ok(r.stdout or "search_pivot produced no output")
+
+
+@tool(
+    "corpus_search",
+    "Run ONE cross-type corpus pivot route and ingest the typed rows into the case KB "
+    "(owner edges; kit/neighbour/mention facts only — collecting is not attributing). "
+    "`route` is a pivot_map key (urlscan.title, urlscan.identifier, wayback.telegram, "
+    "wayback.pdf, wayback.news, fofa.body, publicwww.source, webamon.corpus, email.deep, "
+    "phone.osint, rwhois.purchase, crypto.counterparties, anyrun.lookup, binary.analyze, …). "
+    "`query` is the corpus query string (from pivot_routes.query_for or a hand-built Lucene/"
+    "collection query). `case` scopes the ingest provenance. Owner-rung hits become KB edges; "
+    "kit/neighbour/mention hits are stored as facts only (collecting ≠ attributing). Tri-state: "
+    "rows+total, skipped (no key / free_only on metered), or error. free_only holds metered "
+    "routes and forces urlscan onto the keyless path.",
+    {"route": str, "query": str, "case": str},  # free_only:bool, origin_type:str, origin_value:str optional
+    annotations=READONLY,
+)
+async def corpus_search(args: dict[str, Any]) -> dict[str, Any]:
+    route = str(args.get("route") or "").strip()
+    query = str(args.get("query") or "").strip()
+    case = str(args.get("case") or "").strip()
+    if not route or not query:
+        return _err("corpus_search needs route= and query=")
+    if not case:
+        return _err("corpus_search needs case=<ID> so ingest provenance is scoped")
+    free_only = _flag(args, "free_only") or SMOKE        # execute() also folds in no_spend
+    hostile = bool(POLICY.get("hostile"))
+    try:
+        import pivot_routes as PR  # noqa: E402 — lazy: a missing module never blocks the surface
+    except Exception as e:  # noqa: BLE001
+        return _err(f"corpus_search imports failed: {e}")
+    res = PR.execute(route, query, case=case,
+                     origin_type=str(args.get("origin_type") or "string").strip() or "string",
+                     origin_value=str(args.get("origin_value") or query).strip() or query,
+                     free_only=free_only, hostile=hostile,
+                     kb_root=KB_DIR if os.path.isabs(KB_DIR) else os.path.join(ROOT, KB_DIR))
+    if not isinstance(res, dict) or not res:
+        return _err("corpus_search: empty result")
+    if res.get("error"):
+        return _err(str(res["error"]))
+    if res.get("ingest_error") or res.get("nodes_error"):
+        # Hits came back but were not recorded — reporting success would hide lost evidence.
+        return _err(f"corpus_search: {res.get('rows', 0)} row(s) found but NOT recorded — "
+                    f"ingest: {res.get('ingest_error') or 'ok'}; nodes: {res.get('nodes_error') or 'ok'}")
+    if res.get("skipped"):
+        return _ok(json.dumps({"skipped": res["skipped"], "route": route, "query": query},
+                              ensure_ascii=False))
+    return _ok(json.dumps(res, ensure_ascii=False))
 
 
 @tool(
@@ -681,11 +802,8 @@ async def kb_ingest(args: dict[str, Any]) -> dict[str, Any]:
 
 def collect_binary(target: str, case: str | None = None, keep: str | None = None,
                    timeout: int = 240) -> dict[str, Any]:
-    """Static IOC + packer/protector extraction from a scam-funnel binary (APK/exe/installer/zip)
-    via BinaryPivot/analyze_artifact.py — the file-half sibling of collect_one. When `case` is set,
-    the WebPivot-shaped JSON is written to cases/<case>/raw/<host>.json so kb_ingest folds the app's
-    signing cert / backend host / firebase tenant / named protector into the SAME cluster as the web
-    infra. Returns a summary dict, never raises."""
+    """Statically analyze a binary. Case JSON lives in bin/analysis/<sha256>.json and is
+    ingested separately from raw web-host evidence. Returns a summary dict, never raises."""
     import re
     import tempfile
     if POLICY["hostile"] and re.match(r"^https?://", target, re.I):
@@ -694,9 +812,10 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
                           "hostile infra (it would touch attacker infra from your IP). Pull it from "
                           "non-attributable egress (research VPS/VPN) and re-call with the LOCAL path.")}
     script = os.path.join("BinaryPivot", "tools", "analyze_artifact.py")
-    raw_dir = os.path.join(ROOT, "cases", case, "raw") if case else None
-    if raw_dir:
-        os.makedirs(raw_dir, exist_ok=True)
+    case_dir = os.path.join(ROOT, "cases", case) if case else None
+    analysis_dir = os.path.join(case_dir, "bin", "analysis") if case_dir else None
+    if analysis_dir:
+        os.makedirs(analysis_dir, exist_ok=True)
 
     def _unlink(p):
         try:
@@ -704,14 +823,17 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
         except OSError:
             pass
 
-    # Put the temp JSON on the SAME filesystem as its final home (the case raw dir) so the rename
-    # is atomic and never cross-device; with no case it's a throwaway we delete after reading.
-    fd, tmp_out = tempfile.mkstemp(suffix=".json", prefix="binpivot_", dir=raw_dir)
+    # The case's temporary output is outside raw/ from the start.
+    fd, tmp_out = tempfile.mkstemp(suffix=".json", prefix="binpivot_", dir=analysis_dir)
     os.close(fd)
     cmd = [PY, script, target, "--leads", "-o", tmp_out]
     if case:
         cmd += ["--case", case]
-    keep_dir = keep or (os.path.join(ROOT, "cases", case, "bin") if case else None)
+    # When a case is set, its bin/ is the canonical store the completeness gate and the sandbox
+    # uploader both key off (save_analysis requires saved_to to live under <case>/bin). A custom
+    # keep dir alongside a case would land the file where those checks can't find it, so the case
+    # store wins; keep only applies to a case-less manual analysis.
+    keep_dir = (os.path.join(ROOT, "cases", case, "bin") if case else keep)
     if keep_dir:
         cmd += ["--keep", keep_dir]
     r = _run(cmd, timeout=timeout)
@@ -722,17 +844,22 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
                 "error": f"analyze_artifact failed for {target}: {(r.stderr or '')[-500:]}"}
     host = (data.get("meta") or {}).get("host") or "artifact"
     saved = None
-    if case:
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", host)[:120] or "artifact"
-        saved = os.path.join(raw_dir, safe + ".json")
+    error = data.get("error")
+    if case and not error:
         try:
-            os.replace(tmp_out, saved)
-        except OSError:
-            saved = tmp_out          # same-fs replace should not fail; keep the temp copy if it does
-    else:
-        _unlink(tmp_out)             # no case → ephemeral; the leads text is the deliverable
+            saved = binary_auto.save_analysis(case_dir, data)
+            if saved is None:
+                error = ("not a complete binary: truncated, non-2xx, non-binary, or the saved "
+                         "file does not match its hash — nothing was stored or ingested")
+            else:
+                ingested, note = binary_auto.ingest(case_dir, os.path.join(ROOT, KB_DIR))
+                if not ingested:
+                    error = f"binary KB ingest failed: {note[-500:]}"
+        except (OSError, ValueError) as exc:
+            error = f"binary case save failed: {exc}"
+    _unlink(tmp_out)
     prot = ((data.get("artifacts") or {}).get("binary") or {}).get("protection") or {}
-    return {"ok": not data.get("error"), "error": data.get("error"), "leads": r.stdout or "",
+    return {"ok": not error, "error": error, "leads": r.stdout or "",
             "saved": saved, "host": host, "n_pivots": len(data.get("pivots", [])),
             "packed": bool(prot.get("packed") or prot.get("obfuscated"))}
 
@@ -748,9 +875,9 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
     "(entropy + section/member signatures: UPX, VMProtect, Themida, NSIS/Inno self-extractors, and "
     "the Android app-protectors Qihoo Jiagu / Tencent Legu / Bangcle / Ijiami…) that EXPLAINS a thin "
     "string sweep and routes a protected sample to a dynamic sandbox. When case=<ID> is given the "
-    "WebPivot-shaped JSON is written to cases/<ID>/raw/<host>.json so kb_ingest folds the app's "
-    "cert/backend/firebase/protector into the SAME cluster as the web infra. For HOSTILE targets a "
-    "direct URL download is refused — pull it from non-attributable egress and pass the local path.",
+    "JSON is saved under cases/<ID>/bin/analysis/<sha256>.json and explicitly ingested into the KB, "
+    "without creating a web host row. For HOSTILE targets a direct URL download is refused — "
+    "pull it from non-attributable egress and pass the local path.",
     {"target": str},   # case:str, keep:str optional via args.get()
 )
 async def analyze_artifact(args: dict[str, Any]) -> dict[str, Any]:
@@ -823,11 +950,29 @@ async def risk_signals(args: dict[str, Any]) -> dict[str, Any]:
 
 _REVERSE_FLAG = {"email": "--reverse-email", "name": "--reverse-name", "phone": "--reverse-phone"}
 
+# The reverse-WHOIS AUTO-BUY cap: a preview count above it is treated as a bulk registrant and
+# is not purchased without confirm=true. DATA, not code (RULE 3) — references/reverse_whois.json
+# → rwhois_auto_cap. Read per call so an analyst's edit applies to the next gate decision.
+_RWHOIS_FALLBACK = {"rwhois_auto_cap": {"value": 150}}
+_RWHOIS_REF = _ref_path(__file__, "reverse_whois.json")
 
-def _reverse_gate(kind: str, count: int, cap: int, confirm: bool) -> tuple[str, str]:
-    """Decide what to do after a reverse-WHOIS PREVIEW (cheap count, no credits). Pure — no I/O —
-    so the 'preview first, ask if it's a lot' logic is unit-tested. Returns (action, reason) with
+
+def _rwhois_auto_cap() -> int:
+    """rwhois_auto_cap from references/reverse_whois.json (embedded fallback 150)."""
+    node = _load_ref(_RWHOIS_REF, _RWHOIS_FALLBACK).get("rwhois_auto_cap")
+    try:
+        return int(node["value"] if isinstance(node, dict) else node)
+    except (TypeError, ValueError, KeyError):
+        return int(_RWHOIS_FALLBACK["rwhois_auto_cap"]["value"])
+
+
+def _reverse_gate(kind: str, count: int, cap: int | None, confirm: bool) -> tuple[str, str]:
+    """Decide what to do after a reverse-WHOIS PREVIEW (cheap count, no credits). Pure apart from
+    reading the cap — `cap=None` means the reference rwhois_auto_cap — so the 'preview first, ask
+    if it's a lot' logic is unit-tested. Returns (action, reason) with
     action ∈ {'empty','confirm','purchase'}."""
+    if cap is None:
+        cap = _rwhois_auto_cap()
     if count <= 0:
         return "empty", "0 domains — no reverse-WHOIS pivot here"
     if count > cap and not confirm:
@@ -843,18 +988,19 @@ def _reverse_gate(kind: str, count: int, cap: int, confirm: bool) -> tuple[str, 
 @tool(
     "reverse_whois",
     "Reverse-WHOIS a registrant email, name, or PHONE for HIGH-VALUE pivots. PREVIEWS FIRST (cheap "
-    "count, no credits spent); if the term matches MORE than max_domains (default 150) — a shared "
+    "count, no credits spent); if the term matches MORE than max_domains (default: the "
+    "rwhois_auto_cap reference, references/reverse_whois.json) — a shared "
     "reseller/agency/registrar term = NOISE — it STOPS and asks you to confirm rather than spending "
     "credits to pull them, so re-call with confirm=true (and optionally a higher max_domains) to "
     "purchase anyway. Refuses a privacy/registrar email outright. kind = 'email' | 'name' | 'phone'.",
-    {"term": str, "kind": str},  # max_domains:int (default 150), confirm:bool — both optional
+    {"term": str, "kind": str},  # max_domains:int (default rwhois_auto_cap), confirm:bool — optional
     annotations=READONLY,
 )
 async def reverse_whois(args: dict[str, Any]) -> dict[str, Any]:
     term = str(args["term"]).strip()
     kind = args.get("kind", "email")
-    cap = int(args.get("max_domains", 150))
-    confirm = bool(args.get("confirm"))
+    cap = int(args["max_domains"]) if args.get("max_domains") is not None else _rwhois_auto_cap()
+    confirm = _flag(args, "confirm")
     if kind == "email" and _is_noise_email(term):
         return _err(f"'{term}' is a privacy/registrar address (shared by every domain there) — "
                     "NOT a registrant pivot. Do not reverse it.")
@@ -876,6 +1022,11 @@ async def reverse_whois(args: dict[str, Any]) -> dict[str, Any]:
         return _err(f"reverse-WHOIS preview failed for '{term}': "
                     f"{rec.get('error') or (r.stderr or '')[-300:]}")
     count = rec.get("count", 0)
+    if _flag(args, "free_only"):
+        # free_only (a no_spend posture, or the gate's "re-call with free_only=true"): the free
+        # count is the whole answer — the purchase is never made.
+        return _ok(f"'{term}' ({kind}) → {count} domain(s) (preview count only — free_only: NOT "
+                   f"purchased; propose the purchase for analyst approval if it is worth it).")
     action, reason = _reverse_gate(kind, count, cap, confirm)
     if action == "empty":
         return _ok(f"'{term}' ({kind}) → {reason}.")
@@ -896,10 +1047,12 @@ async def reverse_whois(args: dict[str, Any]) -> dict[str, Any]:
     "cert_overlap",
     "TLS certificate / SAN-overlap check across 2+ domains (comma-separated in `domains`) — a "
     "CORRELATION signal. Two domains sharing a TLS cert is near-decisive same-operator proof: SAN "
-    "names are chosen by whoever controls the cert. Keyless dual-source CT (Shodan CTL + crt.sh). "
-    "Returns a VERDICT: SHARED-CERT / SAN cross-cover (decisive), SIBLING-OVERLAP (certs share a "
-    "third registrable domain = strong), or NO-CT-OVERLAP. Run this on candidate same-operator "
-    "seeds before asserting a cluster — it either corroborates or refutes at the TLS layer.",
+    "names are chosen by whoever controls the cert. Keyless CT via wp_ct (crt.sh, then Shodan CTL "
+    "+ CertSpotter when crt.sh is down). Returns a VERDICT: SHARED-CERT / SAN cross-cover "
+    "(decisive), SIBLING-OVERLAP (certs share a third registrable domain = strong), NO-CT-OVERLAP "
+    "(clean negative: crt.sh answered for every input), or INCONCLUSIVE-CT-DEGRADED (crt.sh was "
+    "unreachable — NOT a negative). Run this on candidate same-operator seeds before asserting a "
+    "cluster — it either corroborates or refutes at the TLS layer.",
     {"domains": str},
     annotations=READONLY,
 )
@@ -986,7 +1139,7 @@ async def censys(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def capability_check(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, os.path.join("WebPivot", "tools", "wp_capabilities.py")]
-    if args.get("free_only"):
+    if _flag(args, "free_only"):
         cmd.append("--free-only")
     r = _run(cmd, timeout=30)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
@@ -1104,7 +1257,8 @@ async def domain_verdict(args: dict[str, Any]) -> dict[str, Any]:
     "api_usage",
     "Report LICENSED/metered API credit usage (FOFA, urlscan, WhoisXML, IPinfo, Shodan) from the "
     "ledger every collection writes. Pass case=<ID> to scope to one case, since=YYYY-MM-DD to bound "
-    "by date, last=<N> to also list the most recent calls. Shows credits per provider / day / case. "
+    "by date, last=<N> to also list the most recent calls. Shows estimated units per cost class "
+    "(free / quota / metered — WebPivot/references/api_cost_classes.json) and per provider / day / case. "
     "Read-only — use it to answer 'how many credits did this case/run cost'.",
     {},   # all optional: case, since (str), last (int) via args.get()
     annotations=READONLY,
@@ -1408,7 +1562,7 @@ async def case_clusters(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, os.path.join("tools", "intel.py"), "clusters", str(args["case"]),
            "--min", str(int(args.get("min", 2))),
            "--max-prevalence", str(int(args.get("max_prevalence", 8)))]
-    if args.get("all"):
+    if _flag(args, "all"):
         cmd.append("--all")
     if args.get("json"):
         cmd.append("--json")
@@ -1459,6 +1613,31 @@ async def case_loop(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "case_enrich",
+    "Run all machine-executable, target-matched identity/exposure leads already discovered in "
+    "a case: registrant email profile, phone OSINT, keyed ChongLuaDao phone/Telegram/actor/org, "
+    "IntelX phonebook and linked GitHub account. Results are checkpointed in cases/<case>/"
+    "enrichment/; a finished lead closes as ran or empty, while missing-key, held, transient-error "
+    "and query-only dork/secret leads stay OPEN for a later keyed run or analyst review. This does "
+    "not fetch the target or re-collect hosts. It SPENDS credits on metered legs unless free_only "
+    "or the case's scope is no_spend; passive is an egress posture and does NOT hold spend.",
+    {"case": str},  # free_only:bool, passive:bool, reopen_legacy:bool optional (tool_params.json)
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "intel.py"), "enrich", str(args["case"])]
+    if _flag(args, "free_only"):
+        cmd.append("--free-only")
+    if _flag(args, "passive"):
+        cmd.append("--passive")
+    if _flag(args, "reopen_legacy"):
+        cmd.append("--reopen-legacy")
+    r = _run(cmd, timeout=1800)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
     "case_reopen",
     "Cold-case reopen: flip a finished (converged/cold) case back to 'expanding' and optionally "
     "merge NEW seeds, so the next case_loop re-mines its frontier against the CURRENT knowledge base "
@@ -1472,6 +1651,186 @@ async def case_reopen(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "case_state.py"), "reopen", str(args["case"]), *seeds])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_approve",
+    "Approve or reject the cross-type loop's PENDING pivot proposal for a case (cases/<case>/proposal.json) "
+    "— the per-round consent step before any metered or oversized "
+    "pivot runs. Two-step and ANALYST-ONLY: call with confirm omitted/false to get the BRIEFING "
+    "(the proposal table: id, type, route, metered, estimated hits, rung, who proposed it and "
+    "why), show it to the analyst, and only after they name what to approve re-call with "
+    "confirm=true plus `only` (comma-separated ids) or all=true, and optionally `reject`. A "
+    "harness phase can never approve its own pivots (the gate denies this tool outside "
+    "interactive use). Approval is bound to the case state the proposal was made against: if the "
+    "case moved on, it is refused as stale and the loop re-proposes. Resume with `harness continue`.",
+    {"case": str},  # confirm:bool, only:str, all:bool, reject:str optional — tool_params.json
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def case_approve(args: dict[str, Any]) -> dict[str, Any]:
+    import proposal as _P  # harness/proposal.py — stdlib only
+    case = str(args["case"]).strip()
+    data = _P.load(ROOT, case)
+    if not data or not data.get("items"):
+        return _err(f"no proposal for {case} — nothing is awaiting approval")
+    if not _flag(args, "confirm"):
+        return _ok("BRIEFING — show this to the analyst; approve only what they name:\n"
+                   + _P.render(data)
+                   + "\n\nRe-call with confirm=true and only=<ids> (or all=true), optional reject=<ids>. "
+                     "Unlisted items are DEFERRED (proposed again later); only reject=<ids> drops one for good.")
+    split = lambda v: [x.strip() for x in str(v or "").replace(" ", ",").split(",") if x.strip()]  # noqa: E731
+    res = _P.approve(ROOT, case, only=split(args.get("only")), reject=split(args.get("reject")),
+                     approve_all=_flag(args, "all"))
+    if res.get("error"):
+        return _err(f"case_approve: {res['error']}")
+    return _ok(f"approved {len(res.get('approved') or [])} · rejected {len(res.get('rejected') or [])} · "
+               f"deferred {len(res.get('deferred') or [])} item(s) for {case} (only rejected ids are "
+               f"dropped for good; deferred ones are proposed again). Resume with: harness continue {case}")
+
+
+@tool(
+    "cti",
+    "Run the `cti` driver end-to-end on ONE target (domain, URL, email, phone, IP, hash or wallet). "
+    "DEFAULT ENGINE = the cross-type harness loop: recall, then typed pivots on any seed type, a "
+    "read-only Plan phase and per-round analyst approval of every metered pivot. A harness run "
+    "takes tens of minutes, so this tool STARTS it in the background and returns at once with the "
+    "case id, a log path and the status command — check `case_frontier`/`harness status`, and the "
+    "analyst approves pending pivots with `case_approve`. When Quarry is on for the case (quarry=true, "
+    "QUARRY_ENABLED=on, or a recorded yes) the driver first waits for the Quarry scan with no time "
+    "limit (hours or days on a large estate — the wait survives network faults and resumes if "
+    "interrupted) before any pivot spends the same vendor accounts, and the run is backgrounded on "
+    "EVERY path, pipeline included, so the wait is not cut by the tool timeout. Ask the user before "
+    "passing quarry=true when QUARRY_ENABLED=ask. pipeline=true (or quick=true) runs the "
+    "deterministic pipeline instead (recall -> collect -> enrich -> frontier -> "
+    "loop) and returns its machine-readable summary (case, status, converged, open_leads, next) "
+    "as the LAST line. Called from inside a harness phase it always uses the pipeline (no "
+    "recursion).",
+    {"target": str},  # case, quick, deep, passive, free_only, extend optional — tool_params.json
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def cti(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args["target"])
+    # Inside ANY harness run (SDK in-process tools have no HARNESS_PHASE; the orchestrator exports
+    # INTEL_IN_HARNESS for every backend) the driver must never start a nested harness.
+    in_harness = bool(os.environ.get("INTEL_IN_HARNESS") or os.environ.get("HARNESS_PHASE"))
+    harness_path = not (_flag(args, "pipeline") or _flag(args, "quick") or _flag(args, "passive")
+                        or in_harness)
+    # A Quarry wait has no time limit — never inside the tool-call timeout, and never nested.
+    case = str(args.get("case") or "") or ("" if in_harness else _cti_default_case(target))
+    quarry_waits = not in_harness and _cti_waits_on_quarry(
+        case, quarry=_flag(args, "quarry"), no_quarry=bool(args.get("no_quarry")))
+    background = (harness_path or quarry_waits) and not in_harness
+    cmd = [PY, os.path.join("tools", "intel.py"), "cti", target]
+    if case:
+        cmd += ["--case", case]
+    if _flag(args, "quick"):
+        cmd.append("--quick")
+    if _flag(args, "deep"):
+        cmd.append("--deep")
+    if _flag(args, "passive"):
+        cmd.append("--passive")
+    if _flag(args, "free_only"):
+        cmd.append("--free-only")
+    if _flag(args, "extend"):
+        cmd.append("--extend")
+    if _flag(args, "quarry"):
+        cmd.append("--quarry")
+    if args.get("no_quarry"):
+        cmd.append("--no-quarry")
+    if args.get("pipeline") or (in_harness and not harness_path):
+        cmd.append("--pipeline")
+    if args.get("depth"):
+        cmd += ["--depth", str(int(args["depth"]))]
+    if background:
+        # Background: the harness loop outlives the host's tool-call timeout. The driver itself
+        # falls back to the pipeline if no backend answers. The case id is fixed HERE so the
+        # analyst gets it now, not only when the run ends.
+        log_dir = os.path.join(ROOT, "cases", case)
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = os.path.join(log_dir, f"cti_harness_{stamp}.log")
+        with open(log_path, "w", encoding="utf-8") as log:
+            subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+        return _ok(f"cti started on {target} — case {case} — in the background"
+                   + (" (waiting for Quarry first)" if quarry_waits else "")
+                   + f". Log: {log_path}. Its last line is the JSON summary when it "
+                   f"finishes; the case stops at `awaiting-approval` when paid pivots need the "
+                   f"analyst — show the proposal (case_approve case={case}, no confirm) and approve "
+                   f"only what they name. Status: `harness status {case}`.")
+    r = _run(cmd, timeout=1800)   # pipeline: the driver may run a full collect+loop pass
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+def _cti_waits_on_quarry(case: str, *, quarry: bool, no_quarry: bool) -> bool:
+    """True when the driver will block on a Quarry scan for this call: the same precedence as
+    quarry_bridge.resolve_decision (flag -> recorded answer -> QUARRY_ENABLED) and the driver's
+    skip when Quarry is unconfigured or switched off — read only, nothing is recorded. An
+    undecided `ask` holds at once (`awaiting-quarry`), so it does not wait. The two flags are
+    passed explicitly so the handler's args reads stay statically resolvable."""
+    if no_quarry:
+        return False
+    if quarry:
+        return True
+    try:
+        import quarry_bridge as qb
+        mode = qb.q.quarry_mode()
+        if mode == "off":
+            return False
+        recorded = qb.recorded_decision(case)
+        return recorded if recorded is not None else mode == "on"
+    except Exception:  # noqa: BLE001 — the driver's own Quarry import would fail too: no wait
+        return False
+
+
+def _cti_default_case(target: str) -> str:
+    """The case id the `cti` driver derives for a target (tools/intel.py _default_case_for), so
+    the background reply can name it. Loaded from the driver itself — one rule, not a copy."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cti_driver_case_rule",    # code location, not the (overridable) data ROOT
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "intel.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod._default_case_for(target)
+
+@tool(
+    "quarry",
+    "Quarry scan platform — a separate scanner that already holds, or will run, the vendor sweeps "
+    "this skill would otherwise pay for again (same accounts). Call with only case+target to READ "
+    "what Quarry already has and import it (free, no scan). start=true STARTS a scan when none "
+    "exists: it crawls the target from Quarry's own egress and spends the shared vendor accounts, "
+    "so ask the user first — and it is refused on a no-spend or no-contact case. A scan takes "
+    "minutes to days; this call waits at most wait_minutes (default 20) and persists the job, so "
+    "call again to resume the same wait rather than scanning twice. The long wait belongs to the "
+    "`cti` driver (quarry=true), which blocks on Quarry before any pivot. Non-domain selectors are "
+    "looked up in Quarry's corpus, never scanned. Imported rows go through the rung table: owner "
+    "links become edges, co-tenancy and kit matches become facts only.",
+    {"case": str, "target": str},   # start, wait_minutes, free_only — tool_params.json
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def quarry(args: dict[str, Any]) -> dict[str, Any]:
+    case = str(args.get("case") or "").strip()
+    target = str(args.get("target") or "").strip()
+    if not case or not target:
+        return _err("quarry needs `case` and `target`.")
+    if os.environ.get("INTEL_IN_HARNESS") or os.environ.get("HARNESS_PHASE"):
+        if _flag(args, "start"):
+            return _err("quarry start=true is refused inside a harness phase — the `cti` driver "
+                        "owns the Quarry wait, and a phase must not start a second scan.")
+    cmd = [PY, os.path.join("tools", "quarry_bridge.py"), "sync",
+           "--case", case, "--target", target]
+    if _flag(args, "start"):
+        cmd.append("--quarry-scan")
+    if _flag(args, "free_only"):
+        cmd.append("--free-only")
+    wait = args.get("wait_minutes")
+    cmd += ["--wait-minutes", str(int(wait) if wait else 20)]
+    r = _run(cmd, timeout=max(300, (int(wait) if wait else 20) * 60 + 180))
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
 
 
 @tool(
@@ -1932,7 +2291,7 @@ async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("BinaryPivot", "tools", "bp_anyrun.py")
-    if args.get("verify_task"):
+    if _flag(args, "verify_task"):
         # Follow-up read-back for a task that was still running at submit time: `target` is the
         # task uuid. Nothing is submitted; a task that landed in a forbidden mode is withdrawn.
         wait = max(0, min(int(args.get("wait", 0) or 0), 240))   # 240 + one 30 s poll < the 290 s _run budget
@@ -1946,7 +2305,7 @@ async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, script, "submit", str(args["target"])]
     if kind == "url":
         cmd.append("--url")
-    confirmed = bool(args.get("confirm"))
+    confirmed = _flag(args, "confirm")
     if confirmed:
         cmd.append("--confirm-submission")
     if args.get("privacy"):
@@ -1991,7 +2350,7 @@ async def anyrun_submit(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def webamon_scan(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("WebPivot", "tools", "wp_webamon.py")
-    confirmed = bool(args.get("confirm"))
+    confirmed = _flag(args, "confirm")
     wait = max(0, min(int(args.get("wait", 240) or 0), 240))   # + one poll < the 290 s _run budget
     cmd = [PY, script, "scan", str(args["target"]), "--wait", str(wait)]
     if confirmed:
@@ -2119,7 +2478,7 @@ async def engage_account(args: dict[str, Any]) -> dict[str, Any]:
     if args.get("no_login"):
         cmd += ["--no-login"]
     # confirm is honoured ONLY if the analyst also set the env second-lock; en_engage re-checks it.
-    if args.get("confirm") and os.environ.get("INTEL_ENGAGE_CONFIRM") == "1":
+    if _flag(args, "confirm") and os.environ.get("INTEL_ENGAGE_CONFIRM") == "1":
         cmd += ["--confirm-engagement"]
     r = _run(cmd, timeout=240)
     v = _load_json_str(r.stdout or "")
@@ -2216,6 +2575,31 @@ async def collection_gaps(args: dict[str, Any]) -> dict[str, Any]:
     if r.returncode != 0 and not (r.stdout or "").strip():
         return _err(f"collection_gaps failed for {args['case']}: {(r.stderr or '')[-300:]}")
     return _ok(out or "collection_gaps produced no output")
+
+
+@tool(
+    "origin_history",
+    "THE HOSTING HISTORY of a case's collected hosts — every address each domain/subdomain has EVER "
+    "resolved to, merged from live DNS, passive DNS (CIRCL, HackerTarget), SecurityTrails history, "
+    "Validin, urlscan's hostname index and scans, Webamon and passive SSL, dated (first/last seen) "
+    "and classified: `origin` (a box the operator rented), `ambiguous` (a network that sells DDoS "
+    "proxying AND servers — DDoS-Guard, StackPath), or suppressed as a CDN/WAF edge, parking farm or "
+    "bogon (counts only). Each origin carries its era — current / recent / historical / undated / "
+    "previous_owner (last seen before the current registration: someone else's box) — and whether "
+    "it was already collected as an IP seed. Use it to find the real server behind a CDN-fronted "
+    "host and to date a shared-IP claim before making it. Offline: reads the stored collections, no "
+    "network, no credits. Pass case; optional host.",
+    {"case": str},   # host:str optional -> args.get()
+    annotations=READONLY,
+)
+async def origin_history(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_origin_history.py"), str(args["case"])]
+    if args.get("host"):
+        cmd += ["--host", str(args["host"])]
+    r = _run(cmd, timeout=90)
+    if r.returncode != 0:
+        return _err(f"origin_history failed for {args['case']}: {(r.stderr or r.stdout or '')[-300:]}")
+    return _ok(r.stdout or "[]")
 
 
 # ---------------------------------------------------------------- IntelShare (MISP dissemination)
@@ -2334,9 +2718,9 @@ async def misp_push(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--event-id", str(args["event_id"])]
     if args.get("dry_run"):
         cmd += ["--dry-run"]
-    if args.get("publish"):
+    if _flag(args, "publish"):
         cmd += ["--publish", "--distribution", str(int(args.get("distribution") or 1))]
-    confirmed = bool(args.get("confirm"))
+    confirmed = _flag(args, "confirm")
     if confirmed:
         cmd += ["--confirm-push"]
     r = _run(cmd, timeout=180)
@@ -2377,7 +2761,7 @@ async def misp_publish(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--case", str(args["case"])]
     if args.get("dry_run"):
         cmd += ["--dry-run"]
-    confirmed = bool(args.get("confirm"))
+    confirmed = _flag(args, "confirm")
     # confirm is honoured only alongside the env second-lock; sh_misp re-checks it and returns the
     # briefing with `blocked_by` when the lock is absent, so the model is told WHY rather than
     # silently retrying.
@@ -2407,11 +2791,13 @@ def _rr(name: str) -> str:
     "the opposite direction from CT enumeration, which only lists one domain's own certs. Give it "
     "`domain` to fetch the live cert and pivot, or an explicit `sha1`/`sha256` you already hold. "
     "Also mines the cert's SAN list, which is often where sibling domains are named outright. The "
-    "fingerprint is computed KEYLESS from a stdlib TLS handshake, and the crt.sh lookup needs no "
-    "key either; Shodan/Censys/FOFA keys only widen the search. Shared hosting and CDN certs are "
-    "served by thousands of unrelated hosts — treat a match on a wildcard or CDN cert as noise, "
-    "not as a same-operator link.",
-    {"domain": str},  # sha1:str, sha256:str, no_live:bool, no_crtsh:bool, cap:int
+    "fingerprint is computed KEYLESS from a stdlib TLS handshake, and the CT history (crtsh block: "
+    "ct_status + completeness_line) needs no key either; Shodan/Censys keys only widen the search. "
+    "Every hit is in `related_hosts`, graded by agreeing origin checks (Host-header probe, cert, "
+    "history, non-CDN) — a related host, never the target's hosting or abuse contact. Shared hosting "
+    "and CDN certs are served by thousands of unrelated hosts — treat a match on a wildcard or CDN "
+    "cert as noise, not as a same-operator link.",
+    {"domain": str},  # sha1, sha256, no_live, passive, proxy, no_crtsh, cap
     annotations=READONLY,
 )
 async def cert_pivot(args: dict[str, Any]) -> dict[str, Any]:
@@ -2421,8 +2807,10 @@ async def cert_pivot(args: dict[str, Any]) -> dict[str, Any]:
     for k in ("sha1", "sha256"):
         if args.get(k):
             cmd += [f"--{k}", str(args[k])]
-    if args.get("no_live"):
-        cmd.append("--no-live")
+    if args.get("no_live") or args.get("passive"):
+        cmd.append("--passive")
+    if args.get("proxy") and not args.get("passive"):
+        cmd += ["--proxy", str(args["proxy"])]
     if args.get("no_crtsh"):
         cmd.append("--no-crtsh")
     if args.get("cap"):
@@ -2588,6 +2976,40 @@ async def wayback_harvest(args: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
+@tool(
+    "wayback_exhaust",
+    "EXHAUSTIVELY download a `domain`'s WHOLE Wayback history — every distinct capture (deduped by "
+    "content hash across all subdomains and paths, HTML + JS/JSON), not the ~15-snapshot sample "
+    "`wayback_harvest` takes — plus every urlscan scan + cached DOM, and harvest every selector. "
+    "Runs as a DETACHED background job (default budget 7 h; `max_hours` overrides, 0 = unbounded) "
+    "across parallel egress exits, and returns at once with the job's state/log path; call again "
+    "with `status: true` to read progress, and re-call without it to resume a finished or cut job "
+    "(state is saved per capture). Selectors are split at the domain's current WHOIS registration "
+    "date: `prior_era` ones (seen only before it) are an EARLIER owner's — historical facts, never "
+    "indicators or pivots. `case` stores state under the case; `yfrom`/`yto` bound an era; "
+    "`created` overrides the registration date; `html_only` skips JS/JSON; `exits` overrides "
+    "routes. Passive (archive.org / urlscan only, never the target).",
+    {"domain": str},  # case, yfrom, yto, created, exits, state:str; max_hours:float; html_only, status:bool
+    annotations=READONLY,
+)
+async def wayback_exhaust(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_wayback_exhaust.py"),
+           str(args.get("domain") or "")]
+    for k, flag in (("case", "--case"), ("yfrom", "--from"), ("yto", "--to"),
+                    ("exits", "--exits"), ("state", "--state"), ("created", "--created")):
+        if args.get(k):
+            cmd += [flag, str(args[k])]
+    if args.get("max_hours") is not None:
+        cmd += ["--max-hours", str(args["max_hours"])]
+    if args.get("html_only"):
+        cmd.append("--html-only")
+    # never run the sweep inside the call: the host kills a call at ~30 min. --detach starts it in
+    # its own session and returns at once; --status only reads the state file.
+    cmd.append("--status" if args.get("status") else "--detach")
+    r = _run(cmd, timeout=60)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
 def _os_(name: str) -> str:
     """Path to a scripts/osint tool, relative to ROOT (= intel_engine/)."""
     return os.path.join("..", "scripts", "osint", name)
@@ -2616,8 +3038,11 @@ async def hash_id(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "threat_check",
     "Reputation for any `indicator` — ip, domain, url or file hash — across feeds that are still "
-    "genuinely keyless (AlienVault OTX, urlscan.io), plus VirusTotal/AbuseIPDB only when their key "
-    "is set. Set `mode` to 'scam' to add ransomware victim records for the fraud reading. Two "
+    "genuinely keyless (AlienVault OTX, urlscan.io), plus VirusTotal/AbuseIPDB/abuse.ch/ChongLuaDao "
+    "only when their key is set. Spamhaus Intelligence API is the FALLBACK: queried only when those "
+    "feeds did not already corroborate MALICIOUS — an IP's active XBL/CSS/BCL listing or a domain's "
+    "DBL listing / abuse tag counts as a signal; expired IP history and a compromised-legitimate "
+    "domain are notes. Set `mode` to 'scam' to add ransomware victim records for the fraud reading. Two "
     "behaviours matter: a feed with no key is reported as NOT CONSULTED rather than silently "
     "counted as clean, and OTX's own whitelist is respected so popular infrastructure is not "
     "flagged for merely appearing in pulses. 'NO ADVERSE RECORD' is never a clean bill — fresh "
@@ -2707,8 +3132,11 @@ async def username_enum(args: dict[str, Any]) -> dict[str, Any]:
     annotations=READONLY,
 )
 async def phone_osint(args: dict[str, Any]) -> dict[str, Any]:
-    r = _run([PY, _os_("phone_osint.py"),
-              *str(args.get("numbers") or "").replace(",", " ").split()])
+    # One number per argv item: split only on list separators — never on the spaces inside
+    # `+1 202 555 0100`, which would turn one number into four fragments.
+    nums = [n.strip() for n in str(args.get("numbers") or "").replace(";", ",")
+            .replace("\n", ",").split(",") if n.strip()]
+    r = _run([PY, _os_("phone_osint.py"), "--", *nums])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
@@ -2837,6 +3265,72 @@ async def cn_recon(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "vn_corp",
+    "Keyless Vietnamese business-registry lookup: a 10/13-digit MST tax code or a company name "
+    "against public mirrors (masothue.com, hsctvn.com, doanhnghiep.biz) → company name (VN + "
+    "international), tax code, legal representative, address, phone, status, registration date — "
+    "each field tri-state with its own source URL. No key, no account. Use it to CORROBORATE a "
+    "WHOIS registrant org/phone (a matching director phone is rung-1 corroboration of who "
+    "REGISTERED, not who runs the scheme — a registered LLC can be a nominee front), or to "
+    "resolve an MST printed on a page. Run it before naming any Vietnamese company.",
+    {"query": str},  # timeout:int
+    annotations=READONLY,
+)
+async def vn_corp(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_vncorp.py"), str(args["query"]), "--json"]
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "sellers_lookup",
+    "AdSense publisher id (ca-pub-… / pub-… / digits) → the LEGAL PAYEE name, domain and seller "
+    "type Google's public sellers.json lists for it. Keyless and free; the ~110 MB file is "
+    "downloaded once into a gitignored cache and reused for its TTL. A NAMED payee is an "
+    "owner-rung signal (rungs.json ads.payee) — the pub id alone is kit, the entity Google pays "
+    "for it is who monetises the site; a confidential row has no name and stays kit. Several ids "
+    "may be space/comma separated.",
+    {"pub_id": str},  # refresh:bool optional — tool_params.json
+    annotations=READONLY,
+)
+async def sellers_lookup(args: dict[str, Any]) -> dict[str, Any]:
+    ids = str(args["pub_id"]).replace(",", " ").split()
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_sellers.py"), *ids, "--json"]
+    if args.get("refresh"):
+        cmd.append("--refresh")
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "app_developer",
+    "Keyless app-store DEVELOPER lookup: a Google Play package (or play.google.com URL) → the "
+    "listing's developer name, 'About the developer' LEGAL name, contact email, website and the "
+    "account's other apps; an App Store id / apps.apple.com URL (or bundle id with "
+    "store='appstore') → iTunes artistName, artistId, sellerName, sellerUrl and other apps. A "
+    "developer website whose registrable domain equals a case domain is an OWNER link (rung "
+    "app.developer_url); the email and any other website are seed CANDIDATES only, never "
+    "auto-seeded — a listing is self-declared. Pass `case` to scope the owner check.",
+    {"query": str},  # store:'auto'|'play'|'appstore', case:str, case_domains:str, timeout:int
+    annotations=READONLY,
+)
+async def app_developer(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_appdev.py"), str(args["query"]), "--json"]
+    if args.get("store"):
+        cmd += ["--store", str(args["store"])]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    if args.get("case_domains"):
+        cmd += ["--case-domains", str(args["case_domains"])]
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
     "kb_crossref",
     "Which identifiers appear across MORE THAN ONE case. `kb_query_shared` answers which "
     "indicators bind domains; this answers the question that matters once you have a backlog — "
@@ -2882,6 +3376,32 @@ async def case_drift(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "evidence_import",
+    "Import an analyst's GRADED findings into a case: `findings` is a path to a JSON list of "
+    "{claim, source_url, rung, rung_class, admiralty, indicators:[{type,value}], "
+    "selector_links:[{from,to,rel}]}. Stored under cases/<case>/evidence/imported/; an OWNER "
+    "finding (owner rung AND a rung_class rungs.json grades owner) writes its selector_links as KB "
+    "edges, everything else — indicators, kit/neighbour links, demoted owner claims — is facts only "
+    "(collecting ≠ attributing). Every row carries source `analyst_import` so the assessment can "
+    "cite it. Entries missing a claim or a valid admiralty grade (A-F + 1-6, e.g. B2) are rejected "
+    "with a message. Never writes assessment.md/.json.",
+    {"case": str, "findings": str},
+    annotations=ToolAnnotations(readOnlyHint=False),   # writes evidence/imported/ + the KB
+)
+async def evidence_import(args: dict[str, Any]) -> dict[str, Any]:
+    case = str(args.get("case") or "").strip()
+    findings = str(args.get("findings") or "").strip()
+    if not case or not findings:
+        return _err("evidence_import needs case=<ID> and findings=<path to findings JSON>")
+    kb = KB_DIR if os.path.isabs(KB_DIR) else os.path.join(ROOT, KB_DIR)
+    r = _run([PY, os.path.join("tools", "evidence_import.py"), "--kb", kb, "import", case,
+              os.path.abspath(findings)])
+    if r.returncode != 0:
+        return _err(r.stdout or r.stderr or "evidence_import failed")
+    return _ok(r.stdout or "evidence_import produced no output")
+
+
+@tool(
     "signature_scan",
     "Evaluate behavioural observations against analysis/signature-catalog.md — the TEMPORAL / "
     "BEHAVIORAL / NETWORK / LINGUISTIC families and their thresholds (posting-interval variance "
@@ -2907,22 +3427,50 @@ async def signature_scan(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "deep_profile",
-    "Run the email-deep / breach-deep chain over a `selector` (an email, or a domain for the "
-    "infrastructure half). This ORCHESTRATES existing tools rather than collecting — email "
-    "hygiene, domain reputation, M365 tenant and subdomains run here because they are free and "
-    "keyless, while the metered steps (IntelX, reverse-WHOIS, HIBP) are returned as an explicit "
-    "PLAN and NOT executed, because spending credits is the analyst's decision rather than a side "
-    "effect of asking for a profile. Set `mode` to 'breach' for the breach-weighted variant. Any "
-    "step lacking a key is reported as a COLLECTION GAP: no breach record here means 'not "
-    "queried', never 'not breached'.",
-    {"selector": str},  # mode:'email'|'breach'
+    "Run the email-deep / breach-deep chain over a `selector`. When the key is set and "
+    "`free_only` is not set, this SENDS Hudson Rock, ZoneCruncher, one IntelX stealer-log "
+    "search, and a WhoisXML reverse-WHOIS (preview, then purchase only if the count is not "
+    "bulk). Pass `case` so the case memo dedups a second call. HIBP stays a collection gap "
+    "unless HIBP_API_KEY is set. Set `mode` to 'breach' for the breach-weighted variant. "
+    "Do not ingest reverse-WHOIS domains from this result as operator edges. Absence of a "
+    "breach record means 'not queried', never 'not breached'.",
+    {"selector": str},  # mode, case, free_only are optional — tool_params.json
     annotations=READONLY,
 )
 async def deep_profile(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("deep_profile.py"), str(args.get("selector") or "")]
     if str(args.get("mode") or "") == "breach":
         cmd += ["--mode", "breach"]
+    if args.get("case"):
+        # deep_profile.py takes a case DIRECTORY (it exports WP_CASE_DIR); a bare case ID would
+        # create a stray <cwd>/<id>/ memo dir outside cases/.
+        c = str(args["case"])
+        cdir = c if (os.path.isabs(c) or os.sep in c) else os.path.join(ROOT, "cases", c)
+        cmd += ["--case", cdir]
+    if _flag(args, "free_only"):
+        cmd.append("--free-only")
     r = _run(cmd, timeout=240)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "cld",
+    "ChongLuaDao Feeds + Shield for one selector, using the same key as the collector. "
+    "`route` (the default) fires only the endpoints that match: a domain gets checkurl, "
+    "IoC, and host-matched ransomware/ClickFix/Phaas; a t.me handle gets Telegram posts, "
+    "not a domain lookup; an email gets burner + IoC; a phone gets checkphone + IoC. "
+    "Do not re-run it for a host the pipeline already collected. Internal-leak urls are "
+    "the paste the document was found on, not the target host.",
+    {"target": str},
+    annotations=READONLY,
+)
+async def cld(args: dict[str, Any]) -> dict[str, Any]:
+    if _flag(args, "free_only"):
+        return {"content": [{"type": "text", "text": "{\"status\": \"HELD — free_only\"}"}],
+                "is_error": False}
+    cmd = [PY, os.path.join("..", "scripts", "cld", "cld_api.py"),
+           str(args.get("op") or "route"), str(args.get("target") or "")]
+    r = _run(cmd, timeout=90)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
@@ -2977,23 +3525,24 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       domain_liveness,
                       detect_login, make_persona, engage_account, harvest_authenticated,
                       engage_report,
-                      cert_pivot, crypto_balance, wayback_fetch, wayback_harvest,
+                      cert_pivot, crypto_balance, wayback_fetch, wayback_harvest, wayback_exhaust,
                       threat_check, msft_recon, username_enum,
                       subdomain_enum, github_harvest, github_osint, traffic_rank, sharelink_resolve,
-                      cn_recon, deep_profile, wifi_ssid,
-                      kb_ingest])
+                      cn_recon, vn_corp, sellers_lookup, cti, quarry, deep_profile, wifi_ssid, cld,
+                      kb_ingest, corpus_search, app_developer])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
                       reverse_whois, cert_overlap, reference_check, reference_add, reference_mirrors,
                       which_cases, domain_verdict, api_usage, tool_calls, case_scope,
-                      case_clusters, case_frontier, case_loop, case_reopen,
+                      case_clusters, case_frontier, case_loop, case_enrich, case_reopen, case_approve,
                       email_permute,
                       render_diagram, case_timeline, render_report, victim_profile,
-                      collection_gaps,
+                      collection_gaps, origin_history,
                       rank_relations, pivot_suggest, sensitive_paths, email_hygiene,
                       hash_id, vuln_check, phone_osint, exposure_score,
                       dork_builder, kb_crossref, case_drift, signature_scan,
-                      misp_export, misp_search, misp_push, misp_publish])
+                      misp_export, misp_search, misp_push, misp_publish,
+                      evidence_import])
 
 COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__analyze_artifact",
@@ -3016,10 +3565,12 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__username_enum", "mcp__collect__subdomain_enum",
                  "mcp__collect__github_harvest",
                  "mcp__collect__github_osint", "mcp__collect__traffic_rank",
-                 "mcp__collect__sharelink_resolve", "mcp__collect__cn_recon",
-                 "mcp__collect__deep_profile", "mcp__collect__wifi_ssid",
+                 "mcp__collect__sharelink_resolve", "mcp__collect__cn_recon", "mcp__collect__vn_corp", "mcp__collect__cti", "mcp__collect__quarry",
+                 "mcp__collect__deep_profile", "mcp__collect__wifi_ssid", "mcp__collect__cld",
                  "mcp__collect__wayback_fetch", "mcp__collect__wayback_harvest",
-                 "mcp__collect__kb_ingest"]
+                 "mcp__collect__wayback_exhaust",
+                 "mcp__collect__kb_ingest", "mcp__collect__corpus_search",
+                 "mcp__collect__app_developer", "mcp__collect__sellers_lookup"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
                  "mcp__analyze__reverse_whois", "mcp__analyze__cert_overlap",
@@ -3029,12 +3580,12 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__api_usage", "mcp__analyze__tool_calls",
                  "mcp__analyze__case_scope",
                  "mcp__analyze__case_clusters", "mcp__analyze__case_frontier",
-                 "mcp__analyze__case_loop",
-                 "mcp__analyze__case_reopen",
+                 "mcp__analyze__case_loop", "mcp__analyze__case_enrich",
+                 "mcp__analyze__case_reopen", "mcp__analyze__case_approve",
                  "mcp__analyze__email_permute",
                  "mcp__analyze__render_diagram", "mcp__analyze__case_timeline",
                  "mcp__analyze__render_report", "mcp__analyze__victim_profile",
-                 "mcp__analyze__collection_gaps",
+                 "mcp__analyze__collection_gaps", "mcp__analyze__origin_history",
                  "mcp__analyze__misp_export", "mcp__analyze__misp_search",
                  "mcp__analyze__rank_relations", "mcp__analyze__pivot_suggest",
                  "mcp__analyze__hash_id", "mcp__analyze__vuln_check",
@@ -3042,4 +3593,18 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__dork_builder", "mcp__analyze__kb_crossref",
                  "mcp__analyze__case_drift", "mcp__analyze__signature_scan",
                  "mcp__analyze__sensitive_paths", "mcp__analyze__email_hygiene",
-                 "mcp__analyze__misp_push", "mcp__analyze__misp_publish"]
+                 "mcp__analyze__misp_push", "mcp__analyze__misp_publish",
+                 "mcp__analyze__evidence_import"]
+# The cross-type loop's Plan phase: READ-ONLY. ANALYZE_TOOLS also carries tools that spend
+# (reverse_whois, case_enrich), expand (case_loop, case_reopen), write shared state
+# (reference_add, misp_push/publish) or approve (case_approve) — a planner holding any of them
+# could act without the per-round approval it exists to feed. tests/test_tool_registry.py asserts
+# this list stays a subset of ANALYZE_TOOLS with no metered, outbound, mutating or approval tool.
+PLAN_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
+              "mcp__analyze__kb_query_shared", "mcp__analyze__kb_crossref",
+              "mcp__analyze__case_frontier", "mcp__analyze__case_clusters",
+              "mcp__analyze__pivot_suggest", "mcp__analyze__rank_relations",
+              "mcp__analyze__which_cases", "mcp__analyze__domain_verdict",
+              "mcp__analyze__api_usage", "mcp__analyze__collection_gaps",
+              "mcp__analyze__case_drift", "mcp__analyze__case_timeline",
+              "mcp__analyze__reference_check", "mcp__analyze__origin_history"]

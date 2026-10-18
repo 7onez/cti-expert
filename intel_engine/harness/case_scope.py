@@ -285,6 +285,92 @@ def said(scope: dict, field: str) -> bool:
     return field in (scope.get("stated_fields") or [])
 
 
+#: the two intake fields the `cti` driver asks before collecting — the ones that carry the scoping
+INTAKE_FIELDS = ("target_class", "purpose")
+
+
+def _question(field: str) -> dict:
+    for q in QUESTIONS:
+        if isinstance(q, dict) and q.get("id") == field:
+            return q
+    return {}
+
+
+def _ask_class(ask, out) -> str | None:
+    """Prompt for the target class by number or name. Empty/EOF → None (the default applies);
+    an unrecognised answer is re-asked rather than silently coerced to a permissive class."""
+    names = list(CLASSES)
+    q = _question("target_class")
+    print(f"[scope] {q.get('ask') or 'What do you believe this is?'}", file=out)
+    for i, k in enumerate(names, 1):
+        print(f"   {i}. {k} — {(CLASSES[k] or {}).get('means', '')}", file=out)
+    for _ in range(3):
+        try:
+            ans = str(ask(f"target class [1-{len(names)} or name; Enter = {DEFAULT_CLASS}]: ")
+                      ).strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if not ans:
+            return None
+        if ans.isdigit() and 1 <= int(ans) <= len(names):
+            return names[int(ans) - 1]
+        key = ans.lower().replace("-", "_").replace(" ", "_")
+        if key in CLASSES:
+            return key
+        print(f"[scope] {ans!r} is not a known class.", file=out)
+    return None
+
+
+def _ask_purpose(ask, out) -> str | None:
+    q = _question("purpose")
+    dflt = q.get("default_if_unanswered") or "triage"
+    try:
+        ans = str(ask(f"[scope] {q.get('ask') or 'What is this run for?'} [Enter = {dflt}]: ")
+                  ).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return ans or None
+
+
+def intake(case: str, root: str = ROOT, *, target_class: str | None = None,
+           purpose: str | None = None, interactive: bool = False, ask=None,
+           out=sys.stderr) -> dict:
+    """Resolve and PERSIST the case scope before any collection.
+
+    Flags win and never prompt. With no flags, an interactive caller is asked the intake fields
+    the case has not already stated (a resumed case keeps its earlier answers); a non-interactive
+    caller is never asked — it proceeds on the persisted scope or the reference default, and says
+    which. Unanswered questions take the default, so this never blocks a run."""
+    given = {f: v for f, v in (("target_class", target_class), ("purpose", purpose))
+             if v not in (None, "")}
+    prev = load(case, root) or {}
+    stated_before = set(prev.get("stated_fields") or [])
+    asked = False
+    if not given and interactive:
+        ask = ask or input                    # looked up per call, so a test can stub builtins
+        for f, fn in (("target_class", _ask_class), ("purpose", _ask_purpose)):
+            if f in stated_before:
+                continue
+            asked = True
+            v = fn(ask, out)
+            if v:
+                given[f] = v
+    scope = resolve(case, root, **given)
+    missing = [f for f in INTAKE_FIELDS if not said(scope, f)]
+    if given:
+        how = "answered" if asked else "from flags"
+        print(f"[scope] {how}: " + ", ".join(f"{f}={scope.get(f)}" for f in given)
+              + f" → persisted to {path(case, root)}", file=out)
+    elif not missing:
+        print(f"[scope] inherited from {path(case, root)}: target_class={scope['target_class']}, "
+              f"purpose={scope.get('purpose')}", file=out)
+    if missing:
+        why = "non-interactive run" if not interactive else "no answer given"
+        print(f"[scope] DEFAULTED ({why}): " + ", ".join(f"{f}={scope.get(f)}" for f in missing)
+              + " — pass --class/--purpose to state it.", file=out)
+    return scope
+
+
 def posture(scope: dict) -> dict:
     """The class entry driving this run. Always a dict — an unknown class was already coerced."""
     return CLASSES.get(normalise_class(scope.get("target_class")), {}) or {}

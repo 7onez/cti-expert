@@ -42,6 +42,7 @@ Writes  <stem>_hires.png / <stem>.svg / <stem>_thumb.png   (figure, needs matplo
         <stem>.md  (with --markdown)                       (paste-ready evidence table)
 """
 import argparse
+import glob
 import json
 import os
 import re
@@ -52,6 +53,25 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ig_refs import load_ref, ref_path                       # noqa: E402
+
+# Ownership-era authority + third-party masking — single source of truth with the engine (see
+# whois_eras.py's docstring): a PRIOR owner's WHOIS-of-the-day is useful DATING evidence (a
+# drop-catch/resale), never this operator's identity, so its contact value must never appear
+# in clear in a timeline event.
+_ENGINE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SKILL_ROOT = os.path.dirname(_ENGINE_ROOT)
+try:
+    sys.path.insert(0, os.path.join(_ENGINE_ROOT, "WebPivot", "tools"))
+    from whois_eras import split_eras  # noqa: E402
+except Exception:
+    def split_eras(history, current_created=None):  # degrade: everything reads as "current"
+        return {"current": {"created": None}, "prior": [], "undated": {}, "basis": "no-records"}
+try:
+    sys.path.insert(0, os.path.join(_SKILL_ROOT, "scripts"))
+    from cti_third_party_mask import mask_third_parties  # noqa: E402
+except Exception:
+    def mask_third_parties(text, **_kw):  # degrade: never crash a report build over masking
+        return text
 
 # Minimal embedded fallback — the real, extensible data lives in
 # references/evidence_sources.json (contributor RULE 3). If you are reading THIS list in
@@ -257,9 +277,18 @@ def whois_events(host, whois, out):
                        source="whois_registrar", url=rdap,
                        value={"registrar": whois.get("registrar")}))
 
-    # registrant eras from WHOIS history: each record's `updated` (else `created`) is when that
-    # record was observed; the era runs to the next record's date. Day-precision at best — the
-    # history API gives us record snapshots, not the moment of change.
+    # registrant eras from WHOIS history: whois_eras.split_eras decides which registration-day
+    # bucket is the CURRENT owner's; a record from an OLDER bucket is a previous owner (drop-catch
+    # /resale) — useful for DATING the reset, but its identity must never surface in clear here
+    # (whois_eras.py's contract). `updated` (else `created`) still drives the event's own timing;
+    # `created` (day precision) is what decides which era a record belongs to.
+    eras = split_eras(whois.get("history"), whois.get("created"))
+    cur_day = eras["current"].get("created")
+
+    def _rec_day(v):
+        s = str(v or "").strip()
+        return s[:10] if len(s) >= 10 and s[4] == "-" and s[7] == "-" else None
+
     recs = []
     for r in ((whois.get("history") or {}).get("records") or []):
         when = parse_dt(r.get("updated")) or parse_dt(r.get("created"))
@@ -276,12 +305,26 @@ def whois_events(host, whois, out):
         nxt = next((recs[j][0] for j in range(i + 1, len(recs))
                     if (recs[j][1].get("email") or recs[j][1].get("name")
                         or recs[j][1].get("registrar")) != ident), None)
-        out.append(_ev(host, "registrant_era", when, nxt or parse_dt(whois.get("expires")),
-                       label=f"registrant: {ident}",
-                       detail="self-declared registrant identity in the WHOIS record of the day"
-                              " — a clustering key, not proof of ownership",
-                       source="whois_history", url=rdap,
-                       value={"identity": ident, "registrar": r.get("registrar")}))
+        rec_day = _rec_day(r.get("created"))
+        is_current = bool(cur_day) and rec_day == cur_day
+        if is_current:
+            out.append(_ev(host, "registrant_era", when, nxt or parse_dt(whois.get("expires")),
+                           label=f"registrant: {ident}",
+                           detail="self-declared registrant identity in the WHOIS record of the "
+                                  "day — a clustering key, not proof of ownership",
+                           source="whois_history", url=rdap,
+                           value={"identity": ident, "registrar": r.get("registrar")}))
+        else:
+            # a PREVIOUS owner's era (drop-catch/resale) — the registration-reset DATE is useful
+            # evidence, the identity is shown in plain text (masking disabled).
+            out.append(_ev(host, "registrant_era", when, nxt or parse_dt(whois.get("expires")),
+                           label=f"previous registrant (era {rec_day or 'undated'})",
+                           detail=f"prior owner's WHOIS-of-the-day identity: {ident} — "
+                                  "registration reset before the current owner; not this "
+                                  "operator's contact",
+                           source="whois_history", url=rdap,
+                           value={"era_created": rec_day, "registrar": r.get("registrar"),
+                                  "identity": ident}))
 
 
 def cert_events(host, analysis, out, max_certs=12):
@@ -766,6 +809,65 @@ def render(events, stem, title, subtitle=None, lang="en", source="", grading="",
     return outs, dropped_lanes
 
 
+# --------------------------------------------------------------------- input resolution
+_GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def _input_roots():
+    """Directories a RELATIVE input may be anchored at, in order: the caller's CWD, $INTEL_HOME,
+    then the engine root. Callers pass `cases/<case>/raw/*.json` from wherever they run (the MCP
+    server runs scripts FROM the engine root, a shell user from anywhere), so anchoring only at
+    the CWD silently read nothing."""
+    roots = [os.getcwd(), os.environ.get("INTEL_HOME") or "", _ENGINE_ROOT]
+    out = []
+    for r in roots:
+        r = os.path.abspath(os.path.expanduser(r)) if r else ""
+        if r and r not in out:
+            out.append(r)
+    return out
+
+
+def _expand_one(token, roots):
+    token = os.path.expanduser(token)
+    bases = [""] if os.path.isabs(token) else roots
+    for base in bases:
+        cand = os.path.join(base, token) if base else token
+        hits = sorted(glob.glob(cand)) if _GLOB_CHARS.search(cand) else (
+            [cand] if os.path.isfile(cand) else [])
+        if hits:
+            return hits
+    return []
+
+
+def resolve_inputs(inputs, roots=None):
+    """Input args -> existing JSON file paths. Accepts literal paths, glob patterns the shell did
+    not expand (an MCP/subprocess call passes `raw/*.json` verbatim), one space-separated string
+    of several, and relative paths anchored at any of _input_roots(). A case's collected pivots
+    live in `raw/`; the docs' older `out/` spelling falls back to `raw/` when `out/` is empty.
+    Returns (paths, unresolved_tokens)."""
+    roots = roots or _input_roots()
+    paths, missing = [], []
+    for arg in inputs:
+        arg = str(arg)
+        tokens = [arg] if (os.path.isfile(os.path.expanduser(arg)) or not arg.split()) \
+            else arg.split()
+        for tok in tokens:
+            hits = _expand_one(tok, roots)
+            if not hits:
+                alt = re.sub(r"(^|[\\/])out([\\/])", r"\1raw\2", tok)
+                if alt != tok:
+                    hits = _expand_one(alt, roots)
+                    if hits:
+                        print(f"  note: {tok} matched nothing — read the case store's raw/ "
+                              f"instead ({len(hits)} file(s))", file=sys.stderr)
+            if not hits:
+                missing.append(tok)
+            for h in hits:
+                if h not in paths:
+                    paths.append(h)
+    return paths, missing
+
+
 # --------------------------------------------------------------------- CLI
 def main():
     ap = argparse.ArgumentParser(
@@ -790,8 +892,15 @@ def main():
     ap.add_argument("--no-figure", action="store_true", help="ledger + correlations only")
     args = ap.parse_args()
 
+    inputs, missing = resolve_inputs(args.inputs)
+    for tok in missing:
+        print(f"  skip {tok}: no such file (tried CWD, $INTEL_HOME, engine root)", file=sys.stderr)
+    history, hist_missing = resolve_inputs(args.history) if args.history else ([], [])
+    for tok in hist_missing:
+        print(f"  history skipped {tok}: no such file", file=sys.stderr)
+
     analyses, hosts = [], set()
-    for p in args.inputs:
+    for p in inputs:
         try:
             d = json.load(open(p, encoding="utf-8"))
         except Exception as exc:
@@ -815,7 +924,7 @@ def main():
         hosting_events(host, a, events)
         urlscan_hostname_events(host, a, events)
         observation_events(host, a, events, observed, hosts)
-    for p in args.history:
+    for p in history:
         try:
             h = json.load(open(p, encoding="utf-8"))
         except Exception as exc:
@@ -850,7 +959,7 @@ def main():
                  "hosts": sorted(hosts), "events": len(events),
                  "certs_omitted_by_max_certs": dropped_certs,
                  "hosts_omitted_from_figure": dropped_lanes,
-                 "collection_record": [os.path.basename(p) for p in args.inputs],
+                 "collection_record": [os.path.basename(p) for p in inputs],
                  "citation_rule": "every event carries an online source link; local case-store "
                                   "paths are collection provenance, never the citation"},
         "events": [{k: v for k, v in e.items() if not k.startswith("_")}

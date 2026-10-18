@@ -61,12 +61,21 @@ _FALLBACK = {
     "role_email_localparts": ["abuse", "hostmaster", "postmaster"],
     "registrar_email_domains": ["cloudflare.com", "namecheap.com", "godaddy.com",
                                 "withheldforprivacy.com", "privacyprotect.org"],
+    "registrar_role_localparts": ["nic-staff"],
+    "whois_notice_phrases": ["please query the rdds service"],
     "privacy_email_tokens": ["privacy", "protect", "whois", "redact", "withheld", "proxy"],
+    "privacy_label_fillers": ["for", "by", "domain", "domains", "contact", "service", "secure",
+                              "guard", "data", "ed", "ion", "ing"],
+    "registry_email_labels": ["nic"],
     "privacy_proxy_phones": [],
     "placeholder_phones": ["0000000000", "5555555555", "1234567890"],
     "phone_length": {"min_digits": 7, "max_digits": 15},
-    "shared_infra_apexes": ["google.com", "cloudflare.com", "amazonaws.com", "gmail.com"],
+    "shared_infra_apexes": ["google.com", "googleusercontent.com", "discordapp.com",
+                            "mediafire.com", "cloudflare.com", "amazonaws.com", "gmail.com",
+                            "twitter.com", "x.com", "facebook.com", "instagram.com",
+                            "linkedin.com", "tiktok.com", "youtube.com"],
     "saas_tenant_suffixes": ["pages.dev", "vercel.app", "github.io", "myshopify.com"],
+    "social_platform_ip_ranges": [],
 }
 
 
@@ -152,6 +161,19 @@ PARKING_HOST_SUBSTRINGS = tuple(_REF["parking_host_substrings"])
 # edge to one clusters every domain at that registrar. Registrant clustering must ignore them.
 ROLE_EMAIL_LOCALPARTS = tuple(_REF["role_email_localparts"])
 REGISTRAR_EMAIL_DOMAINS = tuple(_REF["registrar_email_domains"])
+# Registrar / ISP NIC-staff role local-parts (nic-staff@…) — the registrar's box on ANY domain.
+REGISTRAR_ROLE_LOCALPARTS = frozenset(str(x).strip().lower() for x in _REF["registrar_role_localparts"])
+# Literal WHOIS/RDDS notice text a parser lands in a contact slot ("Please query the RDDS service
+# of the Registrar of Record…") — never a registrant term.
+WHOIS_NOTICE_PHRASES = tuple(str(x).strip().lower() for x in _REF["whois_notice_phrases"])
+
+
+def is_whois_notice(value) -> bool:
+    """True if a WHOIS contact value is the registry's RDDS/redaction NOTICE text rather than a
+    contact (name, email or phone slot alike)."""
+    s = " ".join(str(value or "").split()).lower()
+    return bool(s) and any(p in s for p in WHOIS_NOTICE_PHRASES)
+
 
 # Registrable apexes that are shared infrastructure — CDN, analytics, social, SaaS, registrar,
 # parking, marketplace. Matched exact-or-parent, so `foo.cloudfront.net` is caught by
@@ -186,23 +208,54 @@ def is_shared_infra_apex(apex: str) -> bool:
     return is_parking_host(a)
 
 
-def is_managed_dns(nameserver: str) -> bool:
-    """True if the nameserver belongs to a big managed/registrar/parking DNS provider.
+# Published address ranges of the never-seed social platforms. An IP inside one is the platform's
+# own edge — its reverse-IP co-tenants are unrelated embedders, never seeds.
+def _networks(values):
+    import ipaddress
+    out = []
+    for v in values or ():
+        try:
+            out.append(ipaddress.ip_network(str(v).strip(), strict=False))
+        except ValueError:
+            continue
+    return tuple(out)
 
-    Match on DNS-label boundaries, never a raw substring: an unanchored `s in ns` wrongly
-    flags an operator's own nameserver whose domain merely CONTAINS a provider suffix
-    (e.g. `ns1.jordan.com` ⊃ `dan.com`, `ns1.casedo.com` ⊃ `sedo.com`), silently dropping it
-    from clustering. Dotted suffixes match as an exact-or-parent domain; bare labels like
-    `awsdns` (Route 53's `ns-2048.awsdns-64.co.uk`) match only as a whole dot/dash-delimited
-    label."""
-    ns = _host(nameserver)
-    for s in MANAGED_DNS_SUFFIXES:
+
+SOCIAL_PLATFORM_IP_RANGES = _networks(_REF.get("social_platform_ip_ranges"))
+
+
+def is_social_platform_ip(ip) -> bool:
+    """True when `ip` lies in a listed social-platform range (social_platform_ip_ranges)."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(str(ip or "").strip())
+    except ValueError:
+        return False
+    return any(addr.version == n.version and addr in n for n in SOCIAL_PLATFORM_IP_RANGES)
+
+
+
+def _listed(host: str, entries) -> bool:
+    """True if `host` IS a listed provider, on DNS-label boundaries — never a raw substring. An
+    unanchored `s in host` wrongly flags an operator's own domain that merely CONTAINS a provider
+    name (`jordan.com` ⊃ `dan.com`, `casedo.com` ⊃ `sedo.com`), silently dropping it from
+    clustering and seeding. Dotted entries match as the exact domain or a parent domain; bare
+    labels like `awsdns` (Route 53's `ns-2048.awsdns-64.co.uk`) or `parkingcrew` match only as a
+    whole dot/dash-delimited label."""
+    h = _host(host)
+    for s in entries:
         if "." in s:
-            if ns == s or ns.endswith("." + s):
+            if h == s or h.endswith("." + s):
                 return True
-        elif re.search(r"(?:^|[.\-])" + re.escape(s) + r"(?:[.\-]|$)", ns):
+        elif re.search(r"(?:^|[.\-])" + re.escape(s) + r"(?:[.\-]|$)", h):
             return True
     return False
+
+
+def is_managed_dns(nameserver: str) -> bool:
+    """True if the nameserver belongs to a big managed/registrar/parking DNS provider (matched on
+    label boundaries — see `_listed`)."""
+    return _listed(nameserver, MANAGED_DNS_SUFFIXES)
 
 
 def is_parking_favicon(mmh3_hash) -> bool:
@@ -221,32 +274,97 @@ def is_noise_tracker(tracker_id) -> bool:
 
 
 def is_parking_host(host: str) -> bool:
-    h = _host(host)
-    return any(s in h for s in PARKING_HOST_SUBSTRINGS)
+    """True for a parking / sinkhole / marketplace host (matched on label boundaries — see
+    `_listed`; `jordan.com` is not `dan.com`)."""
+    return _listed(host, PARKING_HOST_SUBSTRINGS)
 
 
-# Substrings that mark a WHOIS privacy-proxy email domain, whatever the provider. Catches
-# the long tail (data-protected.net, whoissecure.net, yinsibaohu.aliyun.com, domain-contact.org…)
-# without enumerating every proxy. Kept conservative so real consumer domains (163.com, gmail) pass.
+# WHOIS privacy-proxy vocabulary, whatever the provider. Catches the long tail
+# (data-protected.net, whoissecure.net, yinsibaohu.aliyun.com, domain-contact.org…) without
+# enumerating every proxy. Matched against whole DNS labels / hyphen segments / registrant-org
+# words — never as raw substrings, which ate operators such as protectorsgroup.example.
 PRIVACY_EMAIL_TOKENS = tuple(_REF["privacy_email_tokens"])
+# Connective words that may join privacy tokens inside ONE label (withheld|for|privacy,
+# domains|by|proxy, whois|secure). A label made ONLY of these words is never privacy by itself.
+PRIVACY_LABEL_FILLERS = tuple(_REF["privacy_label_fillers"])
+# Whole labels / hyphen segments marking a registry or registrar mail domain (nic.<tld>), where a
+# role local-part (abuse@, legal@, hostmaster@) is the provider's mailbox, not a registrant's.
+REGISTRY_EMAIL_LABELS = frozenset(str(x).strip().lower() for x in _REF["registry_email_labels"])
+
+# (word, is_token) pairs for the compound-label decomposition; tokens win over fillers.
+_PRIVACY_VOCAB = tuple({**{str(w).lower(): False for w in PRIVACY_LABEL_FILLERS},
+                        **{str(t).lower().replace("-", ""): True
+                           for t in PRIVACY_EMAIL_TOKENS}}.items())
+
+
+def _privacy_compound(word: str) -> bool:
+    """True if `word` splits ENTIRELY into privacy vocabulary with at least one privacy token:
+    `withheldforprivacy`, `domainsbyproxy`, `whoissecure`, `protected`. `whoisthat` and
+    `protectorsgroup` leave an unexplained remainder, so they are not privacy labels."""
+    n = len(word)
+    best = [-1] * (n + 1)          # -1 unreachable · 0 fillers only · 1 includes a token
+    best[0] = 0
+    for i in range(n):
+        if best[i] < 0:
+            continue
+        for piece, is_tok in _PRIVACY_VOCAB:
+            if piece and word.startswith(piece, i):
+                j = i + len(piece)
+                best[j] = max(best[j], 1 if (best[i] == 1 or is_tok) else 0)
+    return n > 0 and best[n] == 1
+
+
+def _privacy_label(label: str) -> bool:
+    """True if one DNS label (or a hyphen-joined run of org words) names a privacy proxy: a run
+    of hyphen segments equals a token (`domain-contact`, `proxy`), or one segment / the whole
+    de-hyphenated label decomposes into privacy vocabulary (see `_privacy_compound`)."""
+    segs = [s for s in label.split("-") if s]
+    for tok in PRIVACY_EMAIL_TOKENS:
+        tsegs = [s for s in str(tok).lower().split("-") if s]
+        k = len(tsegs)
+        if k and any(segs[i:i + k] == tsegs for i in range(len(segs) - k + 1)):
+            return True
+    return any(_privacy_compound(c) for c in segs + ["".join(segs)])
+
+
+def _is_privacy_text(text: str) -> bool:
+    """Privacy-proxy test for a free-text registrant ORG: each word run judged like a label."""
+    words = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    return bool(words) and _privacy_label(words)
+
+
+def _is_provider_email_domain(dom: str) -> bool:
+    """True if the mail domain is a registrar, registry or privacy proxy — its mailboxes are the
+    provider's, shared by every domain it fronts."""
+    labels = [x for x in dom.split(".") if x]
+    if not labels:
+        return False
+    # abuse.<registrar>.tld — the role is in the DOMAIN, not the local-part, so `takedown@` or
+    # `noreply@` on such a host is still registrar boilerplate rather than a registrant.
+    if labels[0] == "abuse":
+        return True
+    if any(dom == d or dom.endswith("." + d) for d in REGISTRAR_EMAIL_DOMAINS):
+        return True
+    return any(_privacy_label(lb) for lb in labels)
 
 
 def is_noise_email(email: str) -> bool:
     """True if the email is a registrar/registry role or privacy-proxy address — shared by
-    every domain at that provider, so it must not seed a registrant cluster."""
+    every domain at that provider, so it must not seed a registrant cluster. A role local-part
+    (legal@, abuse@…) is noise only on a registrar/registry/privacy domain: on the operator's
+    own domain it is the operator's mailbox and a real registrant lead."""
+    if is_whois_notice(email):
+        return True
     e = _host(email)
     if "@" not in e:
         return False
     local, _, dom = e.partition("@")
+    if _is_provider_email_domain(dom) or local in REGISTRAR_ROLE_LOCALPARTS:
+        return True
     if local in ROLE_EMAIL_LOCALPARTS or local.startswith("abuse"):
-        return True
-    # abuse.<registrar>.tld — the role is in the DOMAIN, not the local-part, so `takedown@` or
-    # `noreply@` on such a host is still registrar boilerplate rather than a registrant.
-    if dom.split(".")[0] == "abuse":
-        return True
-    if any(dom == d or dom.endswith("." + d) for d in REGISTRAR_EMAIL_DOMAINS):
-        return True
-    return any(tok in dom for tok in PRIVACY_EMAIL_TOKENS)
+        return any(s in REGISTRY_EMAIL_LABELS
+                   for lb in dom.split(".") for s in lb.split("-"))
+    return False
 
 
 def is_saturated_reverse(total) -> bool:
@@ -387,6 +505,8 @@ def is_noise_phone(phone, registrant_email: str = None, registrant_org: str = No
     Pass `registrant_email` / `registrant_org` from the SAME WHOIS record when you have them:
     a phone sitting in a privacy-proxied record is the proxy's, whatever the number, which
     catches providers absent from PRIVACY_PROXY_PHONES."""
+    if is_whois_notice(phone):
+        return True                        # RDDS notice text landed in the phone slot
     p = _normalize_phone(phone)
     if not p:
         return False                       # nothing to judge — let the caller decide
@@ -400,10 +520,8 @@ def is_noise_phone(phone, registrant_email: str = None, registrant_org: str = No
         return True
     if registrant_email and is_noise_email(registrant_email):
         return True
-    if registrant_org:
-        org = (registrant_org or "").strip().lower()
-        if any(tok in org for tok in PRIVACY_EMAIL_TOKENS):
-            return True
+    if registrant_org and _is_privacy_text(registrant_org):
+        return True
     return False
 
 
@@ -430,6 +548,10 @@ def is_noise_indicator(indicator_value: str) -> bool:
         # is_shared_infra_apex already matches a host against its parent apexes, so the
         # full backend hostname can be passed straight through.
         return is_shared_infra_apex(v.split(":", 1)[1])
+    if v.startswith("mail:mx:"):
+        # A custom MX on a hosted-platform apex is every tenant's mail box — co-tenancy, not
+        # one operator's mail server (same trap as a shared api_endpoint above).
+        return is_shared_infra_apex(v.split(":", 2)[2])
     if v.startswith("social:"):
         # 'social:<platform>:<handle>' — judge the HANDLE, which is everything after the
         # platform segment. Without this branch a bare facebook.com bridged unrelated cases.
@@ -462,7 +584,8 @@ if __name__ == "__main__":  # tiny self-test / lookup CLI
         assert not is_noise_indicator("google_tag_manager:GTM-XYZ")
         assert is_noise_email("registry-abuse@cloudflare.com")
         assert is_noise_email("domainabuse@tucows.com")
-        assert is_noise_email("abuse@anything.example")
+        assert is_noise_email("abuse@nic.example")         # registry role mailbox
+        assert not is_noise_email("legal@operator.example")  # operator's own role mailbox, keep
         assert not is_noise_email("registrant@163.com")    # a real registrant email, keep
         assert not is_noise_email("operator@gmail.com")
         # --- registrant phone ---

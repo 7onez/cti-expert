@@ -107,8 +107,14 @@ export API_USAGE_LOG="$(mktemp)"   # bare mktemp: portable (BSD/macOS reject a n
 # (sandbox-unreachable) call must fail fast, never wait the 30-min production default. Tests that
 # assert the default read it from references/timeouts.json with the env cleared in their own scope.
 export CTI_CALL_TIMEOUT=10
+# Isolate run-scoped state the tests would otherwise write into the real engine store — the run
+# breaker AND the machine-wide egress pacer/cooldown (a stubbed refusal must never cool the real
+# archive host), with request spacing off: nothing in §6 reaches the network.
+export WAYBACK_GUARD_STATE="$(mktemp -d)/wayback_breaker.json"
+export WAYBACK_PACE_STATE="$(mktemp -d)/wayback_pace.json"
+export WAYBACK_MIN_INTERVAL=0
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
-         tests/test_references.py tests/test_no_sample_submission.py \
+         tests/test_references.py tests/test_no_sample_submission.py tests/test_binary_auto.py \
          tests/test_email_permute.py tests/test_hooks.py \
          tests/test_phish_domain_survival.py tests/test_clickfix_detect.py \
          tests/test_html_visibility_analysis.py tests/test_apk_permission_scope.py \
@@ -121,12 +127,22 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_deep_archive.py tests/test_house_report_mo_neighbours.py \
          tests/test_intelx_autofire.py tests/test_shodan_search.py \
          tests/test_build_report_data_privacy.py tests/test_archive_recovery_hygiene.py \
-         tests/test_ioc_exclusion_gate.py tests/test_subdomain_frontier.py \
+         tests/test_ioc_exclusion_gate.py tests/test_subdomain_frontier.py tests/test_search_pivot_fallback.py \
          tests/test_proxy.py tests/test_github_harvest.py tests/test_cld_reputation.py \
          tests/test_call_timeout.py tests/test_registrable_psl.py tests/test_landlord_ip.py tests/test_social_handle.py \
-         tests/test_archify_blueprint.py \
+         tests/test_archify_blueprint.py tests/test_render_parity.py \
          tests/test_email_hygiene_nullmx.py scripts/test_pivot_orchestrator.py \
-         tests/test_osint_tools.py tests/test_cluster_corroboration.py tests/test_social_noise_classification.py; do
+         tests/test_osint_tools.py tests/test_cluster_corroboration.py tests/test_social_noise_classification.py \
+         tests/test_keyed_feeds.py tests/test_reference_type_infer.py tests/test_query_entity_lookup.py \
+         tests/test_dispatcher_fixes.py tests/test_prior_overlap_same_run.py tests/test_cti_driver.py \
+         tests/test_mcp_host_targets.py tests/test_loop_spend_label.py tests/test_whois_era_purge.py tests/test_mail_signals.py \
+         tests/test_urlscan_dom_recovery.py tests/test_pivot_extract_dom_undecodable.py tests/test_bogon_ip_guard.py \
+         tests/test_passivedns_host_normalize.py tests/test_collect_status_lines.py tests/test_android_ua_defaults.py \
+         tests/test_proxy_https_connect.py tests/test_whois_pivot_era_guard.py tests/test_wayback_breaker.py \
+         tests/test_wayback_exhaust.py tests/test_quarry_bridge.py tests/test_quarry_reuse.py \
+         tests/test_extract_accuracy.py tests/test_idn_selectors.py tests/test_ct_client.py \
+         tests/test_ct_reporting.py tests/test_register_agents.py \
+         tests/test_report_data_hygiene.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
   # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
   # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.
@@ -194,8 +210,15 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
          intel_engine/tests/test_mcp_server_concurrency.py \
          intel_engine/tests/test_validin_engines.py \
          intel_engine/tests/test_validin_engines_quota_frontier.py \
-         intel_engine/tests/test_tool_registry.py \
-         intel_engine/tools/eval/test_webamon_same_kit.py; do
+         intel_engine/tests/test_tool_registry.py intel_engine/tests/test_flag_coercion.py \
+         intel_engine/tools/eval/test_webamon_same_kit.py \
+         intel_engine/tools/eval/test_enrichment_run.py \
+         intel_engine/tools/eval/test_whois_eras.py intel_engine/tools/eval/test_whois_current_parse.py \
+         intel_engine/tools/eval/test_frontier_golden.py intel_engine/tools/eval/test_propose.py \
+         intel_engine/tools/eval/test_propose_page_selectors.py \
+         intel_engine/tools/eval/test_pivot_routes.py intel_engine/tools/eval/test_origin_history.py \
+         intel_engine/tests/test_timeline_inputs.py intel_engine/tests/test_render_mermaid_flags.py \
+         intel_engine/tests/test_cli_backend.py; do
   if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
   if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
 done
@@ -209,12 +232,13 @@ echo "== 10. vendored-engine tests needing claude_agent_sdk =="
 if python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
   for t in intel_engine/tests/test_context_budget.py intel_engine/tests/test_tool_gate.py \
            intel_engine/tests/test_references.py intel_engine/tests/test_case_scope.py \
-           intel_engine/tests/test_openai_backend.py; do
+           intel_engine/tests/test_openai_backend.py intel_engine/tests/test_spend_rails.py \
+           intel_engine/tests/test_cross_type_loop.py intel_engine/tests/test_mcp_protocol.py; do
     if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
     if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
   done
 else
-  note "SKIPPED (claude_agent_sdk not importable) — 5 tests incl. the context-governor check."
+  note "SKIPPED (claude_agent_sdk not importable) — 8 tests incl. the context-governor check."
   note "  Run them with the venv: .venv/bin/python intel_engine/tests/test_context_budget.py"
   note "  CI enforces them in the 'engine tests (with SDK)' job in .github/workflows/audit.yml"
 fi

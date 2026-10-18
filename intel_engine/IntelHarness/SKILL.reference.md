@@ -101,9 +101,10 @@ last-resort probe and report its **VERDICT**:
 ```bash
 python3 tools/fallback_probe.py <host> --kb "${HARNESS_KB:-knowledge}"
 ```
-It sweeps crt.sh certs (SAN-sibling domains = strongest same-owner link), the full Wayback timeline
-(parked-today was often live last year), archive.today, ready-to-run search dorks, and the local KB
-→ `PIVOTABLE` (leads) or `NO-PIVOT-YET` (cold + next steps).
+It sweeps CT certs through the shared `wp_ct` client (SAN-sibling domains = strongest same-owner
+link), the full Wayback timeline (parked-today was often live last year), archive.today, ready-to-run
+search dorks, and the local KB → `PIVOTABLE` (leads), `NO-PIVOT-YET` (cold + next steps) or
+`INCONCLUSIVE-CT-DEGRADED` (cold, but crt.sh was unreachable — re-run before calling it cold).
 
 Then **ingest** so collection becomes correlatable, and (re)build the evidence manifest:
 ```bash
@@ -150,7 +151,7 @@ past its seed set:
 python3 WebPivot/tools/pivot_extract.py <url> --fofa-keyword "<distinctive phrase>" \
     --fofa-keyword "<second phrase>" --pretty -o cases/<CASE>/raw/<host>.json
 # unique subdomain label (e.g. svc-a.site-a.example) is auto-emitted as a `subdomain` pivot with
-#   FOFA host="<label>." · crt.sh <label>.% · Shodan ssl.cert.subject.CN/hostname · Censys names:<label>.*
+#   FOFA host="<label>." · crt.sh <label>.% · Censys names:<label>.*   (Shodan host search is not a CT source)
 ```
 `pivot_extract` already auto-emits a FOFA `body=` query for every HTML-string artifact and runs the
 keyword/subdomain reverse **live** when a `FOFA_KEY` is set. Collect the new hosts (Phase 1),
@@ -184,6 +185,8 @@ refuted ones into the assessment's `gaps` as competing explanations ruled out. T
 this automatically as a phase between correlate and assess (`HARNESS_VERIFY`, disable per run with
 `--no-verify`); the `cti-fanout-case` workflow runs it as a 3-skeptic panel vote (2-of-3 refuted kills
 a link). This is the harness's core false-positive control — don't skip it.
+
+**Collecting ≠ attributing (cross-type tiers).** Kit-rung and neighbour-rung hits the loop collects are `add_fact` only — they render as kit siblings / neighbours with a rung caveat and must never appear in the attributed `cluster`. Mentions (news/pdf/EoT/mediacloud) stay observational. Owner-link classes alone may cluster.
 
 ## Phase 3 — ASSESS  (write it, then version it)
 
@@ -276,10 +279,50 @@ Each round: collect the pending seeds with `pivot_extract --free-only` (keyless 
 urlscan / RDAP WHOIS — **zero credits**) → ingest → `convergence.py snapshot` → write
 `assessment.md` **and** machine-readable **`assessment.json`** → mine every collected `raw/*.json` for
 the next **free frontier** (new registrable apexes from crt.sh SAN siblings, passive-DNS co-hosts,
-urlscan-related, TLS co-SAN, CORS origins, impersonation lookalikes, reverse-WHOIS siblings; shared
-infra/noise filtered) → checkpoint. It **stops** when `convergence.py` says **CONVERGED** (last
-`--stale` rounds added nothing), the frontier is empty (**cold**), or the round cap is hit
-(**awaiting-analyst**).
+urlscan-related, TLS co-SAN, CORS origins, impersonation lookalikes, reverse-WHOIS siblings of a
+registrant **email/phone** — a registrant NAME/ORG reverse is a namesake search and is only a
+`whois` lead; shared
+infra/noise filtered) → checkpoint. CT seeding is re-registration-safe: the flat crt.sh name list
+seeds only the case's own subdomains; a foreign apex seeds only from an examined narrow cert issued
+on/after the host's current WHOIS `created` date. Foreign names from unexamined (truncated) certs, a
+previous-owner-era cert, or an unknown registration date become `cert_overlap` leads, never seeds.
+It **stops** when `convergence.py` says **CONVERGED** (last `--stale` rounds added nothing **and no
+host failed to collect** — a failed host is labelled `[fail]`, retried next round, and after 2
+consecutive failures written off as an `assessment.json` gap), the frontier is empty (**cold**), or
+the round cap is hit (**awaiting-analyst**).
+
+**Historical origin IPs ride the same frontier.** `frontier()` also returns `ips_pending` — the
+non-CDN addresses each expanding host (apex or subdomain) ever resolved to, from the merged
+`origin_history` block (`WebPivot/tools/wp_origin_history.py`: passive DNS, SecurityTrails history,
+Validin, urlscan hostname index, Webamon, passive SSL, keyless urlscan scans; CDN / WAF / parking /
+bogon dropped by CIDR **and** source-reported ASN/org). The loop (`_promote`) and the harness
+(`propose()` → free kit-rung `collect` of type `ip`) collect them as IPPivot seeds at the host's hop,
+capped per host and per round (`references/origin_history.json → sweep_policy`). Each IP's raw is
+then mined like any reverse-IP: co-tenants pass the co-host guards as neighbour-rung seeds — unless
+the case's hosts used that box only **historically/undated** (`meta.origin_context.stale`) or its
+network is `ambiguous` (DDoS-Guard / StackPath), in which case they become a dated held lead; an
+address last seen before the current registration is a `previous-owner origin IP` lead and is never
+collected. The box's OWN lookup (IPinfo ASN/org) is classified again, so a CDN / parking network the
+history sources never named yields an `edge network (IP lookup)` lead instead of seeds. On a
+**cloud/VPS** network (`ip_intel.noise` from the ASN registry, verdict still origin) up to
+`sweep_policy.vps_auto_max_cotenants` (10) co-tenants seed and link automatically — the count is
+`wp_origin_history.cotenant_count` on BOTH the frontier and KB-ingest side (case hosts and
+shared-infrastructure apexes excluded, `ip_intel.cohost_total` honoured); above it a
+`vps co-tenancy — approve` lead lists every domain and `propose()` offers each as an approval item
+(`est_hits` above auto_max, source `approve_ip:<ip>`) — nothing is collected or linked until the
+analyst approves. An approved run (`_run_approved`) records each domain that RAN in `state.json →
+approved_cohosts {ip: {domains, hosts}}` (the loop's analyst-run equivalent is
+`scripts/backend/intel.py approve-cohost <case> <ip> <domain…|--all>`; no MCP tool exists for it).
+From then the frontier seeds exactly those domains, ingest links exactly those, and the partition
+(`query._components(allow_edge=case_state.approved_edge_allow)` and the `binding_indicators` filter in
+`intel._write_clusters`) lets only their `hosted_on` edges and those of the case hosts that led to the
+box bind past the landlord rule AND the `max_prevalence` cap (8); automatic VPS links keep the cap.
+Domains are compared with `wp_origin_history._apex`, which keeps a shared-platform tenant label
+(`noise_filters.SAAS_TENANT_SUFFIXES`, the frontier's own list). Unapproved sites keep
+the rules — the automatic-vs-approval decision stays on the WHOLE tenant set, so a rejected site never
+turns automatic. Stale / ambiguous / edge verdicts are never overridden by approval. Every
+origin-sweep lead carries the full `domains` list. `--free-only` IPPivot runs IPinfo keyless,
+keyless HackerTarget reverse-IP and free Validin, and skips FOFA / Shodan / Censys / CIRCL.
 
 Each round also writes **`clusters.json`** — this case's hosts partitioned into same-operator
 components (strong edges only, the same partition `orchestrator.py --parallel` judges over) with the
@@ -400,7 +443,10 @@ future collections that hit a `signal` fingerprint or an attributed domain resol
   ```
   or the `api_usage` MCP tool. Credits are best-effort **unit counts** (1 = one query/request;
   urlscan_search = 1 per page), plus the provider's reported quota-remaining where exposed (urlscan
-  headers) — a usage log, not an invoice. `pivot_extract.py` makes **zero** Anthropic calls.
+  headers) — a usage log, not an invoice. The report splits the total into **free / quota /
+  metered** subtotals (classes in `WebPivot/references/api_cost_classes.json`: a reverse-WHOIS
+  preview or keyless call is free, a capped plan like urlscan is quota, per-call billing is
+  metered) and labels the total "estimated units". `pivot_extract.py` makes **zero** Anthropic calls.
 
 ## Phase ↔ tool map (parity with `harness/orchestrator.py`)
 
@@ -410,10 +456,13 @@ future collections that hit a `signal` fingerprint or an attributed domain resol
 | collect | `pivot_extract.py --archive-missing --master` | `collect_one` / `collect_many` / `collect_fanout` (`--fanout`) |
 | empty-seed | `fallback_probe.py` | `fallback_probe` tool |
 | ingest | `ingest_webpivot.py` | `ingest` |
+| plan (cross-type) | read-only KB/status tools only — no spend/approve | Plan phase (`PLAN_TOOLS`); consumes `propose` candidates |
+| propose / approve | `case_state.py propose`; `harness approve` / `case_approve` / TTY | digest-bound `proposal.json`; `audit.gate` enforces |
+| corpus-search | `pivot_routes.py` / `corpus_search` | Collect phase route runner |
 | correlate | `query.py --cluster --strong`/`--entity`, `cert_overlap.py`, `reference.py check`, `risk_signals.py` | Correlate phase tools |
 | verify (adversarial) | refute each link — `reference.py check`, `query.py --entity` (prevalence), `cert_overlap.py` | verify phase (`HARNESS_VERIFY`, `--no-verify`) |
 | cross-case | `case_index.py` | `which_cases` |
-| assess + version | write JSON → `case_store.py snapshot` | schema-forced `Assessment` + `_persist_assessment` |
+| assess + version | write JSON → `case_store.py snapshot` | schema-forced `Assessment` (owner `cluster` only; `kit_siblings`/`neighbours`/`mentions` never attributed) + `_persist_assessment` |
 | deliverables | **load `IntelGraph` + `IntelReport` skills**, author the assessment md to the IntelReport contract, then `graph_build.py` → `render_diagram` + `render_report` (pass `report_ref`, not `case_id`) | `_render_deliverables` (auto, best-effort) |
 | evidence manifest | `case_store.py manifest` | `_append_manifest` |
 | converge | `convergence.py snapshot/status` | `--continue` loop |

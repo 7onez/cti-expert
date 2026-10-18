@@ -52,20 +52,32 @@ seeds ──► collect_core.collect_many() ─► WebPivot/tools/pivot_extract.
   reseller terms back as leads instead of seeds.
 - **Harness** (`intel_engine/harness/`) is the LLM front-end over the same artifacts: `tools.py`
   `@tool` wrappers, `mcp_server.py` (stdio JSON-RPC, auto-discovers every `@tool`), `cli.py`.
-  Needs a venv + model key; the deterministic layers do not.
+  Cross-type loop: typed nodes → `propose` → Plan phase (`PLAN_TOOLS`, read-only) → auto free/urlscan
+  pivots with ≤ N=25 hits, else digest-bound `proposal.json` gated in `audit.gate` (`harness approve`,
+  `case_approve`, TTY). Dispatcher ops `propose` and `corpus-search`; weak links stay `add_fact` only.
+  Plan-phase drops persist in `state.json` `dropped` (cleared by `reopen`); `propose` never offers a
+  route whose key is absent (`pivot_routes.route_runnable`) or a `pivot_map.json`
+  `propose_type_exclude` pair (anyrun on IPs); `rungs.json` `fact_only_node_classes` (Quarry
+  page.phone/page.email) stay KB facts, never nodes.
+  Needs a venv + a reasoning backend; the deterministic layers do not. `HARNESS_BACKEND`
+  (`harness/backend_select.py`, `intel.py harness doctor`) resolves the backend per run: `claude` (Agent
+  SDK / Claude Code login or `ANTHROPIC_API_KEY`), `codex` / `omp` (`harness/cli_backend.py` —
+  the host CLI's own login, each phase an isolated MCP-only process judged by its event stream),
+  or an OpenAI-compatible key (`harness/openai_backend.py`). `auto` prefers the host agent the
+  process runs inside; an unusable backend fails the run by name, never as a `✓ $0.00` phase.
 
 ## Key Directories
 
 | Path | Purpose |
 |---|---|
-| `SKILL.md`, `commands/*.md`, `codex/cti-expert.md` | analyst workflow, registered slash commands, Codex prompt |
+|`SKILL.md`, `commands/*.md`|analyst workflow, registered slash commands (`scripts/register.sh` → Claude Code, `scripts/register_agents.py` → every other agent)|
 | `scripts/` | report generators (PEP 723), `redact.py`, `build_report_data.py`, `audit.sh`, installers, `backend/intel.py` dispatcher |
 | `scripts/webpivot/*.py` | **re-export shims** onto the canonical engine collectors — never edit or fork |
 | `intel_engine/WebPivot/tools/` | canonical collector: `pivot_extract.py`, `wp_*.py` vendor clients, `wp_analyze.py` (enrich_live), `whois_enrich.py`, `evidence_report.py` |
 | `intel_engine/WebPivot/references/*.json` | reference DATA (thresholds, denylists, endpoint maps, key registry `api_keys.json`) |
-| `intel_engine/tools/` | pipeline `intel.py`, `case_state.py`, `collect_core.py`, `domain_table.py`, `house_report*.py` |
-| `intel_engine/tools/kb/` | `knowledge_base.py`, `ingest_*.py`, `noise_filters.py`, `convergence.py`, `reference.py` |
-| `intel_engine/harness/` | SDK harness, `@tool` registry, MCP server, `case_scope.py` posture |
+| `intel_engine/tools/` | pipeline `intel.py`, `case_state.py` (frontier + `propose`), `selector_types.py`, `pivot_routes.py` (`corpus-search`), `collect_core.py`, `domain_table.py`, `house_report*.py` |
+| `intel_engine/tools/kb/` | `knowledge_base.py`, `ingest_*.py` (+ `ingest_typed.py`), `noise_filters.py`, `convergence.py`, `reference.py`, `references/rungs.json` (owner/kit/neighbour) |
+| `intel_engine/harness/` | SDK harness, `@tool` registry, MCP server, `case_scope.py` posture, `proposal.py` (digest-bound approval), Plan phase |
 | `intel_engine/IntelGraph/`, `intel_engine/IntelReport/` | figure/timeline scripts; pandoc+xelatex renderer; each has `SKILL.reference.md` (not README) |
 | `intel_engine/cases/`, `intel_engine/knowledge/`, `intel_engine/MEMORY/`, `.orca/`, `plans/` | runtime / private data — gitignored, never fixtures, never quoted in tracked files |
 | `tests/`, `intel_engine/tests/`, `intel_engine/tools/eval/` | regression homes (see Testing) |
@@ -83,13 +95,15 @@ python3 intel_engine/tools/eval/run_eval.py --case qr_funnel   # ONE frozen fixt
 # NEVER run run_eval.py unscoped casually: the unit modules are offline, but a full pass has
 # spent real metered credits before; its spend guard is post-hoc.
 
-# Engine entry points (Tier-2 dispatcher; pass ABSOLUTE paths — it cd's into the engine)
+# Engine entry points (Tier-2 dispatcher; it cd's into the engine, so existing caller-relative paths are absolutized — output names are not, pass those absolute)
 uv run scripts/backend/intel.py list
 uv run scripts/backend/intel.py pipeline open CASE-0001 /abs/seeds.txt [--free-only] [--whois-history off|preview|purchase]
 uv run scripts/backend/intel.py pipeline status CASE-0001
 uv run scripts/backend/intel.py frontier CASE-0001 | convergence CASE-0001 | recall <selector>
 uv run scripts/backend/intel.py house-report CASE-0001 [--md-only --no-screenshots --mask-personas]
-python3 scripts/backend/intel.py mcp --write      # regenerates the local, gitignored .mcp.json
+python3 scripts/backend/intel.py mcp --write      # regenerates the local, gitignored .mcp.json (Claude Code)
+python3 scripts/backend/intel.py mcp --host codex|omp|all --write   # Codex: [mcp_servers.intel] in $CODEX_HOME/config.toml · OMP: .omp/mcp.json
+python3 scripts/backend/intel.py harness doctor [--backend X]      # which LLM backend a harness run would use (probes auth)
 
 # Report pipeline (see §Runtime for the ask-first / always-save contract)
 S="$SKILL_DIR/scripts"
@@ -126,8 +140,10 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   handlers, `_<x>_cached` / `_<X>_CACHE` memos, `_write_<artifact>` persisters in `intel.py`.
 - **Attribution rails (SKILL.md RULE 5 — never name an innocent party).** New live-result blocks join `_HOST_YIELDING_SOURCES` only if
   every row is an owner link; anything provider-level (co-tenancy, same-MO) is classified
-  case-wide, persisted as its own `cases/<id>/*.json`, ingested as `add_fact` only, and rendered
-  with an explicit rung caveat. Never `operator_lead`, never an edge, never a frontier seed.
+  case-wide, persisted as its own `cases/<id>/*.json`, ingested as `add_fact` only, never
+  `operator_lead`, never an edge; the harness cross-type loop MAY collect such hosts (source
+  `kit:`/`cotenant:`/`cpty:`) but they never cluster, never attribute, and render as kit siblings /
+  neighbours with a rung caveat.
 - **Report scrub (IntelReport Rule 12).** `house_report.scrub()` maps vendor/tool/path names to public source
   classes and keeps indicator values; evidence rows are `E<n> [B2] <claim> — <source>` with no URLs.
   Third-party e-mails/phones/case-ids are masked unless in the case-scoped `_KEEP`.
@@ -144,7 +160,10 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 | `CLAUDE.md` | contributor Rules 1–6 (case data, single case store, `@tool`+dispatch+doc, shims, classification tests, hooks) |
 | `scripts/backend/intel.py` | op → script `DISPATCH` map; `--dry-run` prints the resolved command |
 | `intel_engine/tools/intel.py` | `cmd_open` (collect → ingest → clusters → graph → assessment → sidecar → MO-neighbours), `cmd_loop` |
-| `intel_engine/tools/case_state.py` | `state.json` schema, frontier miner, co-tenancy constants, `mo_neighbour_classification` |
+| `intel_engine/tools/case_state.py` | `state.json` schema, frontier miner, `propose()` typed candidates, co-tenancy constants, `mo_neighbour_classification` |
+| `intel_engine/tools/selector_types.py` | typed selectors + `rung_for` (owner/kit/neighbour); pairs with `kb/references/rungs.json` |
+| `intel_engine/tools/pivot_routes.py` | corpus route dispatch (`corpus-search`); urlscan/Wayback/FOFA/PublicWWW |
+| `intel_engine/harness/proposal.py` | digest-bound `proposal.json`; `harness approve` / `case_approve` / TTY gate |
 | `intel_engine/WebPivot/tools/wp_analyze.py` | `enrich_live` `have_*` gate block and per-pivot branches |
 | `intel_engine/WebPivot/tools/wp_refs.py` | `ref_path` / `load_ref` (also vendored as `kb_refs.py`, `ig_refs.py`) |
 | `intel_engine/tools/kb/noise_filters.py` | the single shared-infrastructure denylist (frontier and ingest both read it) |
@@ -159,13 +178,14 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   `uv tool install` CLIs); fallback `python3`/`py` + pip/pipx. A uv venv has no pip. On Windows
   `python` may be a Store stub — prefer uv or the `py` launcher.
 - **Detect the OS once** (`uname -s` / `$IsWindows`) and dispatch shell + package manager
-  (winget / brew / apt·dnf·pacman). Never run Linux package commands on Windows.
+  (winget / brew / apt · dnf/yum · pacman · zypper · apk). Never run Linux package commands on Windows.
 - Dependency truth = `requirements.txt`, `scripts/requirements.txt`, per-engine
   `intel_engine/*/requirements.txt`, PEP 723 headers. No `pyproject`, no lockfile, no Node manifest
   except vendored `scripts/vendor/archify`.
 - Optional, feature-scoped tooling — never make baseline: pandoc + xelatex (IntelReport PDF/DOCX),
   Graphviz `dot` (graphs/cloud figure), Node ≥ 18 (Archify blueprint; `CTI_ARCHIFY=0` skips),
-  Playwright/Chromium (rendered DOM, screenshots, engage), mermaid-cli. All degrade loudly.
+  Playwright/Chromium (screenshots, engage, Cloudflare escalation — `--headless`), Moli (DOM
+  renders, default install; `CTI_BROWSER=auto|moli|chromium`), mermaid-cli. All degrade loudly.
 - `INTEL_HOME` defaults to the vendored `intel_engine/`; to override, **export** it in the process
   (an `.env`-only value loses to the resolver). Cases live only under `$INTEL_HOME/cases/<id>/`.
 - Secrets: process env first, then gitignored root `.env` (`CTI_API_KEYS_ENV` overrides the path).
@@ -178,7 +198,15 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   + report JSON, list the HTML/IOC/DOCX builds and CLI recon as steps to run locally, and never
   claim a tool ran. Say so when you detect such an environment.
 - **Codex:** opening the repo auto-loads this file; add a pointer line to `~/.codex/AGENTS.md` for a
-  global default; copy `codex/cti-expert.md` to `~/.codex/prompts/cti-expert.md` for `/cti-expert`.
+  global default. `scripts/register_agents.py` installs `$cti` as the `~/.agents/skills/cti` skill
+  (Codex removed `~/.codex/prompts` custom prompts in 0.117; skills are invoked with `$`, never `/`).
+- **Other agents:** `register_agents.py` writes pointer stubs for omp, pi, OpenCode, Gemini CLI,
+  Qwen Code, Factory droid and Windsurf (`/cti*`) and the shared skill for Cursor / Copilot CLI /
+  ChatGPT desktop; each stub carries the `cti-expert:generated` marker, the only files it rewrites or removes.
+  `register.sh --uninstall` likewise removes only `~/.claude` symlinks that resolve into this repo —
+  a user's same-named file or foreign link is reported and kept. On Git Bash (Windows) `register.sh`
+  requests native symlinks and, when Windows refuses, writes marked stubs via the non-auto
+  `--host claude`; default `--uninstall` removes those too.
 
 ## Testing & QA
 

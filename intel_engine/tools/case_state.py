@@ -45,7 +45,23 @@ import json
 import os
 import re
 import sys
+import threading
 from datetime import datetime, timezone
+
+# Serialises the cross-type loop's state.json read-modify-writes (pivoted / nodes) inside one
+# process — the stdio MCP server runs tool calls on worker threads, so two corpus_search calls
+# could otherwise interleave load→modify→save and lose a node. Cross-process writers are not
+# covered (one harness run per case is the supported mode).
+_STATE_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    def wrapper(*a, **k):
+        with _STATE_LOCK:
+            return fn(*a, **k)
+    wrapper.__name__, wrapper.__doc__ = fn.__name__, fn.__doc__
+    return wrapper
+
 
 _IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
@@ -56,6 +72,14 @@ KB_TOOLS = os.path.join(ROOT, "tools", "kb")
 for _p in (WP, KB_TOOLS):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+# Historical origin sweep (WebPivot/tools/wp_origin_history.py): every A/AAAA a host ever had, merged
+# and CDN/parking-classified — the frontier collects the ORIGIN rows as IP seeds. Optional: without
+# it the frontier simply proposes no IPs (the pre-sweep behaviour).
+try:
+    import wp_origin_history as _oh  # noqa: E402
+except Exception:  # noqa: BLE001
+    _oh = None
 
 # registrable-domain reducer — reuse WebPivot's so apex logic matches the collectors exactly.
 try:
@@ -82,6 +106,21 @@ except Exception:
     def _is_privacy(_):
         return False
 try:
+    import whois_eras as _whois_eras  # noqa: E402 — history -> OWNER links, single decision point
+except Exception:
+    class _whois_eras:      # fail-open: no history correlation rather than a crash
+        _LIVE = {"email": "registrant_email", "name": "registrant_name",
+                 "phone": "registrant_phone", "org": "registrant_org"}
+
+        @staticmethod
+        def owner_values(whois, kind):
+            v = (whois or {}).get(_whois_eras._LIVE.get(kind, ""))
+            return [v] if v else []
+
+        @staticmethod
+        def previous_owner_contacts(whois, kinds=("email", "phone")):
+            return []
+try:
     import cdn_ranges as _cdn        # CDN/cloud edge ranges — a shared edge IP is never an owner link
 except Exception:
     _cdn = None
@@ -89,6 +128,11 @@ try:
     from noise_filters import is_noise_email as _is_noise_email   # registrar/privacy denylist
 except Exception:
     def _is_noise_email(_):
+        return False
+try:
+    from noise_filters import is_social_platform_ip as _is_social_ip   # never-seed platform edges
+except Exception:
+    def _is_social_ip(_):
         return False
 
 STATE_VERSION = 1
@@ -109,7 +153,7 @@ MAX_IP_COHOSTS = 12      # distinct registrable apexes on one IP before it reads
 BULK_IP_RESULTS = 120    # truncation backstop: total hits on one IP that mean bulk hosting/parking
 # Reverse-WHOIS: harness/tools.py gates an INTERACTIVE reverse at 150 and asks the analyst. Auto-
 # seeding has no analyst in the loop, so the bar is much lower — a real operator portfolio is small.
-MAX_WHOIS_SIBLINGS = 25  # domains on one registrant term before it reads as a bulk/reseller term
+MAX_WHOIS_SIBLINGS = 100  # domains on one registrant term before it reads as a bulk/reseller term
 # Artifact reverses (favicon hash, GA/GTM/AdSense id, verification token, body hash, cert name …)
 # answered by an ENGINE (DNSLytics, Hunter.how, Validin, Censys, SecurityTrails, Quake, ZoomEye).
 # A shared analytics id is normally strong same-owner evidence — which is exactly why a PLATFORM,
@@ -159,8 +203,8 @@ _SUB_STOP = frozenset(str(x).lower() for x in _SUB_POLICY["stop_labels"])
 
 def _new_deferred():
     """Empty co-tenancy lead accumulator — one slot per rejection class, keyed so leads dedupe
-    across the many raw files that saw the same cert / IP / registrant term / artifact."""
-    return {"cert": {}, "cohost": {}, "whois": {}, "artifact": {}}
+    across the many raw files that saw the same cert / IP / registrant term / artifact / origin."""
+    return {"cert": {}, "cohost": {}, "whois": {}, "artifact": {}, "origin": {}}
 
 # ONE noise policy. The shared-infrastructure denylist lives in tools/kb/noise_filters.py — the
 # module whose whole job is "shared INFRASTRUCTURE, not a shared OPERATOR" and which the ingester
@@ -207,22 +251,48 @@ def shared_hosting_ips(cdir):
                 obj = json.load(fh)
         except Exception:
             continue
-        for piv in (obj.get("pivots") or []) if isinstance(obj, dict) else []:
-            lr = piv.get("live_results") or {}
-            for key in ("fofa_ip_reverse", "pdns_ip_reverse", "dnslytics_reverseip"):
-                blk = lr.get(key) or {}
-                rows = blk.get("results") or blk.get("hosts") or blk.get("domains") or []
-                if not rows:
-                    continue
-                ip = _reverse_ip(blk, rows)
-                if not ip:
-                    continue
-                apexes = {_frontier_apex(n) for n in (_cohost_name(r) for r in rows) if n}
-                total = blk.get("total")
-                total = int(total) if isinstance(total, int) else len(rows)
-                if len(apexes) > MAX_IP_COHOSTS or (total > len(rows) and total > BULK_IP_RESULTS) or _is_cdn_ip(ip):
-                    out.add(ip)
+        _shared_ips_in(obj, out)
     return out
+
+
+def approved_edge_allow(cdir):
+    """Predicate (src_domain, dst_indicator) → True for a `hosted_on` edge the analyst's approval
+    covers: an approved co-tenant or a case host of an approved box. The partition keeps the
+    landlord rule for every OTHER edge to that IP (wp_origin_history.approval_allows)."""
+    approved = _oh.approved_cohosts(cdir) if _oh is not None else {}
+    if not approved:
+        return None
+    return lambda src, dst: _oh.approval_allows(approved, src, dst)
+
+
+def _shared_ips_in(obj, out):
+    """Add to `out` every IP one raw object shows to be shared/bulk hosting (see shared_hosting_ips)."""
+    if not isinstance(obj, dict):
+        return
+    if (obj.get("meta") or {}).get("kind") == "ip":
+        # an IPPivot raw (a collected origin IP): its own co-host union answers the same question
+        ip = str((obj.get("meta") or {}).get("host") or "").strip()
+        names = ((obj.get("artifacts") or {}).get("ip_intel") or {}).get("co_hosted_domains") or []
+        apexes = {_frontier_apex(n) for n in (_clean_name(x) for x in names) if n}
+        if ip and (len(apexes) > MAX_IP_COHOSTS or _is_cdn_ip(ip) or _is_social_ip(ip)):
+            out.add(ip)
+        return
+    for piv in obj.get("pivots") or []:
+        lr = piv.get("live_results") or {}
+        for key in ("fofa_ip_reverse", "pdns_ip_reverse", "dnslytics_reverseip"):
+            blk = lr.get(key) or {}
+            rows = blk.get("results") or blk.get("hosts") or blk.get("domains") or []
+            if not rows:
+                continue
+            ip = _reverse_ip(blk, rows)
+            if not ip:
+                continue
+            apexes = {_frontier_apex(n) for n in (_cohost_name(r) for r in rows) if n}
+            total = blk.get("total")
+            total = int(total) if isinstance(total, int) else len(rows)
+            if (len(apexes) > MAX_IP_COHOSTS or (total > len(rows) and total > BULK_IP_RESULTS)
+                    or _is_cdn_ip(ip) or _is_social_ip(ip)):
+                out.add(ip)
 
 
 def _frontier_apex(host):
@@ -263,12 +333,21 @@ def _benign_set():
     return _BENIGN[0]
 
 
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _case_dir(case):
-    return case if os.path.isdir(case) else os.path.join(ROOT, "cases", case)
+    """A PATH (has a separator / is absolute) is used as given; a bare case ID always resolves to
+    ROOT/cases/<id>. A bare ID is never matched against the CWD: a tool that once mistook the ID
+    for a directory (WP_CASE_DIR=<id>) leaves a stray `<cwd>/<id>/`, and treating that as the case
+    split state.json from the real case."""
+    c = str(case)
+    if os.path.isabs(c) or os.sep in c or (os.altsep and os.altsep in c):
+        return c
+    return os.path.join(ROOT, "cases", c)
 
 
 def state_path(cdir):
@@ -282,6 +361,16 @@ def _fresh_state(case):
         "round": 0, "depth_limit": None,
         "collected": [], "pending": [], "consumed": [],
         "metered_leads": [], "history": [], "reopen_count": 0, "note": None,
+        # Cross-type loop: candidate ids already dispatched this case (propose() skips them).
+        # Additive — older state files backfill to [] via load_state.
+        "pivoted": [],
+        # Cross-type loop: candidate ids the Plan phase dropped (id -> {why, round}); propose()
+        # never re-offers them. reopen() clears the map (dict; backfilled).
+        "dropped": {},
+        # Cross-type loop: typed nodes the case reached ("type|selector" -> {type, selector,
+        # rung_class, hop, origins, route}). Seeds of any type enter at hop 0; every corpus pivot
+        # adds its result rows at origin hop + 1. propose() pivots on them (dict; backfilled).
+        "nodes": {},
         "enrichment_done": {},   # {lead_key: reason} — dict, NOT in the list-coercion guard below
         # EXPANSION ANCHOR: hop distance of every collected host from the seeds (seeds = 0; a host
         # seeded from a hop-n host's raw = n+1) and the depth at which a host becomes a LEAF —
@@ -343,9 +432,13 @@ def load_state(case):
                     st.setdefault(k, v)
                 st["case"] = st.get("case") or case
                 # a list-typed key that was persisted as null/scalar would fail the same way
-                for k in ("collected", "pending", "consumed", "metered_leads", "history"):
+                for k in ("collected", "pending", "consumed", "metered_leads", "history", "pivoted"):
                     if not isinstance(st.get(k), list):
                         st[k] = []
+                if not isinstance(st.get("nodes"), dict):
+                    st["nodes"] = {}
+                if not isinstance(st.get("dropped"), dict):
+                    st["dropped"] = {}
                 if not isinstance(st.get("round"), int):
                     st["round"] = 0
                 return st
@@ -548,7 +641,10 @@ _HOST_YIELDING_SOURCES = (
 # They stay visible as `related_leads` for analyst triage; seeding them is how a 12-host estate
 # drifted into 300 strangers' hosts (and their subdomains) in one loop run.
 _NON_OWNER_SOURCES = frozenset({"impersonation", "archive_related_domain",
-                                "urlscan_related", "urlscan_related_domain", "webamon_same_kit"})
+                                "urlscan_related", "urlscan_related_domain", "webamon_same_kit",
+                                # an origin IP's own PTR / self-hosted MX name: chosen by whoever runs
+                                # the box (the operator, or a hoster's naming scheme) — a lead to triage
+                                "ip_ptr", "ip_mx"})
 _LOOKALIKE_SOURCES = _NON_OWNER_SOURCES        # historical name, kept for callers/tests
 
 
@@ -578,14 +674,19 @@ def _cdn_index():
 
 
 def _is_cdn_ip(ip):
-    """True only when the IP is a KNOWN CDN/cloud edge. Unknown/unloadable → False (don't over-block)."""
+    """True only when the IP is a KNOWN CDN/cloud EDGE. Unknown/unloadable → False (don't over-block).
+    Customer cloud compute (GCE ranges — wp_origin_history.is_rentable_cloud) is a rented origin, not
+    an edge: its co-tenants go through the MAX_IP_COHOSTS / BULK_IP_RESULTS count guards instead."""
     idx = _cdn_index()
     if not idx or not ip:
         return False
     try:
-        return bool(_cdn.classify(str(ip).strip(), idx).get("cdn"))
+        c = _cdn.classify(str(ip).strip(), idx)
     except Exception:
         return False
+    if _oh is not None and _oh.is_rentable_cloud(c):
+        return False
+    return bool(c.get("cdn"))
 
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{1,62}$")
@@ -615,7 +716,7 @@ def _cohost_name(row):
     return _clean_name(row.get("domain") or "") or _clean_name(row.get("host") or "")
 
 
-def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
+def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None, approved=None):
     """Mine one raw pivot_extract JSON for NEW registrable apexes discovered FOR FREE this round.
 
     Co-tenancy is filtered here, not later: a multi-tenant TLS cert or a shared-hosting IP names
@@ -624,6 +725,13 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
     MAX_CERT_APEXES / MAX_IP_COHOSTS)."""
     deferred = _new_deferred() if deferred is None else deferred
     host = (obj.get("meta") or {}).get("host") or "?"
+    # CURRENT WHOIS `created` for this host (artifacts.whois is the point-in-time record the
+    # collector wrote for THIS host, same source _whois_identity/_estate_context treat as "current
+    # registrant only") — the crt.sh guard below needs it to tell a live co-SAN from a previous
+    # owner's leftover cert.
+    registered_on = ((obj.get("artifacts") or {}).get("whois") or {}).get("created")
+    if (obj.get("meta") or {}).get("kind") == "ip":
+        _ip_raw_candidates(obj, cands, seed_apexes, deferred, host, approved=approved)
     for piv in obj.get("pivots", []) or []:
         kind, val = piv.get("kind", ""), piv.get("value")
         # pivots whose VALUE is itself a co-domain / lookalike / trusted-origin host
@@ -632,7 +740,7 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
             _add_cand(cands, str(val), kind.split(":")[0], seed_apexes, origin=host)
         lr = piv.get("live_results") or {}
         if kind == "domain":
-            _crtsh_candidates(lr.get("crtsh") or {}, cands, seed_apexes, deferred, host)
+            _crtsh_candidates(lr.get("crtsh") or {}, cands, seed_apexes, deferred, host, registered_on)
             for h in (lr.get("passivedns") or {}).get("hosts") or []:
                 _add_cand(cands, h.get("host") if isinstance(h, dict) else h, "passive_dns", seed_apexes, origin=host)
             for d in (lr.get("urlscan") or {}).get("domains") or []:
@@ -648,9 +756,16 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
             for key in ("fofa_ip_reverse", "pdns_ip_reverse", "dnslytics_reverseip"):
                 _cohost_candidates(lr.get(key) or {}, cands, seed_apexes, deferred, host, key)
         # reverse-WHOIS siblings left behind by a prior --whois-reverse run (WhoisXML current/historic
-        # + SecurityTrails' DSL — same shape, same privacy + MAX_WHOIS_SIBLINGS guards)
+        # + SecurityTrails' DSL — same shape, same privacy + MAX_WHOIS_SIBLINGS guards). Only a
+        # registrant EMAIL/PHONE reverse is an owner link (RULE 5 decisive join keys); a NAME/ORG
+        # reverse answers every namesake ("Nguyen Van A" registers thousands of unrelated domains),
+        # so its results are held as a lead to confirm on the email/phone triple, never seeded.
+        decisive = kind in _DECISIVE_REVERSE_KINDS
         for st in ("reverse_whois_current", "reverse_whois_historic", "securitytrails_reverse_whois"):
-            _whois_candidates(lr.get(st) or {}, cands, seed_apexes, deferred, host, st)
+            if decisive:
+                _whois_candidates(lr.get(st) or {}, cands, seed_apexes, deferred, host, st)
+            else:
+                _defer_name_reverse(lr.get(st) or {}, deferred, host, st, kind, val)
         # ARTIFACT-REVERSE hosts -> frontier seeds, REGISTRY-DRIVEN (Phase 10 universal
         # consumption). Every host/domain-yielding engine is one _HOST_YIELDING_SOURCES entry
         # (Validin co-hosted+subdomains, Hunter.how, Censys cert names, SecurityTrails, DNSLytics,
@@ -691,9 +806,9 @@ def _free_candidates_from_raw(obj, cands, seed_apexes, deferred=None):
             _note_subdomain(_row_host(h), "urlscan_hostname", seed_apexes)
 
 
-def _crtsh_candidates(crt, cands, seed_apexes, deferred, host):
-    """CT names → frontier seeds, EXCEPT names that only ever appear on a multi-tenant cert — and,
-    when the listing shows the host sits on a multi-tenant cert PLATFORM, its narrow pairings too.
+def _crtsh_candidates(crt, cands, seed_apexes, deferred, host, registered_on=None):
+    """CT names → frontier seeds, EXCEPT names that only ever appear on a multi-tenant cert, a
+    previous-owner-era cert, or a truncated (unexamined) CT listing entry.
 
     crt.sh returns whole certificates; a cert covering more than MAX_CERT_APEXES registrable
     apexes is a hoster's shared bundle (cPanel AutoSSL / LE multi-domain / a CDN's managed cert), so
@@ -702,17 +817,32 @@ def _crtsh_candidates(crt, cands, seed_apexes, deferred, host):
     survives. A host whose listing carries ANY such wide cert lives on a multi-tenant platform; the
     platform also mints small 2–4-name certs pairing random customers on one load balancer, so on
     that host a narrow co-SAN is a co-tenant too until cert_overlap says otherwise — it is held back
-    as a lead, never seeded. Only a host with exclusively narrow certs (dedicated issuance) seeds
-    its co-SANs directly. Own-apex subdomains are noted either way (same registration)."""
-    clean, dirty = set(), set()
+    as a lead, never seeded.
+
+    A host with NO wide cert still cannot trust a foreign co-SAN on a narrow cert blindly: `host`
+    may be a RE-REGISTRATION of a name with prior owners, and crt.sh logs certs forever — a cert
+    from a previous owner's tenancy names THAT owner's other domains, not this operator's. So a
+    foreign co-SAN only seeds when its own cert's `not_before` is on/after `registered_on` (the
+    host's current WHOIS `created` date, UTC calendar day); a stale cert, or an unknown
+    registration/issue date, holds the name back as a `previous_owner` / `unregistered` lead instead
+    of guessing. Own-apex names always seed (same registration, not a co-tenancy question).
+
+    wp_ct lists only the newest `listing.max_certs` certificates (recording `cert_total` and
+    `truncated`) but builds the flat `subdomains` list from ALL of them plus hostname-only sources
+    (Shodan CTL's /hostnames) — so a name can appear there whose cert was never examined above at
+    all. Such a foreign name cannot be checked against either guard, so it is deferred as
+    `unexamined` rather than guessed at; only own-apex names from the flat list seed directly."""
+    registered_ord = _date_ord(registered_on) if registered_on else None
+    own, foreign_seed, stale_foreign, unknown_reg_foreign = set(), set(), set(), set()
+    examined = set()
     wide = 0
     for cert in crt.get("certs") or []:
         names = {n for n in (_clean_name(x) for x in (cert.get("names") or [])) if n}
         if not names:
             continue
+        examined |= names
         apexes = {_frontier_apex(n) for n in names}
         if len(apexes) > MAX_CERT_APEXES:
-            dirty |= names
             wide += 1
             key = cert.get("id") or cert.get("serial") or ",".join(sorted(apexes)[:3])
             deferred["cert"][key] = {
@@ -724,10 +854,21 @@ def _crtsh_candidates(crt, cands, seed_apexes, deferred, host):
                         "cert_overlap on a specific pair if you suspect a real SAN cross-cover."),
             }
             continue
-        clean |= names
-    foreign = {nm for nm in clean if _frontier_apex(nm) not in seed_apexes}
-    if wide and foreign:
-        pairs = sorted({_frontier_apex(nm) for nm in foreign})
+        cert_own = {n for n in names if _frontier_apex(n) in seed_apexes}
+        cert_foreign = names - cert_own
+        own |= cert_own
+        if not cert_foreign:
+            continue
+        not_before = _date_ord(cert.get("not_before"))
+        if registered_ord is None:
+            unknown_reg_foreign |= cert_foreign
+        elif not_before is None or not_before < registered_ord:
+            stale_foreign |= cert_foreign
+        else:
+            foreign_seed |= cert_foreign
+    if wide and (foreign_seed or stale_foreign or unknown_reg_foreign):
+        held = foreign_seed | stale_foreign | unknown_reg_foreign
+        pairs = sorted({_frontier_apex(nm) for nm in held})
         deferred["cert"][f"platform:{host}"] = {
             "check": "cert_overlap", "cost": "free", "seen_on": host, "cert_id": None, "issuer": None,
             "apex_count": len(pairs), "sample_apexes": pairs[:6],
@@ -736,14 +877,54 @@ def _crtsh_candidates(crt, cands, seed_apexes, deferred, host):
                     "co-tenants, so they were NOT seeded. Run cert_overlap on a pair to confirm a "
                     "genuine SAN cross-cover."),
         }
-        clean -= foreign
-    tainted = dirty - clean          # a name on a narrow cert too is legitimate — keep it
-    for nm in clean:
+        foreign_seed, stale_foreign, unknown_reg_foreign = set(), set(), set()
+    for nm in own | foreign_seed:
         _add_cand(cands, nm, "crtsh_san", seed_apexes, origin=host)
+    if stale_foreign:
+        pairs = sorted({_frontier_apex(nm) for nm in stale_foreign})
+        deferred["cert"][f"previous_owner:{host}"] = {
+            "check": "cert_overlap", "cost": "free", "seen_on": host, "cert_id": None, "issuer": None,
+            "apex_count": len(pairs), "sample_apexes": pairs[:6],
+            "why": (f"{len(pairs)} co-SAN apex(es) sit only on certs issued before {host}'s current "
+                    f"registration ({str(registered_on)[:10]}) — a previous-owner-era cert, so they "
+                    "were NOT seeded. Run cert_overlap if you suspect a genuine cross-cover."),
+        }
+    if unknown_reg_foreign:
+        pairs = sorted({_frontier_apex(nm) for nm in unknown_reg_foreign})
+        deferred["cert"][f"unregistered:{host}"] = {
+            "check": "cert_overlap", "cost": "free", "seen_on": host, "cert_id": None, "issuer": None,
+            "apex_count": len(pairs), "sample_apexes": pairs[:6],
+            "why": (f"{host}'s current registration date is unknown, so {len(pairs)} co-SAN apex(es) "
+                    "on its narrow cert(s) cannot be confirmed to postdate it — NOT seeded. Run "
+                    "cert_overlap if you suspect a genuine cross-cover."),
+        }
+    unexamined_foreign = set()
     for sd in crt.get("subdomains") or []:
         name = _clean_name(sd)
-        if name and name not in tainted and (not wide or _frontier_apex(name) in seed_apexes):
+        if not name:
+            continue
+        if _frontier_apex(name) in seed_apexes:
             _add_cand(cands, name, "crtsh_san", seed_apexes, origin=host)
+        elif name not in examined:
+            unexamined_foreign.add(name)
+    if unexamined_foreign:
+        pairs = sorted({_frontier_apex(nm) for nm in unexamined_foreign})
+        listed = len(crt.get("certs") or [])
+        if "truncated" not in crt:      # collected before wp_ct recorded the true total
+            reason = "pre-contract collection: its certificate listing may have been truncated"
+        elif crt.get("truncated"):
+            reason = f"CT listing truncated: {listed} of {crt.get('cert_total')} certificates examined"
+        else:
+            reason = "named only by a hostname index, with no certificate row to examine"
+        deferred["cert"][f"unexamined:{host}"] = {
+            "check": "cert_overlap", "cost": "free", "seen_on": host, "cert_id": None, "issuer": None,
+            "apex_count": len(pairs), "sample_apexes": pairs[:6],
+            "cert_total": crt.get("cert_total"), "truncated": bool(crt.get("truncated")),
+            "why": (f"{len(pairs)} foreign apex(es) named only in {host}'s flat CT subdomain listing "
+                    f"— their certificates were never among the ones examined ({reason}), so they "
+                    "were NOT seeded. Run cert_overlap on a specific pair if you suspect a real SAN "
+                    "cross-cover."),
+        }
 
 
 def _whois_candidates(blk, cands, seed_apexes, deferred, host, source):
@@ -776,6 +957,35 @@ def _whois_candidates(blk, cands, seed_apexes, deferred, host, source):
         return
     for d in domains:
         _add_cand(cands, d, "reverse_whois", seed_apexes, origin=host)
+
+
+# Pivot kinds whose reverse-WHOIS results are OWNER links (RULE 5: only registrant e-mail/phone
+# are decisive join keys). Anything else carrying a reverse block — the registrant NAME/ORG — is a
+# namesake search and never seeds.
+_DECISIVE_REVERSE_KINDS = frozenset({"whois:registrant_email", "whois:registrant_phone"})
+
+
+def _defer_name_reverse(blk, deferred, host, source, kind, val):
+    """A non-decisive (name/org) reverse-WHOIS block → one `whois` lead, never frontier seeds.
+    Its domains are namesakes until the email/phone triple ties one of them to the estate."""
+    domains = blk.get("domains") or []
+    if not domains:
+        return
+    count = blk.get("count")
+    n = int(count) if isinstance(count, int) else len(domains)
+    term = str(blk.get("term") or val or "").strip()
+    key = f"{kind}:{term}" if term else f"{source}:{host}"
+    prev = deferred["whois"].get(key) or {}
+    deferred["whois"][key] = {
+        "check": "name reverse-WHOIS (collision-prone)", "cost": "free", "seen_on": host,
+        "source": source, "term": term, "sibling_count": max(n, prev.get("sibling_count") or 0),
+        "sample_domains": sorted({*prev.get("sample_domains", []),
+                                  *(str(d).lower() for d in domains)})[:6],
+        "why": (f"{kind.split(':')[-1].replace('_', ' ')} '{term}' answers with {n} domain(s) — a "
+                "name/org is not a decisive join key (namesakes), so none were seeded; confirm a "
+                "specific domain on the registrant email/phone before adding it"),
+    }
+
 
 
 def _artifact_candidates(rows, blk, cands, seed_apexes, deferred, host, source, kind, val):
@@ -857,7 +1067,11 @@ def _cohost_candidates(blk, cands, seed_apexes, deferred, host, source):
     total = blk.get("total") if isinstance(blk.get("total"), int) else 0
     truncated = total > len(rows)
     reason = ""
-    if ip and _is_cdn_ip(ip):
+    social = bool(ip) and _is_social_ip(ip)
+    if social:
+        reason = (f"{ip} is a social-platform edge range (noise_filters social_platform_ip_ranges) — "
+                  f"its co-tenants are unrelated embedders and are never seeded")
+    elif ip and _is_cdn_ip(ip):
         reason = f"{ip} is a known CDN/cloud edge range — shared by unrelated sites, never an owner link"
     elif len(apexes) > MAX_IP_COHOSTS:
         reason = (f"{ip or 'the IP'} answers with {len(apexes)} distinct apexes (> "
@@ -870,77 +1084,295 @@ def _cohost_candidates(blk, cands, seed_apexes, deferred, host, source):
         deferred["cohost"][ip or f"{source}:{host}"] = {
             "check": "shared-hosting co-tenancy", "cost": "free", "seen_on": host, "source": source,
             "ip": ip, "cohost_count": n_cohosts, "sample_apexes": sorted(apexes)[:6], "why": reason,
+            **({"never_seed": True} if social else {}),
         }
         return
     for n in names:
         _add_cand(cands, n, "ip_cohost", seed_apexes, origin=host)
 
 
+def _origin_lead(ip, check, seen, apexes, why, proposable=False):
+    """A held co-tenancy lead from the origin-IP sweep. `domains` always lists EVERY apex (the analyst
+    sees the whole tenant set, not a sample); `sample_apexes` is what propose() turns into approval
+    candidates — the full set only for a `proposable` (approve-to-collect) lead, a 6-name sample
+    otherwise, so an edge network's thousand customers are never offered for collection."""
+    doms = sorted(apexes)
+    return {"check": check, "cost": "free", "seen_on": seen, "source": "ippivot", "ip": ip,
+            "cohost_count": len(doms), "sample_apexes": doms if proposable else doms[:6],
+            "domains": doms, "why": why}
+
+
+def _ip_raw_candidates(obj, cands, seed_apexes, deferred, ip, approved=None):
+    """A collected ORIGIN IP's own raw (IPPivot) → frontier rows, through the same guards as every
+    other IP reverse.
+
+    Co-hosted domains (FOFA / Shodan / Censys / Validin / HackerTarget / CIRCL pDNS / passive-SSL CNs)
+    go through _cohost_candidates (CDN range + MAX_IP_COHOSTS + bulk guards → neighbour rung). One
+    extra rail: when meta.origin_context says the case's hosts used this box only HISTORICALLY (or on
+    no dated record), or the box sits on a proxy-or-host network (DDoS-Guard, StackPath — `ambiguous`),
+    today's co-tenants are held as a `cohost` lead naming the tenancy, never seeded. PTR / self-hosted
+    MX names are related leads."""
+    ii = (obj.get("artifacts") or {}).get("ip_intel") or {}
+    ctx = (obj.get("meta") or {}).get("origin_context") or {}
+    cls = ii.get("classification") or {}
+    # the SAME name list KB ingest counts (co-hosted + urlscan history co-tenants)
+    names = [n for n in (_clean_name(x) for x in list(ii.get("co_hosted_domains") or [])
+                         + list(ii.get("urlscan_cotenants") or [])) if n]
+    if names and cls.get("kind") == "bogon":
+        names = []                                 # a non-routable answer has no tenants of its own
+    # SECOND LOOK with the box's own ASN/org: most history sources carry none, so an Akamai / Imperva
+    # edge or a DDoS-Guard box is often queued as `origin` and only the IP lookup names its network.
+    verdict = (_oh.collected_verdict(ip, ii) if _oh is not None else {}).get("status")
+    if verdict == "ambiguous":
+        ctx = dict(ctx, ambiguous=True)
+    if names and verdict in ("cdn", "parking", "bogon"):
+        apexes = {a for a in (_frontier_apex(n) for n in names) if not _is_noise_apex(a, seed_apexes)}
+        if apexes:
+            net = " ".join(x for x in ((ii.get("ipinfo") or {}).get("asn"),
+                                       (ii.get("ipinfo") or {}).get("org_name")) if x) or "its network"
+            deferred["cohost"][ip] = _origin_lead(
+                ip, "edge network (IP lookup)", ip, apexes,
+                f"{ip}'s own lookup names {net} — a shared {verdict} network, not an operator box; its "
+                f"co-hosted domains are other customers and were NOT seeded")
+        names = []
+    hold = _oh.hold_cotenants(ctx) if _oh is not None else bool(ctx.get("stale"))
+    if names and hold:
+        apexes = {a for a in (_frontier_apex(n) for n in names) if not _is_noise_apex(a, seed_apexes)}
+        if apexes:
+            seen = ", ".join(ctx.get("hosts") or []) or "a case host"
+            why = (f"{ip} sits on a network that sells DDoS proxying AND servers — its co-tenants may be "
+                   f"other customers behind the same protection edge; date and tie each one by an "
+                   f"identity artifact before treating it as a sibling" if ctx.get("ambiguous") else
+                   f"{ip} is a {ctx.get('era') or 'historical'} origin of {seen} (last seen "
+                   f"{ctx.get('last_seen') or 'undated'}) — its CURRENT co-tenants may postdate that "
+                   f"tenancy; date each one before treating it as a sibling")
+            deferred["cohost"][ip] = _origin_lead(
+                ip, ("ambiguous-network co-tenancy" if ctx.get("ambiguous") else "historical-origin co-tenancy"),
+                seen, apexes, why)
+        names = []
+    ok_domains = ((approved or {}).get(ip) or {}).get("domains") or set()
+    all_names = list(names)        # the automatic-vs-approval decision is on the WHOLE tenant set
+    if names and ok_domains:
+        # the analyst approved THESE co-tenants: seed them as neighbours past the VPS / shared-hosting
+        # bounds (approval is the evidence; collected, never attributed). Every other name on the box
+        # still goes through the rules below — a site left unapproved never turns automatic.
+        for n in names:
+            if _oh._apex(n) in ok_domains:
+                _add_cand(cands, n, "ip_cohost", seed_apexes, origin=ip)
+        names = [n for n in names if _oh._apex(n) not in ok_domains]
+    if names and _oh is not None and _oh.is_vps_origin(ip, ii):
+        # cloud / VPS box (the IP lookup flags the network as hosting): a small tenant set is queued
+        # and linked automatically; above the threshold EVERY domain goes to analyst approval. The
+        # count is wp_origin_history.cotenant_count — the SAME one KB ingest uses, so the two sides
+        # never land on opposite sides of the threshold.
+        _all_apexes, count = _oh.cotenant_count(ii, all_names, exclude=ctx.get("hosts") or (),
+                                                is_noise=_is_shared_infra)
+        apexes, _ = _oh.cotenant_count(ii, names, exclude=ctx.get("hosts") or (), is_noise=_is_shared_infra)
+        if count > _oh.VPS_AUTO_MAX_COTENANTS:
+            seen = ", ".join(ctx.get("hosts") or []) or ip
+            deferred["cohost"][ip] = _origin_lead(
+                ip, "vps co-tenancy — approve", seen, apexes,
+                (f"{ip} is a cloud/VPS origin of {seen} serving {count} other apexes "
+                 f"(> {_oh.VPS_AUTO_MAX_COTENANTS}) — nothing was collected or linked; approve to collect "
+                 f"them as neighbours and link them to the IP (never attributed)"),
+                proposable=True)
+            names = []
+    if names:
+        _cohost_candidates({"ip": ip, "hosts": names}, cands, seed_apexes, deferred, ip, "ippivot")
+    for piv in obj.get("pivots") or []:
+        if piv.get("kind") == "ip:ptr" and piv.get("value"):
+            _add_cand(cands, str(piv["value"]), "ip_ptr", seed_apexes, origin=ip)
+    mail = ii.get("mail") or {}
+    if mail.get("mx") and not mail.get("managed"):
+        for d in mail.get("mail_domains") or []:
+            _add_cand(cands, d, "ip_mx", seed_apexes, origin=ip)
+
+
+def _origin_ip_frontier(host_objs, have, hops, depth, deferred, shared_ips, max_ips=None, today=None):
+    """The historical ORIGIN-IP sweep → (ips_pending, detail).
+
+    `host_objs` = [(host, raw)] of EXPANDING hosts (leaves never widen the estate). Each host's merged
+    origin history (wp_origin_history.host_origins — CDN / WAF / parking / bogon already dropped) is
+    dated against its CURRENT registration: an address last seen before the domain was registered is
+    the previous owner's (an `origin` lead, never collected). The rest are ranked per host (live, then
+    corroboration, then recency) and capped at MAX_IPS_PER_HOST, then case-wide by era, number of case
+    hosts, corroboration — capped at `max_ips` (None/0 = all). An IP already collected/consumed or
+    already shown to be shared hosting by the case's own reverses is skipped."""
+    if _oh is None:
+        return [], {}
+    agg = {}
+    for host, obj in host_objs:
+        _h, _reg, rows = _oh.host_origins(obj, today)
+        taken = 0
+        for r in rows:
+            ip = r["ip"]
+            if r["era"] == "previous_owner":
+                deferred["origin"][f"{ip}@{host}"] = {
+                    "check": "previous-owner origin IP", "cost": "free", "seen_on": host, "ip": ip,
+                    "why": (f"{host} resolved to {ip} until {r.get('last_seen')}, before its current "
+                            f"registration ({_reg}) — the previous owner's box, not collected"),
+                }
+                continue
+            if ip in have or ip in shared_ips or taken >= _oh.MAX_IPS_PER_HOST:
+                continue
+            taken += 1
+            a = agg.setdefault(ip, {"hosts": set(), "sources": set(), "first_seen": None,
+                                    "last_seen": None, "live": False, "era": r["era"],
+                                    "asn": r.get("asn"), "org": r.get("org"), "ambiguous": False})
+            a["ambiguous"] = a["ambiguous"] or r.get("status") == "ambiguous"
+            a["hosts"].add(host)
+            a["sources"].update(r.get("sources") or ())
+            if r.get("first_seen") and (a["first_seen"] is None or r["first_seen"] < a["first_seen"]):
+                a["first_seen"] = r["first_seen"]
+            if r.get("last_seen") and (a["last_seen"] is None or r["last_seen"] > a["last_seen"]):
+                a["last_seen"] = r["last_seen"]
+            a["live"] = a["live"] or bool(r.get("live"))
+            if _oh._ERA_RANK[r["era"]] < _oh._ERA_RANK[a["era"]]:
+                a["era"] = r["era"]
+    ranked = sorted(agg.items(), key=lambda kv: (_oh._ERA_RANK[kv[1]["era"]], -len(kv[1]["hosts"]),
+                                                 -len(kv[1]["sources"]), kv[0]))
+    pending = [ip for ip, _ in ranked][:max_ips] if max_ips else [ip for ip, _ in ranked]
+    detail = {ip: {"hosts": sorted(v["hosts"]), "sources": sorted(v["sources"]),
+                   "first_seen": v["first_seen"], "last_seen": v["last_seen"], "live": v["live"],
+                   "era": v["era"], "asn": v["asn"], "org": v["org"], "ambiguous": v["ambiguous"],
+                   "hop": min(hops.get(h, _unknown_hop(hops, depth)) for h in v["hosts"]),
+                   "cotenants": ("held as leads (DDoS-proxy-or-host network)" if v["ambiguous"]
+                                 else "seedable" if v["era"] in _oh.SEEDABLE_COTENANT_ERAS
+                                 else "held as leads (historical tenancy)")}
+              for ip, v in ranked}
+    return pending, detail
+
+
 def _metered_leads_from_raw(obj, leads):
     """Pivots that would need a METERED call to expand — deferred for analyst approval, never
     auto-run by the free loop. Keyed by (service,value) so they dedupe across hosts."""
     host = (obj.get("meta") or {}).get("host") or "?"
+    who = (obj.get("artifacts") or {}).get("whois") or {}
+    owner_emails = {str(e).lower() for e in _whois_eras.owner_values(who, "email") if e}
     for piv in obj.get("pivots", []) or []:
         kind, val = piv.get("kind", ""), piv.get("value")
-        if kind == "favicon_hash" and val is not None:
+        if kind == "favicon_hash" and val is not None and not _fofa_already_paid(piv):
             leads[("FOFA", f"icon_hash={val}")] = {
                 "service": "FOFA", "query": f'icon_hash="{val}"', "cost": "metered",
                 "why": f"reverse favicon hash to find co-branded siblings (seen on {host})"}
         # A privacy proxy, a registrar-abuse mailbox, or a WHOIS-redacted string is shared by every
         # domain at that provider — reversing it is a guaranteed-noise result that COSTS CREDITS, so
         # it must never even be offered as a lead (same rule the frontier applies to free seeding).
+        # A PRIOR-ERA registrant is a third party (whois_eras.py) and must never be offered either,
+        # even if a stale pre-fix raw file still carries the pivot: gated on owner_emails, not the
+        # pivot value alone.
         elif (kind == "whois:registrant_email" and val and not _is_privacy(val)
-                and not _is_noise_email(str(val)) and "*" not in str(val)):
+                and not _is_noise_email(str(val)) and "*" not in str(val)
+                and str(val).lower() in owner_emails
+                and not _reverse_already_paid(piv)):
             leads[("WhoisXML", f"reverse_email={val}")] = {
                 "service": "WhoisXML", "query": f'reverse-whois email="{val}"', "cost": "metered",
                 "why": f"reverse-WHOIS the registrant email for the owner's other domains ({host})"}
-    # origin-candidate IPs -> FOFA ip= reverse (find more co-hosted domains)
+    # origin-candidate IPs -> FOFA ip= reverse (find more co-hosted domains). The collector tags a
+    # loopback/private/reserved answer `kind: "bogon"` (wp_analyze.classify_ip) — a null-route or
+    # parking A record, not an origin: reversing it returns every domain parked the same way.
     for piv in obj.get("pivots", []) or []:
         if piv.get("kind") != "domain":
             continue
         dns = (piv.get("live_results") or {}).get("dns") or {}
         for c in dns.get("ip_classification") or []:
-            if c.get("cdn") is False and c.get("ip"):
+            if c.get("cdn") is False and c.get("ip") and c.get("kind") != "bogon":
                 leads[("FOFA", f"ip={c['ip']}")] = {
                     "service": "FOFA", "query": f'ip="{c["ip"]}"', "cost": "metered",
                     "why": f"reverse the origin IP {c['ip']} for co-hosted domains (from {host})"}
 
 
+def _reverse_already_paid(piv):
+    """True when the pivot already carries a completed (non-error) reverse-WHOIS block — the
+    collector or email-deep bought it, so offering it again asks for spend that already happened."""
+    lr = piv.get("live_results") or {}
+    return any(isinstance(lr.get(k), dict) and not lr[k].get("error") and "domains" in lr[k]
+               for k in ("reverse_whois_current", "reverse_whois_historic"))
+
+
+def _fofa_already_paid(piv):
+    """True when FOFA already ran on this pivot without error — asking again spends twice."""
+    f = (piv.get("live_results") or {}).get("fofa")
+    return isinstance(f, dict) and not f.get("error") and "results" in f
+
 def _enrichment_leads_from_raw(obj, leads):
-    """Leak/breach/OSINT/dork legs that the infra pipeline never runs — emitted as OPEN leads per
-    discovered registrant email and per case apex so a run can't quietly report 'done' while
-    `/intelx`, `/breach-deep`, `/dork-sweep` and `/github-osint` were never fired (the exact gap that
-    let a case look converged on infra alone). Keyed so they dedupe across hosts; each carries a
-    stable `key` that `enrichment_done` suppresses once the leg has run."""
+    """Build target-matched identity/OSINT leads over raw pivots. Machine-executable leads
+    carry structured run specs (dispatcher op + argv); query-only leads stay open for the
+    /cti agent. Keys dedupe across hosts, and enrichment_done records accounted-for work."""
     art = obj.get("artifacts") or {}
     host = (obj.get("meta") or {}).get("host") or "?"
-    apex = _frontier_apex(host)
+    # an IPPivot raw (a collected origin IP) has no apex: phonebook / dork / GitHub / bucket legs on
+    # "100.40" are junk work, so every apex-scoped leg below is skipped for it
+    is_ip = (obj.get("meta") or {}).get("kind") == "ip" or bool(_IP_RE.match(host)) or ":" in host
+    apex = "" if is_ip else _frontier_apex(host)
     benign = _benign_set()
-    # registrant emails (current + history) — the high-signal identities; skip privacy/registrar noise
-    emails = set()
+    # registrant emails (current owner only — whois_eras.py) — the high-signal identities; skip
+    # privacy/registrar noise. History is never mined flat here: a previous owner (drop-catch,
+    # resale) is a third party and must never become an email-deep/reverse-WHOIS lead.
     who = art.get("whois") or {}
-    if who.get("registrant_email"):
-        emails.add(str(who["registrant_email"]).lower())
-    for e in (who.get("history") or {}).get("registrant_emails", []) or []:
-        emails.add(str(e).lower())
+    owner_emails = {str(e).lower() for e in _whois_eras.owner_values(who, "email") if e}
+    emails = set(owner_emails)
     for piv in obj.get("pivots", []) or []:
         if piv.get("kind") == "whois:registrant_email" and piv.get("value"):
-            emails.add(str(piv["value"]).lower())
+            v = str(piv["value"]).lower()
+            if v in owner_emails:      # never a stale/prior-era pivot value
+                emails.add(v)
     for em in emails:
         if (not em or "*" in em or em in benign
                 or _is_privacy(em) or _is_noise_email(em)):
             continue
-        leads[("breach", em)] = {
-            "tool": "/breach-deep", "value": em, "key": f"breach:{em}", "cost": "metered",
-            "why": f"breach/exposure lookup for registrant email {em} ({host})"}
-        leads[("intelx", em)] = {
-            "tool": "/intelx", "value": em, "key": f"intelx:{em}", "cost": "metered (logs-first ~50% keyless)",
-            "why": f"breach dumps / infostealer logs / pastes / darknet for {em} — machine-tie is direct attribution"}
+        leads[("email-deep", em)] = {
+            "tool": "/email-deep", "value": em, "key": f"email-deep:{em}", "cost": "metered",
+            "run": [{"op": "email-deep", "argv": [em]}],
+            "why": (f"Hudson Rock, ZoneCruncher, one IntelX stealer-log search and reverse-WHOIS "
+                    f"preview for {em}. Do not also run /breach-deep or /intelx on this email.")}
+    if apex and apex not in benign:
+        for piv in obj.get("pivots", []) or []:
+            kind = str(piv.get("kind") or "")
+            val = str(piv.get("value") or "").strip()
+            if not val:
+                continue
+            if kind == "whois:registrant_phone":
+                leads[("phone", val)] = {
+                    "tool": "/phone", "value": val, "key": f"phone:{val}", "cost": "free",
+                    "run": [{"op": "phone", "argv": [val]}],
+                    "why": f"OSINT decomposition of verified registrant phone {val}"}
+                leads[("cld-phone", val)] = {
+                    "tool": "intel.py cld route", "value": val, "key": f"cld-phone:{val}",
+                    "cost": "free", "run": [{"op": "cld", "argv": ["route", val]}],
+                    "why": f"Feeds checkphone + Shield IoC for registrant phone {val}"}
+            elif kind == "telegram":
+                m = re.fullmatch(r"(?:https?://)?(?:t\.me/|telegram\.me/)?@?([A-Za-z0-9_]{4,})", val, re.I)
+                if m and not val.startswith("+"):  # invite tokens are not operator handles
+                    handle = m.group(1).lower()
+                    leads[("cld-telegram", handle)] = {
+                        "tool": "intel.py cld route", "value": f"t.me/{handle}",
+                        "key": f"cld-telegram:{handle}", "cost": "free",
+                        "run": [{"op": "cld", "argv": ["route", f"t.me/{handle}"]}],
+                        "why": f"Shield Telegram posts for handle {handle} — not a domain lookup"}
+            elif kind in ("username", "dev_username") and piv.get("confidence") == "high":
+                handle = val.lower()
+                leads[("cld-actor", handle)] = {
+                    "tool": "intel.py cld actor-usernames", "value": val,
+                    "key": f"cld-actor:{handle}", "cost": "free",
+                    "run": [{"op": "cld", "argv": ["actor-usernames", val]}],
+                    "why": f"Shield threat-actor username map for verified developer handle {val}"}
     # per-apex OSINT/dork legs (deduped by apex) — skip benign/victim/shared-infra apexes so the
     # legit impersonation target (e.g. the real hospital) never gets metered breach/leak leads (§2.5)
     if apex and apex != "?" and apex not in benign and not _is_shared_infra(apex):
+        org = str((art.get("whois") or {}).get("registrant_org") or "").strip()
+        if (org and len(org) >= 3
+                and not re.search(r"privacy|redacted|whois|proxy|guard|protected|domains by", org, re.I)):
+            leads[("cld-org", org.lower())] = {
+                "tool": "intel.py cld ransomware + internal-leaks", "value": org,
+                "key": f"cld-org:{org.lower()}", "cost": "free",
+                "run": [{"op": "cld", "argv": ["ransomware", org]},
+                        {"op": "cld", "argv": ["internal-leaks", org]}],
+                "why": (f"Shield ransomware victims and internal-document leaks for org {org}. "
+                        f"The collector searched the host, not this name.")}
         leads[("intelx-phonebook", apex)] = {
-            "tool": "/intelx --phonebook", "value": apex, "key": f"intelx-phonebook:{apex}", "cost": "metered",
+            "tool": "/intelx phonebook", "value": apex, "key": f"intelx-phonebook:{apex}",
+            "cost": "metered", "run": [{"op": "intelx", "argv": ["phonebook", apex]}],
             "why": f"inventory every email/subdomain/URL IntelX has seen under {apex}"}
         leads[("dork", apex)] = {
             "tool": "/dork-sweep --filetype --docs", "value": apex, "key": f"dork:{apex}", "cost": "free",
@@ -965,8 +1397,10 @@ def _enrichment_leads_from_raw(obj, leads):
         if login.lower() in ("features", "topics", "sponsors", "login", "marketplace", "about", "site", "orgs"):
             continue
         leads[("github-account", login.lower())] = {
-            "tool": "github_harvest", "value": f"github.com/{login}", "key": f"github-account:{login.lower()}", "cost": "free",
-            "why": f"GitHub account linked from {host}: harvest committer e-mails (.patch From:), former logins, org members/contributors"}
+            "tool": "github_harvest", "value": f"github.com/{login}",
+            "key": f"github-account:{login.lower()}", "cost": "free",
+            "run": [{"op": "github", "argv": [f"github.com/{login}"]}],
+            "why": f"GitHub account linked from {host}: harvest committer e-mails and former logins"}
 
 
 def _censys_search_candidates(cdir, cands, seed_apexes, deferred=None):
@@ -1285,6 +1719,21 @@ def mo_neighbour_classification(case, whois_window_days=MO_WINDOW_DAYS):
     }
 
 
+def _enrichment_index(cdir):
+    """Case-local executed-lead summaries; query-only leads have no result row."""
+    try:
+        with open(os.path.join(cdir, "enrichment", "index.json"), encoding="utf-8") as fh:
+            leads = json.load(fh).get("leads") or {}
+    except (OSError, ValueError, AttributeError):
+        return []
+    if not isinstance(leads, dict):
+        return []
+    return [{"key": key, "outcome": row.get("outcome", "?"),
+             "summary": str(row.get("summary") or "")[:300],
+             "file": row.get("file") or ""}
+            for key, row in sorted(leads.items()) if isinstance(row, dict)]
+
+
 def frontier(case, max_new=8):
     """Compute the next FREE frontier + deferred metered leads for a case, from its raw/*.json.
 
@@ -1306,6 +1755,9 @@ def frontier(case, max_new=8):
     deferred = _new_deferred()
     _SUBS.clear()
     leaves = []
+    expanding = []            # (host, raw) of non-leaf DOMAIN hosts — the origin-IP sweep's input
+    shared_ips = set()
+    approved = _oh.approved_cohosts(cdir) if _oh is not None else {}
     for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -1313,13 +1765,22 @@ def frontier(case, max_new=8):
         except Exception:
             continue
         host = ((obj.get("meta") or {}).get("host") or os.path.basename(path)[:-5]).lower()
+        meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else None
+        if meta is not None and meta.get("kind") == "ip" and not meta.get("origin_context") and _oh is not None:
+            # unstamped IP raw (collected without WP_CASE_DIR): recompute whether the case's hosts used
+            # this box only historically — otherwise its stale co-tenants would seed as if current
+            _ctx = _oh.origin_context(cdir, host)
+            if _ctx:
+                meta["origin_context"] = _ctx
         if is_leaf(host, hops, depth):
             # leaf: mine into scratch so own-subdomain notes (_SUBS) and co-tenancy leads survive,
             # but no NEW apex from this host may enter the frontier
-            _free_candidates_from_raw(obj, {}, seed_apexes, deferred)
+            _free_candidates_from_raw(obj, {}, seed_apexes, deferred, approved=approved)
             leaves.append(host)
         else:
-            _free_candidates_from_raw(obj, cands, seed_apexes, deferred)
+            _free_candidates_from_raw(obj, cands, seed_apexes, deferred, approved=approved)
+            expanding.append((host, obj))
+        _shared_ips_in(obj, shared_ips)
         _metered_leads_from_raw(obj, leads)
         _enrichment_leads_from_raw(obj, enr)
     # MO-neighbour: seed ONLY from the CLASSIFIED case-wide file (Phase B), never from the raw
@@ -1354,6 +1815,10 @@ def frontier(case, max_new=8):
     # the collected apexes' OWN subdomains: same registration, collected next round like the apex,
     # kept out of `pending`/`candidate_total` so they never read as new operator infrastructure
     sub_pending, sub_detail = _subdomain_frontier(collected, consumed)
+    # the historical ORIGIN-IP sweep: non-CDN addresses the expanding hosts ever resolved to
+    ips_pending, ip_detail = _origin_ip_frontier(
+        expanding, {h.lower() for h in collected} | consumed, hops, depth, deferred, shared_ips,
+        max_ips=(_oh.MAX_IP_SEEDS_PER_ROUND if (_oh is not None and max_new) else None))
     def _hop_of(v):
         # case-level sources (Censys exact-cert search, MO rows without a recorded estate host) are
         # owner checks against the estate as a whole → hop 1; a per-raw origin that is NOT in `hops`
@@ -1382,17 +1847,20 @@ def frontier(case, max_new=8):
                           for a, v in sorted(related.items(), key=lambda kv: (-len(kv[1]["sources"]), kv[0]))],
         "subdomains_pending": sub_pending,          # {apex: [host, …]} — next-round collection
         "subdomains": sub_detail,                   # {host: {apex, sources, dns}} incl. dead names
+        # historical ORIGIN IPs (non-CDN / non-parking addresses the expanding hosts resolved to) —
+        # collected next round as IP seeds (IPPivot); co-tenants then pass the co-host guards
+        "ips_pending": ips_pending,
+        "origin_ips": ip_detail,                    # {ip: {hosts, sources, first/last_seen, era, hop, …}}
         "metered_leads": list(leads.values()),
         # co-tenancy held back from seeding (multi-tenant certs / shared-hosting IPs) — free to
         # check by hand, never auto-chased, and surfaced so the suppression is visible not silent.
         "co_tenancy_leads": [v for slot in deferred.values() for v in slot.values()],
-        # leak/breach/OSINT/dork legs the infra pipeline never runs. OPEN = not yet closed;
-        # closed-with-a-reason (empty/unavailable/skipped) move to gaps so a keyless/passive/empty
-        # run can't stay permanently non-converged. NOTE: the engine loop converges on
-        # hosts/indicators (convergence.py), NOT on these — this is a /cti completeness checklist.
+        # Structured leads close after the runner checkpoints their result; query-only leads
+        # remain open until an agent executes/reviews them. Host convergence is separate.
         "enrichment_leads": [v for k, v in enr.items() if v["key"] not in _done_map(st)],
         "enrichment_gaps": [{"key": k, "reason": r} for k, r in _done_map(st).items()
                             if r in ("empty", "unavailable", "skipped")],
+        "enrichment_results": _enrichment_index(cdir),
     }
 
 
@@ -1405,13 +1873,16 @@ def convergence_verdict(case, stale=2):
     if not rounds:
         return {"verdict": "EXPANDING", "rounds": 0, "reason": "no snapshots yet"}
     recent = rounds[-stale:]
-    converged = (len(rounds) >= stale and
-                 all(r["new_hosts"] == 0 and r["new_indicators"] == 0 for r in recent))
+    # single source of truth (convergence.is_converged): a round where a host failed to collect
+    # (see snapshot --failed) never counts as zero-growth, even with no new hosts/indicators.
+    converged = _conv.is_converged(rounds, stale)
+    failed_recent = sorted({h for r in recent for h in (r.get("failed") or [])})
     last = rounds[-1]
     return {"verdict": "CONVERGED" if converged else "EXPANDING", "rounds": len(rounds),
             "hosts": last.get("hosts"), "indicators": last.get("indicators"),
             "new_hosts_recent": sum(r["new_hosts"] for r in recent),
-            "new_indicators_recent": sum(r["new_indicators"] for r in recent)}
+            "new_indicators_recent": sum(r["new_indicators"] for r in recent),
+            "failed_recent": failed_recent}
 
 
 def reopen(case, new_seeds=None):
@@ -1421,6 +1892,7 @@ def reopen(case, new_seeds=None):
     st["status"] = "expanding"
     st["reopen_count"] = st.get("reopen_count", 0) + 1
     st["note"] = f"reopened {_now()}"
+    st["dropped"] = {}          # a reopened case re-judges what an earlier Plan phase vetoed
     if new_seeds:
         have = {h.lower() for h in st.get("pending", [])} | {h.lower() for h in st.get("consumed", [])}
         for s in new_seeds:
@@ -1460,6 +1932,1039 @@ def mark_enrichment_done(case, keys, reason="ran"):
     st["enrichment_done"] = done
     save_state(case, st)
     return st
+
+
+
+@_locked
+def record_approved_cohost(case, ip, domains):
+    """The analyst approved THESE co-tenants of an origin IP (a harness approval item that ran, or
+    `case_state.py approve-cohost`). Stored per domain in state.json `approved_cohosts` with the case
+    hosts that resolved to the box, so the frontier seeds, ingest links and the partition binds ONLY
+    these — every other site on the box keeps the VPS / shared-hosting rules."""
+    st = load_state(case)
+    allrec = st.get("approved_cohosts") if isinstance(st.get("approved_cohosts"), dict) else {}
+    rec = allrec.get(str(ip)) if isinstance(allrec.get(str(ip)), dict) else {}
+    reduce = _oh._apex if _oh is not None else _frontier_apex   # the readers' reduction (approval_allows)
+    doms = set(rec.get("domains") or []) | {a for a in (reduce(d) for d in domains or ()) if a}
+    hosts = set(rec.get("hosts") or [])
+    # the case hosts whose history LED to this box (the IP raw's own stamp, taken when it was
+    # collected) — not every collected domain that happens to resolve there today
+    try:
+        with open(os.path.join(_case_dir(case), "raw", f"{ip}.json"), encoding="utf-8") as fh:
+            stamp = ((json.load(fh) or {}).get("meta") or {}).get("origin_context") or {}
+    except Exception:  # noqa: BLE001
+        stamp = {}
+    if not stamp and _oh is not None:
+        stamp = _oh.origin_context(_case_dir(case), ip) or {}
+    hosts |= set(stamp.get("hosts") or [])
+    allrec[str(ip)] = {"domains": sorted(doms), "hosts": sorted(hosts)}
+    st["approved_cohosts"] = allrec
+    save_state(case, st)
+    return allrec[str(ip)]
+
+
+@_locked
+def record_origin_ip_hop(case, ip, hosts):
+    """Give a historical ORIGIN IP the smallest hop among the case hosts that resolved to it — the
+    same rule intel._promote applies — so the loop and the harness agree on where its co-tenants
+    land (one hop past that host). An existing smaller hop is kept; unknown hosts are ignored."""
+    st = load_state(case)
+    hops = st.get("hops") if isinstance(st.get("hops"), dict) else {}
+    known = [int(hops[h]) for h in (str(x).lower() for x in hosts or ()) if isinstance(hops.get(h), int)]
+    if not known:
+        return None
+    hop = min(known)
+    hops[str(ip)] = min(hop, hops.get(str(ip), hop))
+    st["hops"] = hops
+    save_state(case, st)
+    return hops[str(ip)]
+
+
+@_locked
+def mark_pivoted(case, ids):
+    """Record consumed pivot candidate ids in state.json `pivoted` (additive, idempotent).
+
+    Phase 4 records ids after a pivot is dispatched so propose() does not re-emit them.
+    Phase 3 ingest does not touch this list."""
+    st = load_state(case)
+    have = list(st.get("pivoted") or [])
+    seen = set(have)
+    for i in (ids or []):
+        s = str(i or "").strip()
+        if s and s not in seen:
+            have.append(s)
+            seen.add(s)
+    st["pivoted"] = have
+    save_state(case, st)
+    return st
+
+
+@_locked
+def mark_dropped(case, drops, round_no=None):
+    """Record Plan-phase drops in state.json `dropped` ({id: {why, round}}) so propose() never
+    re-offers them in later rounds. `drops` = iterable of (id, why). The first drop of an id is
+    kept (idempotent). reopen() clears the map. Returns the number of NEW drops."""
+    st = load_state(case)
+    have = st.setdefault("dropped", {})
+    rnd = round_no if isinstance(round_no, int) else st.get("round", 0)
+    added = 0
+    for i, why in (drops or ()):
+        s = str(i or "").strip()
+        if s and s not in have:
+            have[s] = {"why": str(why or "")[:300], "round": rnd}
+            added += 1
+    if added:
+        save_state(case, st)
+    return added
+
+
+def _excluded_ids(st):
+    """Candidate ids propose()/accept_extras() never offer: dispatched (`pivoted`) + Plan-dropped."""
+    out = {str(x) for x in (st.get("pivoted") or []) if x}
+    dropped = st.get("dropped")
+    if isinstance(dropped, dict):
+        out |= {str(k) for k in dropped if k}
+    return out
+
+
+
+def _node_key(type_, selector):
+    t = (type_ or "").strip().lower()
+    s = str(selector or "").strip()
+    return f"{t}|{s.lower() if t in ('domain', 'email', 'telegram') else s}"
+
+
+def _node_hop(st, type_, selector):
+    """Hop of a typed node: its registry entry, else (domain) the expansion-anchor hop, else 0."""
+    n = (st.get("nodes") or {}).get(_node_key(type_, selector))
+    if isinstance(n, dict) and isinstance(n.get("hop"), int):
+        return n["hop"]
+    if (type_ or "").lower() == "domain":
+        hops, depth = _hops_and_depth(st)
+        return hops.get(str(selector or "").lower(), _unknown_hop(hops, depth))
+    return 0
+
+
+@_locked
+def register_seed_nodes(case, seeds):
+    """Classify the run's seeds; non-domain seeds become hop-0 typed nodes. Returns the domain/URL
+    seeds (the collect phase's input). A filename/string seed is NEVER treated as a host."""
+    from selector_types import classify
+    st = load_state(case)
+    nodes = st.setdefault("nodes", {})
+    domains, added = [], False
+    for raw in seeds or []:
+        v = str(raw or "").strip()
+        if not v:
+            continue
+        kind = classify(v)
+        if kind == "domain":
+            domains.append(v[len("domain:"):] if v.lower().startswith("domain:") else v)
+            continue
+        sel = v.rsplit("/", 1)[-1].lstrip("@") if kind == "telegram" else v
+        k = _node_key(kind, sel)
+        if k not in nodes:
+            nodes[k] = {"type": kind, "selector": sel, "rung_class": "", "rung_classes": [""],
+                        "hop": 0, "origins": ["seed"], "route": "seed"}
+            added = True
+    if added:                      # a domain-only run leaves state.json exactly as it was
+        save_state(case, st)
+    return domains
+
+
+@_locked
+def add_nodes(case, rows, *, origin_type, origin_value, route):
+    """Record a corpus pivot's result rows as typed nodes at origin hop + 1 (mentions excluded —
+    a mention is a fact, never a node). Rows whose rung class the route delivers fact-only
+    (rungs.json fact_only_node_classes — page-scraped contacts on quarry.page) are skipped: the
+    ingester already stored them as KB facts on the page. Returns the number of NEW nodes."""
+    from selector_types import fact_only_classes
+    fact_only = fact_only_classes(route)
+    st = load_state(case)
+    nodes = st.setdefault("nodes", {})
+    hop = _node_hop(st, origin_type, origin_value) + 1
+    origin = f"{(origin_type or '').lower()}:{origin_value}"
+    added = 0
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        t = str(r.get("type") or "").strip().lower()
+        v = str(r.get("value") or "").strip()
+        if not t or not v or t == "mention":
+            continue
+        if fact_only and str(r.get("rung_class") or "") in fact_only:
+            continue
+        k = _node_key(t, v)
+        cur = nodes.get(k)
+        # An unlabeled corpus row is NOT owner evidence: "unknown" resolves to kit via rung_for.
+        # Only a SEED carries the empty class (register_seed_nodes) and reads as owner.
+        rc = str(r.get("rung_class") or "unknown")
+        if cur is None:
+            nodes[k] = {"type": t, "selector": v.lower() if t == "domain" else v,
+                        "rung_class": rc, "rung_classes": [rc], "hop": hop,
+                        "origins": [origin], "route": route}
+            added += 1
+            continue
+        if rc not in cur.setdefault("rung_classes", [cur.get("rung_class", "")]):
+            cur["rung_classes"].append(rc)
+        if origin not in cur.get("origins", []):
+            cur.setdefault("origins", []).append(origin)
+            cur["hop"] = min(int(cur.get("hop", hop)), hop)
+    save_state(case, st)
+    return added
+
+
+def tier_hosts(case_dir):
+    """{domain: 'kit'|'neighbour'} for hosts the cross-type loop reached ONLY through kit- or
+    neighbour-rung rows (a shared filename / string / favicon / telegram username, an IP
+    co-tenant, an exchange counterparty). Collecting is not attributing: these hosts are kept OUT
+    of the same-operator partition and listed apart. A host that also arrived through an
+    owner-rung row, a seed, or the owner-gated frontier (not in the node registry) is not here.
+    Empty for a case the cross-type loop never touched — legacy partitions are unchanged."""
+    from selector_types import rung_for
+    try:
+        with open(state_path(case_dir), encoding="utf-8") as fh:
+            st = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return {}
+    # The analyst's own seeds (harness_seeds.json, written by the orchestrator) are the subject of
+    # the case and never tier out — every caller (judge partition, propose's enrich.host) agrees.
+    try:
+        with open(os.path.join(case_dir, "harness_seeds.json"), encoding="utf-8") as fh:
+            seeds = {str(s).lower() for s in (json.load(fh) or [])}
+    except Exception:  # noqa: BLE001
+        seeds = set()
+    seeds |= {_frontier_apex(s) for s in seeds}
+    out = {}
+    for n in (st.get("nodes") or {}).values() if isinstance(st, dict) else ():
+        if not isinstance(n, dict) or n.get("type") != "domain":
+            continue
+        sel = str(n.get("selector") or "").lower()
+        if sel in seeds:
+            continue
+        classes = n.get("rung_classes") or [n.get("rung_class") or ""]
+        rungs = {rung_for(c) if c else "owner" for c in classes}
+        if "owner" in rungs:
+            continue
+        out[sel] = "neighbour" if rungs == {"neighbour"} else "kit"
+    return out
+
+
+# Reverse-WHOIS on a phone/email is a REGISTRANT pivot (SKILL.md): it runs only for a contact the
+# WHOIS record names as registrant (or one the analyst seeded by hand), never for one scraped from
+# page text (a phone directory lists thousands of strangers) or reached through a kit/neighbour
+# row. The one choke point for both typed candidate builders below.
+_REGISTRANT_ONLY_ROUTES = frozenset({"rwhois.purchase"})
+_REGISTRANT_RELS = frozenset({"registered_by", "registrant_of"})
+
+
+def _route_admits(route, rung_classes, *, analyst_seed=False):
+    """False when `route` is registrant-only, the selector is not an analyst's hop-0 seed, and no
+    class in `rung_classes` is whois.registrant_*."""
+    if route not in _REGISTRANT_ONLY_ROUTES or analyst_seed:
+        return True
+    return any(str(c).startswith("whois.registrant_") for c in (rung_classes or ()))
+
+
+def _cands_from_state_nodes(st, collected, pr, routes_meta, seed_apexes):
+    """Candidates from the case's typed node registry (seeds of any type + corpus pivot results).
+
+    Domain nodes not yet collected → a free single-host `collect` (rung from the row's class, so a
+    kit sibling is COLLECTED but stays kit). Other nodes → one UNPROBED candidate per accepting
+    route (propose() bounds, then sizes them). Nodes at or past `max_typed_hops` are leaves
+    (recorded, never pivoted) so the estate converges."""
+    from selector_types import classify, max_typed_hops, routes_for, rung_for
+    max_hops = max_typed_hops()
+    have = {h.lower() for h in collected}
+    out = []
+    for key in sorted(st.get("nodes") or {}):
+        n = st["nodes"][key]
+        if not isinstance(n, dict):
+            continue
+        t, sel = n.get("type"), str(n.get("selector") or "")
+        hop = n.get("hop") if isinstance(n.get("hop"), int) else 0
+        if not t or not sel or hop >= max_hops:
+            continue
+        rc = str(n.get("rung_class") or "")
+        classes = {str(c) for c in (n.get("rung_classes") or ()) if c} | ({rc} if rc else set())
+        analyst_seed = n.get("route") == "seed" and hop == 0 and not classes
+        rung = rung_for(rc) if rc else ("owner" if t in ("domain", "email", "wallet") else "kit")
+        origins = tuple(sorted(n.get("origins") or ()))
+        src = (f"node:{n.get('route') or 'seed'}",)
+        if t == "domain":
+            a = _frontier_apex(sel)
+            if (not a or sel.lower() in have or a in have or classify(sel) == "filename"
+                    or never_seed(a) or _is_noise_apex(a, seed_apexes)):
+                continue
+            out.append(_cand("domain", a, "collect", a, metered=False, est_hits=1, rung=rung,
+                             origins=origins, sources=src,
+                             why=f"{rung} node from {n.get('route') or 'seed'} (hop {hop})",
+                             by="node"))
+            continue
+        for route in routes_for(t):
+            if not _route_admits(route, classes, analyst_seed=analyst_seed):
+                continue
+            spec = routes_meta.get(route) or {}
+            query = None
+            if pr is not None:
+                try:
+                    query = pr.query_for(route, t, sel)
+                except Exception:
+                    query = None
+            elif t in (spec.get("types") or []):
+                query = sel
+            if query is None:
+                continue
+            out.append(_cand(t, sel, route, query, metered=bool(spec.get("metered")),
+                             est_hits=None, rung=rung, origins=origins, sources=src,
+                             why=f"{t} node from {n.get('route') or 'seed'} (hop {hop})",
+                             by="node"))
+    return out
+
+
+
+# ------------------------------------------------------------------------- propose() (cross-type)
+# Single deterministic source of next-round candidates for the SDK harness. frontier() stays the
+# domain-only FREE path for intel.py loop and MUST remain byte-identical; propose() reuses its
+# miners by calling it, then adds typed KB nodes, co-tenancy holds (est_hits > auto_max → approval)
+# and validated extra/SDK sources. Filename/string selectors never pass through host normalisation.
+
+_RUNG_RANK = {"owner": 0, "kit": 1, "neighbour": 2}
+
+
+def _kb_root():
+    """Absolute KB path — HARNESS_KB absolute, else under engine ROOT (same rule as _benign_set)."""
+    kb = KB_DIR
+    return kb if os.path.isabs(kb) else os.path.join(ROOT, kb)
+
+
+def _pivot_routes_mod():
+    """Lazy import of pivot_routes (phase 3). Tests inject a stub via sys.modules['pivot_routes']."""
+    mod = sys.modules.get("pivot_routes")
+    if mod is not None:
+        return mod
+    try:
+        import pivot_routes as pr  # noqa: E402
+        return pr
+    except Exception:
+        return None
+
+
+def _case_no_spend(case):
+    """The case intake's constraints.no_spend (scope.json); False when unscoped/unreadable."""
+    try:
+        with open(os.path.join(_case_dir(case), "scope.json"), encoding="utf-8") as fh:
+            return bool(((json.load(fh) or {}).get("constraints") or {}).get("no_spend"))
+    except Exception:
+        return False
+
+
+class _ProbeRoutes:
+    """pivot_routes with every count probe forced free_only on a no_spend case: metered routes
+    answer unknown (no reverse-WHOIS preview is sent) and urlscan counts go keyless."""
+
+    def __init__(self, mod, free_only):
+        self._mod, self._free = mod, bool(free_only)
+
+    def query_for(self, *a, **k):
+        return self._mod.query_for(*a, **k)
+
+    def count(self, route, query, free_only=False):
+        return self._mod.count(route, query, free_only=bool(free_only) or self._free)
+
+    def runnable(self, route):
+        """pivot_routes.route_runnable — False when the route's credential is absent. A stub
+        module without the gate answers True (no change)."""
+        gate = getattr(self._mod, "route_runnable", None)
+        return True if gate is None else bool(gate(route))
+
+
+def _probe_routes(case):
+    mod = _pivot_routes_mod()
+    return None if mod is None else _ProbeRoutes(mod, _case_no_spend(case))
+
+
+def _offerable(c, pr):
+    """False for a candidate propose() must never offer: a route excluded for the selector type
+    (pivot_map.json propose_type_exclude — anyrun.lookup on an IP) or a route whose credential is
+    not configured (pivot_routes.route_runnable). `collect` is always offerable."""
+    from selector_types import propose_excluded
+    if c.tool == "collect":
+        return True
+    if propose_excluded(c.tool, c.type):
+        return False
+    return pr is None or pr.runnable(c.tool)
+
+
+def _findings_from_case(cdir):
+    """Minimal findings dict for pivot_suggest from raw artifacts (best-effort, never raises)."""
+    findings = {"domains": [], "emails": [], "social": [], "persons": [], "cn_names": []}
+    for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except Exception:
+            continue
+        host = ((obj.get("meta") or {}).get("host") or os.path.basename(path)[:-5]).lower()
+        if host:
+            findings["domains"].append({"value": host})
+        art = obj.get("artifacts") or {}
+        for em in art.get("emails") or []:
+            if em:
+                findings["emails"].append({"value": em})
+        for net, handles in (art.get("socials") or {}).items():
+            for h in handles or []:
+                if h:
+                    findings["social"].append({"username": str(h), "platform": str(net)})
+    return findings
+
+
+def _pivot_suggest_boosts(cdir):
+    """selector/target → boost score from pivot_suggest.suggest_all; empty on any failure."""
+    try:
+        import importlib.util
+        path = os.path.join(os.path.dirname(ROOT), "scripts", "webpivot", "pivot_suggest.py")
+        if not os.path.isfile(path):
+            path = os.path.join(ROOT, "scripts", "webpivot", "pivot_suggest.py")
+        if not os.path.isfile(path):
+            return {}
+        spec = importlib.util.spec_from_file_location("_cs_pivot_suggest", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        result = mod.suggest_all(_findings_from_case(cdir))
+        boosts = {}
+        for s in result.get("suggestions") or []:
+            t = str(s.get("target") or "").strip().lower()
+            if not t:
+                continue
+            conf = float(s.get("confidence") or 0) or 0.0
+            pr = str(s.get("priority") or "").lower()
+            pscore = {"critical": 4, "high": 3, "medium": 2, "low": 1}.get(pr, 1)
+            boosts[t] = max(boosts.get(t, 0.0), pscore + conf)
+        return boosts
+    except Exception:
+        return {}
+
+
+def _cand(type_, selector, tool, query, *, metered=False, est_hits=None, rung="kit",
+          origins=(), sources=(), why="", by="", id_=None):
+    """Build a Candidate via selector_types (local import keeps frontier path free of it)."""
+    from selector_types import Candidate, candidate_id
+    q = query if query is not None else selector
+    cid = id_ or candidate_id(type_, selector, tool, q)
+    return Candidate(
+        id=cid, type=type_, selector=selector, tool=tool, query=q,
+        metered=bool(metered), est_hits=est_hits, rung=rung or "kit",
+        origins=tuple(origins or ()), sources=tuple(sources or ()),
+        why=str(why or ""), by=str(by or ""),
+    )
+
+
+# Frontier source → rung (the locked rung table). The legacy frontier seeds only sources it treats
+# as owner links (_owner_linked: everything outside _NON_OWNER_SOURCES — exact cert / co-SAN,
+# registrant reverse-WHOIS, own subdomains, the _HOST_YIELDING_SOURCES engines, same-registrant MO
+# neighbours). Two refinements from the rung table: page-similarity sources (_NON_OWNER_SOURCES)
+# are kit, and IP co-tenancy (ip_cohost, passive-DNS co-hosts) is NEIGHBOUR — collected, never
+# attributed. A candidate takes the STRONGEST rung among its sources.
+_NEIGHBOUR_SOURCES = frozenset({"ip_cohost", "passive_dns"})
+_RUNG_ORDER = ("owner", "kit", "neighbour")
+
+
+def _source_rung(source):
+    s = str(source or "")
+    if s in _NEIGHBOUR_SOURCES:
+        return "neighbour"
+    if s in _NON_OWNER_SOURCES:
+        return "kit"
+    return "owner"
+
+
+def _strongest_rung(rungs):
+    rs = set(rungs or ())
+    for r in _RUNG_ORDER:
+        if r in rs:
+            return r
+    return "kit"
+
+
+def _frontier_rung(sources):
+    return _strongest_rung(_source_rung(s) for s in (sources or ()))
+
+
+def _domain_cands_from_frontier(fr, auto_max, host_tier=None):
+    """Seedable frontier apexes + co-tenancy/deferred holds as domain Candidates.
+
+    `host_tier(host)`: a candidate mined from a host's raw is only as strong as the BEST host it
+    was found on — a crt.sh co-SAN on a hosting co-tenant's certificate is a co-tenant lead, not an
+    owner link (rung = weaker of the source rung and the best origin tier)."""
+    out, seen = [], set()
+    for apex, info in (fr.get("candidates") or {}).items():
+        a = (apex or "").strip().lower()
+        if not a or a in seen:
+            continue
+        seen.add(a)
+        out.append(_cand(
+            "domain", a, "collect", a,
+            metered=False, est_hits=1,                 # one host, free-only collect
+            rung=(_weakest_rung((_frontier_rung(info.get("sources") or ()),
+                                 _strongest_rung(host_tier(o) for o in info["origins"])))
+                  if host_tier is not None and info.get("origins")
+                  else _frontier_rung(info.get("sources") or ())),
+            origins=tuple(sorted(info.get("origins") or ())),
+            sources=tuple(sorted(info.get("sources") or ())),
+            why=f"owner-linked frontier seed (hop {info.get('hop', '?')})",
+            by="frontier",
+        ))
+    for lead in fr.get("co_tenancy_leads") or []:
+        if lead.get("never_seed"):
+            continue                  # a social-platform edge: shown as a lead, never offered
+        samples = list(lead.get("sample_apexes") or lead.get("sample_domains") or [])
+        count = lead.get("cohost_count") or lead.get("sibling_count") or lead.get("apex_count")
+        try:
+            est = int(count) if count is not None else int(auto_max) + 1
+        except (TypeError, ValueError):
+            est = int(auto_max) + 1
+        if est <= int(auto_max):
+            est = int(auto_max) + 1
+        check = str(lead.get("check") or "co_tenancy")
+        src = f"co_tenancy:{check}"
+        # an approve-to-collect VPS lead carries its IP, so the approved run records the approval
+        extra_src = ((f"approve_ip:{lead['ip']}",) if check == "vps co-tenancy — approve" and lead.get("ip")
+                     else ())
+        origin = (lead.get("seen_on") or "").strip().lower()
+        for apex in samples:
+            a = (apex or "").strip().lower()
+            if not a or a in seen or never_seed(a):
+                continue
+            seen.add(a)
+            out.append(_cand(
+                "domain", a, "collect", a,
+                metered=False, est_hits=est, rung="neighbour",
+                origins=(origin,) if origin else (),
+                sources=(src,) + extra_src,
+                why=str(lead.get("why") or check),
+                by="co_tenancy",
+            ))
+    return out
+
+
+def _weakest_rung(rungs):
+    rs = set(rungs or ())
+    for r in reversed(_RUNG_ORDER):
+        if r in rs:
+            return r
+    return "kit"
+
+
+def _typed_cands_from_kb(collected, pr, routes_meta, host_tier=None):
+    """One candidate per applicable route for each KB entity linked to a collected host.
+
+    `host_tier(host) -> owner|kit|neighbour`: a selector is only as strong as the BEST host it was
+    found on — a GA id seen only on a hosting co-tenant is a neighbour pivot, never an owner one,
+    however strong its identifier class (rung = weaker of class rung and best source-host tier)."""
+    from selector_types import node_from_kb, routes_for, rung_for
+    out = []
+    try:
+        from knowledge_base import KB
+    except Exception:
+        return out
+    kb_path = _kb_root()
+    if not os.path.isdir(kb_path):
+        return out
+    try:
+        kb = KB(kb_path)
+    except Exception:
+        return out
+    nodes = {}  # (type, selector) -> {rung_class, classes, origins, sources}
+    for host in sorted(collected):
+        h = (host or "").strip().lower()
+        if not h:
+            continue
+        try:
+            neigh = kb.neighbors("domain", h)
+        except Exception:
+            continue
+        for etype, value, rel, _conf in neigh:
+            if etype in ("email", "phone") and rel in _REGISTRANT_RELS:
+                # a WHOIS registrant edge (ingest_webpivot `registered_by`, ingest_typed
+                # `registrant_of`) — the only email/phone class reverse-WHOIS may run on
+                node = {"type": etype, "selector": str(value or "").strip(),
+                        "rung_class": f"whois.registrant_{etype}"}
+            else:
+                node = node_from_kb(etype, value)
+            if not node or not node["selector"]:
+                continue
+            ntype, sel = node["type"], node["selector"]
+            # Filename/string stay typed — NEVER reclassify as domain / run through PSL reducer.
+            if ntype not in ("domain", "email", "phone", "wallet", "ip", "hash",
+                             "string", "filename", "telegram"):
+                continue
+            key = (ntype, sel)
+            slot = nodes.setdefault(key, {
+                "rung_class": node.get("rung_class") or "",
+                "classes": set(), "origins": set(), "sources": set(),
+            })
+            slot["origins"].add(h)
+            slot["sources"].add(f"kb:{rel or 'linked'}")
+            nrc = node.get("rung_class") or ""
+            if nrc:
+                slot["classes"].add(nrc)
+                if not slot["rung_class"] or nrc.startswith("whois.registrant_"):
+                    slot["rung_class"] = nrc     # a registrant edge outranks a page sighting
+    for (ntype, sel), slot in sorted(nodes.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        rc = slot["rung_class"]
+        if rc:
+            rung = rung_for(rc)
+        elif ntype == "ip":
+            rung = "neighbour"
+        elif ntype in ("domain", "email", "wallet"):
+            rung = "owner"
+        else:
+            rung = "kit"
+        origins = tuple(sorted(slot["origins"]))
+        if host_tier is not None:
+            best = _strongest_rung(host_tier(o) for o in slot["origins"])
+            rung = _weakest_rung((rung, best))
+        sources = tuple(sorted(slot["sources"]))
+        for route in routes_for(ntype):
+            if (routes_meta.get(route) or {}).get("collected_only"):
+                continue                     # e.g. enrich.host: proposed for collected hosts only
+            if not _route_admits(route, slot["classes"]):
+                continue
+            query = None
+            if pr is not None:
+                try:
+                    query = pr.query_for(route, ntype, sel)
+                except Exception:
+                    query = None
+            else:
+                spec = routes_meta.get(route) or {}
+                if ntype in (spec.get("types") or []):
+                    query = sel
+            if query is None:
+                continue
+            spec = routes_meta.get(route) or {}
+            out.append(_cand(
+                ntype, sel, route, query,
+                metered=bool(spec.get("metered")), est_hits=None, rung=rung,
+                origins=origins, sources=sources,
+                why=f"KB-linked {ntype} on {', '.join(origins[:3])}",
+                by="kb",
+            ))
+    return out
+
+
+# Keyed enrichment engines pivot_extract records in meta.enriched_with. A raw that already lists
+# any of them was collected with the paid layers (the round-1 seed, a cached keyed run), so
+# proposing `enrich.host` for it would pay twice.
+_KEYED_ENGINES = frozenset({"fofa", "censys", "whoisxml", "validin", "securitytrails",
+                            "hunterhow", "intelx", "shodan-search", "dnslytics"})
+
+
+def _owner_evidence_hosts(cdir, st):
+    """Hosts (and apexes) with POSITIVE owner evidence: the analyst's seeds (harness_seeds.json and
+    hop-0 expansion anchors), domain nodes that arrived through an owner-rung row, and members of
+    the judged cluster (assessment.json `cluster`). Absence from the kit/neighbour tiers is NOT
+    evidence — a brand/impersonation reference or an unlabeled co-host is in neither."""
+    from selector_types import rung_for
+    out = set()
+    try:
+        with open(os.path.join(cdir, "harness_seeds.json"), encoding="utf-8") as fh:
+            out |= {str(s).lower() for s in (json.load(fh) or [])}
+    except Exception:  # noqa: BLE001
+        pass
+    out |= {str(h).lower() for h, v in (st.get("hops") or {}).items() if v == 0}
+    for n in (st.get("nodes") or {}).values():
+        if isinstance(n, dict) and n.get("type") == "domain":
+            classes = n.get("rung_classes") or [n.get("rung_class") or ""]
+            if any(c and rung_for(c) == "owner" for c in classes):
+                out.add(str(n.get("selector") or "").lower())
+    try:
+        with open(os.path.join(cdir, "assessment.json"), encoding="utf-8") as fh:
+            for m in (json.load(fh) or {}).get("cluster") or []:
+                if isinstance(m, dict) and m.get("domain"):
+                    out.add(str(m["domain"]).strip().lower().rstrip("."))
+    except Exception:  # noqa: BLE001
+        pass
+    out.discard("")
+    return out | {_frontier_apex(h) for h in out}
+
+
+def _keyed_raw(cdir, host):
+    try:
+        with open(os.path.join(cdir, "raw", f"{host}.json"), encoding="utf-8") as fh:
+            meta = (json.load(fh) or {}).get("meta") or {}
+    except Exception:  # noqa: BLE001 — unreadable raw: not known keyed
+        return False
+    return bool(_KEYED_ENGINES & {str(e).lower() for e in (meta.get("enriched_with") or [])})
+
+
+def _accept_extra(raw, seed_apexes, depth, routes_meta, pr):
+    """Validate an extra Candidate/dict. Drop unknown routes, noise domains, filename-as-host."""
+    from selector_types import Candidate, classify, routes_for
+    if isinstance(raw, dict):
+        try:
+            c = Candidate.from_dict(raw)
+        except Exception:
+            return None
+    elif isinstance(raw, Candidate):
+        c = raw
+    else:
+        return None
+    typ = (c.type or "").strip().lower() or classify(c.selector)
+    sel = c.selector
+    tool = (c.tool or "").strip()
+    # A planner never sizes or prices its own pivot: est_hits comes from the cheap count probe and
+    # metered from pivot_map. Only the engine's own sources (SDK previews, frontier) are trusted.
+    trusted = (c.by or "") != "planner"
+    if typ == "domain":
+        # Refuse filename/string tokens that only look domain-ish after a bad cast.
+        if classify(sel, hint=None) == "filename":
+            return None
+        a = _frontier_apex(sel) if sel else ""
+        if not a or never_seed(a) or _is_noise_apex(a, seed_apexes):
+            return None
+        # depth check: extras are hop-1 relative to the estate; depth 0 admits no expansion
+        if isinstance(depth, int) and depth >= 0 and 1 > depth:
+            return None
+        if tool and tool != "collect":
+            spec = routes_meta.get(tool)
+            if not isinstance(spec, dict) or "domain" not in (spec.get("types") or []):
+                return None                        # a domain is collected, or pivoted on a domain route
+            est = c.est_hits if trusted else None
+            if pr is not None and est is None:
+                try:
+                    est = pr.count(tool, c.query or a)
+                except Exception:
+                    est = None
+            return _cand(
+                "domain", a, tool, c.query or a,
+                metered=bool(spec.get("metered")) or bool(c.metered), est_hits=est,
+                rung=(c.rung if trusted else "kit") or "kit", origins=c.origins,
+                sources=c.sources or ("extra",),
+                why=c.why or "extra", by=c.by or "extra", id_=None,   # id from the apex
+            )
+        return _cand(
+            "domain", a, "collect", a,
+            # rung: an engine source states its own (sdk.infra → neighbour, kb peer → kit); a
+            # planner hunch is never owner evidence; an unlabeled extra is kit (conservative)
+            metered=False, est_hits=1, rung=(c.rung if trusted else "kit") or "kit",
+            origins=c.origins, sources=c.sources or ("extra",),
+            why=c.why or "extra", by=c.by or "extra",
+            id_=None,   # id from the APEX: every subdomain/URL form of one apex is ONE candidate
+        )
+    # Non-domain: tool must be a known accepting route (or absent → pick nothing here; typed
+    # path owns multi-route expansion). Unknown route → drop.
+    if not tool or tool == "collect":
+        return None
+    spec = routes_meta.get(tool)
+    if spec is None:
+        return None  # unknown route
+    if typ not in (spec.get("types") or []):
+        return None
+    query = c.query
+    if pr is not None:
+        try:
+            q = pr.query_for(tool, typ, sel)
+        except Exception:
+            q = None
+        if q is None:
+            return None
+        query = q
+    elif not query:
+        query = sel
+    est = c.est_hits if trusted else None
+    if pr is not None and est is None:
+        try:
+            est = pr.count(tool, query)
+        except Exception:
+            est = None
+    return _cand(
+        typ, sel, tool, query,
+        metered=bool(spec.get("metered")) or bool(c.metered),
+        est_hits=est, rung=c.rung or "kit",
+        origins=c.origins, sources=c.sources or ("extra",),
+        why=c.why or "extra", by=c.by or "extra",
+        id_=None,   # id from the NORMALISED query: a planner re-add of a pivoted search dedups
+    )
+
+
+def accept_extras(case, extras):
+    """Validate extra candidates (planner additions) against the case — the same checks propose()
+    applies to `extra`: known route accepting the type, domain never-seed / noise / depth /
+    filename-as-host guards, a fresh count probe (a planner never sizes its own pivot), and the
+    offerability gate (credential configured, route not excluded for the type). Drops
+    already-pivoted and Plan-dropped ids. Returns accepted Candidates."""
+    from selector_types import load_pivot_map
+    st = load_state(case)
+    _hops, depth = _hops_and_depth(st)
+    collected = collected_hosts(_case_dir(case))
+    seed_apexes = {_frontier_apex(h) for h in collected} | {
+        _frontier_apex(h) for h in st.get("consumed", [])}
+    pivoted = _excluded_ids(st)
+    routes_meta = load_pivot_map().get("routes") or {}
+    pr = _probe_routes(case)
+    out = []
+    for raw in extras or ():
+        c = _accept_extra(raw, seed_apexes, depth, routes_meta, pr)
+        if c is not None and c.id not in pivoted and _offerable(c, pr):
+            out.append(c)
+    return out
+
+
+def _dedup_cands(cands, pivoted):
+    """Dedup by id; drop already-pivoted ids; merge sources/origins/est_hits on collision with
+    the strongest rung winning (merged evidence)."""
+    uniq = {}
+    for c in cands:
+        if c.id in pivoted:
+            continue
+        prev = uniq.get(c.id)
+        if prev is None:
+            uniq[c.id] = c
+            continue
+        srcs = tuple(sorted(set(prev.sources) | set(c.sources)))
+        orgs = tuple(sorted(set(prev.origins) | set(c.origins)))
+        est = prev.est_hits if prev.est_hits is not None else c.est_hits
+        if (srcs != prev.sources or orgs != prev.origins or est != prev.est_hits
+                or c.rung != prev.rung):
+            uniq[c.id] = _cand(
+                prev.type, prev.selector, prev.tool, prev.query,
+                metered=prev.metered, est_hits=est,
+                rung=_strongest_rung((prev.rung, c.rung)),   # merged evidence: strongest rung wins
+                origins=orgs, sources=srcs,
+                why=prev.why or c.why, by=prev.by or c.by, id_=prev.id,
+            )
+    return list(uniq.values())
+
+
+# Analyst-confirmed era rule (whois_eras.previous_owner_contacts): a registrant e-mail/phone whose
+# WHOIS observation date predates the domain's CURRENT registration creation date belongs to a
+# previous owner. It is never a normal seed and never silently dropped: each becomes one
+# approval-required item tagged PREVIOUS_OWNER_ERA (est_hits unknown, metered reverse-WHOIS,
+# neighbour rung), with both dates in its `why`. A rejection rides the existing proposal reject
+# path (orchestrator._run_approved → mark_pivoted), so a rejected id is never re-proposed.
+PREVIOUS_OWNER_ERA = "previous_owner_era"
+_PREVIOUS_OWNER_ROUTE = "rwhois.purchase"
+
+
+def _contact_key(type_, value):
+    v = str(value or "").strip().lower()
+    return (type_, re.sub(r"[^\d]", "", v) if type_ == "phone" else v)
+
+
+def _previous_owner_era_cands(cdir, pr, routes_meta):
+    """One approval-required Candidate per previous-owner registrant contact across the case's raws."""
+    spec = routes_meta.get(_PREVIOUS_OWNER_ROUTE) or {}
+    found = {}     # (type, norm) -> {"value", "observed", "created", "hosts"}
+    for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except Exception:
+            continue
+        host = ((obj.get("meta") or {}).get("host") or os.path.basename(path)[:-5]).lower()
+        who = (obj.get("artifacts") or {}).get("whois") or {}
+        try:
+            contacts = _whois_eras.previous_owner_contacts(who, ("email", "phone"))
+        except Exception:
+            contacts = []
+        for ct in contacts:
+            val = str(ct.get("value") or "").strip()
+            if (not val or "*" in val or _is_privacy(val)
+                    or (ct["kind"] == "email" and _is_noise_email(val))):
+                continue
+            slot = found.setdefault(_contact_key(ct["kind"], val), {
+                "type": ct["kind"], "value": val.lower() if ct["kind"] == "email" else val,
+                "observed": ct["observed"], "created": ct["current_created"], "hosts": set()})
+            slot["observed"] = min(slot["observed"], ct["observed"])
+            slot["hosts"].add(host)
+    out = []
+    for key in sorted(found):
+        s = found[key]
+        query = None
+        if pr is not None:
+            try:
+                query = pr.query_for(_PREVIOUS_OWNER_ROUTE, s["type"], s["value"])
+            except Exception:
+                query = None
+        hosts = sorted(s["hosts"])
+        out.append(_cand(
+            s["type"], s["value"], _PREVIOUS_OWNER_ROUTE, query or s["value"],
+            metered=bool(spec.get("metered", True)), est_hits=None, rung="neighbour",
+            origins=tuple(hosts), sources=(PREVIOUS_OWNER_ERA,),
+            why=(f"{PREVIOUS_OWNER_ERA}: registrant {s['type']} {s['value']} observed {s['observed']} "
+                 f"predates the current registration created {s['created']} on "
+                 f"{', '.join(hosts[:3])} — a previous owner of the name, not an owner link; "
+                 f"approve to pivot it, reject to keep it out"),
+            by="whois_eras",
+        ))
+    return out
+
+
+
+def propose(case, *, extra=(), max_per_type=None, probe=True):
+    """Deterministic next-round candidates for every selector type.
+
+    Signature: propose(case, *, extra=(), max_per_type=None, probe=True) -> list[Candidate]
+
+    - Domain candidates: same miners as frontier() (via frontier itself) — seedable apexes plus
+      co-tenancy/deferred holds with est_hits forced above auto_max so they route to approval.
+    - Typed candidates: KB entities linked to collected hosts via node_from_kb, one per route
+      that accepts the type (pivot_routes.query_for not None). rwhois.purchase only for a
+      whois.registrant_* contact. Ranked, then kit/neighbour ones capped per type
+      (pivot_map.json page_selector_cap) BEFORE any count probe; owner-rung ones are uncapped.
+    - extra: SDK/planner Candidates, validated (classify / route / never_seed / noise / depth).
+    - previous_owner_era: a WHOIS registrant email/phone observed before the current registration
+      was created → one approval-required item (sources=("previous_owner_era",), est_hits None,
+      both dates in `why`) replacing any normal candidate on that contact; never capped.
+    - est_hits: pivot_routes.count when probe=True; None when unknown or probe=False.
+    - Rank: pivot_suggest boost desc, len(sources) desc, rung owner>kit>neighbour, id.
+    - Dedup by Candidate.id; state.json `pivoted` and Plan-`dropped` ids are never offered.
+    - Never offered: a route whose credential is absent or excluded for the type (_offerable).
+    - Filename/string NEVER go through host normalisation / PSL reducer.
+    """
+    from selector_types import auto_max_hits, classify, load_pivot_map, page_selector_cap
+
+    cdir = _case_dir(case)
+    st = load_state(case)
+    hops, depth = _hops_and_depth(st)
+    collected = collected_hosts(cdir)
+    seed_apexes = {_frontier_apex(h) for h in collected} | {
+        _frontier_apex(h) for h in st.get("consumed", [])
+    }
+    pivoted = _excluded_ids(st)
+    auto_max = auto_max_hits()
+    routes_meta = (load_pivot_map().get("routes") or {})
+    pr = _probe_routes(case)
+
+    # 1) domain candidates from frontier miners (byte-identical mining via frontier())
+    fr = frontier(case, max_new=0)
+    # Tier of a host the case collected: owner only with positive owner evidence (seeds, owner-rung
+    # nodes, judged cluster); otherwise its recorded kit/neighbour tier, else kit. Every mined
+    # candidate — frontier domains (1) and typed selectors (2) — is capped by its origin hosts.
+    owned = _owner_evidence_hosts(cdir, st)
+    tiers = tier_hosts(cdir)
+
+    def _host_tier(h):
+        h = (h or "").lower()
+        if h in owned or _frontier_apex(h) in owned:
+            return "owner"
+        return tiers.get(h, "kit")      # no positive owner evidence → never stronger than kit
+
+    cands = list(_domain_cands_from_frontier(fr, auto_max, _host_tier))
+    # 1b) historical ORIGIN IPs of the expanding hosts → a free IPPivot `collect` each. Collecting is
+    #     not attributing: the IP is infrastructure evidence (kit), and the co-tenants its raw yields
+    #     come back through frontier() as neighbour-rung, co-host-guarded candidates.
+    for ip in fr.get("ips_pending") or []:
+        d = (fr.get("origin_ips") or {}).get(ip) or {}
+        cands.append(_cand(
+            "ip", ip, "collect", ip, metered=False, est_hits=1, rung="kit",
+            origins=tuple(d.get("hosts") or ()),
+            sources=tuple(f"origin:{s}" for s in (d.get("sources") or ())) or ("origin_history",),
+            why=(f"{d.get('era', '?')} non-CDN origin of {', '.join((d.get('hosts') or [])[:3])} "
+                 f"({d.get('first_seen') or '?'} → {'now' if d.get('live') else d.get('last_seen') or '?'})"),
+            by="frontier",
+        ))
+
+    # rank key — boost desc, corroboration desc, rung owner>kit>neighbour, id (steps 2 and 5)
+    boosts = _pivot_suggest_boosts(cdir)
+
+    def _key(c):
+        return (
+            -(boosts.get((c.selector or "").lower(), 0) or 0),
+            -len(c.sources or ()),
+            _RUNG_RANK.get(c.rung, 9),
+            c.id,
+        )
+
+    # 2) typed KB-linked candidates — capped by the tier of the hosts each selector was found on
+    typed = _typed_cands_from_kb(collected, pr, routes_meta, _host_tier)
+    # 2b) typed node registry: non-domain seeds + corpus pivot results, multi-hop
+    typed += _cands_from_state_nodes(st, collected, pr, routes_meta, seed_apexes)
+    # 2-bound) rank and cap BEFORE sizing: a page listing thousands of contacts (a phone
+    #     directory) must never cost one vendor count probe per scraped selector. Kit/neighbour
+    #     pivots keep the best `page_selector_cap` per type; owner-rung pivots and free
+    #     `collect` items are never dropped by this rule. Only survivors are probed.
+    page_cap = page_selector_cap()
+    counts, bounded = {}, []
+    for c in sorted(_dedup_cands([c for c in typed if _offerable(c, pr)], pivoted), key=_key):
+        if c.tool != "collect" and c.rung != "owner":
+            if counts.get(c.type, 0) >= page_cap:
+                continue
+            counts[c.type] = counts.get(c.type, 0) + 1
+        if probe and pr is not None and c.tool != "collect" and c.est_hits is None:
+            try:
+                est = pr.count(c.tool, c.query, free_only=False)
+            except Exception:
+                est = None
+            if est is not None:
+                c = _cand(c.type, c.selector, c.tool, c.query, metered=c.metered, est_hits=est,
+                          rung=c.rung, origins=c.origins, sources=c.sources, why=c.why,
+                          by=c.by, id_=c.id)
+        bounded.append(c)
+    cands.extend(bounded)
+    # 2c) keyed enrichment of collected hosts: a metered item per host (loop collects run
+    #     free-only). Offered ONLY with positive owner evidence (a seed or its subdomain, an
+    #     owner-rung node, or a member of the judged cluster) — never for a brand/impersonation
+    #     reference, a co-tenant, a non-hostname entry, or a host whose raw is already keyed.
+    if "enrich.host" in routes_meta:
+        owned = _owner_evidence_hosts(cdir, st)
+        for h in sorted(collected):
+            hl = h.lower()
+            if classify(hl) != "domain" or "/" in hl or _keyed_raw(cdir, hl):
+                continue
+            if hl not in owned and _frontier_apex(hl) not in owned:
+                continue
+            cands.append(_cand("domain", hl, "enrich.host", hl, metered=True, est_hits=None,
+                               rung="owner", origins=(hl,), sources=("collected",),
+                               why="keyed enrichment (WhoisXML / FOFA / Censys / urlscan Pro / "
+                                   "reverse-WHOIS) of an owner-linked host collected free-only",
+                               by="proposer"))
+
+    # 3) extra sources (SDK seed wrappers, planner additions)
+    collected_apexes = {_frontier_apex(h) for h in collected}
+    for raw in (extra or ()):
+        acc = _accept_extra(raw, seed_apexes, depth, routes_meta, pr)
+        if acc is None:
+            continue
+        if acc.tool == "collect" and acc.selector in collected_apexes:
+            continue             # a subdomain/URL form of an apex the case already holds
+        cands.append(acc)
+
+    # 3b) previous-owner-era registrant contacts (whois_eras.previous_owner_contacts): never a
+    #     normal seed — any other candidate on the same contact is replaced by ONE approval-required
+    #     item tagged previous_owner_era (est_hits unknown → proposal.split routes it to approval).
+    prev_owner = _previous_owner_era_cands(cdir, pr, routes_meta)
+    if prev_owner:
+        prev_keys = {_contact_key(c.type, c.selector) for c in prev_owner}
+        cands = [c for c in cands if _contact_key(c.type, c.selector) not in prev_keys]
+        cands.extend(prev_owner)
+
+    # 4) dedup by id; drop already-pivoted (incl. analyst rejections) and Plan-dropped; merge
+    #    sources on collision; never offer an unrunnable / type-excluded route (_offerable)
+    cands = [c for c in _dedup_cands(cands, pivoted) if _offerable(c, pr)]
+
+    # 5) rank: boost desc, corroboration desc, rung owner>kit>neighbour, id
+    cands.sort(key=_key)
+
+    # 6) optional per-type cap (after rank, so highest-ranked survive)
+    if max_per_type is not None:
+        try:
+            cap = int(max_per_type)
+        except (TypeError, ValueError):
+            cap = None
+        if cap is not None and cap >= 0:
+            counts, limited = {}, []
+            for c in cands:
+                n = counts.get(c.type, 0)
+                if n >= cap and PREVIOUS_OWNER_ERA not in (c.sources or ()):
+                    continue
+                counts[c.type] = n + 1
+                limited.append(c)
+            cands = limited
+
+    return cands
 
 
 # ------------------------------------------------------------------------- CLI
@@ -1506,6 +3011,20 @@ def main():
     e.add_argument("--key", action="append", help="lead key to close, e.g. intelx:u@d.com (repeatable)")
     e.add_argument("--reason", default="ran", choices=["ran", "empty", "unavailable", "skipped"],
                    help="why the leg is closed: ran|empty|unavailable|skipped (default ran)")
+    ac = sub.add_parser("approve-cohost", help="ANALYST-RUN: approve listed co-tenants of a cloud/VPS origin IP")
+    ac.add_argument("case")
+    ac.add_argument("ip", help="origin IP listed under a `vps co-tenancy — approve` lead")
+    ac.add_argument("domains", nargs="*", help="the co-tenant domains you approve (from the lead's list)")
+    ac.add_argument("--all", action="store_true",
+                    help="approve every domain the lead lists NOW (sites that appear later need a new approval)")
+    p = sub.add_parser("propose", help="typed next-round candidates (domain + cross-type); read-only JSON")
+    p.add_argument("case")
+    p.add_argument("--max-per-type", type=int, default=None,
+                   help="optional cap of candidates retained per selector type after ranking")
+    p.add_argument("--no-probe", action="store_true",
+                   help="skip cheap hit-count probes (est_hits left null)")
+    p.add_argument("--json", action="store_true", default=True,
+                   help="emit JSON (default; kept for symmetry with frontier --json)")
     a = ap.parse_args()
 
     if a.cmd == "status":
@@ -1534,6 +3053,14 @@ def main():
         if dead:
             print(f"  {len(dead)} discovered subdomain(s) do not resolve (recorded, not collected): "
                   f"{', '.join(sorted(dead)[:8])}{' …' if len(dead) > 8 else ''}")
+        if fr.get("ips_pending"):
+            print(f"  {len(fr['ips_pending'])} historical ORIGIN IP(s) to collect next (non-CDN addresses "
+                  f"the hosts resolved to — IP intel; co-tenants pass the co-host guards):")
+            for ip in fr["ips_pending"]:
+                d = fr["origin_ips"].get(ip, {})
+                print(f"    {ip:40} {d.get('era', '?'):10} {d.get('first_seen') or '?'} → "
+                      f"{'now' if d.get('live') else d.get('last_seen') or '?'}  of {', '.join(d.get('hosts', [])[:3])}"
+                      f"  via {', '.join(d.get('sources', []))}  — co-tenants {d.get('cotenants')}")
         if fr["metered_leads"]:
             print(f"  {len(fr['metered_leads'])} metered lead(s) — need approval before spending credits:")
             for ml in fr["metered_leads"][:12]:
@@ -1543,6 +3070,8 @@ def main():
                   f"(multi-tenant cert / shared hosting — free to check by hand):")
             for cl in fr["co_tenancy_leads"][:12]:
                 print(f"    [{cl['check']}] {cl.get('ip') or cl.get('cert_id') or cl.get('artifact') or cl.get('term') or ''}   — {cl['why']}")
+                if cl.get("domains"):
+                    print(f"        {len(cl['domains'])} domain(s): {', '.join(cl['domains'])}")
         if fr.get("related_leads"):
             rl = fr["related_leads"]
             print(f"  {len(rl)} related/lookalike lead(s) NOT seeded (non-owner sources — pages that loaded "
@@ -1552,13 +3081,19 @@ def main():
             if len(rl) > 12:
                 print(f"    … and {len(rl) - 12} more (frontier --json → related_leads)")
         if fr.get("enrichment_leads"):
-            print(f"  {len(fr['enrichment_leads'])} enrichment lead(s) OPEN — leak/breach/OSINT/dork "
-                  f"legs the infra pipeline never runs (a /cti completeness checklist, not an engine "
-                  f"stop-condition — close each once run/empty/unavailable):")
+            print(f"  {len(fr['enrichment_leads'])} enrichment lead(s) OPEN — "
+                  "not yet run, held for spend/key posture, or retryable; run `intel.py enrich "
+                  f"{a.case}` / `intel.py loop {a.case} --full`, review query-only legs in /cti:")
             for el in fr["enrichment_leads"][:16]:
                 print(f"    {el['tool']} {el['value']}   — {el['why']}  [{el['cost']}]  key={el['key']}")
             print(f"    close: python3 tools/case_state.py enrichment-done {a.case} "
                   f"--key <key> --reason ran|empty|unavailable|skipped")
+        if fr.get("enrichment_results"):
+            print(f"  {len(fr['enrichment_results'])} enrichment result(s) in enrichment/index.json "
+                  "(third-party leads, not attribution):")
+            for row in fr["enrichment_results"][:16]:
+                print(f"    [{row['outcome']}] {row['key']}: {row['summary']}"
+                      + (f" (enrichment/{row['file']})" if row["file"] else ""))
         if fr.get("enrichment_gaps"):
             print(f"  {len(fr['enrichment_gaps'])} enrichment lead(s) closed as GAP "
                   f"(ran-empty / no-capability / skipped — auditable, not re-chased):")
@@ -1570,10 +3105,36 @@ def main():
         print(f"closed {len(a.key or [])} enrichment lead(s) as '{a.reason}' for '{a.case}' "
               f"({len(_done_map(st))} total closed).")
         return 0
+    if a.cmd == "approve-cohost":
+        # the analyst approves from the lead they SAW: --all freezes its list; named domains must be on it
+        lead = next((l for l in frontier(a.case, max_new=0).get("co_tenancy_leads") or []
+                     if l.get("ip") == a.ip and l.get("check") == "vps co-tenancy — approve"), None)
+        if lead is None:
+            print(f"no `vps co-tenancy — approve` lead for {a.ip} in '{a.case}' — nothing approved",
+                  file=sys.stderr)
+            return 2
+        listed = set(lead.get("domains") or [])
+        reduce = _oh._apex if _oh is not None else _frontier_apex
+        unknown = [d for d in (a.domains or []) if reduce(d) not in listed]
+        if unknown:
+            print(f"not on {a.ip}'s approval list (nothing approved): {', '.join(unknown)}", file=sys.stderr)
+            return 2
+        doms = list(a.domains or []) + (sorted(listed) if a.all else [])
+        if not doms:
+            print("name the domains to approve, or pass --all for the lead's current list", file=sys.stderr)
+            return 2
+        rec = record_approved_cohost(a.case, a.ip, doms)
+        print(f"approved {len(rec['domains'])} co-tenant(s) of {a.ip} for '{a.case}': "
+              f"{', '.join(rec['domains'])}. Next round seeds them; ingest links them to the IP.")
+        return 0
     if a.cmd == "reopen":
         st = reopen(a.case, a.seeds or None)
         print(f"reopened '{a.case}' → status={st['status']}, pending={len(st['pending'])} "
               f"(reopened×{st['reopen_count']}). Re-run: python3 tools/intel.py loop {a.case}")
+        return 0
+    if a.cmd == "propose":
+        cands = propose(a.case, max_per_type=a.max_per_type, probe=not a.no_probe)
+        print(json.dumps([c.to_dict() for c in cands], indent=2, ensure_ascii=False))
         return 0
     return 1
 
