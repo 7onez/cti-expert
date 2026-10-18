@@ -366,6 +366,10 @@ def check():
         ("wp_exhaust.LAYERS", wp_exhaust.LAYERS, wp_exhaust._EXHAUST_FALLBACK["layers"]),
         ("wp_exhaust.SEED_POLICY", wp_exhaust.SEED_POLICY,
          wp_exhaust._EXHAUST_FALLBACK["seed_policy"]),
+        # Execution-outcome flag policy: on the stub only --no-whois is known, so a free-only /
+        # --no-enrich run's withheld layers read as plain "not run" instead of skipped_policy.
+        ("wp_exhaust.FLAG_POLICY", wp_exhaust.FLAG_POLICY,
+         wp_exhaust._EXHAUST_FALLBACK["outcomes"]["flag_policy"]),
         ("sh_export.ATTRIBUTE_MAP", sh_export.ATTRIBUTE_MAP,
          sh_export._MISP_FALLBACK["attribute_map"]),
         ("sh_export.EXCLUDED_KINDS", sh_export.EXCLUDED_KINDS,
@@ -761,7 +765,7 @@ def check():
     # Regex parity with intel.py — selector_types copies the patterns (intel import has side effects)
     import intel as _intel_for_re                                            # noqa: E401
     for name in ("_BARE_DOMAIN_RE", "_URL_SCHEME_RE", "_HASH_HEX_RE",
-                 "_PHONE_SHAPE_RE", "_WALLET_SHAPE_RE"):
+                 "_PHONE_SHAPE_RE", "_WALLET_SHAPE_RE", "_ONION_RE"):
         ok(getattr(sel, name).pattern == getattr(_intel_for_re, name).pattern,
            f"selector_types.{name} pattern matches intel.{name}")
         ok(getattr(sel, name).flags == getattr(_intel_for_re, name).flags,

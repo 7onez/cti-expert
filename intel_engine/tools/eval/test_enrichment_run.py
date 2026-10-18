@@ -347,6 +347,37 @@ def test_enrich_run_wires_load_env_before_run_case():
             intel._run_enrichment("CASE-X")
     assert seen == ["fake-override-key"], seen
 
+def test_failed_steps_are_failed_and_skips_name_their_cause():
+    # A runner that RAISES, or exits 0 with nothing on stdout, broke — the lead must stay open as
+    # status error (re-runnable), never close as "empty". A free-only hold is skipped_policy, a
+    # missing key skipped_no_key: two different closures an analyst acts on differently.
+    for phone_reply, want in ((RuntimeError("runner exploded"), "error"),
+                              ({"returncode": 0, "stdout": ""}, "error"),
+                              ({"returncode": 0, "stdout": "{}"}, "error"),
+                              ({"returncode": 124, "error": "killed at ceiling"}, "timed_out")):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, _key_env()):
+            case = _case(tmp)
+
+            def call(op, argv, case_dir, hide_env=None, _r=phone_reply):
+                if op == "phone":
+                    if isinstance(_r, Exception):
+                        raise _r
+                    return dict(_r)
+                return _fake([])(op, argv, case_dir, hide_env=hide_env)
+
+            results = er.run_case(case, free_only=True, call=call)
+            row = _index(case)["phone:+18005550100"]
+            assert row["outcome"] == "retry" and row["status"] == want, (phone_reply, row)
+            assert row["reason"] and isinstance(row["elapsed_s"], float), row
+            assert "phone:+18005550100" not in cs.load_state(case).get("enrichment_done", {})
+            assert {r["key"]: r["status"] for r in results}["phone:+18005550100"] == want
+            idx = _index(case)
+            held = idx["email-deep:owner@example.com"]
+            assert held["status"] == "skipped_policy" and held["reason"] == "free_only", held
+            nokey = idx["cld-phone:+18005550100"]
+            assert nokey["status"] == "skipped_no_key" and "CHONGLUADAO_API_KEY" in nokey["reason"], nokey
+
+
 _TESTS = [
     test_keyed_matches_and_persists_index_rows,
     test_free_only_holds_metered_but_runs_unlimited_cld,
@@ -359,6 +390,7 @@ _TESTS = [
     test_call_does_not_ledger_cld_manually,
     test_key_aliases_expand_from_registry,
     test_enrich_run_wires_load_env_before_run_case,
+    test_failed_steps_are_failed_and_skips_name_their_cause,
 ]
 
 

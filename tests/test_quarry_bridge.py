@@ -157,15 +157,20 @@ def _http_error(code):
     return urllib.error.HTTPError("https://quarry.example/api/mcp", code, "x", {}, None)
 
 
+_LISTED = b'{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"quarry_get_domain"}]}}'
+
+
 def test_client_session_recovers():
-    answer = ('data: {"jsonrpc":"2.0","id":3,"result":{"structuredContent":'
+    answer = ('data: {"jsonrpc":"2.0","id":4,"result":{"structuredContent":'
               '{"domain":"site-a.example"}}}\n')
     op = _Opener([
         _Resp(b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"quarry"}}}'),
         _Resp(b""),
+        _Resp(_LISTED),
         _http_error(404),
-        _Resp(b'{"jsonrpc":"2.0","id":2,"result":{"serverInfo":{"name":"quarry"}}}'),
+        _Resp(b'{"jsonrpc":"2.0","id":3,"result":{"serverInfo":{"name":"quarry"}}}'),
         _Resp(b""),
+        _Resp(_LISTED),
         _Resp(answer, sse=True),
     ])
     s = q.Session(url="https://quarry.example/api/mcp", key="k", opener=op)
@@ -173,6 +178,35 @@ def test_client_session_recovers():
     ok(err is None and result.get("domain") == "site-a.example",
        "a session the server forgot is re-opened and the call retried")
     ok(op.seen.count("initialize") == 2, "the stale session is re-initialised exactly once")
+
+
+def test_client_tool_list_freshness():
+    pushed = ('data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n'
+              'data: {"jsonrpc":"2.0","id":3,"result":{"content":['
+              '{"type":"text","text":"{\\"domain\\": \\"site-a.example\\"}"},'
+              '{"type":"text","text":"[Quarry notice] tool list changed"}]}}\n')
+    relisted = b'{"jsonrpc":"2.0","id":4,"result":{"tools":[{"name":"quarry_scan"}]}}'
+    op = _Opener([
+        _Resp(b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"quarry",'
+              b'"version":"1.0.0+tools.aaaa"}}}'),
+        _Resp(b""),
+        _Resp(_LISTED),
+        _Resp(pushed, sse=True),
+        _Resp(relisted),
+    ])
+    s = q.Session(url="https://quarry.example/api/mcp", key="k", opener=op)
+    result, err = s.call("quarry_get_domain", {"domain": "site-a.example"})
+    ok(op.seen[:3] == ["initialize", "notifications/initialized", "tools/list"],
+       "a new session lists Quarry's tools before its first call")
+    ok(err is None and result.get("domain") == "site-a.example",
+       "a reply carrying list_changed and an appended notice still yields the JSON payload")
+    ok(s.list_changed, "a pushed tools/list_changed marks the session's list stale")
+    gone, gerr = s.call("quarry_get_domain", {"domain": "site-a.example"})
+    ok(op.seen[-1] == "tools/list" and not s.list_changed,
+       "the next call re-lists tools once after list_changed")
+    ok(gerr is None and gone.get("kind") == "tool" and "no longer exposes" in gone.get("error", ""),
+       "a tool the current list lacks is a tool error, not sent to the server")
+    ok(op.seen.count("tools/call") == 1, "the removed tool never egresses")
 
 
 def test_client_auth_is_terminal():
@@ -284,6 +318,7 @@ def check():
     test_cotenancy_cap()
     test_client_session_recovers()
     test_client_auth_is_terminal()
+    test_client_tool_list_freshness()
     with tempfile.TemporaryDirectory() as tmp:
         case = os.path.join(tmp, "CASE-0001")
         os.makedirs(case)

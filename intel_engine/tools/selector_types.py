@@ -2,7 +2,7 @@
 """Typed selector model for the cross-type auto-pivot harness path.
 
 Stdlib only. Classifies raw seeds into node types (domain|email|phone|wallet|ip|hash|
-string|filename|telegram), loads pivot routes + rung table from reference JSON, and
+string|filename|telegram|onion), loads pivot routes + rung table from reference JSON, and
 defines the frozen Candidate record the proposer/planner exchange.
 
 intel.py's `_classify_selector` / `_SELECTOR_OP` stay untouched — this module is the
@@ -19,6 +19,7 @@ import re
 import sys
 from dataclasses import asdict, dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------- reference loader (RULE 3)
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,10 @@ _WALLET_SHAPE_RE = re.compile(
 # return IDN ccTLDs in this form, and `[a-z]{2,}` above rejects the digits and hyphens in it.
 _PUNY_DOMAIN_RE = re.compile(
     r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+xn--[a-z0-9-]{1,59}$', re.I)
+# Tor onion services, v3 (56 base32) and legacy v2 (16), optionally under a subdomain label.
+# Classified as `onion`, never `domain`: every domain route (collector, DNS, WHOIS, CT, subenum)
+# is clearnet-only and would hand the name to the system resolver or a registry.
+_ONION_RE = re.compile(r'^(?:[a-z0-9-]+\.)*(?:[a-z2-7]{56}|[a-z2-7]{16})\.onion$', re.I)
 
 
 def _is_domain(v: str) -> bool:
@@ -55,8 +60,11 @@ def _is_domain(v: str) -> bool:
 
 
 _KINDS = frozenset({
-    "domain", "email", "phone", "wallet", "ip", "hash", "string", "filename", "telegram",
+    "domain", "email", "phone", "wallet", "ip", "hash", "string", "filename", "telegram", "onion",
 })
+#: an onion has no routes of its own yet; it inherits the STRING routes — corpus searches of the
+#: literal (urlscan text, Wayback/news, FOFA body, …), none of which resolve or fetch the name.
+_ROUTE_TYPE_ALIAS = {"onion": "string"}
 _RUNGS = frozenset({"owner", "kit", "neighbour"})
 
 # ---------------------------------------------------------------- pivot_map.json
@@ -78,7 +86,7 @@ _RUNG_CLASSES_KIT = {
     "analytics.fb_pixel": "kit", "analytics.tiktok": "kit", "analytics.metrica": "kit",
     "ads.adsense": "kit", "ads.affiliate": "kit", "ads.other": "kit",
     "token.telegram_bot": "kit", "token.discord_webhook": "kit", "token.other": "kit",
-    "wallet.operator": "kit", "wallet.exchange": "kit",
+    "wallet.operator": "kit", "wallet.exchange": "kit", "wallet.token_contract": "kit",
     "whois.registrant_email": "kit", "whois.registrant_phone": "kit",
     "whois.privacy_customer": "kit", "txt.verification": "kit",
     "cert.exact": "kit", "app.developer_url": "kit", "app.apple_team": "kit",
@@ -148,9 +156,11 @@ def page_selector_cap() -> int:
 
 
 # Conservative fallbacks: a sandbox lookup on an IP has no ownership yield; page-scraped contacts
-# from a Quarry page export are facts on the page, never pivot nodes.
+# from a Quarry page export are facts on the page, never pivot nodes; a token CONTRACT (USDT-TRC20 …)
+# is never a node on any route ("*") — a pivot on it would balance-look-up a public constant.
 _PROPOSE_TYPE_EXCLUDE_FALLBACK = {"anyrun.lookup": ["ip"]}
-_FACT_ONLY_NODE_CLASSES_FALLBACK = {"quarry.page": ["page.email", "page.phone"]}
+_FACT_ONLY_NODE_CLASSES_FALLBACK = {"quarry.page": ["page.email", "page.phone"],
+                                    "*": ["wallet.token_contract"]}
 
 
 def _route_type_map(raw, fallback) -> dict:
@@ -170,10 +180,11 @@ def propose_excluded(route: str, type_: str) -> bool:
 
 def fact_only_classes(route: str) -> frozenset:
     """Rung classes a corpus `route` delivers as KB facts only — never as typed nodes the proposer
-    pivots on (rungs.json fact_only_node_classes; fallback {quarry.page: [page.email, page.phone]})."""
+    pivots on (rungs.json fact_only_node_classes; the "*" row applies to every route; fallback
+    {quarry.page: [page.email, page.phone], *: [wallet.token_contract]})."""
     raw = _RUNGS_REF if isinstance(_RUNGS_REF, dict) else {}
     table = _route_type_map(raw.get("fact_only_node_classes"), _FACT_ONLY_NODE_CLASSES_FALLBACK)
-    return frozenset(table.get((route or "").strip(), set()))
+    return frozenset(table.get((route or "").strip(), set()) | table.get("*", set()))
 
 
 def load_rungs() -> dict:
@@ -206,17 +217,19 @@ def rung_for(rung_class: str) -> str:
 
 
 def routes_for(type_: str) -> list:
-    """Pivot-map route keys whose `types` list includes `type_`, in map order."""
+    """Pivot-map route keys whose `types` list includes `type_` (or the type it aliases to — an
+    onion runs the string corpus routes), in map order."""
     t = (type_ or "").strip().lower()
     if not t:
         return []
+    want = {t, _ROUTE_TYPE_ALIAS.get(t, t)}
     routes = load_pivot_map().get("routes") or {}
     out = []
     for key, spec in routes.items():
         if not isinstance(spec, dict):
             continue
         types = spec.get("types") or []
-        if t in types:
+        if want & set(types):
             out.append(key)
     return out
 
@@ -253,8 +266,8 @@ def classify(raw, hint=None) -> str:
     """Classify a raw selector into one node type.
 
     Order (hint always wins; filename BEFORE bare-domain fallback; `domain:` forces domain):
-      hint → domain: prefix → URL scheme → IP → email → hash → wallet → phone →
-      telegram (t.me/…) → filename → bare domain → string
+      hint → domain: prefix → onion (bare or URL host) → URL scheme → IP → email → hash →
+      wallet → phone → telegram (t.me/…) → filename → bare domain → string
     """
     if hint is not None:
         h = str(hint).strip().lower()
@@ -270,6 +283,10 @@ def classify(raw, hint=None) -> str:
     # Analyst force-type: domain:<value> (ambiguous TLDs like .zip / .app / .mov)
     if v.lower().startswith("domain:"):
         return "domain"
+
+    _host = (urlparse(v).hostname or "") if _URL_SCHEME_RE.match(v) else v
+    if _ONION_RE.match(_host.rstrip(".")):
+        return "onion"
 
     if _URL_SCHEME_RE.match(v):
         # URL whose host is telegram still counts as telegram for the harness path

@@ -248,10 +248,19 @@ def crtsh_keyword_hunt(label: str):
 
 
 def fofa_keyword_hunt(label: str, size: int = 100, timeout: int = 30):
-    """Opt-in FOFA keyword hunt via cert="label" (TLS cert mentions the brand). METERED — the
-    fofa_search client records the credit spend. Returns {} if no FOFA key is configured."""
+    """Opt-in FOFA keyword hunt via cert.subject="label" (TLS cert subject names the brand).
+    METERED — the fofa_search client records the credit spend. Returns {} if no FOFA key is
+    configured.
+
+    Field choice: FOFA `=` is a fuzzy CONTAINS match, and `cert.subject` covers the subject DN —
+    the CN, where a DV lookalike cert carries its hostname, plus the O of an OV/EV cert (the same
+    field hunter.how accepts — Quarry, live-verified 2026-10). The unscoped `cert=` form is not
+    used: Quarry found it matches nothing for a fingerprint. `cert.domain` was rejected: it holds
+    the cert's registrable domain, so a bare brand label (no TLD) is not what it is built to match."""
+    if not label or re.search(r'["\\\x00-\x1f\x7f]', label):
+        return {"source": "fofa", "skipped": "label unsafe to embed in a FOFA query"}
     from wp_recon import fofa_search
-    res = fofa_search(f'cert="{label}"', size=size, timeout=timeout)
+    res = fofa_search(f'cert.subject="{label}"', size=size, timeout=timeout)
     if not res:
         return {"source": "fofa", "skipped": "no FOFA key configured"}
     if res.get("error"):

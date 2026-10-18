@@ -41,7 +41,7 @@ def test_junk_urlscan_dom_recovery_is_rejected_and_flagged():
     p.urlscan_intel = lambda *a, **k: {
         "total": 1, "related_domains": [],
         "recent_scans": [{"result": f"https://urlscan.io/result/{scan_uuid}/"}]}
-    p.urlscan_dom = lambda *a, **k: (junk, scan_uuid)
+    p.urlscan_dom = lambda *a, **k: (junk, scan_uuid, None)
 
     old_argv = sys.argv
     try:

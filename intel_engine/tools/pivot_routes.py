@@ -111,6 +111,15 @@ if isinstance(_ea, dict):
     for k, v in (_ea.get("entries") if isinstance(_ea.get("entries"), dict) else _ea).items():
         if not str(k).startswith("_") and k not in ("values", "entries"):
             _EX_ADDRS[str(k).lower()] = v
+# public crypto constants (reference vectors drop; token contracts → wallet.token_contract)
+try:
+    from wp_crypto_refs import reference_label as _ref_label, token_contract as _token_contract  # noqa: E402
+except Exception:  # noqa: BLE001
+    def _ref_label(_addr):
+        return ""
+
+    def _token_contract(_addr):
+        return None
 # route → urlscan field
 _URLSCAN_ROUTE_FIELD = {
     "urlscan.title": "page.title",
@@ -140,18 +149,33 @@ def _is_exchange_addr(addr: str) -> bool:
     return bool(addr) and str(addr).strip().lower() in _EX_ADDRS
 
 
+def wallet_rung(addr: str):
+    """rung_class for a wallet address seen by any route — the one wallet classifier.
+
+    None = public reference constant (spec test vector / genesis / burn / system program): drop it.
+    wallet.token_contract (kit) = stablecoin/token contract: a payment-method fact, never a payee,
+    never a pivot node. wallet.exchange (neighbour) = listed custodian. Otherwise wallet.operator."""
+    if _ref_label(addr):
+        return None
+    if _token_contract(addr):
+        return "wallet.token_contract"
+    if _is_exchange_addr(addr):
+        return "wallet.exchange"
+    return "wallet.operator"
+
+
 def identifier_rung(id_type: str, value: str = "") -> str:
     """Map a urlscan content.identifiers type to a rung_class."""
     t = (id_type or "").strip().lower()
     if t in _ID_RUNGS:
         rc = _ID_RUNGS[t]
-        if rc == "wallet.operator" and _is_exchange_addr(value):
-            return "wallet.exchange"
+        if rc == "wallet.operator":
+            return wallet_rung(value) or "string"       # a reference constant binds nobody
         return rc
     if t.startswith("telegram.bot-token"):
         return "token.telegram_bot"
     if t.startswith("wallet."):
-        return "wallet.exchange" if _is_exchange_addr(value) else "wallet.operator"
+        return wallet_rung(value) or "string"
     if t.startswith("google.") and t.endswith("-id"):
         # unknown google.* id → kit token rather than owner analytics
         return "token.other"
@@ -424,9 +448,10 @@ def _infer_identifier_rung_from_query(query: str) -> str:
         if idt in q:
             # wallet + exchange check needs the value; best-effort extract
             if rc == "wallet.operator":
-                m = re.search(r"(bc1[a-z0-9]+|[13][a-zA-Z0-9]{25,34}|0x[a-fA-F0-9]{40})", q)
-                if m and _is_exchange_addr(m.group(1)):
-                    return "wallet.exchange"
+                m = re.search(r"(bc1[a-z0-9]+|[13][a-zA-Z0-9]{25,34}|0x[a-fA-F0-9]{40}"
+                              r"|T[1-9A-HJ-NP-Za-km-z]{33})", q)
+                if m:
+                    return wallet_rung(m.group(1)) or "string"
             return rc
     if "telegram.bot-token" in q:
         return "token.telegram_bot"
@@ -656,8 +681,11 @@ def _run_counterparties(selector, *, free_only=False):
         addr = str(c.get("address") or "").strip()
         if not addr:
             continue
-        is_ex = bool(c.get("exchange"))
-        rc = "wallet.exchange" if is_ex else "wallet.operator"
+        rc = wallet_rung(addr)
+        if rc is None:                       # reference constant (burn / test vector) — not a party
+            continue
+        if rc == "wallet.operator" and c.get("exchange"):
+            rc = "wallet.exchange"
         rows.append(_row("wallet", addr, rc, "crypto.counterparties",
                          evidence={"value": c.get("value"), "label": c.get("label"),
                                    "seed": selector},
@@ -746,6 +774,10 @@ def _run_binary(selector, *, free_only=False):
               "telegram": "telegram.username"}.get(t, "string")
         if t == "domain" and "://" in str(val):
             val = urllib.parse.urlparse(str(val)).hostname or val
+        if t == "wallet":
+            rc = wallet_rung(str(val))
+            if rc is None:
+                continue
         rows.append(_row(t, str(val), rc, "binary.analyze",
                          evidence={"source": (data.get("meta") or {}).get("source")}))
     return {"rows": rows, "total": len(rows)}

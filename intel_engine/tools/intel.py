@@ -330,8 +330,10 @@ def cmd_open(a):
     def _status(res):
         good = _extract_ok(res)
         note = (res.get("note") or "").strip() or ("ok" if good else res.get("error") or "miss")
-        print(f"   [{'ok ' if good else 'MISS'}] {res['host']}  {note}")
-        (ok if good else failed).append(res["host"])
+        label = "skip" if res.get("skipped") else ("ok " if good else "MISS")
+        print(f"   [{label}] {res['host']}  {note}")
+        if not res.get("skipped"):          # a policy skip (onion/hostile) is not a collection miss
+            (ok if good else failed).append(res["host"])
 
     if getattr(a, "no_collect", False):
         # Handoff mode: a collector (e.g. cti-expert's /case) has already fetched every host and
@@ -365,8 +367,16 @@ def cmd_open(a):
     # 1c) subdomain enumeration — ONCE per apex per case via the installed passive tools
     #     (subfinder / amass / assetfinder / findomain, subfinder keyed from the skill-owned config).
     #     never under --no-collect; keyless-only under a no-spend scope or --free-only.
+    #     A .onion never goes to the enumerators: subfinder & co. query clearnet APIs for it and the
+    #     DNS-verify step resolves every name through the system resolver (skipped_policy 'onion').
     if not getattr(a, "no_collect", False):
-        _subenum_once(case_dir, hosts, free_only=getattr(a, "free_only", False), jobs=max(1, a.jobs))
+        onions = [h for h in hosts if collect_core.wp_exhaust.is_onion_host(_host(h))]
+        for h in onions:
+            collect_core.wp_exhaust.record_outcomes(
+                case_dir, _host(h).lower(),
+                stages={"subenum": collect_core.wp_exhaust.outcome("skipped_policy", "onion")})
+        _subenum_once(case_dir, [h for h in hosts if h not in onions],
+                      free_only=getattr(a, "free_only", False), jobs=max(1, a.jobs))
 
     # 1d) EXPANSION ANCHOR: the analyst's seeds are hop 0 in state.json, so a later `loop` knows which
     #     hosts are the operator's own registrations and which were reached over owner-link hops.
@@ -1462,9 +1472,11 @@ def cmd_loop(a):
         def _loop_status(res):
             good = _extract_ok(res)
             collect_failed = bool(res.get("collect_failed"))
-            label = "fail" if collect_failed else ("ok " if good else "MISS")
+            label = "fail" if collect_failed else ("skip" if res.get("skipped") else ("ok " if good else "MISS"))
             note = (res.get("note") or "").strip() or ("ok" if good else res.get("error") or "miss")
             print(f"   [{label}] {res['host']}  {note}")
+            if res.get("skipped") and not collect_failed:
+                return                      # policy skip (onion/hostile): consumed, never a retry streak
             (failed if (collect_failed or not good) else ok).append(res["host"])
 
         for hosts_part, extra in ((expanding_batch, loop_extra + metered_extra), (leaf_batch, loop_extra)):
@@ -1646,17 +1658,25 @@ _URL_SCHEME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9+.\-]*://')
 _HASH_HEX_RE = re.compile(r'^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$', re.I)
 _PHONE_SHAPE_RE = re.compile(r'^\+?[0-9()\-\s]{6,20}$')
 _WALLET_SHAPE_RE = re.compile(r'^(bc1[a-z0-9]{20,}|[13][a-zA-Z0-9]{25,34}|0x[a-fA-F0-9]{40}|T[a-zA-Z0-9]{25,34})$')
+# Tor onion services: v3 (56 base32 chars) and legacy v2 (16), optionally under a subdomain label.
+# Checked BEFORE the bare-domain shape, which would otherwise accept it as a clearnet domain.
+_ONION_RE = re.compile(r'^(?:[a-z0-9-]+\.)*(?:[a-z2-7]{56}|[a-z2-7]{16})\.onion$', re.I)
 # selector kind -> the existing dispatcher op that already handles it (Step 1 table, commands/cti.md)
-# — the driver REUSES this routing, it does not fork a second type->script map.
+# — the driver REUSES this routing, it does not fork a second type->script map. An onion goes to
+# the search-engine/corpus pivot of the string: no clearnet collector, DNS, WHOIS or subenum.
 _SELECTOR_OP = {"email": "email-deep", "phone": "phone", "ip": "pivot-extract",
-                "hash": "hash-id", "wallet": "crypto-balance", "other": "search-pivot"}
+                "hash": "hash-id", "wallet": "crypto-balance", "onion": "search-pivot",
+                "other": "search-pivot"}
 
 
 def _classify_selector(raw):
     """Selector kind for the `cti` driver's routing: domain/url -> the deterministic pipeline;
     anything else -> the type-matched dispatcher op (mirrors reference.py._infer_type's ordering:
-    IP before colon/keyword, since IPv6 also contains ':')."""
+    IP before colon/keyword, since IPv6 also contains ':'). A .onion (bare or as a URL host) is
+    `onion` — never `domain` — so it never reaches the clearnet collector, DNS or WHOIS."""
     v = (raw or "").strip()
+    if _ONION_RE.match(collect_core.host_of(v).rstrip(".") if _URL_SCHEME_RE.match(v) else v.rstrip(".")):
+        return "onion"
     if _URL_SCHEME_RE.match(v):
         return "domain"
     try:

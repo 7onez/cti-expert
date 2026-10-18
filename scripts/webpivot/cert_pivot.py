@@ -34,6 +34,7 @@ import ssl
 import time
 import json
 import socket
+import re
 import hashlib
 import base64
 import argparse
@@ -265,7 +266,8 @@ def fetch_leaf_fingerprints(host, port=443, timeout=15):
         return {"error": f"egress refused or failed: {type(e).__name__}: {e}"}
     if not der:
         return {"error": "no certificate presented"}
-    out = {"sha1": hashlib.sha1(der).hexdigest(), "sha256": hashlib.sha256(der).hexdigest()}
+    out = {"sha1": hashlib.sha1(der).hexdigest(), "sha256": hashlib.sha256(der).hexdigest(),
+           "serial": _der_serial(der)}
     if parsed:
         out["sans"] = [v.lower() for t, v in parsed.get("subjectAltName", ()) if t.lower() == "dns"]
         iss = {k: v for rdn in parsed.get("issuer") or () for k, v in rdn}
@@ -288,6 +290,80 @@ def _engine_module(name):
         return __import__(name)
     except Exception:  # noqa: BLE001
         return None
+
+
+# ------------------------------------------------------------- FOFA cert serial
+# FOFA answers NOTHING for `cert="<sha256>"` (Quarry, live-verified 2026-10); the working cert
+# pivot is `cert.sn="<decimal x509 serial>"`. Only some CT sources store the REAL serial — the rest
+# store a hash or an issuance id that cert.sn can never match. The allow-list lives in
+# WebPivot/references/ct_sources.json → real_serial_sources; the fallback is crt.sh alone.
+_CT_SERIAL_FALLBACK = {"real_serial_sources": ["crt.sh"]}
+
+
+def _real_serial_sources():
+    refs = _engine_module("wp_refs")
+    if refs is None:
+        return frozenset(_CT_SERIAL_FALLBACK["real_serial_sources"])
+    doc = refs.load_ref(refs.ref_path(refs.__file__, "ct_sources.json"), _CT_SERIAL_FALLBACK)
+    return frozenset(doc["real_serial_sources"])
+
+
+REAL_SERIAL_SOURCES = _real_serial_sources()
+# The target controls every certificate field it presents; a quote/backslash/control char could
+# close the FOFA string and append terms (`x" || ip="…`), so such a value is never queried.
+_QUERY_UNSAFE = re.compile(r'["\\\x00-\x1f\x7f]')
+
+
+def _der_serial(der):
+    """The x509 serialNumber of a DER certificate as lowercase hex ('' if unparsable). The served
+    leaf is the one certificate whose serial is never a CT-index surrogate."""
+    def tlv(i):
+        tag, ln = der[i], der[i + 1]
+        i += 2
+        if ln & 0x80:
+            n = ln & 0x7F
+            ln = int.from_bytes(der[i:i + n], "big")
+            i += n
+        return tag, ln, i
+    try:
+        tag, _, i = tlv(0)                       # Certificate SEQUENCE
+        if tag != 0x30:
+            return ""
+        tag, _, i = tlv(i)                       # tbsCertificate SEQUENCE
+        if tag != 0x30:
+            return ""
+        tag, ln, j = tlv(i)
+        if tag == 0xA0:                          # [0] version (absent on v1 certs)
+            tag, ln, j = tlv(j + ln)
+        return der[j:j + ln].hex() if tag == 0x02 and ln else ""
+    except (IndexError, TypeError):
+        return ""
+
+
+def fofa_serial(serial):
+    """A hex x509 serial (colons allowed) → the DECIMAL string FOFA's cert.sn expects, or '' when
+    the value is empty, unsafe to embed, not hex, or longer than 20 bytes (crt.sh may prefix a
+    00 sign byte, stripped with the other leading zeros)."""
+    s = str(serial or "")
+    if not s or _QUERY_UNSAFE.search(s):
+        return ""
+    h = s.strip().lower().replace(":", "").lstrip("0")
+    if not h or len(h) > 40 or not re.fullmatch(r"[0-9a-f]+", h):
+        return ""
+    return str(int(h, 16))
+
+
+def ct_real_serial(cert):
+    """Decimal serial of a CT record for FOFA, or '' when no source behind it stores the real x509
+    serial (CertIndex/CertSpotter/Censys/Shodan CTL surrogates) — never a known-dead query."""
+    if not REAL_SERIAL_SOURCES.intersection(cert.get("sources") or ()):
+        return ""
+    return fofa_serial(cert.get("serial_number"))
+
+
+def fofa_cert_query(serial_dec):
+    """FOFA's cert pivot for a decimal serial from fofa_serial()/ct_real_serial(), or None."""
+    return f'cert.sn="{serial_dec}"' if serial_dec and str(serial_dec).isdigit() else None
 
 
 # ------------------------------------------------------------------------ CT history
@@ -336,19 +412,21 @@ def _censys_cenql(sha256):
     return " or ".join(q)
 
 
-def build_queries(sha1, sha256):
+def build_queries(sha1, sha256, serial_dec=""):
     q = {}
     if sha256:
         # Shodan's ssl.cert.fingerprint matches the SHA-256 fingerprint on modern data.
         q["shodan"] = f"ssl.cert.fingerprint:{sha256}"
         q["censys"] = _censys_cenql(sha256)
-        q["fofa"] = f'cert="{sha256}"'
+    fofa = fofa_cert_query(serial_dec)
+    if fofa:
+        q["fofa"] = fofa
     if sha1:
         q["shodan_sha1"] = f"ssl.cert.fingerprint:{sha1}"
     return q
 
 
-def passive_links(domain, sha1, sha256, crtsh_id="", serial=""):
+def passive_links(domain, sha1, sha256, crtsh_id="", serial="", serial_dec=""):
     links = []
     if crtsh_id:
         links.append({"engine": "crt.sh", "label": f"crt.sh entry #{crtsh_id}",
@@ -367,8 +445,10 @@ def passive_links(domain, sha1, sha256, crtsh_id="", serial=""):
         links.append({"engine": "censys_web", "label": "Censys cert fingerprint (SHA-256)",
                       "url": (cen.censys_ui_url(cenql) if cen
                               else "https://platform.censys.io/search?q=" + quote(cenql, safe=""))})
-        fofa_b64 = base64.b64encode(f'cert="{sha256}"'.encode()).decode()
-        links.append({"engine": "fofa_web", "label": "FOFA cert fingerprint (SHA-256)",
+    fofa = fofa_cert_query(serial_dec)
+    if fofa:
+        fofa_b64 = base64.b64encode(fofa.encode()).decode()
+        links.append({"engine": "fofa_web", "label": "FOFA cert serial search",
                       "url": f"https://en.fofa.info/result?qbase64={fofa_b64}&full=true"})
     if sha1:
         links.append({"engine": "shodan_web", "label": "Shodan cert fingerprint (SHA-1 alt)",
@@ -515,14 +595,20 @@ def grade_hits(domain, sha256, hits, leaf=None, probe=None):
 
 
 # --------------------------------------------------------------------------- driver
-def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20, passive=False):
+def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20, passive=False,
+        x509_serial=""):
     result = {"target": domain, "fingerprints": {}, "crtsh": {},
               "passive_links": [], "queries": {}, "active_pivots": [],
               "new_hosts": [], "notes": [], "summary": {}}
 
     # ONE egress decision before the first byte to the target or any hit IP (leaf certificate,
     # page baseline, Host-header probe). Denied or passive → every live check reads `not run`.
-    leaf = {}
+    leaf, fofa_sn, sn_from = {}, "", ""
+    if x509_serial:
+        fofa_sn = fofa_serial(x509_serial)
+        sn_from = "explicit" if fofa_sn else ""
+        if not fofa_sn:
+            result["notes"].append("--serial rejected: not a hex x509 serial (or unsafe to embed)")
     if domain:
         ok, why = egress_gate(domain, passive=passive or not live)
         result["egress"] = {"allowed": ok, "reason": why or None}
@@ -538,6 +624,9 @@ def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20, pass
                     "sans": fp.get("sans") or []}
             if not (sha1 or sha256):
                 sha1, sha256 = fp["sha1"], fp["sha256"]
+            if not fofa_sn and sha256 == fp["sha256"]:
+                fofa_sn = fofa_serial(fp.get("serial"))
+                sn_from = "live leaf" if fofa_sn else ""
     result["fingerprints"] = {"sha1": sha1, "sha256": sha256}
 
     crtsh_id = serial = ""
@@ -551,10 +640,22 @@ def run(domain=None, sha1="", sha256="", live=True, use_crtsh=True, cap=20, pass
         if ch.get("certs"):
             crtsh_id = ch["certs"][0].get("crtsh_id", "")
             serial = ch["certs"][0].get("serial_number", "")
+        if not fofa_sn:
+            # The pivoted fingerprint's own CT record first, else the newest cert with a real serial.
+            certs = sorted(ch.get("certs") or [], key=lambda c: not (sha256 and c.get("sha256") == sha256))
+            for c in certs:
+                fofa_sn = ct_real_serial(c)
+                if fofa_sn:
+                    sn_from = "CT (" + ", ".join(c.get("sources") or []) + ")"
+                    break
         result["new_hosts"].extend(ch.get("san_siblings", []))
 
-    result["queries"] = build_queries(sha1, sha256)
-    result["passive_links"] = passive_links(domain or "", sha1, sha256, crtsh_id, serial)
+    result["fingerprints"].update({"serial_decimal": fofa_sn, "serial_source": sn_from or None})
+    if not fofa_sn:
+        result["notes"].append("FOFA cert pivot not emitted: no real x509 serial (FOFA cert=<fingerprint> "
+                               "matches nothing; CT-index surrogate serials are skipped)")
+    result["queries"] = build_queries(sha1, sha256, fofa_sn)
+    result["passive_links"] = passive_links(domain or "", sha1, sha256, crtsh_id, serial, fofa_sn)
 
     sh_hits, sh_note = shodan_pivot(sha256, sha1, cap=cap)
     cn_hits, cn_note = censys_pivot(sha256, cap=cap)
@@ -596,6 +697,8 @@ def main():
     ap.add_argument("domain", nargs="?", help="domain to fetch + pivot (e.g. site.top)")
     ap.add_argument("--sha1", default="", help="pivot an explicit SHA-1 fingerprint (hex)")
     ap.add_argument("--sha256", default="", help="pivot an explicit SHA-256 fingerprint (hex)")
+    ap.add_argument("--serial", default="",
+                    help="explicit x509 serial (hex) for the FOFA cert.sn pivot")
     ap.add_argument("--no-live", action="store_true",
                     help="no live contact with the target or hit IPs (same as --passive)")
     ap.add_argument("--passive", action="store_true",
@@ -608,14 +711,14 @@ def main():
     ap.add_argument("-o", "--out", help="write JSON to file")
     args = ap.parse_args()
 
-    if not args.domain and not (args.sha1 or args.sha256):
-        ap.error("provide a domain, or --sha1/--sha256")
+    if not args.domain and not (args.sha1 or args.sha256 or args.serial):
+        ap.error("provide a domain, or --sha1/--sha256/--serial")
 
     if args.proxy:
         os.environ["HTTPS_PROXY"] = args.proxy        # read by cti_proxy.proxied_connection
     result = run(domain=args.domain, sha1=args.sha1.lower(), sha256=args.sha256.lower(),
                  live=not args.no_live, use_crtsh=not args.no_crtsh, cap=args.cap,
-                 passive=args.passive)
+                 passive=args.passive, x509_serial=args.serial)
 
     s = result["summary"]
     print(f"cert_pivot: fingerprint={'yes' if s['have_fingerprint'] else 'no'}; "

@@ -293,6 +293,19 @@ def check():
     ok(CS._is_noise_apex("work.gd", set()) and CS._is_noise_apex("cloudflaressl.com", set()),
        "bare work.gd / cloudflaressl.com apexes are noise, never seeds")
     ok(CS._frontier_apex("api.cmsnt.example") == "cmsnt.example", "an ordinary host still reduces to its apex")
+    # Shared-infra merge (RULE 5): a page that loads mobile-attribution / session-replay / chat-widget
+    # vendors reports their hosts as "related"; those apexes must not seed, while an operator's own
+    # apex in the same block still does. A per-customer helpdesk (`<company>.zendesk.com`) is a
+    # TENANT — the bare platform apex is noise, the tenant is the registrable unit and stays a lead.
+    rel = ["sdk.appsflyer.com", "static.hotjar.io", "client.crisp.chat", "t.me", "zendesk.com",
+           "acme-help.zendesk.com", "cdn.operator-a.example"]
+    apex, _ = _mine(_domain_pivot(urlscan={"domains": rel}))
+    ok(not apex & {"appsflyer.com", "hotjar.io", "crisp.chat", "t.me", "zendesk.com"},
+       f"newly listed shared-infra apexes never become frontier candidates ({sorted(apex)})")
+    ok({"operator-a.example", "acme-help.zendesk.com"} <= apex,
+       "the operator's own apex and a helpdesk TENANT still become candidates")
+    ok(CS._frontier_apex("acme-help.zendesk.com") == "acme-help.zendesk.com",
+       "a zendesk tenant is keyed on its tenant label, not collapsed into zendesk.com")
 
     # --- 9. ENGINE artifact reverses carry the same prevalence guard as certs/IPs/registrants -----
     # DNSLytics answered 2,500 domains for the template placeholder `G-XXXXXXXXXX`; Hunter.how / Validin

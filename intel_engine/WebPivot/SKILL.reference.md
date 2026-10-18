@@ -477,6 +477,23 @@ layer that did not run as a negative finding. Tune the checklist in
 `references/exhaustion.json`; add a layer there when you add a collector, or it will never appear
 in the gap list.
 
+**Failed ≠ empty ≠ withheld.** Post-hoc evidence cannot tell a crashed layer from one never asked,
+so `collect_core.collect_host` records an execution outcome per host and per layer in
+`cases/<case>/collection_outcomes.json` — `ran | empty | error | timed_out | skipped_no_key |
+skipped_policy` with `reason` and `elapsed_s` (enrichment leads carry the same `status` in
+`enrichment/index.json`). A collector that raises, times out, or exits without writing a fresh
+file is verdict **`failed`** and listed as **RE-RUNNABLE** — re-run it; never report the host as
+collected-empty. `skipped_policy` (free-only, no_spend, hostile egress, onion) was withheld on
+purpose; `skipped_no_key` is closed by the named credential (from the result's own
+`meta.capability`). The flag → layer map is `outcomes.flag_policy` in `references/exhaustion.json`.
+
+**Onion seeds.** A v3/v2 `.onion` (bare, URL host, or under a label) classifies as `onion`, never
+`domain`. It is never handed to `pivot_extract` (its fetch, TLS/JARM/MX probes, live-DNS anchor,
+WHOIS/RDAP and CT all touch the clearnet/system resolver) nor to the subdomain enumerators; those
+layers are `skipped_policy` reason `onion` (WHOIS/CT/pDNS/pSSL/Censys/liveness/lookalike/ads are
+*not applicable*; the rest stay open gaps). What still runs: the string corpus routes (urlscan
+text, Wayback/news, FOFA body, PublicWWW, Webamon) and the `cti` driver's `search-pivot`.
+
 ## §0 Intake — scope before you collect, and TEST the claim (run this first)
 
 A target rarely arrives alone; it arrives with a belief attached — *"this scam site"*, *"their

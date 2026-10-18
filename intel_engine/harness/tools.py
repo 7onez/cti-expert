@@ -2558,7 +2558,11 @@ async def engage_report(args: dict[str, Any]) -> dict[str, Any]:
     "exactly one. A correlation pass over a triage-depth collection is then scrupulous about "
     "every artifact it has and silent about the search space it never entered, so 'no further "
     "links found' reads as a finding when it is a statement about which flags were passed. "
-    "Verdict is `exhausted` or `triage`; a `triage` verdict must be STATED in the assessment, "
+    "Verdict is `exhausted`, `triage`, `failed` (the collector crashed/timed out — RE-RUN it, "
+    "never report the host as collected-empty) or `skipped` (withheld by policy: onion/hostile). "
+    "Each gap carries its execution status — error/timed_out (FAILED, re-runnable, listed under "
+    "RE-RUNNABLE with failed enrichment leads), skipped_policy (free-only/no_spend/hostile/onion) "
+    "or skipped_no_key (set the named key). A `triage` verdict must be STATED in the assessment, "
     "and a layer that did not run is absence of COLLECTION, never absence of evidence. Pass "
     "case; optional host to check one, json for the raw structure.",
     {"case": str},   # host:str, json:bool optional -> args.get()
@@ -2789,7 +2793,8 @@ def _rr(name: str) -> str:
     "cert_pivot",
     "Pivot on a TLS LEAF-CERTIFICATE FINGERPRINT to find the other hosts serving the SAME cert — "
     "the opposite direction from CT enumeration, which only lists one domain's own certs. Give it "
-    "`domain` to fetch the live cert and pivot, or an explicit `sha1`/`sha256` you already hold. "
+    "`domain` to fetch the live cert and pivot, or an explicit `sha1`/`sha256` you already hold "
+    "(`serial` = hex x509 serial for the FOFA cert.sn query; FOFA cannot search fingerprints). "
     "Also mines the cert's SAN list, which is often where sibling domains are named outright. The "
     "fingerprint is computed KEYLESS from a stdlib TLS handshake, and the CT history (crtsh block: "
     "ct_status + completeness_line) needs no key either; Shodan/Censys keys only widen the search. "
@@ -2797,14 +2802,14 @@ def _rr(name: str) -> str:
     "history, non-CDN) — a related host, never the target's hosting or abuse contact. Shared hosting "
     "and CDN certs are served by thousands of unrelated hosts — treat a match on a wildcard or CDN "
     "cert as noise, not as a same-operator link.",
-    {"domain": str},  # sha1, sha256, no_live, passive, proxy, no_crtsh, cap
+    {"domain": str},  # sha1, sha256, serial, no_live, passive, proxy, no_crtsh, cap
     annotations=READONLY,
 )
 async def cert_pivot(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _rr("cert_pivot.py")]
     if args.get("domain"):
         cmd.append(str(args["domain"]))
-    for k in ("sha1", "sha256"):
+    for k in ("sha1", "sha256", "serial"):
         if args.get(k):
             cmd += [f"--{k}", str(args[k])]
     if args.get("no_live") or args.get("passive"):

@@ -555,7 +555,7 @@ def _urlscan_exhaust(host, state, ua, spend_key, flush=None, deadline=None, stat
     dom_gap = None
     for scan in state["urlscan_scans"]:
         uid = scan.get("uuid")
-        if not uid or uid in done:
+        if not uid or uid in done or wp_net.urlscan_gated_reason(scan):
             continue
         if deadline is not None and time.monotonic() > deadline:
             dom_gap = f"time budget reached ({len(done)} DOM(s) done) — re-run to continue"
@@ -585,7 +585,8 @@ def _urlscan_exhaust(host, state, ua, spend_key, flush=None, deadline=None, stat
         if raw is None:
             continue
         html = _decode_body(raw, enc).decode("utf-8", "ignore")
-        if not html or len(html) < 200:
+        # a challenge/error capture's selectors are the CDN's, never the operator's
+        if not html or len(html) < 200 or wp_net.urlscan_dom_gated_reason(html):
             continue
         h = hashlib.sha256(html.encode("utf-8", "ignore")).hexdigest()
         if h in seen_hashes:

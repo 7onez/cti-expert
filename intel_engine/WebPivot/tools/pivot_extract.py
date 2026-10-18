@@ -562,6 +562,7 @@ def main():
     recovered_via = None
     urlscan_dom_uuid = None   # scan uuid, set only when urlscan_dom's HTML was actually accepted
     dom_undecodable = None    # set when a recovered urlscan DOM was binary junk / yielded nothing
+    urlscan_dom_gate = None   # set when urlscan_dom skipped gated (challenge/error) scans, nothing recovered
     cf_challenge = None       # set if the live target returned a Cloudflare interstitial
     snap_url = None           # closest existing Wayback snapshot (if any)
     wb_submitted = None       # result of an --archive-missing Save-Page-Now submission
@@ -811,7 +812,10 @@ def main():
                   f"{len(intel.get('related_domains', []))} related domains", file=sys.stderr)
             # No Wayback copy but urlscan has a prior scan → analyze its stored DOM.
             if not html:
-                dom_html, dom_id = urlscan_dom(intel, ua=seed_ua, free_only=args.free_only)
+                dom_html, dom_id, urlscan_dom_gate = urlscan_dom(intel, ua=seed_ua,
+                                                                 free_only=args.free_only)
+                if urlscan_dom_gate:
+                    print(f"[!] urlscan DOM skipped: {urlscan_dom_gate['skipped']}", file=sys.stderr)
                 if dom_html and dom_is_binary_junk(dom_html):
                     dom_undecodable = f"urlscan_dom:{dom_id}"
                     print(f"[!] urlscan DOM {dom_id} decoded to binary junk (bad/missing "
@@ -997,6 +1001,8 @@ def main():
         result["meta"]["renderer"] = renderer
     if dom_undecodable:
         result["meta"]["dom_undecodable"] = dom_undecodable
+    if urlscan_dom_gate:
+        result["meta"]["urlscan_dom_skipped"] = urlscan_dom_gate
     if wb_submitted and wb_submitted.get("snapshot"):
         result.setdefault("archives", {}).setdefault("wayback", {})["submitted"] = wb_submitted["snapshot"]
     if intel is not None:
@@ -1173,8 +1179,18 @@ def main():
         archives["wayback"] = wayback_save(src, ua=args.ua, timeout=max(args.timeout, 90))
         print(f"    wayback: {archives['wayback'].get('snapshot') or archives['wayback'].get('error') or archives['wayback'].get('skipped')}",
               file=sys.stderr)
-        print("[+] submitting to urlscan.io …", file=sys.stderr)
-        archives["urlscan"] = urlscan_submit(src, timeout=max(args.timeout, 30))
+        # every stored scan gated (challenge / Chrome error) → this ONE scan goes out from the
+        # ccTLD's country with the Android UA instead of the default egress; --free-only skips it
+        _resub = urlscan_gated_resubmit(src, intel=intel, dom_gate=urlscan_dom_gate)
+        print("[+] submitting to urlscan.io …"
+              + (f" ({_resub['reason']}; country={_resub.get('country') or '-'})" if _resub else ""),
+              file=sys.stderr)
+        archives["urlscan"] = urlscan_submit(src, timeout=max(args.timeout, 30),
+                                             country=(_resub or {}).get("country"),
+                                             customagent=(_resub or {}).get("customagent"),
+                                             free_only=args.free_only)
+        if _resub:
+            archives["urlscan"]["gated_resubmit"] = _resub["reason"]
         u = archives["urlscan"]
         print(f"    urlscan: {u.get('result') or u.get('error') or u.get('skipped')}", file=sys.stderr)
         result.setdefault("archives", {}).update(archives)   # keep any screenshot key

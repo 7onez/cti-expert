@@ -46,6 +46,7 @@ from wp_common import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_net import fetch  # noqa
 from wp_extract import (extract_trackers, extract_saas, extract_crypto,  # noqa
+                        extract_token_contracts,
                         extract_socials, extract_telegram, extract_emails,
                         BOILERPLATE_EMAIL_HOSTS)
 
@@ -582,6 +583,7 @@ def extract_from_bundles(text: str, self_host: str = ""):
         "trackers": trackers,
         "saas_ids": extract_saas(text),
         "crypto": extract_crypto(text),
+        "crypto_token_contracts": extract_token_contracts(text),
         "socials": extract_socials(urls),
         "telegram": extract_telegram(urls),
         "emails": emails,

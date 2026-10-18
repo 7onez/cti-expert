@@ -52,6 +52,12 @@ _USCAN_FALLBACK = {
     "verdict": {"structural_labels": ["domain.apexdomain", "content.rootdir", "hosting.cdn"]},
     "dom_assets": {"max_resources": 10, "extensions": [".js", ".css"],
                    "mime_prefixes": ["javascript", "css"]},
+    # gate = the scan captured a Chrome error / anti-bot page / challenge, not the site. Minimum:
+    # the one label + the three statuses + the one title Cloudflare serves most.
+    "gated": {"labels": {"content.chromeerror": "chrome_error"},
+              "statuses": [403, 429, 503], "titles": ["just a moment..."]},
+    # no alias on the fallback: a missing file sends `uk` (urlscan rejects it) — loud, not wrong
+    "resubmit": {"generic_cctlds": ["io", "co", "me", "tv", "ai"], "cctld_aliases": {}},
 }
 _USCAN_REF = load_ref(ref_path(__file__, "urlscan_endpoints.json"), _USCAN_FALLBACK)
 URLSCAN_ENDPOINTS = _USCAN_REF["endpoints"]
@@ -61,6 +67,14 @@ URLSCAN_HOSTNAME_CFG = _USCAN_REF["hostname"]
 URLSCAN_STRUCTURAL_LABELS = frozenset((_USCAN_REF.get("verdict") or _USCAN_FALLBACK["verdict"])["structural_labels"])
 # bounds for urlscan_dom_assets — see references/urlscan_endpoints.json -> dom_assets
 URLSCAN_DOM_ASSETS_CFG = _USCAN_REF.get("dom_assets") or _USCAN_FALLBACK["dom_assets"]
+# gated scans — see references/urlscan_endpoints.json -> gated / resubmit
+_USCAN_GATED = _USCAN_REF.get("gated") or _USCAN_FALLBACK["gated"]
+URLSCAN_GATED_LABELS = dict(_USCAN_GATED["labels"])
+URLSCAN_GATED_STATUS = frozenset(int(s) for s in _USCAN_GATED["statuses"])
+URLSCAN_GATED_TITLES = frozenset(str(t).lower() for t in _USCAN_GATED["titles"])
+_USCAN_RESUBMIT = _USCAN_REF.get("resubmit") or _USCAN_FALLBACK["resubmit"]
+URLSCAN_GENERIC_CCTLDS = frozenset(_USCAN_RESUBMIT["generic_cctlds"])
+URLSCAN_CCTLD_ALIASES = dict(_USCAN_RESUBMIT["cctld_aliases"])
 URLSCAN_BASE = "https://urlscan.io"
 
 
@@ -467,12 +481,15 @@ def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
             latest_uid = latest_uid or uid
             # page.domain/ip/asn per scan: the aggregate `ips` above mixes in pages that merely
             # LOADED the host, so wp_origin_history dates the host's own hosting from these rows
-            # (page.domain == host) instead.
+            # (page.domain == host) instead. `gated` is read off the full search row (labels,
+            # page.status/title) so DOM consumers can skip a challenge-page capture unfetched.
             out["all_scans"].append({
                 "uuid": uid, "url": p.get("url"), "time": res.get("task", {}).get("time"),
                 "result": f"https://urlscan.io/result/{uid}/",
                 "domain": p.get("domain"), "ip": p.get("ip"),
                 "asn": p.get("asn"), "asnname": p.get("asnname"),
+                "status": p.get("status"), "title": p.get("title"),
+                "gated": urlscan_gated_reason(res),
             })
         # advance the cursor. urlscan's `has_more` is NOT trustworthy (measured 2026-09-28: false on
         # a full page of 100 while `total` was 248 and page 2 held 100 fresh scans), so stop on an
@@ -758,34 +775,141 @@ def dom_is_binary_junk(html: str) -> bool:
     return (bad / max(len(sample), 1)) > _BINARY_JUNK_THRESHOLD
 
 
+def urlscan_gated_reason(scan_result):
+    """Why a urlscan scan shows a GATE instead of the site, or None when it is ungated.
+
+    Accepts a RESULT document or a raw SEARCH row (`labels` + `page.status/title/ip/server`),
+    or a urlscan_intel `all_scans` row (precomputed `gated`, flat `status`/`title`). A gated
+    capture is the CDN/browser's page — Chrome error, anti-bot fake error, blocking status,
+    challenge interstitial — so its DOM and assets must never be parsed as the operator's kit.
+    Reasons: a label's reason (references/urlscan_endpoints.json -> gated.labels), `http_<code>`,
+    `challenge_page`, or `no_response` (a result/search row with no status, IP or server)."""
+    if not isinstance(scan_result, dict):
+        return None
+    if "gated" in scan_result and "page" not in scan_result:    # urlscan_intel row
+        return scan_result.get("gated") or None
+    labels = {str(x).strip() for x in scan_result.get("labels") or [] if isinstance(x, str)}
+    for label, reason in URLSCAN_GATED_LABELS.items():
+        if label in labels:
+            return reason
+    nested = isinstance(scan_result.get("page"), dict)
+    page = scan_result["page"] if nested else scan_result
+    try:
+        status = int(str(page.get("status") or "").strip())
+    except ValueError:
+        status = None
+    if status in URLSCAN_GATED_STATUS:
+        return f"http_{status}"
+    if _gate_title(page.get("title")) in URLSCAN_GATED_TITLES:
+        return "challenge_page"
+    # only a real urlscan document proves "no response" — a legacy compact row simply lacks fields
+    if nested and status is None and not page.get("ip") and not page.get("server"):
+        return "no_response"
+    return None
+
+
+def _gate_title(title) -> str:
+    return " ".join(str(title or "").split()).lower()
+
+
+def urlscan_dom_gated_reason(html: str):
+    """`challenge_page` when a fetched urlscan DOM's <title> is a gate title, else None — the
+    backstop for a scan whose search row carried no title/status (legacy intel, keyless rows)."""
+    m = re.search(r"<title[^>]*>(.*?)</title>", (html or "")[:20000], re.I | re.S)
+    if not m:
+        return None
+    from html import unescape as _unescape
+    return "challenge_page" if _gate_title(_unescape(m.group(1))) in URLSCAN_GATED_TITLES else None
+
+
+def urlscan_ungated_scans(intel: dict):
+    """The intel's scan rows (recent_scans, else all_scans) whose capture is NOT gated, newest
+    first — [0] is the scan a DOM/result consumer should read as the site."""
+    scans = (intel or {}).get("recent_scans") or (intel or {}).get("all_scans") or []
+    return [s for s in scans if not urlscan_gated_reason(s)]
+
+
+def urlscan_cctld_country(target: str) -> str:
+    """ISO 3166-1 alpha-2 country of a host/URL's ccTLD (`vn` for shop.example.vn, `gb` for .uk),
+    or '' for a generic TLD / a ccTLD sold as generic (.io, .co, .me …) / an IP address."""
+    t = (target or "").strip()
+    host = (urlparse(t).hostname if "://" in t else t.split("/")[0].split(":")[0]) or ""
+    last = host.strip(".").rsplit(".", 1)[-1].lower()
+    if len(last) != 2 or not last.isalpha() or last in URLSCAN_GENERIC_CCTLDS:
+        return ""
+    return URLSCAN_CCTLD_ALIASES.get(last, last)
+
+
+def urlscan_gated_resubmit(url: str, intel: dict = None, dom_gate: dict = None):
+    """Parameters for the ONE geo/UA-matched rescan the consented --submit path makes when every
+    stored scan of the target is gated: {'country', 'customagent', 'reason'}, or None when an
+    ungated scan exists (or there are no scans — nothing proves a gate). country is the ccTLD's
+    (omitted for generic TLDs); customagent is the Android UA every request here presents. This
+    only PLANS — urlscan_submit spends the credit and enforces --free-only."""
+    scans = (intel or {}).get("recent_scans") or (intel or {}).get("all_scans") or []
+    reasons = [urlscan_gated_reason(s) for s in scans]
+    all_gated = bool(scans) and all(reasons)
+    if not all_gated and not (dom_gate or {}).get("all_gated"):
+        return None
+    why = sorted({r for r in reasons if r} | {g.get("reason") for g in (dom_gate or {}).get("gated", [])
+                                                if g.get("reason")})
+    plan = {"customagent": DEFAULT_UA, "reason": "every stored urlscan scan is gated (" + ", ".join(why) + ")"}
+    cc = urlscan_cctld_country(url)
+    if cc:
+        plan["country"] = cc
+    return plan
+
+
 def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only: bool = False):
-    """Fetch the rendered DOM of the most recent urlscan scan for a host, so a dead /
-    blocked target is still analyzable from a third-party capture. Returns (html, id)
-    or ('', None). urlscan stores the DOM at /dom/<uuid>/ — which returns 403 without an
-    API-Key, so the key (when set) is sent; keyless (or free_only) degrades to ('', None).
-    The body is decoded per its actual Content-Encoding (_decode_body, gzip-magic-sniffing
-    fallback included) before UTF-8 — a bare `.decode()` of a gzip body is binary junk."""
+    """Fetch the rendered DOM of the newest UNGATED urlscan scan for a host, so a dead /
+    blocked target is still analyzable from a third-party capture. Returns (html, id, gate):
+    (html, uuid, None) on recovery; ('', None, None) when nothing was recovered and no scan was
+    gated; ('', None, {'skipped', 'all_gated', 'gated': [{uuid, reason}]}) when gated scans were
+    skipped and no ungated DOM was recovered — a challenge page is never returned as the site.
+    A scan is gated by its search row (urlscan_gated_reason) or, failing that, by the fetched
+    DOM's <title> (urlscan_dom_gated_reason). urlscan stores the DOM at /dom/<uuid>/ — which
+    returns 403 without an API-Key, so the key (when set) is sent; keyless (or free_only)
+    degrades to nothing recovered. The body is decoded per its actual Content-Encoding
+    (_decode_body, gzip-magic-sniffing fallback included) before UTF-8 — a bare `.decode()` of
+    a gzip body is binary junk."""
     _uk = None if free_only else _secret("URLSCAN_API_KEY")
     hdr = {"User-Agent": ua}
     if _uk:
         hdr["API-Key"] = _uk
+    gated, candidates = [], 0
     for scan in (intel or {}).get("recent_scans", []):
         res = scan.get("result") or ""
         m = re.search(r"/result/([0-9a-f\-]{16,})", res)
         if not m:
             continue
         uid = m.group(1)
+        candidates += 1
+        reason = urlscan_gated_reason(scan)
+        if reason:
+            gated.append({"uuid": uid, "reason": reason})
+            continue
         try:
             req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 raw = r.read()
                 enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
             html = _decode_body(raw, enc).decode("utf-8", "ignore")
-            if html and len(html) > 200:
-                return html, uid
         except Exception:
             continue
-    return "", None
+        if html and len(html) > 200:
+            reason = urlscan_dom_gated_reason(html)
+            if reason:
+                gated.append({"uuid": uid, "reason": reason})
+                continue
+            return html, uid, None
+    if not gated:
+        return "", None, None
+    all_gated = len(gated) == candidates
+    why = ", ".join(sorted({g["reason"] for g in gated}))
+    return "", None, {
+        "skipped": (f"all {len(gated)} urlscan scans are gated ({why})" if all_gated else
+                    f"no ungated urlscan DOM recovered; {len(gated)} gated scans skipped ({why})"),
+        "all_gated": all_gated, "gated": gated}
 
 def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
                     max_doms: int = 25, min_len: int = 200,
@@ -795,7 +919,9 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
     /dom/<uuid>/ (sending the API-Key when set — the endpoint is 403 keyless), decodes each
     body per its Content-Encoding (_decode_body), and dedupes on the DECODED text's sha256.
     Returns [{'uuid','url','time','sha256','html'}], newest first, capped at max_doms distinct
-    DOMs.
+    DOMs. Gated captures (urlscan_gated_reason on the row, urlscan_dom_gated_reason on the
+    fetched body) are skipped — a challenge page's selectors are the CDN's, not the operator's.
+    A row already known gated costs no fetch.
 
     BOUNDED so a host with hundreds of scans whose DOMs 404/time out cannot stall the caller:
     stops after `max_attempts` fetches (default max_doms*3+10) or when `deadline`
@@ -822,7 +948,7 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
         if not uid:
             m = re.search(r"/result/([0-9a-f\-]{16,})", scan.get("result") or "")
             uid = m.group(1) if m else None
-        if not uid:
+        if not uid or urlscan_gated_reason(scan):
             continue
         attempts += 1
         try:
@@ -835,7 +961,7 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
             html = _decode_body(raw, enc).decode("utf-8", "ignore")
         except Exception:
             continue
-        if not html or len(html) < min_len:
+        if not html or len(html) < min_len or urlscan_dom_gated_reason(html):
             continue
         h = hashlib.sha256(html.encode("utf-8", "ignore")).hexdigest()
         if h in seen_hashes:
@@ -995,23 +1121,35 @@ def wayback_save(url: str, ua: str = DEFAULT_UA, timeout: int = 40):
         wg.observe("web.archive.org", e, getattr(e, "headers", None))
         return {"error": str(e)}
 
-def urlscan_submit(url: str, timeout: int = 30, visibility: str = None):
+def urlscan_submit(url: str, timeout: int = 30, visibility: str = None, country: str = None,
+                   customagent: str = None, free_only: bool = False):
     """Submit a URL to urlscan.io for a fresh scan (needs URLSCAN_API_KEY). Returns the
     api/result URLs + scan UUID, or an error/'no key'. This actively enqueues a new scan
     (vs urlscan_search/urlscan_intel which only read existing scans).
+
+    `country` (ISO alpha-2, e.g. 'vn') scans from that country's egress; `customagent` sets the
+    scanner's User-Agent — the pair urlscan_gated_resubmit plans when every stored scan is gated.
+    A scan spends a credit, so `free_only=True` skips it before the key is even read.
 
     OPSEC: visibility defaults to `URLSCAN_VISIBILITY` env if set, else 'unlisted'. On a **Pro**
     key set `URLSCAN_VISIBILITY=private` — a private scan of hostile infra is team-only and never
     appears in the public feed, so the operator can't discover that you scanned them. (On the free
     tier 'private' is rejected; 'unlisted' is the safe default.)"""
+    if free_only:
+        return {"skipped": "--free-only (urlscan scan submission is metered)"}
     timeout = _floor_to(timeout)   # requests path bypasses the urllib floor
     key = _secret("URLSCAN_API_KEY")
     if not key:
         return {"skipped": "no URLSCAN_API_KEY"}
     if visibility is None:
         visibility = _secret("URLSCAN_VISIBILITY") or "unlisted"
+    body = {"url": url, "visibility": visibility}
+    if country:
+        body["country"] = str(country).strip().lower()
+    if customagent:
+        body["customagent"] = customagent
     try:
-        payload = json.dumps({"url": url, "visibility": visibility}).encode()
+        payload = json.dumps(body).encode()
         if HAVE_REQUESTS:
             r = requests.post("https://urlscan.io/api/v1/scan/", data=payload, timeout=timeout,
                               headers={"API-Key": key, "Content-Type": "application/json"})
@@ -1025,8 +1163,10 @@ def urlscan_submit(url: str, timeout: int = 30, visibility: str = None):
             if api_usage:
                 api_usage.record("urlscan", "scan", credits=1, query=url,
                                  results=j.get("visibility", visibility))
-            return {"uuid": j["uuid"], "result": j.get("result"), "api": j.get("api"),
-                    "visibility": j.get("visibility", visibility)}
+            out = {"uuid": j["uuid"], "result": j.get("result"), "api": j.get("api"),
+                   "visibility": j.get("visibility", visibility)}
+            out.update({k: body[k] for k in ("country", "customagent") if k in body})
+            return out
         if api_usage:
             api_usage.record("urlscan", "scan", credits=0, query=url, ok=False)
         return {"error": j.get("message") or j.get("description") or str(j)[:200]}

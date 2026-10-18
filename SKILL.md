@@ -184,7 +184,9 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > starts one and **waits for it with no time limit** — hours or days on a large estate, resuming if interrupted —
 > before the harness loop or pipeline collects. A no-spend or no-contact case reuses only.
 > Imported rows go through the rung table: owner links become edges, co-tenancy and kit matches
-> become facts only. Ask the user before the first scan of a case.
+> become facts only. Ask the user before the first scan of a case. Every bridge session lists
+> Quarry's MCP tools first and re-lists on `tools/list_changed`; `intel.py quarry tools` reloads the
+> list on demand (read-only) and flags any tool the bridge calls that Quarry no longer exposes.
 >
 > **`/harness` deepening AUTO-ESCALATES on non-convergence** (`--no-harness` opts out). After the
 > `--no-collect` pipeline, if the case has **not converged** — `intel.py convergence <case>`

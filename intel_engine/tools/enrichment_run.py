@@ -13,11 +13,15 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import case_state  # noqa: E402
+if os.path.join(ROOT, "WebPivot", "tools") not in sys.path:
+    sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+import wp_exhaust  # noqa: E402 — the shared execution-outcome vocabulary (ran|empty|error|…)
 
 SCRIPTS = {
     "email-deep": os.path.join(ROOT, "..", "scripts", "osint", "deep_profile.py"),
@@ -207,6 +211,10 @@ def _result_json(result):
     if result.get("returncode") != 0:
         detail = result.get("error") or result.get("stderr") or result.get("stdout")
         return None, f"exit {result.get('returncode')}: {_short(detail, 180)}"
+    # exit 0 with NOTHING on stdout (or a bare `{}`) is a step that broke quietly — FAILED and
+    # retried, never "asked and found nothing", which would close the lead for good.
+    if not (result.get("stdout") or "").strip():
+        return None, "exit 0 with empty stdout — the step produced nothing (failed, not empty)"
     try:
         data = json.loads(result.get("stdout") or "")
     except (TypeError, ValueError):
@@ -215,6 +223,8 @@ def _result_json(result):
     result.pop("stdout", None)
     if not isinstance(data, dict):
         return None, "JSON output was not an object"
+    if not data:
+        return None, "exit 0 with an empty JSON object — the step produced nothing (failed, not empty)"
     return data, None
 
 
@@ -407,17 +417,33 @@ def _judge(op, result, memo=None):
     return "ran", f"{op} completed", memo
 
 
-def _index_row(case_dir, key, outcome, summary):
+#: lead outcome -> execution-outcome status (wp_exhaust vocabulary). `retry` is a FAILED step —
+#: error, or timed_out when the child was killed at the ceiling — never collected-empty.
+_STATUS_OF = {"ran": "ran", "empty": "empty", "retry": "error",
+              "unavailable": "skipped_no_key", "held": "skipped_policy"}
+
+
+def _execution_outcome(outcome, summary, policy="", returncode=None, elapsed=None):
+    status = _STATUS_OF.get(outcome, "error")
+    if status == "error" and returncode == 124:
+        status = "timed_out"
+    reason = policy if status == "skipped_policy" else ("" if status in ("ran", "empty") else summary)
+    return wp_exhaust.outcome(status, reason, elapsed)
+
+
+def _index_row(case_dir, key, outcome, summary, execution=None):
     path = _artifact(case_dir, key)
     row = {"outcome": outcome, "summary": _short(summary)}
     if os.path.isfile(path):
         row["file"] = os.path.basename(path)
+    if execution:                       # additive: status / reason / elapsed_s (+ at)
+        row.update({k: execution[k] for k in ("status", "reason", "elapsed_s", "at")})
     return row
 
 
-def _update_index(case_dir, key, outcome, summary):
+def _update_index(case_dir, key, outcome, summary, execution=None):
     index = _load_index(case_dir)
-    index["leads"][key] = _index_row(case_dir, key, outcome, summary)
+    index["leads"][key] = _index_row(case_dir, key, outcome, summary, execution)
     _write_index(case_dir, index)
 
 
@@ -484,7 +510,12 @@ def _missing_key_summary(ops):
 
 
 def _invoke(invoke, op, argv, case_dir, hide_env=None):
-    return invoke(op, argv, case_dir, hide_env=hide_env)
+    """A runner that RAISES is a failed step (retry, status error) — not a crash of the whole
+    case, and never a silent empty."""
+    try:
+        return invoke(op, argv, case_dir, hide_env=hide_env)
+    except Exception as exc:  # noqa: BLE001
+        return {"returncode": 1, "error": f"{op} raised {type(exc).__name__}: {exc}", "credits": []}
 
 
 def _run_step(invoke, case_dir, record, step):
@@ -546,11 +577,12 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
             continue
         key = lead["key"]
         ops = _lead_ops(lead)
+        policy, rc, t0 = "", None, time.monotonic()
         if defer_metered and any(op in METERED for op in ops):
-            reason = "held"
+            reason, policy = "held", "defer_metered"
             summary = "held: default loop defers metered enrichment; rerun full/keyed collection"
         elif hold and any(op in METERED for op in ops):
-            reason = "held"
+            reason, policy = "held", ("free_only" if free_only else "no_spend")
             why = "free-only posture" if free_only else "case no_spend constraint"
             summary = f"held: {why} blocks metered enrichment; lead remains open"
         elif any(not _keys(op) for op in ops):
@@ -566,15 +598,21 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
                 summaries.append(summary)
                 if outcome in ("retry", "unavailable", "held"):
                     reason = outcome
+                    rc = (record["steps"].get(json.dumps([step.get("op"), step.get("argv")],
+                                                          ensure_ascii=False)) or {}).get("returncode")
+                    policy = "memoized step held" if outcome == "held" else ""
                     break
                 if outcome == "ran":
                     reason = "ran"
             summary = "; ".join(s for s in summaries if s) or f"{key} completed"
-        _update_index(case_dir, key, reason, summary)
+        execution = _execution_outcome(reason, summary, policy, rc, time.monotonic() - t0)
+        _update_index(case_dir, key, reason, summary, execution)
         if reason in FINAL_OUTCOMES:
             case_state.mark_enrichment_done(case, [key], reason)
-        results.append({"key": key, "reason": reason, "summary": _short(summary)})
-        print(f"   enrichment {key}: {reason}" + (" (open for later run)" if reason not in FINAL_OUTCOMES else ""))
+        results.append({"key": key, "reason": reason, "status": execution["status"],
+                        "summary": _short(summary)})
+        print(f"   enrichment {key}: {reason} [{execution['status']}]"
+              + (" (open for later run)" if reason not in FINAL_OUTCOMES else ""))
     remaining = len(case_state.frontier(case).get("enrichment_leads", []))
     print(f"   enrichment: {len(results)} handled; {remaining} lead(s) still open "
           "(query-only, held, unavailable, and retryable leads require later review/run)")

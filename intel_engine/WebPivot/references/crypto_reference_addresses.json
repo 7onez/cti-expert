@@ -1,0 +1,59 @@
+{
+  "_comment": "Public crypto REFERENCE constants for wallet extraction (WebPivot/tools/wp_crypto_refs.py → wp_extract.valid_crypto_address / extract_token_contracts, tools/pivot_routes.wallet_rung, quarry_bridge). Ported from Quarry data/crypto-reference-addresses.yaml. Matching: 0x… and bech32 (bc1/ltc1/tb1) compare case-insensitively, base58 exactly. RULE 1: publicly documented spec/doc/protocol constants only — NEVER case data, NEVER an address discovered in an investigation.",
+  "reference_crypto_addresses": {
+    "_comment": "Documentation / BIP-EIP test vectors, genesis, burn and system-program addresses. A match is DROPPED outright — never a wallet indicator, never ingested, never balance-looked-up. Value = provenance note.",
+    "entries": {
+      "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa": "Satoshi Nakamoto genesis coinbase reward address",
+      "1BpEi6DfDAUFd153wiGrvkiKW1LghFxPVM": "BIP-32 derivation example (m/0'/0)",
+      "1LjmJcdPnDHhNTUgriesEACAVbFJRqBFNQ": "BIP-32 derivation example",
+      "1HLoD9E4SDFFPDiYfNYnkBLQ85Y51J3Zb1": "BIP-32 derivation example (m/0)",
+      "1FwZXt6EpRT7Fkndzv6K4b4DFoT4trbMrV": "BIP-44 derivation example",
+      "1Q1pE5vPGEEMqRcVRMbtBK842Y6Pzo6nK9": "BIP-44 test address",
+      "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh": "BIP-173 bech32 reference test vector",
+      "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4": "BIP-173 bech32 P2WPKH test vector",
+      "bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx": "BIP-173 bech32 P2WSH test vector",
+      "bc1zw508d6qejxtdg4y5r3zarvaryvg6kdje": "BIP-173 bech32 P2SH-P2WSH test vector",
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045": "Vitalik Buterin's public Ethereum address (widely cited)",
+      "0x71C7656EC7ab88b098defB751B7401B5f6d8976F": "EIP-55 checksum example address",
+      "0x000000000000000000000000000000000000dEaD": "Ethereum burn address (EIP-55)",
+      "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe": "Ethereum Foundation donation address (official docs)",
+      "LaMT348PWRnrqeeWArpwQPbuanpXDZGEUz": "Litecoin BIP-44 test vector",
+      "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9": "Litecoin bech32 test vector",
+      "11111111111111111111111111111111": "Solana System Program address (all ones in base58)",
+      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA": "Solana SPL Token Program address",
+      "So11111111111111111111111111111111111111112": "Solana Wrapped SOL mint address",
+      "T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb": "Tron black-hole (all-zero) burn address",
+      "THPvaUhoh2Qn2y9THCZML3H815hhFhn5YC": "Tron developer doc reference address",
+      "DBXu2kgc3xtvCUWFcxFE3r9hEYgmuaaCyD": "Dogecoin example address in documentation"
+    }
+  },
+  "token_contracts": {
+    "_comment": "Well-known token / stablecoin CONTRACT addresses. A match is a fixed public constant on every site that accepts the token, not a payee: it never becomes an operator wallet, never edges or clusters two domains, and never triggers crypto_balance. It is kept only as a non-attributive payment-method fact (rung class wallet.token_contract → kit). chain uses the extractor's coin labels (eth, tron). Base58 is case-sensitive and an entry must pass the extractor's checksum to ever match: Quarry's source list spells USDT-TRC20 'KQXGTC' (fails base58check, so it would never match); the checksum-valid published contract 'KQxGTC' is used here.",
+    "entries": {
+      "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t": {
+        "chain": "tron",
+        "label": "USDT-TRC20"
+      },
+      "0xdAC17F958D2ee523a2206206994597C13D831ec7": {
+        "chain": "eth",
+        "label": "USDT-ERC20"
+      },
+      "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8": {
+        "chain": "tron",
+        "label": "USDC-TRC20"
+      },
+      "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48": {
+        "chain": "eth",
+        "label": "USDC-ERC20"
+      },
+      "0x6B175474E89094C44Da98b954EedeAC495271d0F": {
+        "chain": "eth",
+        "label": "DAI"
+      },
+      "0x4Fabb145d64652a948d72533023f6E7A623C7C53": {
+        "chain": "eth",
+        "label": "BUSD"
+      }
+    }
+  }
+}

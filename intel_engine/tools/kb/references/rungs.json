@@ -20,6 +20,7 @@
 
       "wallet.operator": "owner",
       "wallet.exchange": "neighbour",
+      "wallet.token_contract": "kit",
 
       "whois.registrant_email": "owner",
       "whois.registrant_phone": "owner",
@@ -52,9 +53,10 @@
   },
 
   "fact_only_node_classes": {
-    "_comment": "Route → rung classes that are stored as KB facts on the origin page and NEVER registered as typed nodes in state.json (so propose() never pivots on them). A Quarry page export lists every contact the page scraped — a directory page yields hundreds of strangers' phones/emails. Owner classes (whois.registrant_*) on the same route are unaffected. Fallback in code: {quarry.page: [page.email, page.phone]}.",
+    "_comment": "Route → rung classes that are stored as KB facts on the origin page and NEVER registered as typed nodes in state.json (so propose() never pivots on them). A Quarry page export lists every contact the page scraped — a directory page yields hundreds of strangers' phones/emails. The \"*\" row applies to EVERY route: a token contract (wallet.token_contract — USDT-TRC20 and the like, WebPivot/references/crypto_reference_addresses.json) is a public constant, so a node on it would balance-look-up and pivot on every site that accepts the token. Owner classes (whois.registrant_*) on the same route are unaffected. Fallback in code: {quarry.page: [page.email, page.phone], *: [wallet.token_contract]}.",
     "entries": {
-      "quarry.page": ["page.email", "page.phone"]
+      "quarry.page": ["page.email", "page.phone"],
+      "*": ["wallet.token_contract"]
     }
   },
 

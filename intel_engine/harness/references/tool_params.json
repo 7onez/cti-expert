@@ -1158,6 +1158,10 @@
           "type": "string",
           "description": "Pivot on this leaf-cert sha256 fingerprint instead of fetching the live cert."
         },
+        "serial": {
+          "type": "string",
+          "description": "Hex x509 serial of the leaf cert for the FOFA cert.sn query (sent as decimal). Use only a real serial (crt.sh/certkit/netlas or the live leaf); surrogate ids from other CT indexes match nothing."
+        },
         "no_live": {
           "type": "boolean",
           "description": "No live contact with the target or hit IPs (same as passive)."

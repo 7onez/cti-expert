@@ -76,5 +76,9 @@
     "_comment": "How many certificates / subdomains a merged CT result lists inline. The full counts are always recorded (cert_total, subdomain_total) with a truncated flag, so a capped listing is never read as the whole history; the frontier treats names beyond the examined certificates as unexamined.",
     "max_certs": 40,
     "max_subdomains": 80
+  },
+  "real_serial_sources": {
+    "_comment": "CT sources whose serial is the REAL x509 serial — the only ones cert_pivot turns into a FOFA cert.sn=\"<decimal>\" query (FOFA's cert=\"<sha256>\" matches nothing, live-verified by Quarry 2026-10). CertSpotter (issuance id), CertIndex, Shodan CTL and Censys rows carry a surrogate or no serial and are skipped, so a record backed only by them yields no FOFA query rather than a dead one. The served leaf's own serial (parsed from its DER) always qualifies.",
+    "values": ["crt.sh", "certkit", "netlas"]
   }
 }

@@ -30,6 +30,22 @@
     "extensions": [".js", ".mjs", ".css"],
     "mime_prefixes": ["javascript", "css", "json"]
   },
+  "gated": {
+    "_comment": "A urlscan scan that captured a GATE instead of the site — Chrome error page, anti-bot fake error, a blocking HTTP status or a challenge interstitial (Cloudflare 'Just a moment...', 'Attention Required!', DDoS-Guard …). Its DOM/assets are the CDN's challenge kit, never the operator's, so wp_net.urlscan_gated_reason flags it and urlscan_dom / urlscan_dom_all skip it in favour of the newest UNGATED scan. Ported from Quarry urlscan_target_signals.gated_reason. `labels` maps a result label to the reason string; `statuses` are page.status codes that mean the crawler was blocked/errored; `titles` are whitespace-collapsed, lower-cased page titles matched EXACTLY (a substring match would flag a real page titled 'Access denied — login').",
+    "labels": {"content.chromeerror": "chrome_error", "detect.antibot.fakeerror": "antibot_fake_error"},
+    "statuses": [401, 403, 406, 407, 429, 444, 451, 503, 520, 521, 522, 523, 524, 525, 526, 530],
+    "titles": ["just a moment...", "just a moment", "attention required! | cloudflare",
+               "ddos-guard", "one moment, please...", "please wait...", "access denied",
+               "checking your browser", "checking your browser before accessing",
+               "security check", "verifying you are human", "403 forbidden", "forbidden"]
+  },
+  "resubmit": {
+    "_comment": "When every stored scan of a target is gated, the consented --submit path scans ONCE from the target's ccTLD country (urlscan `country`) with the Android UA (`customagent`) — a geo/UA-fenced kit often gates foreign desktop crawlers only. generic_cctlds are ccTLDs sold as generic TLDs whose country says nothing about the audience (no country is sent for them); cctld_aliases maps a ccTLD to its ISO 3166-1 alpha-2 code where they differ. Ported from Quarry urlscan_target_signals.cctld_country.",
+    "generic_cctlds": ["io", "co", "me", "tv", "ai", "cc", "ws", "to", "fm", "gg", "ly", "sh", "la", "so",
+                       "ac", "am", "app", "bz", "cx", "eu", "gs", "im", "is", "li", "lc", "mn", "nu", "pw",
+                       "sc", "st", "su", "tk", "ml", "ga", "cf", "gq", "vc"],
+    "cctld_aliases": {"uk": "gb"}
+  },
   "field_search": {
     "_comment": "Pro content-index FIELDS the cross-type auto-pivot loop may query via wp_recon.urlscan_field_query. `fields` maps a pivot_map route short-name (or the corpus field itself) to the Lucene field key urlscan accepts. page.title / filename / files.filename / hash are free-or-Pro; text.content, content.identifiers.*, links.domains, frames.domains, websockets.domains, dom.hash, text.hash need Pro. TRON wallets are NOT an identifier type — they go through text.content. Edit here when urlscan adds a field; never hardcode field names in the proposer.",
     "fields": {

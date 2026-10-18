@@ -242,12 +242,15 @@ def _row(type_, value, rung_class, source, evidence=None, coin=""):
     return r
 
 
-def _exchange_wallet(addr):
+def _wallet_rung(addr, default):
+    """pivot_routes.wallet_rung: None = reference constant (drop), wallet.token_contract (kit),
+    wallet.exchange (neighbour); a non-listed address keeps the FINDING_RUNGS default."""
     try:
         import pivot_routes
-        return bool(pivot_routes._is_exchange_addr(addr))
+        rc = pivot_routes.wallet_rung(addr)
     except Exception:                        # noqa: BLE001 — unknown beats a wrong owner link
-        return False
+        return default
+    return default if rc == "wallet.operator" else rc
 
 
 def build_row_groups(bundle, *, target, rung_cap=""):
@@ -303,8 +306,14 @@ def _page_rows(content, notes, rung_cap):
         v = str((f or {}).get("value") or "").strip()
         if not v:
             continue
-        coin = _COIN.get(str((f or {}).get("subtype") or "").lower(), "")
-        rc = "wallet.exchange" if _exchange_wallet(v) else rung_of.get("crypto", "wallet.operator")
+        sub = str((f or {}).get("subtype") or "").lower()
+        coin = _COIN.get(sub, "")
+        rc = _wallet_rung(v, rung_of.get("crypto", "wallet.operator"))
+        if rc is None:                       # spec test vector / genesis / burn — not a wallet
+            notes["dropped_noise"] += 1
+            continue
+        if sub == "token_contract":          # Quarry's own token-contract tag
+            rc = "wallet.token_contract"
         add("wallet", v, rc, coin=coin)
     for f in findings.get("tracking_ids") or []:
         v = str((f or {}).get("value") or "").strip()
@@ -805,6 +814,28 @@ def stage(case, target, *, explicit=False, no_quarry=False, free_only=False, pas
 
 # ---------------------------------------------------------------- CLI
 
+# Quarry MCP tools this bridge calls; `tools` reports any the server no longer exposes.
+_BRIDGE_TOOLS = ("quarry_get_domain", "quarry_scan", "quarry_scan_status", "quarry_export",
+                 "quarry_js_findings", "quarry_connected_scans", "quarry_search_ioc")
+
+
+def list_tools():
+    """Reload Quarry's MCP tool list (read-only, no credits): server version, every exposed tool,
+    and the bridge tools it no longer exposes."""
+    if not q.quarry_configured():
+        return {"status": "skipped", "reason": "not configured"}
+    session = q.Session()
+    err = session.initialize()
+    if err:
+        return {"status": "error", "reason": err.get("error"), "kind": err.get("kind")}
+    if session.tools is None:
+        return {"status": "error", "reason": "tools/list failed"}
+    names = sorted(session.tools)
+    missing = [t for t in _BRIDGE_TOOLS if t not in session.tools]
+    return {"status": "error" if missing else "ok", "server_version": session.server.get("version"),
+            "count": len(names), "tools": names, "bridge_missing": missing}
+
+
 def _main(argv=None):
     import argparse
     ap = argparse.ArgumentParser(description="Quarry scan bridge: reuse or run a scan, wait, import")
@@ -813,6 +844,7 @@ def _main(argv=None):
         p = sub.add_parser(name)
         p.add_argument("--case", required=True)
         p.add_argument("--target", required=True)
+    sub.add_parser("tools", help="reload Quarry's MCP tool list (read-only)")
     sub.choices["sync"].add_argument("--quarry-scan", action="store_true",
                                      help="allow a new scan (spends shared vendor accounts)")
     sub.choices["sync"].add_argument("--no-wait", action="store_true")
@@ -825,6 +857,8 @@ def _main(argv=None):
                    passive=a.passive, wait_minutes=a.wait_minutes)
     elif a.cmd == "lookup":
         out = _lookup(a.case, a.target, print)
+    elif a.cmd == "tools":
+        out = list_tools()
     else:
         out = _load_job(a.case) or {"status": "none"}
     print(json.dumps(out, ensure_ascii=False, default=str))

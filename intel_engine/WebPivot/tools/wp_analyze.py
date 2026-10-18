@@ -79,6 +79,8 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
             del trackers["sentry_dsn"]
     saas_ids = extract_saas(html)
     crypto = extract_crypto(html)
+    # token CONTRACTS (USDT-TRC20 …) — payment-method facts, never wallets (wp_crypto_refs)
+    token_contracts = extract_token_contracts(html)
 
     emails = extract_emails(html)[:40]
 
@@ -113,6 +115,11 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
             saas_ids[label] = uniq(list(saas_ids.get(label, [])) + list(vals))
         for label, vals in (jd.get("crypto") or {}).items():
             crypto[label] = uniq(list(crypto.get(label, [])) + list(vals))
+        _tc_seen = {t["address"] for t in token_contracts}
+        for t in (jd.get("crypto_token_contracts") or []):
+            if t.get("address") and t["address"] not in _tc_seen:
+                _tc_seen.add(t["address"])
+                token_contracts.append(t)
         for net, handles in (jd.get("socials") or {}).items():
             socials[net] = uniq(list(socials.get(net, [])) + list(handles))
         # telegram entries are dicts ({url,kind,handle}) — uniq() can't hash them, so
@@ -302,6 +309,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "trackers": trackers,
         "saas_ids": saas_ids,
         "crypto": crypto,
+        "crypto_token_contracts": token_contracts,
         "prose_selectors": prose_selectors,
         "emails": emails,
         "socials": socials,

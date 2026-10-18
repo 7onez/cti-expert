@@ -808,7 +808,9 @@ python3 tools/kb/convergence.py status <case> --stale 2  # CONVERGED vs EXPANDIN
 >
 > - `tools/kb/references/noise_filters.json` — shared **infrastructure**: managed-DNS suffixes,
 >   parking favicons/hosts, shared apexes, SaaS tenant suffixes, privacy-proxy and placeholder
->   phones, phone-length bounds.
+>   phones, phone-length bounds, registry role/functional mailbox words (`support@nic.<tld>` is
+>   noise; `support@<operator-domain>` stays a lead), and asset-filename extensions (a srcset
+>   token like `banner@2x.png` is never an email).
 > - `tools/kb/references/registrant_noise.json` — shared **registrant identity**: org suffixes,
 >   WHOIS-label junk, role-name placeholders (`Domain Admin`), privacy markers, proxy email
 >   domains/tokens, empty-hash artifacts, and the report-ingest noise domains.

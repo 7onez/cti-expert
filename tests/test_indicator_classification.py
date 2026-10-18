@@ -19,8 +19,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "intel_engine", "tools", "kb"))
 
 from ingest_webpivot import _is_privacy, _is_role_placeholder, _norm_name  # noqa: E402
-from noise_filters import (is_managed_dns, is_noise_email, is_noise_phone,  # noqa: E402
-                           is_parking_host, is_shared_infra_apex)
+from noise_filters import (is_asset_filename_email, is_managed_dns, is_noise_email,  # noqa: E402
+                           is_noise_phone, is_parking_host, is_shared_infra_apex)
 
 FAILURES = []
 
@@ -177,6 +177,10 @@ PROVIDER_EMAILS = [                       # real registrar / privacy-proxy mailb
     "info@yinsibaohu.aliyun.com",
     "abuse@nic.example",                  # registry role mailbox
     "noreply@abuse.registrar.example",    # abuse.<provider> host — whatever the local-part
+    "support@nic.example",                # functional mailbox on a registry domain
+    "billing@registrar-services.example", # …on a registrar domain (hyphen segment)
+    "webmaster@registry.example",
+    "support@namecheap.com",              # registrar provider domain — any local-part
 ]
 for em in PROVIDER_EMAILS:
     check(f"provider email is noise: {em!r}", is_noise_email(em), True)
@@ -189,9 +193,24 @@ OPERATOR_EMAILS = [                       # operator / self-hosted mailboxes —
     "x@anonymous-bank.example",
     "boss@whoisthat.example",
     "registrant@163.com",
+    "support@operator-shop.example",      # the operator's OWN functional mailboxes stay leads:
+    "admin@operator-shop.example",        # the merged role words fire only on registry domains
+    "webmaster@operator-shop.example",
+    "info@site-a.example",
+    "owner@site.zip",                     # .zip is a delegated gTLD, not an asset extension
 ]
 for em in OPERATOR_EMAILS:
     check(f"operator email is NOT noise: {em!r}", is_noise_email(em), False)
+
+# Asset FILENAMES a token regex mis-reads as addresses (the `@` of a retina @2x/@3x suffix). Left in,
+# `email:banner@2x.png` binds every site that ships the same theme asset into one "operator".
+ASSET_PSEUDO_EMAILS = ["banner@2x.png", "x@3x.webp", "asset-26@3x.png.webp", "logo@2x.SVG",
+                       "icons@1.5x.woff2", "bundle@1.2.0.min.js"]
+for em in ASSET_PSEUDO_EMAILS:
+    check(f"asset filename is not an email: {em!r}", is_asset_filename_email(em), True)
+    check(f"asset filename is noise: {em!r}", is_noise_email(em), True)
+for em in ("owner@operator.example", "owner@site.zip", "png@operator.example", "nohost@"):
+    check(f"real address is not an asset filename: {em!r}", is_asset_filename_email(em), False)
 
 # The same vocabulary judges a registrant ORG when deciding whether a phone is the proxy's.
 check("privacy-proxy org makes its phone noise",

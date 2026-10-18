@@ -34,11 +34,13 @@ from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  
                            is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS,
                            is_shared_hosting_ip, social_handle, is_whois_notice)
 
-# reuse the collector's checksum validator so bad wallets can't enter via a stale raw file either
+# reuse the collector's validator so bad wallets — checksum failures, spec test vectors and token
+# CONTRACTS (wp_crypto_refs) — can't enter via a stale raw file either. Imported from wp_extract, not
+# the pivot_extract facade: one broken sibling collector must not silently fail this gate open.
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))), "WebPivot", "tools"))
-    from pivot_extract import valid_crypto_address as _valid_wallet  # noqa: E402
+    from wp_extract import valid_crypto_address as _valid_wallet  # noqa: E402
 except Exception:
     def _valid_wallet(label, value):   # fail-open if collector not importable
         return True
@@ -1097,6 +1099,15 @@ def ingest_file(kb, path):
             ind = f"wallet:{kind}:{v}"
             kb.add_edge("domain", host, "uses_wallet", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
             kb.add_fact("indicator", ind, "kind", f"wallet_{kind}", "webpivot", COLLECTOR, observed, "high", ev)
+            n += 1
+    # Token CONTRACTS (USDT-TRC20 …, rung wallet.token_contract → kit): a public constant on every
+    # site accepting the token — payment METHOD, not payee. A domain fact only: never an edge, so
+    # two sites sharing it never cluster and it never reaches crypto_balance as a wallet node.
+    for tc in (art.get("crypto_token_contracts") or []):
+        if isinstance(tc, dict) and tc.get("address"):
+            kb.add_fact("domain", host, "payment_token_contract",
+                        f"{tc.get('label') or 'token'}:{tc.get('chain') or ''}:{tc['address']}",
+                        "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
     # --- money trail: on-page contact emails (how the operator gets reached to close the fraud) ---
     _GENERIC_EMAIL = ("support@", "info@", "admin@", "contact@", "hello@", "sales@",

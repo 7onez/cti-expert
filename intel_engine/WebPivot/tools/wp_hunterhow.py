@@ -25,6 +25,7 @@ import base64
 import datetime
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -45,6 +46,12 @@ PAGE_SIZES = (10, 20, 50, 100, 1000)
 # Master off switch, flipped by callers (e.g. --no-hunterhow). Only the NETWORK call honours it —
 # the query builder is offline and free, so it keeps emitting queries either way.
 ENABLED = True
+
+# A bare hex/colon run (fingerprint or serial) — something cert.subject can never match.
+_HEXISH = re.compile(r"[0-9a-fA-F:]{16,}")
+# The API rejects any start_time older than today − 365 days ("cannot exceed one year"), and its
+# "today" may run a day ahead of ours — so a 365-day window is retried once with start + 1 day.
+MAX_HISTORY_DAYS = 365
 
 
 def hunterhow_key():
@@ -75,8 +82,14 @@ def query_for(kind, value):
         return f'web.body="{v}"'
     if k in ("server_header", "server"):
         return f'header.server="{v}"'
-    if k in ("cert", "cert_sha256", "cert_serial"):
-        return f'cert="{v}"'
+    if k in ("cert_sha256", "cert_sha1", "cert_serial", "cert_fingerprint"):
+        return None                  # hunter.how has no working hash/serial cert field
+    if k in ("cert", "cert_subject", "cert_domain", "cert_san"):
+        # `cert="…"` answers 440 "[cert] Invalid query"; `cert.subject="<domain>"` is the working
+        # form (Quarry, live-verified 2026-10). It matches a subject/domain string, never a hash.
+        if _HEXISH.fullmatch(str(value).strip()):
+            return None
+        return f'cert.subject="{v}"'
     return None
 
 
@@ -85,11 +98,19 @@ def ui_url(query):
     return UI_URL + urllib.parse.quote(query or "", safe="")
 
 
-def _window(days):
-    """A recent [start, end] date window <= 365 days, as the API requires."""
-    days = max(1, min(int(days), 365))
+def _window(days, start=None, shift=0):
+    """A recent [start, end] date window <= MAX_HISTORY_DAYS, as the API requires. An explicit
+    `start` (ISO date) older than the API's reach is clamped to it; `shift` moves the start later."""
     end = datetime.date.today()
-    return (end - datetime.timedelta(days=days)).isoformat(), end.isoformat()
+    floor = end - datetime.timedelta(days=MAX_HISTORY_DAYS)
+    try:
+        begin = datetime.date.fromisoformat(str(start)) if start else None
+    except ValueError:
+        begin = None
+    if begin is None:
+        begin = end - datetime.timedelta(days=max(1, min(int(days), MAX_HISTORY_DAYS)))
+    begin = min(max(begin, floor) + datetime.timedelta(days=shift), end)
+    return begin.isoformat(), end.isoformat()
 
 
 def _record(query, results, ok=True):
@@ -101,10 +122,11 @@ def _record(query, results, ok=True):
             pass
 
 
-def search(query, page=1, page_size=10, days=180, fields="ip,port,domain", timeout=25):
+def search(query, page=1, page_size=10, days=180, fields="ip,port,domain", timeout=25,
+           start=None):
     """Run a hunter.how query -> a dict with {query, ui, code, total, results_count,
     query_count, query_limit, hosts:[{domain,ip,port}]}; {'skipped':...} keyless; {'error':...}
-    on transport failure. Never raises."""
+    on transport failure. Never raises. `start` (ISO date) overrides `days`, clamped to 365 days."""
     try:
         import wp_quarry_reuse as _qr
         _hit = _qr.get(_qr.hunterhow_key(query))
@@ -118,23 +140,29 @@ def search(query, page=1, page_size=10, days=180, fields="ip,port,domain", timeo
     if not hunterhow_configured():
         out["skipped"] = "no HUNTERHOW_API_KEY configured — run the query in the web UI (see 'ui')"
         return out
-    start, end = _window(days)
     q64 = base64.b64encode(query.encode("utf-8")).decode("ascii")
-    params = urllib.parse.urlencode({
-        "api-key": hunterhow_key(), "query": q64, "page": page, "page_size": page_size,
-        "fields": fields, "start_time": start, "end_time": end})
-    try:
-        req = urllib.request.Request(API_URL + "?" + params,
-                                     headers={"User-Agent": DEFAULT_UA,
-                                              "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = json.load(r)
-    except urllib.error.HTTPError as e:
-        out["error"] = f"HTTP {e.code}"
-        return out
-    except Exception as e:
-        out["error"] = str(e)
-        return out
+    for shift in (0, 1):
+        out["window"] = list(_window(days, start, shift))
+        params = urllib.parse.urlencode({
+            "api-key": hunterhow_key(), "query": q64, "page": page, "page_size": page_size,
+            "fields": fields, "start_time": out["window"][0], "end_time": out["window"][1]})
+        try:
+            req = urllib.request.Request(API_URL + "?" + params,
+                                         headers={"User-Agent": DEFAULT_UA,
+                                                  "Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = json.load(r)
+        except urllib.error.HTTPError as e:
+            out["error"] = f"HTTP {e.code}"
+            return out
+        except Exception as e:
+            out["error"] = str(e)
+            return out
+        # The API's "today" can run a day ahead: a full-year start reads as too old — retry once.
+        if (shift == 0 and body.get("code") != 200
+                and "one year" in str(body.get("message") or "").lower()):
+            continue
+        break
     code = body.get("code")
     out["code"] = code
     data = body.get("data") or {}

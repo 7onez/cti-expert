@@ -60,13 +60,29 @@ ALLOW="$ALLOW"'|(registrant|operator)@'
 #   0x529084…  the canonical EIP-55 checksum test vector from the spec itself
 #   UA-26575989-44  a template-default Analytics property shared by unrelated sites —
 #                   noise_tracker_ids, the same role as the parking-favicon hashes
-# Verified before allowing: the two Tron strings were base58check-decoded. The contract above is
-# valid (hence real, hence a genuine public constant); the Engage test fixture TJ8y5w… fails its
-# checksum, i.e. it is synthetic by construction and needs no entry here.
+# crypto_reference_addresses.json (wp_crypto_refs) — token contracts and doc/burn constants:
+#   0xA0b869…  USDC ERC-20 token contract           — token_contracts
+#   0x6B1754…  DAI ERC-20 token contract            — token_contracts
+#   0x4Fabb1…  BUSD ERC-20 token contract           — token_contracts
+#   TEkxiTeh…  USDC-TRC20 token contract (Tron)     — token_contracts
+#   0xd8dA6B…  vitalik.eth, cited in docs/tutorials — reference_crypto_addresses
+#   0xde0B29…  Ethereum Foundation address          — reference_crypto_addresses
+#   0x71C765…  ubiquitous docs example address      — reference_crypto_addresses
+#   T9yD14Nj…  Tron black-hole (all-zero payload)   — reference_crypto_addresses
+#   THPvaUho…  TronWeb docs example address         — reference_crypto_addresses
+# Verified before allowing: every Tron string was base58check-decoded and every 0x string passes
+# its EIP-55 checksum. The contracts above are valid (hence real, hence genuine public constants);
+# the Engage test fixture TJ8y5w… fails its checksum, i.e. it is synthetic by construction and
+# needs no entry here.
 PUBLIC_CONST='TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t|0xdAC17F958D2ee523a2206206994597C13D831ec7'
 PUBLIC_CONST="$PUBLIC_CONST"'|0x55d398326f99059fF775485246999027B3197955'
 PUBLIC_CONST="$PUBLIC_CONST"'|0x0{36}dEaD|0x52908400098527886E0F7030069857D2E4169EE7'
 PUBLIC_CONST="$PUBLIC_CONST"'|UA-26575989-44'
+PUBLIC_CONST="$PUBLIC_CONST"'|0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48|0x6B175474E89094C44Da98b954EedeAC495271d0F'
+PUBLIC_CONST="$PUBLIC_CONST"'|0x4Fabb145d64652a948d72533023f6E7A623C7C53|TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8'
+PUBLIC_CONST="$PUBLIC_CONST"'|0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045|0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe'
+PUBLIC_CONST="$PUBLIC_CONST"'|0x71C7656EC7ab88b098defB751B7401B5f6d8976F|T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb'
+PUBLIC_CONST="$PUBLIC_CONST"'|THPvaUhoh2Qn2y9THCZML3H815hhFhn5YC'
 ALLOW="$ALLOW|$PUBLIC_CONST"
 
 HITS="$(

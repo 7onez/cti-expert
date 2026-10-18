@@ -113,7 +113,7 @@ candidates to monitor (NRDs of a brand appear over time). Same `pivots` schema �
 case's web infrastructure.
 
 **Cost:** free by default — **crt.sh + DNS spend zero credits**. Add `--hunt-fofa` (FOFA
-`cert="label"`) and/or `--hunt-urlscan` (`page.domain:*label*`) for the metered keyword sweeps;
+`cert.subject="label"`) and/or `--hunt-urlscan` (`page.domain:*label*`) for the metered keyword sweeps;
 both are recorded to the `api_usage` ledger. `--hunt-max N` caps generated candidates (default 600,
 ordered typo → combosquat → TLD-sweep so a cap keeps the closest lookalikes).
 
@@ -184,6 +184,14 @@ still records the intended host with its passive intel (urlscan related domains/
 is a persisted fact, not dropped. `recovered_via` in `meta` records the source. `--no-fallback`
 disables this.
 
+A urlscan scan that captured a **gate** instead of the site — Chrome error, anti-bot fake error,
+a blocking status (403/503/52x …) or a challenge title ("Just a moment...", "Attention Required! |
+Cloudflare", DDoS-Guard …; list in `references/urlscan_endpoints.json -> gated`) — is never parsed
+as the operator's page: the newest **ungated** scan is used instead, and the deep-archive /
+exhaust DOM passes skip gated captures too. When every stored scan is gated, nothing is recovered
+from urlscan and `meta.urlscan_dom_skipped` records why (`skipped`, `all_gated`, per-scan `gated`
+reasons).
+
 ## Cloudflare-walled targets — detect + escalate (`--solve-cf`)
 
 Many scam/leak sites sit behind Cloudflare's **managed challenge / Turnstile** (HTTP 403/503 JS
@@ -221,7 +229,11 @@ python3 "$WP/tools/pivot_extract.py" https://target.example --render \
 `--save-dom` writes whatever was fetched (use `--render` to store the post-JS DOM — client-side
 content like inline form scripts only appears there). `--submit` attaches `archives.wayback.snapshot`
 and `archives.urlscan.result` to the JSON. A Wayback read-timeout does **not** mean the capture
-failed — Save-Page-Now usually completes server-side.
+failed — Save-Page-Now usually completes server-side. When every stored urlscan scan of the target
+is gated, that one urlscan submission goes out from the target's ccTLD country (`.vn` → `vn`; none
+for generic-sold ccTLDs like `.io`/`.co`, list in `urlscan_endpoints.json -> resubmit`) with the
+Android UA, recorded as `archives.urlscan.gated_resubmit`. `--free-only` skips the urlscan scan
+(it spends a credit).
 
 ## Historical analytics (Bellingcat method) — `tools/wayback_ga.py`
 
@@ -517,7 +529,10 @@ didn't look."
 ## What it extracts
 
 (see `references/PivotArtifacts.md`): favicon mmh3/md5/sha256, analytics & ad IDs (GA4 `G-`, `GTM-`,
-AdSense `pub-`, FB Pixel, Yandex, Hotjar, Matomo, Sentry DSN, …), crypto wallets (BTC/ETH/XMR/TRON/LTC),
+AdSense `pub-`, FB Pixel, Yandex, Hotjar, Matomo, Sentry DSN, …), crypto wallets (BTC/ETH/XMR/TRON/LTC —
+checksum-validated; spec test vectors / genesis / burn addresses are dropped and token **contracts**
+such as USDT-TRC20 go to `crypto_token_contracts` as a payment-method fact that never clusters or
+balance-looks-up, both per `references/crypto_reference_addresses.json`),
 **app-download artifacts** (direct `.apk`/`.aab`/`.ipa` URLs + the backend host serving them, **desktop
 "trading terminal" installers** — `.exe`/`.msi`/`.dmg`/`.pkg`/`.appimage`/`.deb` — Android package ids,
 iOS app ids, smart-app-banner meta, `intent://` deep links, and the APK **signing-cert SHA-256** +

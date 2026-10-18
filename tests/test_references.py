@@ -113,6 +113,7 @@ def check():
     import wp_sellers                                                              # noqa: E401
     import wp_appdev                                                               # noqa: E401
     import whois_eras                                                              # noqa: E401
+    import wp_crypto_refs                                                          # noqa: E401
     _kb_tools = os.path.join(ENGINE, "tools", "kb")
     if _kb_tools not in sys.path:
         sys.path.append(_kb_tools)
@@ -199,6 +200,20 @@ def check():
         # and two extensions are fetched, so a bundle-heavy SPA loses its API/app-download layer.
         ("wp_net.URLSCAN_DOM_ASSETS_CFG.extensions", wp_net.URLSCAN_DOM_ASSETS_CFG["extensions"],
          wp_net._USCAN_FALLBACK["dom_assets"]["extensions"]),
+        # gated: on the fallback only a 403/429/503 or 'just a moment...' is a gate, so a DDoS-Guard
+        # or 'Attention Required!' capture is parsed as the operator's kit (CDN selectors as pivots).
+        ("wp_net.URLSCAN_GATED_LABELS", wp_net.URLSCAN_GATED_LABELS,
+         wp_net._USCAN_FALLBACK["gated"]["labels"]),
+        ("wp_net.URLSCAN_GATED_STATUS", wp_net.URLSCAN_GATED_STATUS,
+         wp_net._USCAN_FALLBACK["gated"]["statuses"]),
+        ("wp_net.URLSCAN_GATED_TITLES", wp_net.URLSCAN_GATED_TITLES,
+         wp_net._USCAN_FALLBACK["gated"]["titles"]),
+        # resubmit: on the fallback .cc/.ws/.to … read as countries, so an all-gated rescan goes out
+        # from an unrelated country; with no alias .uk sends `uk`, which urlscan rejects.
+        ("wp_net.URLSCAN_GENERIC_CCTLDS", wp_net.URLSCAN_GENERIC_CCTLDS,
+         wp_net._USCAN_FALLBACK["resubmit"]["generic_cctlds"]),
+        ("wp_net.URLSCAN_CCTLD_ALIASES", wp_net.URLSCAN_CCTLD_ALIASES,
+         wp_net._USCAN_FALLBACK["resubmit"]["cctld_aliases"]),
         ("evidence_report._NOISE_EMAIL_SUBSTR", evidence_report._NOISE_EMAIL_SUBSTR,
          evidence_report._RN_FALLBACK["noise_email_substrings"]),
         # VN business registry (keyless): `sources` are the mirror URL templates — on the fallback only
@@ -268,6 +283,24 @@ def check():
          noise_filters._FALLBACK["registrar_role_localparts"]),
         ("noise_filters.WHOIS_NOTICE_PHRASES", noise_filters.WHOIS_NOTICE_PHRASES,
          noise_filters._FALLBACK["whois_notice_phrases"]),
+        # Email / apex noise (RULE 5): on the fallback srcset filenames (`banner@2x.woff2`) become
+        # email indicators, a registry's support@/billing@ box reads as a registrant, and a page's
+        # session-replay / attribution / chat-widget vendors seed the frontier as operator apexes.
+        ("noise_filters.ASSET_FILENAME_EXTENSIONS", noise_filters.ASSET_FILENAME_EXTENSIONS,
+         noise_filters._FALLBACK["asset_filename_extensions"]),
+        ("noise_filters.ROLE_EMAIL_LOCALPARTS", noise_filters.ROLE_EMAIL_LOCALPARTS,
+         noise_filters._FALLBACK["role_email_localparts"]),
+        ("noise_filters.SHARED_INFRA_APEXES", noise_filters.SHARED_INFRA_APEXES,
+         noise_filters._FALLBACK["shared_infra_apexes"]),
+        ("noise_filters.SAAS_TENANT_SUFFIXES", noise_filters.SAAS_TENANT_SUFFIXES,
+         noise_filters._FALLBACK["saas_tenant_suffixes"]),
+        # Crypto reference constants: on the 2-entry fallbacks the other BIP/EIP test vectors and burn
+        # addresses extract as wallets, and USDC/DAI/BUSD contracts read as one shared payout wallet
+        # that clusters every site accepting the token (an owner-rung false merge).
+        ("wp_crypto_refs.REFERENCE_ADDRESSES", wp_crypto_refs.REFERENCE_ADDRESSES,
+         wp_crypto_refs._CRYPTO_REF_FALLBACK["reference_crypto_addresses"]),
+        ("wp_crypto_refs.TOKEN_CONTRACTS", wp_crypto_refs.TOKEN_CONTRACTS,
+         wp_crypto_refs._CRYPTO_REF_FALLBACK["token_contracts"]),
     ]
     for name, loaded, fallback in consumers:
         ok(len(loaded) > len(fallback),
@@ -450,6 +483,15 @@ def check():
        and wp_certindex.CFG["max_pages"] == ct_doc["certindex"]["max_pages"]
        and wp_certkit.CFG["session_ttl_seconds"] == ct_doc["certkit"]["session_ttl_seconds"],
        "keyed CT backups (CertKit/CertIndex/Netlas/Censys) load from ct_sources.json, not the fallback")
+    # On the fallback only crt.sh counts as a real-serial source, so a CertKit/Netlas-backed cert
+    # silently loses its FOFA cert.sn pivot.
+    swp = os.path.join(ROOT, "scripts", "webpivot")
+    if swp not in sys.path:
+        sys.path.insert(0, swp)
+    import cert_pivot                                                             # noqa: E401
+    ok(cert_pivot.REAL_SERIAL_SOURCES == set(ct_doc["real_serial_sources"]["values"])
+       and len(cert_pivot.REAL_SERIAL_SOURCES) > len(cert_pivot._CT_SERIAL_FALLBACK["real_serial_sources"]),
+       "cert_pivot real-serial CT sources load from ct_sources.json → real_serial_sources, not the fallback")
 
     # --- 6b. Wayback collection_search + urlscan field_search + exchange_wallets (phase 3) ------
     ok(isinstance(we_doc.get("collection_search"), dict)
@@ -561,11 +603,13 @@ def check():
     with open(os.path.join(ENGINE, "tools", "kb", "references", "rungs.json"),
               encoding="utf-8") as fh:
         rg_doc = json.load(fh)
+    _fo = rg_doc["fact_only_node_classes"]["entries"]
     ok("fact_only_node_classes" in selector_types._RUNGS_REF
-       and all(selector_types.fact_only_classes(r) == frozenset(cs)
-               for r, cs in rg_doc["fact_only_node_classes"]["entries"].items())
-       and selector_types._FACT_ONLY_NODE_CLASSES_FALLBACK == {"quarry.page": ["page.email", "page.phone"]},
-       "selector_types.fact_only_classes loads fact_only_node_classes from rungs.json")
+       and all(selector_types.fact_only_classes(r) == frozenset(cs) | frozenset(_fo.get("*", []))
+               for r, cs in _fo.items())
+       and selector_types._FACT_ONLY_NODE_CLASSES_FALLBACK == {"quarry.page": ["page.email", "page.phone"],
+                                                               "*": ["wallet.token_contract"]},
+       "selector_types.fact_only_classes loads fact_only_node_classes from rungs.json (\"*\" = every route)")
     import noise_filters                                                           # noqa: E401
     with open(os.path.join(ENGINE, "tools", "kb", "references", "noise_filters.json"),
               encoding="utf-8") as fh:

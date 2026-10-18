@@ -31,6 +31,7 @@ from wp_common import *  # noqa
 from wp_hash import *  # noqa
 from wp_net import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA in references/*.json
+from wp_crypto_refs import reference_label, token_contract  # noqa: E402 — public crypto constants
 
 # DATA: references/generic_labels.json — base-rate floors for the structural fingerprints.
 # Below these a fingerprint is universal boilerplate and identifies nobody, so emitting it
@@ -371,9 +372,8 @@ def _bech32_ok(s: str) -> bool:
             chk ^= g if (top >> i) & 1 else 0
     return chk in (1, 0x2bc830a3)                # bech32 (v0) or bech32m (v1+)
 
-def valid_crypto_address(label: str, value: str) -> bool:
-    """Reject regex matches that aren't real addresses (md5/asset hashes false-positive the
-    legacy BTC/LTC pattern). Money-tracing depends on this — an unvalidated wallet is noise."""
+def _address_checksum_ok(label: str, value: str) -> bool:
+    """Structural/checksum validity only — md5/asset hashes false-positive the legacy BTC/LTC pattern."""
     if label == "eth":
         return bool(re.fullmatch(r"0x[a-fA-F0-9]{40}", value))       # md5 has no 0x prefix
     if label == "xmr":
@@ -386,13 +386,36 @@ def valid_crypto_address(label: str, value: str) -> bool:
     versions = _B58_VERSIONS.get(label)
     return versions is None or payload[0] in versions
 
+def valid_crypto_address(label: str, value: str) -> bool:
+    """True iff value may be a payee WALLET: checksum-valid AND not a public constant. Spec test
+    vectors / genesis / burn addresses and token CONTRACTS (references/crypto_reference_addresses.json)
+    are rejected — a USDT contract on every USDT-accepting site would otherwise read as one shared
+    payout wallet and fuse unrelated domains. Money-tracing depends on this — an unvalidated wallet
+    is noise. ingest_webpivot / clean_kb gate on this too, so stale raw files cannot reintroduce them."""
+    if not _address_checksum_ok(label, value):
+        return False
+    return not (reference_label(value) or token_contract(value))
+
 def extract_crypto(text: str):
+    """{coin: [payee wallet, …]} — reference constants and token contracts excluded."""
     found = {}
     for label, pat in CRYPTO_PATTERNS:
         vals = [v for v in uniq(re.findall(pat, text)) if valid_crypto_address(label, v)]
         if vals:
             found[label] = vals[:25]
     return found
+
+def extract_token_contracts(text: str):
+    """Known token contracts on the page — [{address, chain, label}]. Payment-METHOD evidence
+    ("this site takes USDT-TRC20"), never a wallet: ingested as a domain fact, not an edge."""
+    out, seen = [], set()
+    for label, pat in CRYPTO_PATTERNS:
+        for v in uniq(re.findall(pat, text or "")):
+            tc = token_contract(v)
+            if tc and tc["address"] not in seen and _address_checksum_ok(label, v):
+                seen.add(tc["address"])
+                out.append(tc)
+    return out
 
 
 # --- Android / iOS app-download artifacts -------------------------------------------

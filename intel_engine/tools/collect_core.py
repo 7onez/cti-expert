@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from typing import Any, Callable, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -41,6 +42,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "WebPivot", "tools"))
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
+import wp_exhaust  # noqa: E402 — execution-outcome vocabulary + collection_outcomes.json writer
 
 
 def host_of(url: str) -> str:
@@ -141,10 +143,12 @@ def collect_host(
 ) -> dict[str, Any]:
     """Collect ONE host end-to-end and return a summary dict; never raises.
 
-    Pipeline: cache-reuse (already investigated in ANY case?) → egress policy (refuse a direct
-    live fetch of a hostile target) → collector run with unsupported-flag filtering → Cloudflare
-    retry (flaresolverr/browser) → optional evidence manifest. Self-contained + stdlib, so it is
-    safe to fan out across threads.
+    Pipeline: cache-reuse (already investigated in ANY case?) → onion isolation (a .onion never
+    reaches the clearnet collector) → egress policy (refuse a direct live fetch of a hostile
+    target) → collector run with unsupported-flag filtering → Cloudflare retry
+    (flaresolverr/browser) → optional evidence manifest → execution outcomes recorded in
+    cases/<case>/collection_outcomes.json (wp_exhaust vocabulary). Self-contained + stdlib, so it
+    is safe to fan out across threads.
 
     `collector` is the pivot_extract.py path (absolute, or relative to `root`). `render_py` is the
     interpreter used for browser render/screenshot (defaults to `py`). `manifest_cb(case, host,
@@ -152,12 +156,14 @@ def collect_host(
     harness passes its `_append_manifest`; the deterministic pipeline passes None). `extra_flags`
     are appended verbatim before filtering (e.g. `--whois-reverse` / `--fofa-full` / `--render`).
 
-    Result dict keys: host, ok, reused, error, dom, n_pivots, note, status, collect_failed, data.
+    Result dict keys: host, ok, reused, error, dom, n_pivots, note, status, collect_failed, data,
+    outcome (and `skipped` for a policy skip — onion / hostile — which collect_many never retries).
     `status` is one of 'ok' (the live fetch itself succeeded), 'recovered (<source>)' (content came
-    from an archive/urlscan capture instead), or 'unreachable (<reason>)' (neither) — `note` always
-    starts with it, so the printed per-host line never reports 'ok' for a dead live target.
-    `collect_failed` is True only for the 'unreachable' case — use it, not `ok`, to tell a real
-    collection failure from a merely-cached/host-derived hit.
+    from an archive/urlscan capture instead), 'unreachable (<reason>)' (neither), 'error (…)' /
+    'timed_out (…)' (the collector crashed or produced no fresh file), or 'skipped (onion)' —
+    `note` starts with it on a collected host, so the printed per-host line never reports 'ok'
+    for a dead live target. `collect_failed` is True for 'unreachable' and for a crashed/timed-out
+    collector — use it, not `ok`, to tell a real collection failure from a cached/host-derived hit.
     """
     render_py = render_py or py
     collpath = collector if os.path.isabs(collector) else os.path.join(root, collector)
@@ -190,11 +196,35 @@ def collect_host(
             return {"host": host, "ok": True, "reused": True, "error": None, "dom": dom,
                     "n_pivots": len(data.get("pivots", [])), "note": " (cached)", "data": data}
 
+    case_dir = os.path.join(root, "cases", case)
+
+    # ONION ISOLATION — a .onion is never handed to the collector. pivot_extract's live fetch,
+    # TLS/JARM/MX probes, live-DNS anchor, WHOIS/RDAP and CT all resolve or query the name over
+    # the clearnet (system resolver / rdap.org / crt.sh), so even a Tor-proxied fetch would leak
+    # it through the MX `dig` and the DNS anchor. Recorded as a policy skip, not a failure: the
+    # clearnet-only layers become not-applicable; the rest stay open for an onion-safe route
+    # (corpus/search pivots of the string still run through the harness and enrichment).
+    if wp_exhaust.is_onion_host(host):
+        skip = wp_exhaust.outcome("skipped_policy", "onion")
+        wp_exhaust.record_outcomes(
+            case_dir, host, collect=skip,
+            layers=wp_exhaust.layer_outcomes(
+                {"meta": {"host": host}, "pivots": []},
+                failure=wp_exhaust.outcome("skipped_policy", "onion_collector")))
+        return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None,
+                "dom": dom, "note": "", "skipped": True, "collect_failed": False,
+                "status": "skipped (onion)", "outcome": skip,
+                "error": ("skipped by policy: .onion — the clearnet collector would resolve it via "
+                          "the system DNS; corpus/search pivots of the string still apply")}
+
     # EGRESS POLICY — never let the analyst's own IP touch hostile infra without passive/proxy.
     if hostile and not passive and not proxy:
+        skip = wp_exhaust.outcome("skipped_policy", "hostile")
+        wp_exhaust.record_outcomes(case_dir, host, collect=skip)
         return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,
-                "note": "", "error": (f"BLOCKED by egress policy: {host} is hostile. Re-call with "
-                                      "passive=true or proxy='<cidr>'.")}
+                "note": "", "skipped": True, "outcome": skip,
+                "error": (f"BLOCKED by egress policy: {host} is hostile. Re-call with "
+                          "passive=true or proxy='<cidr>'.")}
 
     args = [url, "--pretty", "-o", out, "--save-dom", dom]
     if timeout is not None:
@@ -220,11 +250,35 @@ def collect_host(
     # exhaustive (that is the separate resumable `wayback-exhaust` job). Give the run headroom.
     _deep = "--deep-archive" in args
     _sub_timeout = 600 if _deep else (300 if want_shot else 240)
-    r = run([screenshot_py, *base], cwd=root, timeout=_sub_timeout)
-    data = load_json(out)
+    # EXECUTION OUTCOME — a collector that crashes, times out or exits without writing a FRESH
+    # file is FAILED (re-runnable), never "collected, found nothing". The mtime check matters on
+    # a forced re-collect: the previous run's file is still on disk and would otherwise be read
+    # back as this run's result.
+    before = os.path.getmtime(out) if os.path.exists(out) else None
+    t0 = time.monotonic()
+    r, run_err = None, None
+    try:
+        r = run([screenshot_py, *base], cwd=root, timeout=_sub_timeout)
+    except subprocess.TimeoutExpired as e:
+        run_err = ("timed_out", f"collector timed out after {e.timeout}s")
+    except Exception as e:  # noqa: BLE001 — collect_host never raises
+        run_err = ("error", f"{type(e).__name__}: {e}")
+    elapsed = time.monotonic() - t0
+    fresh = os.path.exists(out) and os.path.getmtime(out) != before
+    data = load_json(out) if (run_err is None and fresh) else None
     if data is None:
+        if run_err is None:
+            rc = getattr(r, "returncode", None)
+            run_err = ("timed_out" if rc == 124 else "error",
+                       f"exit {rc}: {((getattr(r, 'stderr', '') or '')[-300:]).strip() or 'no output file'}")
+        fail = wp_exhaust.outcome(run_err[0], run_err[1], elapsed)
+        wp_exhaust.record_outcomes(
+            case_dir, host, collect=fail,
+            layers=wp_exhaust.layer_outcomes({"meta": {"host": host}, "pivots": []}, failure=fail))
         return {"host": host, "ok": False, "reused": False, "n_pivots": 0, "data": None, "dom": dom,
-                "note": "", "error": f"pivot_extract failed for {host}: {(r.stderr or '')[-500:]}"}
+                "note": "", "collect_failed": True, "status": f"{run_err[0]} ({run_err[1][:120]})",
+                "outcome": fail,
+                "error": f"pivot_extract {run_err[0]} for {host}: {run_err[1]}"}
 
     cf = (data.get("meta") or {}).get("cloudflare")             # Cloudflare interstitial? retry
     used = "direct"
@@ -264,8 +318,20 @@ def collect_host(
     # Never silently drop a requested capability — an unsupported flag means the collector in use
     # cannot do that step, and the analyst has to know the evidence was not captured.
     dropnote = f"  · unsupported by collector, skipped: {' '.join(dropped)}" if dropped else ""
+    # Per-layer outcomes for this run: evidence → ran; a flag this run passed (after the --help
+    # filter) → skipped_policy; meta.capability → skipped_no_key / free-only. `--no-archive` is a
+    # policy pseudo-flag: capture is off because pivot_extract ran without --case.
+    n_piv = len(data.get("pivots", []))
+    done = wp_exhaust.outcome("ran" if n_piv else "empty", status, elapsed)
+    try:
+        wp_exhaust.record_outcomes(
+            case_dir, host, collect=done,
+            layers=wp_exhaust.layer_outcomes(
+                data, flags=list(args) + (["--no-archive"] if (smoke or no_archive) else [])))
+    except OSError as e:  # the outcome file is bookkeeping — never fail a good collection on it
+        dropnote += f"  · outcome record not written ({e})"
     return {"host": host, "ok": True, "reused": False, "error": None, "dom": dom,
-            "n_pivots": len(data.get("pivots", [])), "note": status + cfnote + archnote + dropnote,
+            "n_pivots": n_piv, "note": status + cfnote + archnote + dropnote, "outcome": done,
             # `ok` above means only "pivot_extract produced a parseable file" — it stays True even
             # for the 'unreachable' branch (WHOIS/DNS-derived pivots can still land with zero live
             # content), so it is the WRONG signal for "did we actually collect this host". Callers
@@ -295,7 +361,7 @@ def collect_many(
     def _one(seed: str) -> dict[str, Any]:
         res = collect_host(seed, case, **collect_kwargs)
         tries = 0
-        while (not res.get("ok")) and tries < retry_misses:
+        while (not res.get("ok")) and not res.get("skipped") and tries < retry_misses:
             res = collect_host(seed, case, **{**collect_kwargs, "force": True})
             tries += 1
         return res

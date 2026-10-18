@@ -110,7 +110,8 @@ Automated by [`cert_pivot.py`](../../../scripts/webpivot/cert_pivot.py) (`intel.
 |---|---|---|---|
 | **Shodan** | `ssl.cert.fingerprint:<hash>` | **SHA-256** (SHA-1 alt) | key → live hosts; web link keyless |
 | **Censys** | `web.cert.fingerprint_sha256=<hex>` / `host.services.cert.fingerprint_sha256=<hex>` (Platform CenQL; `cert.` = the cert record, no hosts) | **SHA-256** | `CENSYS_PAT`/`CENSYS_API_KEY` (+`CENSYS_ORG_ID`) |
-| **FOFA** | `cert="<sha256>"` | **SHA-256** | base64-wrapped web query |
+| **FOFA** | `cert.sn="<decimal x509 serial>"` | **serial** (hex → decimal) | base64-wrapped web query. `cert="<sha256>"` matches **nothing** (Quarry, live-verified 2026-10), so no fingerprint query is emitted. Only a REAL serial qualifies: the served leaf's (parsed from its DER), an explicit `--serial`, or a CT record backed by a source in `ct_sources.json → real_serial_sources` (crt.sh / CertKit / Netlas). CertSpotter (issuance id), CertIndex, Shodan CTL and Censys surrogates are skipped — no real serial = no FOFA query, with a note. A serial containing `"`, `\` or a control char is never embedded (the target controls its cert fields) |
+| **Hunter.how** | `cert.subject="<domain>"` | — (subject/domain string) | `cert="…"` is refused (440 "[cert] Invalid query"); there is **no** hash/serial cert field, so a fingerprint or serial yields no Hunter.how query. API window = last **365 days** (an older start is clamped; a "cannot exceed one year" refusal is retried once with the start one day later) |
 | **crt.sh** | `?id=<n>` / `?serial=<hex>` / `?q=<sha256>` | — | keyless; SANs = sibling domains |
 
 The leaf-cert fingerprint is computed **keyless** from a live TLS handshake (stdlib `ssl`);
@@ -130,7 +131,7 @@ searches server-side.
 | **Netlas** — DNS + host responses | Freemium | REST, key |
 | **Silent Push** — infra pivots, live scans, attack clustering | Mostly paid + community | REST, key |
 | **HackerTarget** — reverse IP / DNS | Free (limited) + paid | REST |
-| **Hunter.how** — domain/ip/cert/favicon/body asset search, CN-dense | Freemium | REST, key |
+| **Hunter.how** — domain/ip/`cert.subject`/favicon/body asset search, CN-dense, last 365 days only | Freemium | REST, key |
 
 **IPPivot noise control** — WebPivot's `wp_ippivot.py` classifies each IP as an *origin candidate*
 (reverse-IP co-tenants = same-operator leads) or *noise* (shared CDN/cloud edge / bulk hosting,

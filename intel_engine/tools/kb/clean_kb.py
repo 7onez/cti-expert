@@ -42,7 +42,7 @@ from ingest_webpivot import (_is_role_placeholder, _ORG_SUFFIX,  # noqa: E402
 # only carry a CURRENT-era value; anything else is a previous owner and belongs in a fact, not here.
 from whois_eras import owner_values  # noqa: E402
 try:
-    from pivot_extract import valid_crypto_address as _valid_wallet
+    from wp_extract import valid_crypto_address as _valid_wallet
 except Exception:
     def _valid_wallet(label, value):
         return True
@@ -72,7 +72,7 @@ def classify_edge(e):
     if e["rel"] == "uses_wallet" and e["dst_type"] == "indicator" and e["dst"].startswith("wallet:"):
         kind, addr = _wallet_parts(e["dst"])
         if addr and not _valid_wallet(kind, addr):
-            return ("drop", "invalid wallet (checksum)")
+            return ("drop", "invalid wallet (checksum / reference vector / token contract)")
     if e["rel"] == "registered_by" and e["dst_type"] in ("person", "org"):
         # Generic registrant ROLE boilerplate ("Domain Admin", "Hostmaster", …). The ingester now
         # rejects these at the door, but edges created BEFORE that guard persist — and one such

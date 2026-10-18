@@ -16,6 +16,10 @@ whether a scan may start (quarry_bridge.py). This module only speaks the protoco
     kind="auth" is terminal.
   * Attribution rails live in quarry_bridge.py, not here: this client returns Quarry's own JSON
     and classifies nothing.
+  * Tool-list freshness: Quarry fingerprints its tool set into serverInfo.version and treats a
+    session that calls tools without listing them as stale (notifications/tools/list_changed plus
+    a notice block appended to the result). Every session lists tools right after initialize,
+    re-lists when the server pushes list_changed, and refuses a tool the current list lacks.
 
 Endpoints and timings: references/quarry.json (RULE 3). Endpoint URL and key: environment.
 """
@@ -65,6 +69,8 @@ FINDING_RUNGS = dict(_Q["finding_rungs"])
 
 # Quarry finding/connection kinds whose value is a tracker id, classified per value below.
 TRACKER_CLASS = "tracker"
+
+_LIST_CHANGED = "notifications/tools/list_changed"
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -121,6 +127,8 @@ class Session:
         self.session_id = None
         self._id = 0
         self.server = {}
+        self.tools = None          # name -> tool dict from the last tools/list; None = never listed
+        self.list_changed = False  # the server pushed list_changed since that listing
 
     def _headers(self):
         h = {"User-Agent": DEFAULT_UA, "Content-Type": "application/json",
@@ -153,7 +161,10 @@ class Session:
             return None, _fail("transient", f"{type(e).__name__}: {e}")
         if body.get("id") is None:
             return None, None
-        msg = _parse_rpc(raw, ctype)
+        msgs = _rpc_messages(raw, ctype)
+        if any(m.get("method") == _LIST_CHANGED for m in msgs):
+            self.list_changed = True
+        msg = _reply(msgs, body["id"])
         if msg is None:
             return None, _fail("protocol", "response carried no JSON-RPC message")
         if msg.get("error"):
@@ -172,18 +183,48 @@ class Session:
             return err
         self.server = (msg.get("result") or {}).get("serverInfo") or {}
         _n, nerr = self._post({"jsonrpc": "2.0", "method": "notifications/initialized"})
-        return nerr
+        if nerr:
+            return nerr
+        self.list_tools()          # best effort: a failed listing leaves self.tools as it was
+        return None
+
+    def list_tools(self):
+        """tools/list over every page -> (name -> tool dict, error). Marks this session current
+        with Quarry; on error self.tools keeps the previous listing."""
+        tools, cursor, seen = {}, None, set()
+        while True:
+            msg, err = self._post({"jsonrpc": "2.0", "id": self._next(), "method": "tools/list",
+                                   "params": {"cursor": cursor} if cursor else {}})
+            if err:
+                return None, err
+            res = msg.get("result") or {}
+            for t in res.get("tools") or []:
+                if isinstance(t, dict) and t.get("name"):
+                    tools[t["name"]] = t
+            seen.add(cursor)
+            cursor = res.get("nextCursor")
+            if not cursor or cursor in seen:
+                break
+        self.tools, self.list_changed = tools, False
+        return tools, None
 
     def _next(self):
         self._id += 1
         return self._id
 
     def call(self, name, arguments=None):
-        """tools/call -> (result dict, error dict). A lost session re-initialises once."""
+        """tools/call -> (result dict, error dict). A lost session re-initialises once. A tool
+        missing from the current list comes back as a tool error without egress."""
         if not self.session_id:
             err = self.initialize()
             if err:
                 return None, err
+        elif self.list_changed:
+            self.list_tools()
+        if self.tools is not None and name not in self.tools:
+            return {"error": f"Quarry no longer exposes {name} (server "
+                             f"{self.server.get('version') or '?'}): its tool list changed",
+                    "kind": "tool"}, None
         msg, err = self._rpc_call(name, arguments or {})
         if err and err.get("kind") == "stale":
             self.session_id = None
@@ -202,23 +243,33 @@ class Session:
         })
 
 
-def _parse_rpc(raw, ctype):
-    """A Streamable-HTTP reply is either one JSON body or an SSE stream of `data:` lines.
-    The message answering the request is the last JSON-RPC object in the stream."""
-    found = None
+def _rpc_messages(raw, ctype):
+    """A Streamable-HTTP reply is either one JSON body or an SSE stream of `data:` lines that may
+    carry server notifications next to the answer. Returns every JSON-RPC object, in order."""
     if "event-stream" in (ctype or ""):
+        out = []
         for line in raw.splitlines():
             line = line.strip()
             if line.startswith("data:"):
                 try:
-                    found = json.loads(line[5:].strip())
+                    out.append(json.loads(line[5:].strip()))
                 except ValueError:
                     continue
-        return found
-    try:
-        return json.loads(raw) if raw.strip() else None
-    except ValueError:
-        return None
+    else:
+        try:
+            out = [json.loads(raw)] if raw.strip() else []
+        except ValueError:
+            out = []
+    return [m for m in out if isinstance(m, dict)]
+
+
+def _reply(msgs, want_id):
+    """The response answering request `want_id`; else the last response (no `method`)."""
+    responses = [m for m in msgs if "method" not in m]
+    for m in responses:
+        if m.get("id") == want_id:
+            return m
+    return responses[-1] if responses else None
 
 
 def _tool_result(msg):
@@ -233,14 +284,15 @@ def _tool_result(msg):
     sc = res.get("structuredContent")
     if isinstance(sc, dict):
         return sc
-    text = " ".join(b.get("text", "") for b in res.get("content") or []
-                    if isinstance(b, dict)).strip()
-    parsed = None
-    try:
-        parsed = json.loads(text) if text else None
-    except ValueError:
-        parsed = None
-    return parsed if isinstance(parsed, dict) else {"text": text}
+    blocks = [b.get("text", "") for b in res.get("content") or [] if isinstance(b, dict)]
+    for block in blocks:                     # a JSON payload block, ignoring appended notices
+        try:
+            parsed = json.loads(block) if block.strip() else None
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {"text": " ".join(blocks).strip()}
 
 
 def call(name, arguments=None, session=None):

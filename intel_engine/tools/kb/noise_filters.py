@@ -62,6 +62,7 @@ _FALLBACK = {
     "registrar_email_domains": ["cloudflare.com", "namecheap.com", "godaddy.com",
                                 "withheldforprivacy.com", "privacyprotect.org"],
     "registrar_role_localparts": ["nic-staff"],
+    "asset_filename_extensions": ["png", "jpg", "jpeg", "gif", "webp", "svg", "css", "js"],
     "whois_notice_phrases": ["please query the rdds service"],
     "privacy_email_tokens": ["privacy", "protect", "whois", "redact", "withheld", "proxy"],
     "privacy_label_fillers": ["for", "by", "domain", "domains", "contact", "service", "secure",
@@ -166,6 +167,10 @@ REGISTRAR_ROLE_LOCALPARTS = frozenset(str(x).strip().lower() for x in _REF["regi
 # Literal WHOIS/RDDS notice text a parser lands in a contact slot ("Please query the RDDS service
 # of the Registrar of Record…") — never a registrant term.
 WHOIS_NOTICE_PHRASES = tuple(str(x).strip().lower() for x in _REF["whois_notice_phrases"])
+# Extensions a real mail host never ends in — `banner@2x.png` is a retina srcset filename, not an
+# address. Never a delegated TLD (.zip/.mov/.map are real) — see the group's _comment.
+ASSET_FILENAME_EXTENSIONS = frozenset(str(x).strip().lower().lstrip(".")
+                                      for x in _REF["asset_filename_extensions"])
 
 
 def is_whois_notice(value) -> bool:
@@ -348,12 +353,25 @@ def _is_provider_email_domain(dom: str) -> bool:
     return any(_privacy_label(lb) for lb in labels)
 
 
+def is_asset_filename_email(email: str) -> bool:
+    """True if an "email" is really an asset FILENAME a token regex mis-captured — the `@` of a
+    retina `@2x`/`@3x` suffix (`banner@2x.png`, `asset-26@3x.png.webp`). Judged on the last label
+    of the host part after the LAST `@`; malformed / dot-less input is False so this never masks
+    the separate registrar/privacy decision."""
+    e = _host(email)
+    if "@" not in e:
+        return False
+    host = e.rpartition("@")[2]
+    return "." in host and host.rsplit(".", 1)[1] in ASSET_FILENAME_EXTENSIONS
+
+
 def is_noise_email(email: str) -> bool:
     """True if the email is a registrar/registry role or privacy-proxy address — shared by
-    every domain at that provider, so it must not seed a registrant cluster. A role local-part
-    (legal@, abuse@…) is noise only on a registrar/registry/privacy domain: on the operator's
-    own domain it is the operator's mailbox and a real registrant lead."""
-    if is_whois_notice(email):
+    every domain at that provider, so it must not seed a registrant cluster — or not an address
+    at all (an asset filename such as `banner@2x.png`). A role local-part (legal@, support@,
+    abuse@…) is noise only on a registrar/registry/privacy domain: on the operator's own domain
+    it is the operator's mailbox and a real registrant lead."""
+    if is_whois_notice(email) or is_asset_filename_email(email):
         return True
     e = _host(email)
     if "@" not in e:
