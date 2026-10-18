@@ -136,7 +136,51 @@ def test_expansion_leaf_subject_is_not_an_ioc():
     attr = gen.attribution(data)
     assert {a["to"] for a in attr} == {"operator-estate.example"}, attr
     assert not any(a["rel"] == "related_to" for a in attr)
+    assert not any(a["rel"] == "related_to" for a in attr)
 
+
+def test_truncated_ip_never_leaves():
+    """A fragment that matches the loose IPv6 scan is not an address and must not be an IOC,
+    whether it arrives as a typed indicator or inside prose."""
+    data = {
+        "subjects": [
+            {"id": "s1", "label": "2001:db8:1:2::3", "type": "ip", "role": "infrastructure",
+             "confidence": 90, "notes": "Also saw f03c:92ff:fe29:cd83 in a cut field."},
+        ],
+        "indicators": [
+            {"type": "ipv6", "value": "2407:3641:2294:343", "category": "network"},
+            {"type": "ipv4", "value": "203.0.113.7", "category": "network"},
+            {"type": "ipv4", "value": "203.0.113", "category": "network"},
+        ],
+    }
+    vals = {r["value"] for r in gen.extract(data)}
+    assert "2001:db8:1:2::3" in vals
+    assert "203.0.113.7" in vals
+    assert "f03c:92ff:fe29:cd83" not in vals
+    assert "2407:3641:2294:343" not in vals
+    assert "203.0.113" not in vals
+
+
+def test_report_exclude_drops_link_to_unflagged_subject():
+    """ioc_exclude drops the operator link even when the subject object itself is not flagged."""
+    data = {
+        "ioc_exclude": ["198.51.100.7"],
+        "subjects": [
+            {"id": "op", "label": "Operator (persona)", "type": "person", "role": "actor",
+             "confidence": 90},
+            {"id": "shared", "label": "198.51.100.7", "type": "ip", "role": "infrastructure",
+             "confidence": 60},
+            {"id": "own", "label": "203.0.113.7", "type": "ip", "role": "infrastructure",
+             "confidence": 90},
+        ],
+        "connections": [
+            {"from_id": "op", "to_id": "shared", "relationship": "related_to", "strength": "possible"},
+            {"from_id": "op", "to_id": "own", "relationship": "operates", "strength": "confirmed"},
+        ],
+    }
+    attr = gen.attribution(data)
+    assert {a["to"] for a in attr} == {"203.0.113.7"}, attr
+    assert "198.51.100.7" not in {r["value"] for r in gen.extract(data)}
 if __name__ == "__main__":
     import sys
     failed = 0

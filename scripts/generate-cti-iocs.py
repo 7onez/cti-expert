@@ -31,6 +31,7 @@ With a single format, <out_prefix> is treated as the exact output path.
 
 Author: Hieu Ngo - chongluadao.vn
 """
+import ipaddress
 import sys
 import os
 import re
@@ -166,6 +167,25 @@ def _exclude_values(data):
     return {str(v).strip().lower() for v in (data.get("ioc_exclude") or []) if str(v).strip()}
 
 
+def _complete_ip(typ, value):
+    """An IP indicator must be a complete address of the family its type claims.
+
+    A truncated fragment (a bare hextet run, a prefix cut out of a longer address) matches the
+    loose IPv6 scan and must never leave as an IOC — it names nothing and collides with
+    unrelated addresses. ``ip`` accepts either family; ``ipv4``/``ipv6`` must match theirs.
+    """
+    try:
+        addr = ipaddress.ip_address(str(value).strip())
+    except ValueError:
+        return False
+    want = str(typ).lower()
+    if want == "ipv4":
+        return addr.version == 4
+    if want == "ipv6":
+        return addr.version == 6
+    return want == "ip"
+
+
 def detect_social(u):
     for rx, plat in SOCIAL:
         m = rx.search(u)
@@ -205,6 +225,10 @@ def extract(data):
         value = str(value).strip()
         if not value:
             return
+        if str(typ).lower() in ("ip", "ipv4", "ipv6"):
+            if not _complete_ip("ip", value):
+                return                      # fragment or prefix — names nothing, never an IOC
+            typ = "ipv4" if ipaddress.ip_address(value.strip()).version == 4 else "ipv6"
         if value.lower() in exclude:  # §2.5: dropped no matter where it was harvested
             return
         key = "%s|%s|%s" % (cat, typ, value.lower())
@@ -335,11 +359,17 @@ def attribution(data):
     """Actor↔subject links for the export. A link whose endpoint is an EXCLUDED subject (rejected,
     masked, an expansion leaf marked `ioc_exclude`) is dropped: naming a stranger's domain next to
     the operator — even as `related_to … possible` — is exactly what a scraper strips the caveat from."""
+    exclude = _exclude_values(data)
     by_id = {s.get("id"): s for s in (data.get("subjects") or [])}
     rows = []
     for c in (data.get("connections") or []):
         a, b = by_id.get(c.get("from_id")), by_id.get(c.get("to_id"))
         if (a and _is_excluded_subject(a)) or (b and _is_excluded_subject(b)):
+            continue
+        # A report-level exclusion applies even when the subject object itself was not flagged:
+        # a shared or historical IP kept as a subject must not leave as an operator link.
+        ends = {(a.get("label") if a else ""), (b.get("label") if b else "")}
+        if any(str(e).strip().lower() in exclude for e in ends if e):
             continue
         rel = str(c.get("relationship") or c.get("type") or "linked_to")
         rows.append({
