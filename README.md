@@ -151,7 +151,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 ## What's New in v2.11
 
-> **The eCrime-2026 follow-up batch — planned, then cooked.** Four deferred phases from the v2.10 research pass ship as keyless, offline, tested modules (planned in `plans/260826-1935-ecrime-2026-followup-analyzers/`, implemented via `/ak:cook`). Same contracts: zero-dep tests in `audit.sh`, attribution-safety (RULE 5).
+> **The eCrime-2026 follow-up batch — planned, then cooked.** Four deferred phases from the v2.10 research pass ship as keyless, offline, tested modules (planned in `plans/260826-1935-ecrime-2026-followup-analyzers/`, implemented via `/ak:cook`). Same contracts: zero-dep tests in `audit.sh`, attribution-safety (RULE 5). Full mapping: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
 
 | Category | What's New | Details |
 |----------|-----------|---------|
@@ -169,7 +169,7 @@ Multi-vector reconnaissance on any target type — person, domain, organization,
 
 ## What's New in v2.10
 
-> **The release that turns APWG eCrime 2026 research into working, tested detectors.** Three keyless, offline, deterministically-tested analyzers land at the Enrich→Assess boundary, each mapped to a named eCrime 2026 paper — closing the two audited gaps: page-content threat classification, and an explicit maliciously-registered-vs-compromised call.
+> **The release that turns APWG eCrime 2026 research into working, tested detectors.** Three keyless, offline, deterministically-tested analyzers land at the Enrich→Assess boundary, each mapped to a named eCrime 2026 paper — closing the two audited gaps: page-content threat classification, and an explicit maliciously-registered-vs-compromised call. Full mapping + repo audit: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
 
 | Category | What's New | Details |
 |----------|-----------|---------|

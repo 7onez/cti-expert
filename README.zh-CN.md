@@ -151,7 +151,7 @@
 
 ## v2.11 新功能
 
-> **eCrime 2026 后续批次 —— 先规划，再实现。** v2.10 研究批次中推迟的四个阶段现已作为无密钥、离线、带测试的模块交付（在 `plans/260826-1935-ecrime-2026-followup-analyzers/` 中规划，通过 `/ak:cook` 实现）。契约不变：`audit.sh` 中的零依赖测试、归因安全（RULE 5）。
+> **eCrime 2026 后续批次 —— 先规划，再实现。** v2.10 研究批次中推迟的四个阶段现已作为无密钥、离线、带测试的模块交付（在 `plans/260826-1935-ecrime-2026-followup-analyzers/` 中规划，通过 `/ak:cook` 实现）。契约不变：`audit.sh` 中的零依赖测试、归因安全（RULE 5）。完整映射见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6。
 
 | 类别 | 新增内容 | 详情 |
 |------|---------|------|
@@ -169,7 +169,7 @@
 
 ## v2.10 新功能
 
-> **这是把 APWG eCrime 2026 研究转化为可用、带测试检测器的版本。** 三个无密钥、离线、确定性测试的分析器落在 Enrich→Assess 边界，各自对应一篇具名的 eCrime 2026 论文 —— 堵上两个经审计的缺口：页面内容威胁分类，以及明确的"恶意注册 vs 被入侵"判定。
+> **这是把 APWG eCrime 2026 研究转化为可用、带测试检测器的版本。** 三个无密钥、离线、确定性测试的分析器落在 Enrich→Assess 边界，各自对应一篇具名的 eCrime 2026 论文 —— 堵上两个经审计的缺口：页面内容威胁分类，以及明确的"恶意注册 vs 被入侵"判定。完整映射与仓库审计见 [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md)。
 
 | 类别 | 新增内容 | 详情 |
 |------|---------|------|

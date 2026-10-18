@@ -151,7 +151,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 ## Có gì mới trong v2.11
 
-> **Lô tiếp nối eCrime 2026 — lập kế hoạch trước, rồi hiện thực.** Bốn pha bị hoãn từ đợt nghiên cứu v2.10 nay đã giao dưới dạng các module không cần key, chạy offline, có kiểm thử (được lập kế hoạch trong `plans/260826-1935-ecrime-2026-followup-analyzers/`, hiện thực qua `/ak:cook`). Cam kết không đổi: test zero-dep trong `audit.sh`, an toàn quy thuộc (RULE 5).
+> **Lô tiếp nối eCrime 2026 — lập kế hoạch trước, rồi hiện thực.** Bốn pha bị hoãn từ đợt nghiên cứu v2.10 nay đã giao dưới dạng các module không cần key, chạy offline, có kiểm thử (được lập kế hoạch trong `plans/260826-1935-ecrime-2026-followup-analyzers/`, hiện thực qua `/ak:cook`). Cam kết không đổi: test zero-dep trong `audit.sh`, an toàn quy thuộc (RULE 5). Ánh xạ đầy đủ: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
 
 | Hạng mục | Có gì mới | Chi tiết |
 |----------|-----------|----------|
@@ -169,7 +169,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 ## Có gì mới trong v2.10
 
-> **Đây là bản phát hành biến nghiên cứu APWG eCrime 2026 thành các bộ phát hiện chạy được, có kiểm thử.** Ba bộ phân tích không cần key, chạy offline, kiểm thử tất định hạ cánh ở ranh giới Enrich→Assess, mỗi cái ứng với một bài báo eCrime 2026 có tên — bịt hai lỗ hổng đã được kiểm toán: phân loại mối đe dọa theo nội dung trang, và một phán quyết rõ ràng "đăng ký-độc-hại vs bị-xâm-nhập".
+> **Đây là bản phát hành biến nghiên cứu APWG eCrime 2026 thành các bộ phát hiện chạy được, có kiểm thử.** Ba bộ phân tích không cần key, chạy offline, kiểm thử tất định hạ cánh ở ranh giới Enrich→Assess, mỗi cái ứng với một bài báo eCrime 2026 có tên — bịt hai lỗ hổng đã được kiểm toán: phân loại mối đe dọa theo nội dung trang, và một phán quyết rõ ràng "đăng ký-độc-hại vs bị-xâm-nhập". Ánh xạ đầy đủ + kiểm toán repo: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
 
 | Hạng mục | Có gì mới | Chi tiết |
 |----------|-----------|----------|
