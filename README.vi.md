@@ -9,14 +9,14 @@
 <br>
 
 <p>
-  <a href="#cài-đặt">Cài đặt</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#demo">Xem demo</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#bắt-đầu-nhanh">Bắt đầu nhanh</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#tham-chiếu-lệnh">Lệnh</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#đóng-góp">Đóng góp</a>
+  <a href="#cài-đặt">Cài đặt</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#bắt-đầu-nhanh">Bắt đầu nhanh</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#tham-chiếu-lệnh">Lệnh</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="#đóng-góp">Đóng góp</a>
 </p>
 
 <br>
 
 <!-- Feature Badges -->
 <p>
-  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.11-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.11"></a>&nbsp;
+  <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.12-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.12"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#tham-chiếu-lệnh"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
   <a href="#danh-mục-kỹ-thuật"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
@@ -65,7 +65,7 @@
 | Đơn vị hỗ trợ | Họ đóng góp gì | Trong bộ công cụ |
 |---------------|----------------|------------------|
 | [**Rexxfield**](https://rexxfield.com) | Điều tra tội phạm mạng và hỗ trợ nạn nhân từ năm 2008 — nghiệp vụ thực chiến mà quy trình điều tra và chuẩn quy kết của skill này mô phỏng theo | Nghiệp vụ &amp; phương pháp luận |
-| [**ChongLuaDao**](https://chongluadao.vn) ⭐ | **First-party** — đơn vị chủ quản của dự án. Tình báo mối đe dọa VN cao cấp: xác minh trên denylist ~20 triệu URL, phân tích URL bằng AI chuyên sâu, IoC + phơi nhiễm dữ liệu rò rỉ/breach, tên miền giả mạo và feed CVE/KEV — client chỉ kết nối tới CLD, và CLD tự tải mục tiêu ở phía máy chủ (không phải từ máy bạn) | `/cld` · `/scam-check` · `/threat-check` · `/breach-deep` |
+| [**APWG**](https://apwg.org) | Anti-Phishing Working Group — liên minh liên ngành toàn cầu chống lừa đảo trực tuyến (phishing) và tội phạm điện tử, đồng thời là đơn vị tổ chức [hội nghị nghiên cứu eCrime](https://ecrimeresearch.org) mà các bài báo năm 2026 của hội nghị là nền tảng cho tám kỹ thuật của bộ công cụ này | Bộ phát hiện phishing (ClickFix, khả năng sống sót của tên miền, dấu vân tay kit, HTML nhận-biết-khả-kiến, PhishTrace, phạm vi quyền APK) · lớp phủ AAM của `/threat-model` |
 | [**Hudson Rock**](https://www.hudsonrock.com) | Tình báo về máy nhiễm infostealer — máy nào rò rỉ thông tin đăng nhập nào, và vào lúc nào | `/breach-deep` · `/stealer-log` |
 | [**ParanoidLab**](https://paranoidlab.com) | Giám sát dark web, Initial Access Broker và log infostealer trên diễn đàn, chợ đen và Telegram kín | Thu thập &amp; rà soát dark web |
 | [**ANY.RUN**](https://any.run) | Sandbox mã độc tương tác + **TI Lookup** — C2 và endpoint thật quan sát được từ mẫu đã đóng gói | `/binary` · `/hash-id` |
@@ -114,45 +114,11 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 **Quy trình AEAD**
 
-**A**cquire thu thập dữ liệu thô &rarr; **E**nrich làm giàu bằng mở rộng pivot &rarr; **A**ssess đánh giá phát hiện &rarr; **D**eliver bàn giao báo cáo có cấu trúc (HTML tương tác + Markdown + JSON/CSV + gói IOC; Word khi có yêu cầu).
+**A**cquire thu thập dữ liệu thô &rarr; **E**nrich làm giàu bằng mở rộng pivot &rarr; **A**ssess đánh giá phát hiện &rarr; **D**eliver bàn giao báo cáo có cấu trúc — gói cơ bản (Markdown + JSON + CSV + gói IOC) luôn được lưu, sau đó bạn chọn một báo cáo trình bày: PDF, DOCX, HTML, hoặc tất cả.
 
 </td>
 </tr>
 </table>
-
-<br>
-
----
-
-<br>
-
-## Demo
-
-### Điều tra một vụ việc trọn vẹn
-
-<div align="center">
-<img src="assets/demo-full-case.gif" alt="Demo vụ việc trọn vẹn — lệnh /case chạy một cuộc điều tra hoàn chỉnh" width="800">
-</div>
-
-<br>
-
-### Tạo báo cáo CTI
-
-<div align="center">
-<img src="assets/demo-cti-report.gif" alt="Demo báo cáo CTI — kết xuất báo cáo Markdown + DOCX" width="800">
-</div>
-
-<br>
-
-### Ảnh chụp màn hình
-
-<div align="center">
-
-| Báo cáo INTSUM | Cấu trúc mạng | Đánh giá rủi ro |
-|:---:|:---:|:---:|
-| <img src="assets/intsum.png" alt="Báo cáo INTSUM" width="280"> | <img src="assets/network-topology.png" alt="Sơ đồ cấu trúc mạng" width="280"> | <img src="assets/risk-assessment.png" alt="Điểm đánh giá rủi ro" width="280"> |
-
-</div>
 
 <br>
 
@@ -185,7 +151,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 ## Có gì mới trong v2.11
 
-> **Lô tiếp nối eCrime 2026 — lập kế hoạch trước, rồi hiện thực.** Bốn pha bị hoãn từ đợt nghiên cứu v2.10 nay đã giao dưới dạng các module không cần key, chạy offline, có kiểm thử (được lập kế hoạch trong `plans/260826-1935-ecrime-2026-followup-analyzers/`, hiện thực qua `/ak:cook`). Cam kết không đổi: test zero-dep trong `audit.sh`, an toàn quy thuộc (RULE 5). Ánh xạ đầy đủ: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md) §6.
+> **Lô tiếp nối eCrime 2026 — lập kế hoạch trước, rồi hiện thực.** Bốn pha bị hoãn từ đợt nghiên cứu v2.10 nay đã giao dưới dạng các module không cần key, chạy offline, có kiểm thử (được lập kế hoạch trong `plans/260826-1935-ecrime-2026-followup-analyzers/`, hiện thực qua `/ak:cook`). Cam kết không đổi: test zero-dep trong `audit.sh`, an toàn quy thuộc (RULE 5).
 
 | Hạng mục | Có gì mới | Chi tiết |
 |----------|-----------|----------|
@@ -203,7 +169,7 @@ Trinh sát đa vector trên mọi loại mục tiêu — cá nhân, tên miền,
 
 ## Có gì mới trong v2.10
 
-> **Đây là bản phát hành biến nghiên cứu APWG eCrime 2026 thành các bộ phát hiện chạy được, có kiểm thử.** Ba bộ phân tích không cần key, chạy offline, kiểm thử tất định hạ cánh ở ranh giới Enrich→Assess, mỗi cái ứng với một bài báo eCrime 2026 có tên — bịt hai lỗ hổng đã được kiểm toán: phân loại mối đe dọa theo nội dung trang, và một phán quyết rõ ràng "đăng ký-độc-hại vs bị-xâm-nhập". Ánh xạ đầy đủ + kiểm toán repo: [docs/ecrime-research-integration.md](docs/ecrime-research-integration.md).
+> **Đây là bản phát hành biến nghiên cứu APWG eCrime 2026 thành các bộ phát hiện chạy được, có kiểm thử.** Ba bộ phân tích không cần key, chạy offline, kiểm thử tất định hạ cánh ở ranh giới Enrich→Assess, mỗi cái ứng với một bài báo eCrime 2026 có tên — bịt hai lỗ hổng đã được kiểm toán: phân loại mối đe dọa theo nội dung trang, và một phán quyết rõ ràng "đăng ký-độc-hại vs bị-xâm-nhập".
 
 | Hạng mục | Có gì mới | Chi tiết |
 |----------|-----------|----------|
@@ -406,7 +372,7 @@ Toàn bộ workflow của CTI Expert được tối ưu cho Claude Code CLI. CLI
 #### 🖥️ Nên chạy ở đâu — CLI là lựa chọn tốt nhất cho skill này
 
 > [!IMPORTANT]
-> CTI Expert **nặng về thực thi**: nó chạy `uv`/Python, cài công cụ OSINT, ghi báo cáo `.md`/`.html`/`.json`/`.csv` + gói IOC, truy cập nhiều trang bên ngoài, và lưu workspace vụ việc. Thứ quan trọng là **một shell cục bộ thật + tệp lưu bền + mạng không bị chặn** — một **CLI hoặc tác nhân desktop cục bộ** cho bạn điều đó; một **sandbox đám mây tạm thời thì không**. Điều này đúng với cả **Claude** lẫn **Codex**.
+> CTI Expert **nặng về thực thi**: nó chạy `uv`/Python, cài công cụ OSINT, ghi báo cáo `.md`/`.json`/`.csv`/`.html`/`.docx`/`.pdf` + gói IOC, truy cập nhiều trang bên ngoài, và lưu workspace vụ việc. Thứ quan trọng là **một shell cục bộ thật + tệp lưu bền + mạng không bị chặn** — một **CLI hoặc tác nhân desktop cục bộ** cho bạn điều đó; một **sandbox đám mây tạm thời thì không**. Điều này đúng với cả **Claude** lẫn **Codex**.
 
 | Môi trường | Chạy điều tra | Lý do |
 |---|---|---|
@@ -508,7 +474,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Ev
 
 ### Bước 3 &mdash; Đăng ký các lệnh với Claude Code và mọi tác nhân khác
 
-`install.sh` cài các *công cụ* OSINT. Bước một lần này gắn **skill, 9 lệnh slash `/cti*`, và các công cụ MCP** vào Claude Code để chúng hoạt động ngay từ một prompt lạnh trong bất kỳ dự án nào — nó tạo symlink `commands/*.md` vào `~/.claude/commands/` và ghi tệp `.mcp.json` riêng cho từng máy. Sau đó nó đăng ký `/cti` với mọi tác nhân lập trình khác phát hiện được trên máy (xem mục *Dùng trong các tác nhân khác* bên dưới). Bước này idempotent, nên chạy lại sau một `git pull` là an toàn.
+`install.sh` cài các *công cụ* OSINT. Bước một lần này gắn **skill, 9 lệnh slash `/cti*`, và các công cụ MCP** vào Claude Code để chúng hoạt động ngay từ một prompt lạnh trong bất kỳ dự án nào — nó tạo symlink `commands/*.md` vào `~/.claude/commands/` và ghi tệp `.mcp.json` riêng cho từng máy. Sau đó nó đăng ký `/cti` với mọi tác nhân lập trình khác phát hiện được trên máy (xem [Dùng trong các tác nhân khác](#dùng-trong-các-tác-nhân-khác-codex--chatgpt--cursor--gemini--omp--pi-)). Bước này idempotent, nên chạy lại sau một `git pull` là an toàn.
 
 ```bash
 # Register the skill + 9 commands + write the per-machine .mcp.json + other detected agents
@@ -521,6 +487,30 @@ cd ~/.claude/skills/cti-expert && uv venv && uv pip install -r requirements.txt
 > **Windows (PowerShell bản địa):** hãy chạy `register.sh` từ **Git Bash** — `~` của Git Bash chính là `%USERPROFILE%`, nơi các tác nhân chạy bản địa trên Windows (Claude Code, Codex, Cursor, Gemini …) đọc cấu hình. **Không dùng WSL:** trong WSL, `~` là thư mục home của Linux, nên chạy trong WSL chỉ đăng ký cho các tác nhân cũng chạy bên trong WSL. Mặc định `ln -s` của Git Bash âm thầm sao chép tệp, nên `register.sh` yêu cầu symlink Windows thật (cần **Developer Mode** hoặc shell quản trị) và, nếu Windows từ chối, sẽ ghi stub con trỏ thay thế — cách nào thì các lệnh cũng theo kịp `git pull`; bật Developer Mode rồi chạy lại để nâng stub thành liên kết. Stub và các tác nhân khác cần Python 3.10+ — `.venv` của repo (`.venv\Scripts\python.exe`), `python3`, `python` hoặc trình khởi chạy `py`, thử theo thứ tự đó; nếu không cái nào chạy được, `register.sh` in **Registration INCOMPLETE** và thoát với mã 1 thay vì báo thành công. Riêng bước đăng ký các tác nhân khác cũng chạy trực tiếp được bằng `py scripts\register_agents.py`. Sau đó, trên mọi nền tảng, hãy **khởi động lại từng tác nhân** để skill và các lệnh được nạp lúc khởi động.
 
 > **Gỡ cài đặt:** `bash scripts/register.sh --uninstall` gỡ các liên kết Claude Code trỏ vào bản clone này và mọi stub do `register_agents.py` ghi. Lệnh hay skill cùng tên do bạn tự viết không bao giờ bị đụng tới — dù là lúc cài hay lúc gỡ.
+
+<details>
+<summary><b>Lựa chọn khác — cài đặt dưới dạng plugin Claude Code (skill + lệnh + MCP + hook an toàn trong một khối)</b></summary>
+
+`register.sh` gắn skill, các lệnh và MCP server, nhưng không cài được **hook** — mà hai thuộc tính an toàn của cti-expert lại được thực thi chính ở đó:
+
+| Hook | Chức năng |
+|---|---|
+| `hooks/leakguard.py` | **PreToolUse** trên `Write`/`Edit` — quét payload sắp ghi bằng `scripts/leakcheck.sh` và **từ chối** lệnh ghi có thể đưa dữ liệu vụ việc vào một tệp *được theo dõi*. Git hook trước commit chỉ kích hoạt lúc commit và `git commit --no-verify` bỏ qua nó; hook này kích hoạt ngay lúc ghi, nơi cờ đó không tồn tại. Các lệnh ghi vào kho vụ việc nằm trong git-ignore, và các lệnh ghi bên ngoài một bản checkout cti-expert, đều không bị đụng tới. |
+| `hooks/actionguard.py` | **PreToolUse** trên các hành động ra ngoài — `engage_account`, `harvest_authenticated`, `anyrun_submit`, mọi `--submit` — trả về **ask** kèm bản tóm tắt rủi ro. Bản thân các công cụ đã từ chối nếu không có xác nhận, nhưng mã đó là mã *vendor*; cổng này nằm trong cây mã riêng của cti-expert, nên một lần đồng bộ engine lỗi không thể xóa nó. Phát hiện (`detect_login`, `url_paths`, `passive_ssl`) và thu thập thông thường **không** bị gác. |
+| `hooks/sessionguard.py` | **SessionStart** — báo cáo tầng backend đã phân giải, và cảnh báo khi số `@tool` của engine thay đổi so với phiên trước. Claude Code cache danh sách công cụ của MCP server lúc *kết nối*, nên một bản đăng ký cũ sẽ âm thầm điều khiển một bề mặt cũ mà không báo lỗi gì. |
+
+```bash
+# from a local clone
+claude
+/plugin marketplace add ~/.claude/skills/cti-expert
+/plugin install cti-expert
+```
+
+Sau đó khởi động lại Claude Code. Kiểm tra bằng `/hooks` (ba mục) và `/mcp` (server `intel`).
+
+Mọi thứ đều giữ nguyên hành vi: cả hai hook `PreToolUse` đều **hỏng theo hướng mở** khi gặp lỗi nội bộ, nên một lỗi hook không bao giờ làm hỏng repo của bạn — `scripts/audit.sh` và git hook trước commit vẫn là lưới đỡ.
+
+</details>
 
 ---
 
@@ -674,7 +664,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-expert      # nạp skill trước — bốn lệnh dưới là lệnh quy ước
 /onboard         # hướng dẫn chạy lần đầu tương tác
 /capabilities    # lớp bằng chứng nào đang thiếu + đường miễn phí thay thế
-/backend         # xác nhận MCP có kiểu Tier-1 (79 công cụ) đang chạy, không phải Tier-3 stateless
+/backend         # xác nhận MCP có kiểu Tier-1 (92 công cụ) đang chạy, không phải Tier-3 stateless
 /apikeys status  # không key vẫn chạy; thêm key free/trả phí để mở khóa reverse pivot
 ```
 
@@ -688,7 +678,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti ./trader.apk         # file    → static IOCs, clustered with the web infra
 ```
 
-> `/cti` chọn đúng kỹ thuật cho mục tiêu, rồi mở rộng đồ thị pivot **đến khi khép kín — không hỏi phê duyệt.** Thêm `--deep` để fan-out sub-agent song song, `--quick` để chạy một lượt duy nhất, hoặc `--passive` cho mục tiêu thù địch (không tiếp xúc trực tiếp). Kết xuất mặc định: Markdown + HTML tương tác + JSON + CSV + gói IOC.
+> `/cti` chọn đúng kỹ thuật cho mục tiêu, rồi mở rộng đồ thị pivot **đến khi khép kín — không hỏi phê duyệt.** Thêm `--deep` để fan-out sub-agent song song, `--quick` để chạy một lượt duy nhất, hoặc `--passive` cho mục tiêu thù địch (không tiếp xúc trực tiếp). Kết xuất mặc định: gói cơ bản (Markdown + JSON + CSV + gói IOC) cộng với báo cáo trình bày bạn chọn (PDF, DOCX, HTML, hoặc tất cả).
 
 ### 2 &mdash; Chạy một vụ việc từ đầu đến cuối
 
@@ -743,11 +733,13 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 
 ### 7 &mdash; Full pipeline & full harness (chế độ sâu nhất)
 
-`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 79 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
+`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 92 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
+
+> **`/case` vốn đã lưu bền một vụ việc có phiên bản — và bước lưu KHÔNG phát sinh thêm egress.** Khi `/backend` đang chạy (Tier 1/2), một lượt `/case` **tái sử dụng các pivot vừa thu thập** (nó **không** tải lại): ghi chúng vào `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` và chạy pipeline tất định ở chế độ tái sử dụng — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — bỏ qua bước tải trực tiếp và chạy toàn bộ chuỗi (ingest → recall → risk → clusters → `case_graph.json` → `assessment.md` theo ICD-203) trên dữ liệu thô đó. Vụ việc có phiên bản hoàn chỉnh nằm tại `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**không phải CWD của bạn**) và được tương quan xuyên mọi vụ việc trước. **Nếu vụ việc chưa hội tụ** (`intel.py convergence <ID>` báo trạng thái ≠ `converged`, hoặc `/frontier` vẫn liệt kê lead còn mở) **và** posture đang chủ động, `/case` sẽ **tự động nâng cấp lên vòng đào sâu `/harness`** — ưu tiên không-key (dùng chính model của CLI), egress bị **chặn cứng** với hạ tầng thù địch (`audit.py` của harness từ chối thu thập ra ngoài khi `hostile=True`), dùng `--no-harness` để tắt. `/pipeline open` thuần (không có `--no-collect`) và `/cti-case` vẫn **thu thập** — chúng tải lại trực tiếp mọi seed — nên chỉ chạy tay hai lệnh này cho một vụ việc **mới** chưa từng thu thập, sau khi đã đặt posture egress (`/scope`, `/cti-proxy`, hoặc `--passive` cho hạ tầng thù địch). Tier 3 / không có seed host → `/case` âm thầm bỏ qua bước chuyển giao.
 
 ```bash
 /cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
-/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 79 MCP tool)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 92 MCP tool)
 
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -930,19 +922,19 @@ Mọi cuộc điều tra đều đi qua bốn pha tự động:
 
 ### Sơ đồ quy trình
 
-**Luồng công cụ &amp; skill đầu-cuối** — toàn hệ thống trong một sơ đồ tuần tự: mục tiêu đi vào từ `/cti`, băng qua 57 kỹ thuật của Lớp 1 và bề mặt MCP 79 công cụ, qua WebPivot / BinaryPivot / cơ sở tri thức / IntelAnalysis, rồi đi ra dưới dạng đồ thị đã render và một file PDF:
+**Luồng công cụ &amp; skill đầu-cuối** — một lệnh gọi `/cti` chạy recall, tiếp nhận (intake), tái sử dụng Quarry (tùy chọn), thu thập, vòng làm giàu đa kiểu với phê duyệt theo từng vòng, đánh giá và bàn giao qua cả hai lớp: 9 lệnh đã đăng ký và 57 kỹ thuật ở Lớp 1, cùng 92 `@tool` của harness trên `intel_engine` được vendor (backend claude, codex, omp hoặc bất kỳ backend tương thích OpenAI nào):
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="Luồng công cụ và skill đầu-cuối của cti-expert — sơ đồ tuần tự qua cả hai lớp" width="900">
 </div>
 
-**Pipeline `/cti` · `/case` đầy đủ (AEAD)** — spider-map đệ quy, và nơi `/webpivot`, `/icp`, `/iban` cùng bước tương quan khớp vào:
+**Pipeline `/cti` · `/case` đầy đủ (AEAD)** — một vòng lặp đệ quy Acquire → Enrich → Assess → Deliver: mọi collector ghi lại kết quả theo từng lớp (một lớp thất bại có thể chạy lại, không bao giờ bị coi là "rỗng"), các pivot miễn phí có từ 25 hit trở xuống tự chạy, các pivot tính phí hoặc quá khổ chờ phê duyệt trong `proposal.json`, và chỉ những kết quả liên kết chủ sở hữu mới trở thành seed mới:
 
 <div align="center">
 <img src="assets/workflow-case.svg" alt="Pipeline /case của cti-expert (AEAD)" width="820">
 </div>
 
-**Luồng `/webpivot` + tương quan + API key premium:**
+**Luồng `/webpivot` + tương quan + API key premium** — một nền tảng không cần key luôn chạy, cộng thêm ChongLuaDao, Validin và Webamon dùng key miễn phí; các engine tính phí chỉ tham gia khi key của chúng được đặt và `--free-only` / `no_spend` đang tắt; ngưỡng sử dụng chỉ cảnh báo chứ không bao giờ chặn, nên HTTP 402/429 của nhà cung cấp là giới hạn duy nhất:
 
 <div align="center">
 <img src="assets/workflow-apikeys.svg" alt="Quy trình /webpivot + tương quan + API key của cti-expert" width="820">
@@ -1249,8 +1241,8 @@ Cùng một vụ việc, ở những định dạng mà công cụ khác đọc 
 - **Markdown** — bản báo cáo viết: INTSUM, tóm tắt điều hành, ngôn ngữ phổ thông, hoặc pháp lý
 - **JSON** — dữ liệu vụ việc có cấu trúc để nạp vào pipeline và các công cụ khác
 - **CSV** — phát hiện và chỉ báo, sẵn sàng cho bảng tính hoặc SIEM
-- **Gói IOC** — STIX 2.1, danh sách phẳng, và CSV của mọi selector
-- **Word (.docx)** — khi có yêu cầu, hoặc `/report legal` (trang bìa, mục lục, biểu đồ)
+- **Gói IOC** — STIX 2.1, danh sách phẳng, CSV và JSONL của mọi selector
+- **Word (.docx) / PDF** — chọn tại lời nhắc (lựa chọn **a**/**b**/**d**) hoặc `/report legal`; trang bìa, mục lục, biểu đồ
 
 </td>
 </tr>
@@ -1324,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (87 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (92 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
@@ -1451,21 +1443,22 @@ CTI Expert đứng trên vai của cộng đồng mã nguồn mở và các nhà
 
 | Hạng mục | Dự án & dịch vụ miễn phí chúng tôi tri ân |
 |----------|---------------------------------------------|
-| **Tác nhân & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) |
-| **Trình duyệt & thu thập web** | [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
+| **Tác nhân & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · các tác nhân mà `/cti` cũng đăng ký vào: [OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
+| **Trình duyệt & thu thập web** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
 | **Tên người dùng, con người & mạng xã hội** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
 | **Email & dữ liệu rò rỉ** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
-| **Tên miền, DNS, chứng chỉ & hạ tầng** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) |
-| **Tình báo mối đe dọa & sandbox** | [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) |
-| **Máy tìm kiếm & quảng cáo** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) |
+| **Tên miền, DNS, chứng chỉ & hạ tầng** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) · [CertKit](https://certkit.io) · [CertIndex](https://ctindex.io) · [IANA RDAP bootstrap](https://data.iana.org/rdap/) · [Hurricane Electric BGP Toolkit](https://bgp.he.net) · [ip-api](https://ip-api.com) · [JARM — Salesforce](https://github.com/salesforce/jarm) · [mmh3](https://github.com/hajimes/mmh3) |
+| **Tình báo mối đe dọa & sandbox** | [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [Webamon](https://webamon.com) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) · [Spamhaus](https://www.spamhaus.org) |
+| **Máy tìm kiếm & quảng cáo** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) · [Google sellers.json](https://iabtechlab.com/sellers-json/) (IAB Tech Lab) |
 | **Bí mật, mã nguồn & lộ lọt** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) · [GrayHatWarfare](https://grayhatwarfare.com) |
 | **Điện thoại** | [PhoneInfoga](https://github.com/sundowndev/phoneinfoga) · FreeCNAM · WhoCalld |
 | **Định vị & WiFi** | [OpenStreetMap](https://www.openstreetmap.org) · [what3words](https://what3words.com) · [Overpass Turbo](https://overpass-turbo.eu) · [WiGLE](https://wigle.net) |
-| **Hình ảnh, media & thị giác máy** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) |
-| **Blockchain** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [Subscan](https://subscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) |
+| **Hình ảnh, media & thị giác máy** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) · [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) |
+| **Blockchain** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [Subscan](https://subscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) · [Blockstream Esplora](https://blockstream.info) · [Tronscan](https://tronscan.org) |
 | **Trinh sát Trung Quốc / Hoa ngữ** | [ENScan_GO](https://github.com/wgpsec/ENScan_GO) · [Kunyu](https://github.com/knownsec/Kunyu) · [fofax](https://github.com/xiecat/fofax) · [PyDork](https://github.com/blacknon/pydork) · [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) · [pypinyin](https://github.com/mozillazg/python-pinyin) · [OpenCC](https://github.com/BYVoid/OpenCC) · [jieba](https://github.com/fxsjy/jieba) · [FOFA](https://fofa.info) · [Quake (360)](https://quake.360.net) · [ZoomEye](https://www.zoomeye.ai) · [Hunter.how](https://hunter.how) · [GSXT](https://www.gsxt.gov.cn) · [信用中国](https://www.creditchina.gov.cn) · [Cninfo](http://www.cninfo.com.cn) |
 | **Kênh thanh toán & hash** | [ISO 13616 / ISO 7064](https://www.iso.org) (IBAN + mod-97 standards) · [NAPAS / VietQR](https://vietqr.vn) · [name-that-hash](https://github.com/HashPals/Name-That-Hash) |
-| **Nghiệp vụ & phương pháp luận** | [Rexxfield](https://rexxfield.com) · [ParanoidLab](https://paranoidlab.com) · [Social Links](https://sociallinks.io) · [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong) (China-layer tool survey & access-reality matrix) · [Exploratores](https://github.com/SOsintOps/Exploratores) (reversible-redaction and IBAN-analysis *techniques* — independently reimplemented from its published documentation; that project is AGPL-3.0 and **no code was copied**) |
+| **Đăng ký doanh nghiệp & ứng dụng** | [masothue.com](https://masothue.com) · [hsctvn.com](https://hsctvn.com) · [doanhnghiep.biz](https://doanhnghiep.biz) (tra cứu mã số thuế / đăng ký doanh nghiệp Việt Nam) · [Google Play](https://play.google.com) (tên pháp lý của nhà phát triển ứng dụng) |
+| **Nghiệp vụ & phương pháp luận** | [Rexxfield](https://rexxfield.com) · [ParanoidLab](https://paranoidlab.com) · [Social Links](https://sociallinks.io) · [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong) (China-layer tool survey & access-reality matrix) · [Exploratores](https://github.com/SOsintOps/Exploratores) (reversible-redaction and IBAN-analysis *techniques* — independently reimplemented from its published documentation; that project is AGPL-3.0 and **no code was copied**) · [APWG eCrime research](https://ecrimeresearch.org) (các bài báo năm 2026 đứng sau tám kỹ thuật) · [ISECOM](https://www.isecom.org) (khung mô hình hóa đối thủ của Pete Herzog, nền tảng của lớp phủ AAM) |
 | **Theo dõi phương tiện** | [ADS-B Exchange](https://www.adsbexchange.com) · [Flightradar24](https://www.flightradar24.com) · [MarineTraffic](https://www.marinetraffic.com) · [VesselFinder](https://www.vesselfinder.com) |
 | **Darknet** | [Ahmia](https://ahmia.fi) · [OnionSearch](https://github.com/megadose/OnionSearch) · [ransomwatch](https://github.com/joshhighet/ransomwatch) |
 | **Đám mây & tài liệu** | [MSFTRecon](https://github.com/Arcanum-Sec/msftrecon) · [Xeuledoc](https://github.com/Malfrats/xeuledoc) · [oletools](https://github.com/decalage2/oletools) · [poppler](https://poppler.freedesktop.org) · [qpdf](https://github.com/qpdf/qpdf) · [mat2](https://0xacab.org/jvoisin/mat2) · [The Sleuth Kit](https://www.sleuthkit.org) |

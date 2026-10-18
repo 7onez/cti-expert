@@ -15,67 +15,55 @@ skinparam activity {
 
 start
 :**/webpivot URL**  ·  **/cti-pivot URL|IP**  ·  **/case DOMAIN**;
-:**pivot_extract.py**\nfetch page (or saved DOM / Wayback capture) + extract artifacts\nfavicon mmh3 + md5 · GA / GTM / AdSense / UA · verification tokens\nwallets · emails · phones · Telegram · Google Doc IDs\nfooter address · ETag · DOM + template fingerprint;
-:**enrich_live()**;
+if (Quarry enabled for the case?\nQUARRY_API_KEY + QUARRY_MCP_URL) then (yes)
+  :**Quarry bridge** — reuse a finished scan or start one and wait (no time limit)\nimported rows go through the rung table · vendors are not paid twice;
+else (no)
+endif
+:**collect_core.collect_many -> pivot_extract.py**\nfetch page (or saved DOM / Wayback / gated-urlscan recovery) + extract artifacts\nfavicon mmh3 + md5 · GA / GTM / AdSense · verification tokens\nwallets · emails · phones · Telegram · footer · ETag · DOM + template fingerprint;
+:**enrich_live(free_only)**\n//free_only = ~--free-only, scope.json no_spend, or ~--passive//;
 
 fork
-  :**KEYLESS baseline — ALWAYS runs**\ncrt.sh (certificate transparency)\nHackerTarget passive DNS · anonymous urlscan\nRDAP · ipwho.is · Shodan InternetDB\nmail / SPF / DMARC · CORS · JARM;
+  :**KEYLESS baseline — ALWAYS runs**\ncrt.sh + CT backups · HackerTarget passive DNS · anonymous urlscan\nRDAP · ipwho.is · Shodan InternetDB\nmail / SPF / DMARC · CORS · JARM;
 fork again
-  if (premium API key present?\nresolve order: ENV var -> repo .env -> ~/.config/cti-expert) then (key set)
-    :**PREMIUM enrichers**  //(only the keys you actually set)//
+  :**FREE / unlimited keys — run EVEN under ~--free-only**\n**ChongLuaDao** (verdict · IoC · primary .vn WHOIS — fact, never an edge)\n**Validin** (pDNS · cert · favicon · body hash — free Community key)\n**Webamon** (scan corpus · same-kit siblings · servers · feeds);
+fork again
+  if (metered key present AND not free_only?\nresolve order: ENV var -> repo .env -> ~/.config/cti-expert) then (yes)
+    :**METERED engines**  //(only the keys you actually set)//
     ----
-    **Infrastructure**
-    Shodan (favicon mmh3 + cert SHA-256) · Censys (favicon md5 + cert)
-    FOFA · **Quake (360)** · **ZoomEye** · SecurityTrails · urlscan-PRO · IPinfo
-    **Netlas** (DNS · scan · WHOIS · cert index) · **Validin** (pDNS · cert · favicon · body hash — free key)
+    **Infrastructure** //(enrich_live)//
+    FOFA · Shodan search · **Censys Platform** (CENSYS_API_KEY + CENSYS_ORG_ID)
+    **Hunter.how** (cert.subject) · Quake (360) · ZoomEye · **Netlas** · SecurityTrails
+    urlscan-Pro · CIRCL pDNS + passive SSL · IPinfo
     ----
     **Ownership**
-    WhoisXML //(WHOIS + Whois History eras + Reverse WHOIS — DRS balance)//
-    Whoxy · DNSLytics (GA / AdSense -> sibling domains)
-    **MO-neighbours**  origin IP -> co-tenant apexes (Netlas · Validin · urlscan), WHOIS-verified
+    WhoisXML (WHOIS history · reverse WHOIS · **MO-neighbours** WHOIS-verify)
+    DNSLytics (GA / AdSense -> sibling domains)
     ----
-    **Leak / breach / darknet / exposure**
-    **IntelX** (phonebook · paste · stealer logs · darknet selectors)
-    **Hudson Rock** · LeakCheck · HIBP · **GrayHatWarfare** //(open buckets — exposure, never a pivot)//
-    ----
-    **Search · ads**
-    **SerpApi** (Ads Transparency — who paid · cloaking probe)
-    ----
-    **File half of the funnel**
-    **ANY.RUN TI Lookup**  //read-only// · **anyrun_submit** //ask-first, private-only, plan-checked//
-    VirusTotal · MalwareBazaar · ThreatFox
-    ----
-    **Money**
-    Blockchair / Etherscan / Subscan (wallet balance + lifetime flow);
-    :**entitlement measured, not assumed**\nfree account probes -> cases/<id>/capability_plans.json (once per case)\na key measured //free// skips the Pro calls that would 403;
-    :**api_usage.record(...)**\nevery metered call logged to MEMORY/api_usage.jsonl\n//per-case legs (IntelX · reverse-WHOIS · MO-neighbour origins) bought ONCE per case//;
-  else (no key)
-    :skip premium\n**keyless leads only — identical coverage, lower tier**;
+    **Per-selector tools** //(same gate)//
+    IntelX · Hudson Rock · GrayHatWarfare · SerpApi Ads · PublicWWW
+    ANY.RUN TI Lookup //(anyrun_submit: ask-first)//;
+    :**entitlement measured, not assumed**\ncases/<id>/capability_plans.json — a key measured //free// skips Pro calls;
+  else (no key / free_only)
+    :layer recorded **skipped_no_key** / **skipped_policy**\nin collection_outcomes.json — re-runnable later;
   endif
 end fork
 
-:**ranked pivots + live_results**   (high -> low confidence);
+:**api_usage.record(...)** -> MEMORY/api_usage.jsonl\nno local cap: thresholds **warn, never block**\n**vendor HTTP 402 / 429 is the only limit**;
 
-:**correlate — all keyless**
-rank_relations.py  score same-operator siblings, drop shared-infra noise
-cert_pivot.py / cert_overlap  cert fingerprint + SAN siblings
-pivot_suggest.py  ranked next-pivots //(+ ~--cjk: pinyin · Simplified <-> Traditional · company stem)//
-wp_impersonate  typosquat / TLD sweep / homoglyph
-crypto_balance · email_hygiene · sensitive_paths;
+:**cert pivot** (cert_pivot · wp_ct)\nkeyless live fingerprint + CT (crt.sh · CertSpotter · CertIndex · CertKit · Netlas · Censys)\nShodan / Censys fingerprint search · **FOFA cert.sn** on a REAL x509 serial only;
 
-:**reference_check**  — false-positive ledger\n**BENIGN** shared noise  vs  **SIGNAL** operator fingerprint;
-note right
-  Managed-DNS suffixes, parking favicons and
-  CDN ranges are **noise**. A nameserver the
-  operator runs themselves is **attribution-grade** —
-  you cannot point a domain at ns1.<their-host>
-  without controlling that zone.
-end note
+:**correlate — keyless**
+rank_relations  score same-operator siblings, drop shared-infra noise
+cert_overlap · pivot_suggest · impersonation_hunt
+crypto_balance  //(reference + token-contract addresses filtered out)//
+email_hygiene · sensitive_paths;
 
-:save to case store   $INTEL_HOME/cases/<CASE-ID>/raw/<host>.json;
-:**kb_ingest**  ->  shared knowledge base (cross-case);
-:**graph_build.py**\ncluster hosts into one network graph\nshared favicon / GA / wallet hubs + ranked sibling edges;
-:**render_diagram** (IntelGraph)  ·  **render_report** (IntelReport);
+:**reference_check**  — false-positive ledger\n**BENIGN** shared noise  vs  **SIGNAL** operator fingerprint\nco-tenancy guards keep shared certs / IPs as **leads, not seeds**;
+
+:save  $INTEL_HOME/cases/<CASE-ID>/raw/<host>.json;
+:**kb_ingest** (ingest_webpivot)  ->  knowledge/ (cross-case);
+:**intel.py open | loop** -> clusters.json · case_graph.json -> assessment.md / .json;
+:**render_diagram** (IntelGraph)  ·  **house_report** (IntelReport);
 stop
 
 legend right
@@ -83,20 +71,19 @@ legend right
   ====
   repo-root .env  (CTI_API_KEYS_ENV overrides the path)
   chmod 600 · gitignored · ENV var always wins
+  registry: WebPivot/references/api_keys.json
   ----
   Add a key:   /apikeys set censys <KEY>
   Check:       /apikeys status | test | unlocks
   Balances:    **/cti-status**
   ----
-  Keyless correlation tools:
-  /rank-relations · /cert-pivot · /pivot-suggest
-  /crypto-balance · /email-hygiene · /sensitive-paths
+  **Spend gate:** ~--free-only / scope no_spend
+  holds every metered engine; free keys still run.
+  The harness loop proposes metered pivots for
+  approval (proposal.json) instead of spending.
   ----
   **No keys set  ->  everything runs keyless / free.**
   A missing or bad key degrades to a note,
   it never breaks the run.
-  ----
-  **Cost:** third-party credits are **not** in the
-  model's total_cost_usd. Two ledgers, always.
 endlegend
 @enduml
