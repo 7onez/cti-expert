@@ -339,13 +339,17 @@ def _link_url(link):
     return None
 
 
-def parse_appstore_page(text):
+def parse_appstore_page(text, track_id=None):
     """apps.apple.com product page HTML -> {provider, trader, address, phone, email, website,
     support_url, privacy_url, served_storefront, product_page}, or None when the page carries no
-    parseable page data. `product_page` False = Apple served another page (geo-redirect); every
-    other field is then None. `trader` is
+    parseable page data. `product_page` False = Apple served another page (geo-redirect) or a
+    product page for a DIFFERENT app than `track_id`; every other field is then None. `trader` is
     'declared' / 'not_declared' / None (block absent or wording unrecognised). Address, phone and
-    email are only ever read from a DECLARED trader block — never guessed from page text."""
+    email are only ever read from a DECLARED trader block — never guessed from page text.
+
+    Scope: the page also embeds OTHER apps (similar-items lockups carry their own links), so the
+    trader block and the links are read only from the product's own shelves (`own_shelves` in
+    references/appdev.json, matched by shelf key AND content type) — never from a page-wide scan."""
     if not isinstance(text, str):
         return None
     m = _SERVER_DATA_RE.search(text)
@@ -362,20 +366,34 @@ def parse_appstore_page(text):
                  for lbl in lbls}
     link_map = {str(lbl).lower(): key for key, lbls in (APPSTORE_PAGE.get("link_labels") or {}).items()
                 for lbl in lbls}
-    intent = {}
+    intent, page = {}, {}
     first = (data.get("data") or [None])[0] if isinstance(data, dict) and isinstance(data.get("data"), list) else None
-    if isinstance(first, dict) and isinstance(first.get("intent"), dict):
-        intent = first["intent"]
+    if isinstance(first, dict):
+        intent = first.get("intent") if isinstance(first.get("intent"), dict) else {}
+        page = first.get("data") if isinstance(first.get("data"), dict) else {}
+    is_product = str(intent.get("$kind") or "").startswith("ProductPage")
+    same_app = track_id is None or str(intent.get("id") or "") == str(track_id)
     out = {"provider": None, "trader": None, "address": None, "phone": None, "email": None,
            "website": None, "support_url": None, "privacy_url": None,
-           "served_storefront": intent.get("storefront"),
-           "product_page": str(intent.get("$kind") or "").startswith("ProductPage")}
+           "served_storefront": intent.get("storefront"), "served_id": intent.get("id"),
+           "product_page": is_product and same_app}
     if not out["product_page"]:
         # Apple served another page (an egress IP in a storefront that does not sell the app is
-        # redirected to that storefront's Today page) — nothing on it describes this app.
+        # redirected to that storefront's Today page), or another app's page: nothing here
+        # describes the requested app.
         return out
-    ann = next((d for d in _walk(data) if d.get("$kind") == "Annotation"
-                and str(d.get("title") or "").lower() in titles), None)
+    own = APPSTORE_PAGE.get("own_shelves") or {}
+    shelves = page.get("shelfMapping") if isinstance(page.get("shelfMapping"), dict) else {}
+
+    def _own(kind):
+        rule = own.get(kind) or {}
+        keys = set(rule.get("keys") or [])
+        types = set(rule.get("content_types") or [])
+        return [v for k, v in shelves.items()
+                if isinstance(v, dict) and k in keys and v.get("contentType") in types]
+
+    ann = next((d for shelf in _own("trader") for d in _walk(shelf.get("items"))
+                if d.get("$kind") == "Annotation" and str(d.get("title") or "").lower() in titles), None)
     if ann is not None:
         out["provider"] = _clean(str(ann.get("summary") or "")) or None
         texts = [d["rawText"] for d in _walk(ann.get("items")) if isinstance(d.get("rawText"), str)]
@@ -391,13 +409,14 @@ def parse_appstore_page(text):
                 if key and not out.get(key):
                     lines = [_clean(x) for x in fm.group(2).splitlines()]
                     out[key] = ", ".join(x for x in lines if x) or None
-    for d in _walk(data):
-        if d.get("$kind") != "ProductPageLink":
-            continue
-        key = link_map.get(str(d.get("text") or "").strip().lower())
-        url = _link_url(d)
-        if key and url and not out.get(key) and not _is_noise_host(_host(url)):
-            out[key] = url
+    for shelf in _own("links"):
+        for d in _walk(shelf.get("items")):
+            if d.get("$kind") != "ProductPageLink":
+                continue
+            key = link_map.get(str(d.get("text") or "").strip().lower())
+            url = _link_url(d)
+            if key and url and not out.get(key) and not _is_noise_host(_host(url)):
+                out[key] = url
     if out["email"] and not (_EMAIL_RE.fullmatch(out["email"]) and _email_ok(out["email"])):
         out["email"] = None
     return out
@@ -591,17 +610,23 @@ def _appstore_trader(track_id, timeout=None):
             last = {"status": "not_listed_in_eu" if status == 404 else "unavailable",
                     "storefront": cc, "source_url": url, "error": err}
             continue
-        parsed = parse_appstore_page(body)
+        parsed = parse_appstore_page(body, track_id)
         if parsed is None:
             last = {"status": "unknown", "storefront": cc, "source_url": url}
             continue
         if not parsed.pop("product_page"):
+            served = parsed.get("served_id")
+            if served and str(served) != str(track_id):
+                last = {"status": "wrong_app", "storefront": cc, "source_url": url,
+                        "note": f"page describes app id {served}, not {track_id}; not read"}
+                continue
             # Every EU storefront redirects the same egress the same way: stop, say why.
             return {"status": "geo_redirected", "storefront": cc, "source_url": url,
                     "served_storefront": parsed.get("served_storefront"),
                     "note": "Apple served a non-product page for this storefront (egress IP "
                             "geolocates to a storefront that redirects); the EU trader block "
                             "needs an egress outside that region"}
+        parsed.pop("served_id", None)
         parsed.update(status=parsed.pop("trader") or "unknown", storefront=cc, source_url=url)
         return parsed
     return last

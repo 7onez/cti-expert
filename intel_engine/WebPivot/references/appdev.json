@@ -32,12 +32,16 @@
     }
   },
   "appstore_page": {
-    "_comment": "apps.apple.com product page, English EU storefront. Its <script id=serialized-server-data> JSON carries an Annotation titled by provider_titles whose rawText items state whether the provider declared itself a TRADER under the EU Digital Services Act (trader_declared / trader_not_declared sentence fragments, matched case-insensitively; not_declared is checked first) and, when declared, '**Label**\\nvalue' markdown fields mapped by trader_fields. Apple DISPLAYS these values but they are self-declared by the developer. ProductPageLink items whose text matches link_labels give the listing's website / support / privacy-policy URLs.",
+    "_comment": "apps.apple.com product page, English EU storefront. Its <script id=serialized-server-data> JSON carries an Annotation titled by provider_titles whose rawText items state whether the provider declared itself a TRADER under the EU Digital Services Act (trader_declared / trader_not_declared sentence fragments, matched case-insensitively; not_declared is checked first) and, when declared, '**Label**\\nvalue' markdown fields mapped by trader_fields. Apple DISPLAYS these values but they are self-declared by the developer. ProductPageLink items whose text matches link_labels give the listing's website / support / privacy-policy URLs. own_shelves scopes both reads to the REQUESTED product's own shelves (shelfMapping key AND contentType must both match): the same page embeds similar apps whose lockups carry other developers' links, so a page-wide scan would read another developer's data. The page intent id must also equal the requested track id.",
     "entries": {
       "provider_titles": ["Provider"],
       "trader_declared": ["has identified itself as a trader"],
       "trader_not_declared": ["has not identified itself as a trader"],
       "trader_fields": {"address": ["Address"], "phone": ["Phone Number", "Phone"], "email": ["Email"]},
+      "own_shelves": {
+        "trader": {"keys": ["information"], "content_types": ["annotation"]},
+        "links": {"keys": ["notPurchasedLinks", "purchasedLinks", "description"], "content_types": ["productPageLink", "productDescription"]}
+      },
       "link_labels": {"website": ["Developer Website", "Website"], "support_url": ["Support", "App Support"], "privacy_url": ["Privacy Policy"]}
     }
   },
