@@ -4,7 +4,7 @@
     "purpose": "Known hosting/CDN ASNs -> GENERIC provider facts, used by wp_ippivot to decide whether an IP is same-operator signal or shared noise, and to route abuse/takedown contact.",
     "opsec": "Provider-level metadata ONLY (ASN, org name, abuse contact, noise flag, kind). NEVER a target IP, domain, or case id (repo CLAUDE.md RULE 1). wp_ippivot.asn_registry_upsert enforces this.",
     "fields": "asns[ASxxxx] = {asn, name, abuse_contacts[], noise(bool), kind: cdn|cloud|hosting|transit|unknown}",
-    "noise": "noise=true means a reverse-IP on ANY address of this ASN returns many unrelated tenants -> mark the IP as INFORMATION, do not cluster on it. It is a whole-network claim: wp_ippivot sets it only when the IP sits in a published CDN/cloud edge range; a per-IP reason (one shared box over SHARED_TENANT_MAX tenants, IPinfo's per-IP hosting flag) banks name/abuse only. Any other noise=true row is an analyst call."
+    "noise": "noise=true means a reverse-IP on ANY address of this ASN returns many unrelated tenants -> mark the IP as INFORMATION, do not cluster on it. It is a whole-network claim and therefore a REVIEWED ANALYST CALL: wp_ippivot never writes it. Every collector reason is per-IP — a published CDN/cloud CIDR hit covers that range, not the ASN; one shared box over SHARED_TENANT_MAX tenants or IPinfo's per-IP hosting flag covers that box — so the collector banks name/abuse only."
   },
   "asns": {
     "AS13335": {
