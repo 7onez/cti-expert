@@ -142,6 +142,18 @@
       "name": "SEDO GmbH",
       "kind": "origin_candidate",
       "noise": true
+    },
+    "AS45544": {
+      "asn": "AS45544",
+      "name": "SUPERDATA-VN",
+      "kind": "origin_candidate",
+      "noise": true
+    },
+    "AS63701": {
+      "asn": "AS63701",
+      "name": "Jishi Media Co ., Ltd.",
+      "kind": "origin_candidate",
+      "noise": true
     }
   }
 }
