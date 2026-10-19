@@ -120,8 +120,10 @@ def confidence_matrix_png(findings: list, subjects: list) -> bytes | None:
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
-def registration_heatmap_png(regs: list) -> bytes | None:
-    """regs = [(domain, (year, month))] -> year × month heatmap; cell = registrations that month."""
+def registration_heatmap_png(regs: list, malicious: bool = False) -> bytes | None:
+    """regs = [(domain, (year, month))] -> year × month heatmap; cell = registrations that month.
+    The title calls the domains malicious ONLY when `malicious` is True — i.e. the case verdict
+    supports it (report JSON `verdict.malicious_supported`); the default is the neutral estate view."""
     if not regs:
         return None
     years = sorted({ym[0] for _, ym in regs})
@@ -140,7 +142,8 @@ def registration_heatmap_png(regs: list) -> bytes | None:
             if grid[i, j]:
                 ax.text(j, i, str(grid[i, j]), ha="center", va="center", fontsize=9, fontweight="bold",
                         color="white" if grid[i, j] > grid.max() * 0.6 else COLORS_HEX["text"])
-    ax.set_title("Malicious-domain registration timeline (count per month)",
+    ax.set_title(("Malicious-domain" if malicious else "Estate-domain")
+                 + " registration timeline (count per month)",
                  fontsize=10, color=COLORS_HEX["text"], pad=8)
     cbar = fig.colorbar(im, ax=ax, fraction=0.025, pad=0.02)
     cbar.ax.tick_params(labelsize=7)
@@ -195,7 +198,9 @@ def build_all(data: dict, case_dir: str | None, out_dir: str) -> dict:
     out, notes = {}, {}
     jobs = {
         "fig_confidence": lambda: confidence_matrix_png(data.get("findings") or [], data.get("subjects") or []),
-        "fig_registrations": lambda: registration_heatmap_png(collect_registrations(data, case_dir)),
+        "fig_registrations": lambda: registration_heatmap_png(
+            collect_registrations(data, case_dir),
+            malicious=bool((data.get("verdict") or {}).get("malicious_supported"))),
         # cap=None: the house report shows every estate domain (Rule 19 — no sampling)
         "fig_cooccurrence": lambda: cooccurrence_heatmap_png(build_cooccurrence(data, case_dir, cap=None), _attr_label),
         "fig_entity_map": lambda: entity_map_png(data),

@@ -23,7 +23,7 @@ answered and parsed, `None` when the app does not exist or the page carried no d
 hosts are reference DATA (`references/appdev.json`, RULE 3).
 
 CLI:
-  python3 wp_appdev.py com.example.app --case CASE-0001
+  python3 wp_appdev.py com.example.app --case CASE-0001      # also saves cases/CASE-0001/appdev/
   python3 wp_appdev.py 1234567890 --case-domains example.com --json
   python3 wp_appdev.py com.example.app --store appstore      # an iOS bundle id
 """
@@ -472,11 +472,35 @@ def case_domains_for(case_id):
     return out
 
 
+def save_to_case(case_id, res):
+    """Persist a resolved developer record as cases/<id>/appdev/<store>_<query>.json so the report
+    bridge (scripts/build_report_data.py) can carry it into the narrative. Only a parsed record is
+    stored — never an error or a no-such-app answer. Returns the path, or None."""
+    if not case_id or not isinstance(res, dict) or res.get("error") or not res.get("developer"):
+        return None
+    home = os.environ.get("INTEL_HOME") or ENGINE
+    case_dir = os.path.join(home, "cases", case_id)
+    if not os.path.isdir(case_dir):
+        return None
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{res.get('store') or 'app'}_{res.get('query') or 'query'}")
+    out_dir = os.path.join(case_dir, "appdev")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, slug + ".json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(res, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+        return path
+    except OSError:
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Keyless app-store developer lookup (Play / App Store).")
     ap.add_argument("query", help="Play package / play.google.com URL, or App Store id / URL / bundle id")
     ap.add_argument("--store", choices=("auto", "play", "appstore"), default="auto")
-    ap.add_argument("--case", help="case id — its collected domains scope the owner-link check")
+    ap.add_argument("--case", help="case id — its collected domains scope the owner-link check; "
+                    "a resolved record is saved to cases/<id>/appdev/ for the report")
     ap.add_argument("--case-domains", default="", help="comma-separated extra case domains")
     ap.add_argument("--timeout", type=int, default=None)
     ap.add_argument("--json", action="store_true", help="compact JSON (default: pretty-printed)")
@@ -488,6 +512,8 @@ def main():
     if res is None:
         res = {"query": a.query, "result": None,
                "note": "no such app, or the store page carried no developer block"}
+    elif a.case:
+        save_to_case(a.case, res)
     print(json.dumps(res, indent=None if a.json else 2, ensure_ascii=False))
     return 1 if isinstance(res, dict) and res.get("error") else 0
 

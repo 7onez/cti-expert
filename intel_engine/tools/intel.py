@@ -209,7 +209,8 @@ def _prior_overlap(hosts, min_shared=1, since_ts=None):
         if not (seeds & doms):
             continue
         for peer in doms - seeds:
-            peers.setdefault(peer, set()).add(dv if ":" in str(dv) else f"{dt}:{dv}")
+            shown = kb.display_value(dt, dv)       # org: registrar spelling, not the join key
+            peers.setdefault(peer, set()).add(shown if ":" in str(shown) else f"{dt}:{shown}")
 
     # split out this-run's own discoveries (#6) before anything downstream treats them as "prior"
     prior_peers, discovered_this_run = {}, {}
@@ -498,13 +499,14 @@ def cmd_open(a):
 
 
 def _run_enrichment(case, free_only=False, passive=False, defer_metered=False,
-                    reopen_legacy=False):
+                    reopen_legacy=False, leak_only=False):
     _load_env()   # CLI/MCP enrich path never enters cmd_open/cmd_loop; without this the root
                   # .env keys (the /apikeys setup) are invisible and every keyed lead reads unavailable
     os.environ["INTEL_CASE"] = case   # (#23) standalone `enrich <case>` never calls _export_run_env
     import enrichment_run
     enrichment_run.run_case(case, free_only=free_only, passive=passive,
-                            defer_metered=defer_metered, reopen_legacy=reopen_legacy)
+                            defer_metered=defer_metered, reopen_legacy=reopen_legacy,
+                            leak_only=leak_only)
 
 def _enrichment_rows(case_dir):
     """Read the runner's case-local evidence index; never re-query a provider."""
@@ -521,17 +523,50 @@ def _enrichment_rows(case_dir):
             for key, row in sorted(leads.items()) if isinstance(row, dict)]
 
 
+def _leak_coverage_md(case_dir):
+    """The mandatory per-selector leak coverage table (enrichment/leak_coverage.json, written by
+    every enrich run): which vendor was consulted for which CONFIRMED selector, and why not."""
+    try:
+        with open(os.path.join(case_dir, "enrichment", "leak_coverage.json"), encoding="utf-8") as fh:
+            rows = json.load(fh).get("rows") or []
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not rows:
+        return ""
+    lines = ["", "## Leak / stealer coverage — exposure, not attribution", "",
+             "| Selector | Type | Vendor | Result | Reason |", "|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r.get('selector')} | {r.get('type')} | {r.get('vendor')} | "
+                     f"{r.get('state')} | {str(r.get('reason') or '').replace('|', '/')} |")
+    return "\n".join(lines) + "\n"
+
+
+def _leak_coverage_summary(case_dir):
+    """{file, selectors, hit, clean, not_consulted} for the cti JSON line — the final answer must
+    state per-selector leak coverage; None means the fan-out never ran (say so, never 'clean')."""
+    try:
+        with open(os.path.join(case_dir, "enrichment", "leak_coverage.json"), encoding="utf-8") as fh:
+            rows = json.load(fh).get("rows") or []
+    except (OSError, ValueError, AttributeError):
+        return None
+    out = {"file": "enrichment/leak_coverage.json",
+           "selectors": len({(r.get("type"), r.get("selector")) for r in rows})}
+    for state in ("hit", "clean", "not_consulted"):
+        out[state] = sum(1 for r in rows if r.get("state") == state)
+    return out
+
+
 def _enrichment_md(case_dir):
     rows = _enrichment_rows(case_dir)
     if not rows:
-        return ""
+        return _leak_coverage_md(case_dir)
     lines = ["", "## Case enrichment — third-party leads (not attribution)", "",
              "These lookups are leads; verify owner links before adding cluster edges.", ""]
     for row in rows:
         lines.append(f"- {row['key']} [{row['outcome']}]: {row['summary']} "
                      f"(enrichment/{row['file']})" if row["file"] else
                      f"- {row['key']} [{row['outcome']}]: {row['summary']}")
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + _leak_coverage_md(case_dir)
 
 
 def _all_raw(case_dir):
@@ -954,7 +989,10 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
             inside = sorted(d for d in s["domains"] if d.lower() in mset)
             if len(inside) < min_shared:
                 continue
+            # `indicator` stays the machine join key; `display` is what a reader is shown (an org
+            # node's registrar spelling instead of its canonical lowercase key)
             binding.append({"indicator": f"{s['indicator_type']}:{s['indicator']}",
+                            "display": f"{s['indicator_type']}:{s.get('display') or s['indicator']}",
                             "rels": strong_rels, "domains_in_cluster": inside,
                             "kb_wide_domains": s["domain_count"]})
         # most distinctive first: rare KB-wide, but binding many of this cluster's domains
@@ -985,7 +1023,8 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
           + (f"; {len(related_hosts)} related host(s) at the expansion depth kept out" if related_hosts else "")
           + f" -> {os.path.relpath(os.path.join(case_dir, 'clusters.json'), ROOT)}")
     for c in multi[:8]:
-        top = c["binding_indicators"][0]["indicator"] if c["binding_indicators"] else "—"
+        b0 = c["binding_indicators"][0] if c["binding_indicators"] else {}
+        top = b0.get("display") or b0.get("indicator") or "—"
         cor = c.get("corroboration") or {}
         flag = "" if cor.get("independent_artifacts", 0) >= 2 else "  ⚠ LEAD ONLY"
         print(f"      c{c['id']} ({c['size']}): {', '.join(c['domains'][:5])}"
@@ -1172,7 +1211,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None,
     for c in clusters:
         for b in c.get("binding_indicators", []):
             for d in b.get("domains_in_cluster", []):
-                by_domain.setdefault(d.lower(), []).append(b["indicator"])
+                by_domain.setdefault(d.lower(), []).append(b.get("display") or b["indicator"])
 
     gaps = []
     if fr["candidate_total"]:
@@ -1256,7 +1295,8 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None,
             "collected": collected, "cluster_shared": cluster,
             # the partition judgment should run over — one cluster is one attribution question
             "clusters": [{"id": c["id"], "size": c["size"], "domains": c["domains"],
-                          "binding_indicators": [b["indicator"] for b in c["binding_indicators"][:5]]}
+                          "binding_indicators": [b.get("display") or b["indicator"]
+                                                 for b in c["binding_indicators"][:5]]}
                          for c in clusters],
             "frontier": [{"seed": ap, "why": fr["candidates"].get(ap, {}).get("sources", []),
                           "cost": "free"} for ap in fr["pending"]],
@@ -1925,6 +1965,7 @@ def cmd_cti(a):
                                 free_only=free_only, depth=getattr(a, "depth", None))
         if hres is not None:
             summary.update(hres)
+            summary["leak_coverage"] = _leak_coverage_summary(case_dir)
             print(json.dumps(summary, sort_keys=True))
             return
         print("   harness unavailable (no LLM backend answered, nothing collected) — "
@@ -1991,6 +2032,7 @@ def cmd_cti(a):
         summary["open_leads"] = _open_leads(fr)
 
     summary["next"] = (["harness"] if not summary["converged"] else []) + ["report"]
+    summary["leak_coverage"] = _leak_coverage_summary(case_dir)
     print(json.dumps(summary, sort_keys=True))
     # Ask only a human at a terminal, and only AFTER the JSON line. A non-interactive caller already
     # has `open_leads`/`next` in that line, so no NEXT_ACTIONS block is appended after it.
@@ -2080,9 +2122,13 @@ def main():
     e.add_argument("--reopen-legacy", action="store_true",
                    help="reopen old skipped/unavailable closures without runner evidence; "
                         "use only after reviewing analyst-owned closure decisions")
+    e.add_argument("--leak-only", action="store_true",
+                   help="run only the leak/stealer fan-out on confirmed selectors "
+                        "(the harness's round-1 step); writes enrichment/leak_coverage.json")
     e.set_defaults(func=lambda a: _run_enrichment(a.case, free_only=a.free_only,
                                                   passive=a.passive,
-                                                  reopen_legacy=a.reopen_legacy))
+                                                  reopen_legacy=a.reopen_legacy,
+                                                  leak_only=a.leak_only))
 
 
     lp = sub.add_parser("loop", help="resumable convergence feedback loop (collect→assess→chase gaps)")

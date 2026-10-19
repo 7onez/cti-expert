@@ -234,10 +234,11 @@
       "intelx_search": {
         "mode": {
           "type": "string",
-          "description": "'search' runs the selector across leak/stealer-log/paste/darknet buckets; 'phonebook' inventories a domain's emails and subdomains; 'budget' is an OFFLINE quota check.",
+          "description": "'search' runs the selector across leak/stealer-log/paste/darknet buckets; 'phonebook' inventories a domain's emails and subdomains; 'item' OPENS one search record (selector = its storageid, plus `bucket`) as a bounded, redacted preview — the only thing an infection/compromise claim may cite; 'budget' is an OFFLINE quota check.",
           "enum": [
             "search",
             "phonebook",
+            "item",
             "budget"
           ]
         },
@@ -262,6 +263,30 @@
             "emails",
             "urls"
           ]
+        },
+        "deadline": {
+          "type": "integer",
+          "description": "mode=search: overall wall-clock seconds for the whole search (default proportional to buckets searched). On expiry the records so far return with status 'partial (deadline)'."
+        },
+        "bucket": {
+          "type": "string",
+          "description": "mode=item: the record's `bucket` (e.g. leaks.logs), from the search records/read_these row."
+        },
+        "media": {
+          "type": "integer",
+          "description": "mode=item: the record's `media_id` (default 0)."
+        },
+        "ctype": {
+          "type": "integer",
+          "description": "mode=item: the record's content `type` (default 1 = text)."
+        },
+        "lines": {
+          "type": "integer",
+          "description": "mode=item: preview lines (default from references/intelx.json result_limits.preview_lines)."
+        },
+        "systemid": {
+          "type": "string",
+          "description": "mode=item: the record's systemid, used only for the intelx.io UI link."
         }
       },
       "url_paths": {
@@ -463,7 +488,7 @@
       "case_enrich": {
         "free_only": {
           "type": "boolean",
-          "description": "Hold every metered leg (email-deep, IntelX, reverse-WHOIS) as an open lead; run only free legs. ChongLuaDao is unlimited and runs regardless. Use to avoid spending credits."
+          "description": "Hold every metered leg (email-deep, IntelX, Hudson Rock, reverse-WHOIS) as an open lead; run only free legs. ChongLuaDao is unlimited and runs regardless. Held leak vendors are reported as not_consulted in leak_coverage.json. Use to avoid spending credits."
         },
         "passive": {
           "type": "boolean",
@@ -472,6 +497,10 @@
         "reopen_legacy": {
           "type": "boolean",
           "description": "Reopen old held/unavailable closures that lack runner evidence and cannot be told apart from a deliberate analyst closure. Off by default."
+        },
+        "leak_only": {
+          "type": "boolean",
+          "description": "Run only the leak/stealer fan-out (CLD, IntelX, Hudson Rock, deep_profile) on the case's confirmed selectors and rewrite enrichment/leak_coverage.json. Same spend gate as a full run."
         }
       },
       "case_reopen": {
@@ -1365,6 +1394,38 @@
         "max_hops": {
           "type": "integer",
           "description": "Max redirects to follow (default 8)."
+        },
+        "no_follow": {
+          "type": "boolean",
+          "description": "Parse the given URL only (unwrap carriers, extract platform ids) — contact nothing."
+        }
+      },
+      "meta_transparency": {
+        "target": {
+          "type": "string",
+          "required": false,
+          "description": "Facebook Page vanity / numeric id / URL, or Instagram @handle / URL. Omit when using `search`."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["auto", "facebook", "instagram"],
+          "description": "auto (default): instagram.com URLs and @handles = Instagram, everything else = Facebook."
+        },
+        "search": {
+          "type": "string",
+          "description": "Ad Library page-name search: candidate Pages (id + names) whose ads match this name."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case id — writes cases/<case>/enrichment/meta_transparency/<platform>_<slug>.json."
+        },
+        "no_wayback": {
+          "type": "boolean",
+          "description": "Skip the Wayback name/bio/location history pass."
+        },
+        "no_linked": {
+          "type": "boolean",
+          "description": "Do not follow the Page's linked Instagram account."
         }
       },
       "dork_builder": {

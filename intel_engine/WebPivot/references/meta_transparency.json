@@ -1,0 +1,47 @@
+{
+  "_comment": "wp_meta (meta_transparency) — keyless Meta account-transparency collector: a Facebook Page (vanity / numeric id / URL) or an Instagram account resolved to its public About + Page-transparency fields, Ad Library page info, and a Wayback-reconstructed name/bio/location history. Endpoints, the fetch profile, the retry/backoff policy and the Wayback sampling bounds live here (RULE 3) so a Meta surface change is a data edit. Nothing here is case data — public Meta hostnames, a public web app id, and generic GraphQL error codes. NO COOKIES ARE EVER SUPPLIED: the only cookie in play is the anonymous challenge cookie Meta's edge issues to every logged-out visitor, held in memory for one run.",
+  "settings": {
+    "_comment": "ua is an Android Chrome string (project decision). timeout_seconds per request. attempts = tries per request on a rate-limit / 5xx answer; backoff_seconds is the base of the exponential backoff between them; max_retry_after_seconds is the longest Retry-After the collector will SLEEP for — a longer one is returned as rate_limited with the server's retry_after value instead of blocking the run (never a usage cap: the vendor's 429 is the limit). country = Ad Library country filter (ALL = every country). max_related_pages / max_ads_sampled bound how much of the Ad Library answer is copied into the output (the full count is always reported).",
+    "ua": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    "timeout_seconds": 30,
+    "attempts": 3,
+    "backoff_seconds": 5,
+    "max_retry_after_seconds": 120,
+    "country": "ALL",
+    "max_related_pages": 50,
+    "max_ads_sampled": 50
+  },
+  "endpoints": {
+    "_comment": "Keyless surfaces, verified logged-out with an Android UA. page_plugin = the embeddable Page plugin (vanity -> numeric Page id, name, follower count; answers without login). ad_library_page = the Ad Library page view; its HTML carries the LSD token and the AdLibraryFoundationRootQuery preloader (doc id + variables) that graphql re-runs with isAboutTab=true to get the About tab (Page history, admin countries, confirmed owner, linked IG). ad_library_search = page-name search (the GraphQL typeahead answers 'Unauthorized logged out query' (1675002), so name search reads advertiser pages out of the SSR result list). ig_profile = Instagram's public web profile JSON (needs ig_app_id as X-IG-App-ID; no login). fb_page / ig_page are the canonical profile URLs used as Wayback keys and citations. {…} placeholders are URL-encoded by the caller.",
+    "entries": {
+      "page_plugin": "https://www.facebook.com/plugins/page.php?href={href}&tabs=&width=340&height=130&small_header=true&adapt_container_width=true&hide_cover=true&show_facepile=false",
+      "ad_library_page": "https://www.facebook.com/ads/library/?active_status={status}&ad_type=all&country={country}&media_type=all&view_all_page_id={page_id}",
+      "ad_library_search": "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country={country}&media_type=all&search_type=page&q={q}",
+      "graphql": "https://www.facebook.com/api/graphql/",
+      "fb_origin": "https://www.facebook.com",
+      "ig_profile": "https://i.instagram.com/api/v1/users/web_profile_info/?username={username}",
+      "fb_page": "https://www.facebook.com/{vanity}",
+      "ig_page": "https://www.instagram.com/{username}/"
+    }
+  },
+  "ig_app_id": {
+    "_comment": "The public Instagram web app id the browser sends as X-IG-App-ID on every logged-out profile request. A public constant of the Instagram web client, not a credential.",
+    "values": ["936619743392459"]
+  },
+  "graphql_errors": {
+    "_comment": "Meta GraphQL error codes -> tri-state. 1675004 'Rate limit exceeded' is backed off and retried; 1675002 'Unauthorized logged out query' means the surface needs a login (reported, never worked around).",
+    "entries": {
+      "1675004": "rate_limited",
+      "1675002": "login_required"
+    }
+  },
+  "wayback": {
+    "_comment": "History reconstruction from Wayback captures of the canonical profile URL. max_captures = how many captures are fetched (spread evenly across the history, newest and oldest always included); collapse = CDX collapse key (timestamp:6 = at most one capture per month). The run-scoped Wayback breaker (wp_wayback_guard, >20 consecutive failures) still governs every request; the collector also stops its own loop on a tripped breaker.",
+    "max_captures": 12,
+    "collapse": "timestamp:6"
+  },
+  "generic_titles": {
+    "_comment": "Archived page titles that are Meta chrome (login walls, error pages), not the account's name — a capture whose title is one of these contributes no name to the history. Compared case-insensitively after trimming.",
+    "values": ["facebook", "instagram", "log into facebook", "log in or sign up to view", "facebook - log in or sign up", "facebook – log in or sign up", "login • instagram", "instagram login", "page not found", "content not found", "error", "error facebook", "redirecting...", "security check required"]
+  }
+}

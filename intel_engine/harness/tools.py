@@ -1616,12 +1616,23 @@ async def case_loop(args: dict[str, Any]) -> dict[str, Any]:
     "case_enrich",
     "Run all machine-executable, target-matched identity/exposure leads already discovered in "
     "a case: registrant email profile, phone OSINT, keyed ChongLuaDao phone/Telegram/actor/org, "
-    "IntelX phonebook and linked GitHub account. Results are checkpointed in cases/<case>/"
+    "IntelX phonebook and linked GitHub account — plus the MANDATORY LEAK FAN-OUT: every CONFIRMED "
+    "selector (analyst seed, owner-rung node, first-round WHOIS registrant email/phone, owned seed "
+    "domain, social-intake account username; never a kit/neighbour/co-tenant one) is checked "
+    "against ChongLuaDao, IntelX, Hudson Rock (email → login/emails, domain → search-by-domain, "
+    "username → login/usernames) and, for emails, the deep_profile breach chain. Writes cases/"
+    "<case>/enrichment/leak_coverage.json: one row per selector × vendor, state hit | clean | "
+    "not_consulted with the reason (missing key, free_only/no_spend hold, n/a for the type, "
+    "retryable error). Consulted results are KB exposure facts (leak_exposure), never attribution "
+    "edges. Results are checkpointed in cases/<case>/"
     "enrichment/; a finished lead closes as ran or empty, while missing-key, held, transient-error "
-    "and query-only dork/secret leads stay OPEN for a later keyed run or analyst review. This does "
+    "and query-only dork/secret leads stay OPEN for a later keyed run or analyst review; a rerun "
+    "never re-buys a closed leg. This does "
     "not fetch the target or re-collect hosts. It SPENDS credits on metered legs unless free_only "
-    "or the case's scope is no_spend; passive is an egress posture and does NOT hold spend.",
-    {"case": str},  # free_only:bool, passive:bool, reopen_legacy:bool optional (tool_params.json)
+    "or the case's scope is no_spend (then only keyless CLD runs and metered vendors read "
+    "not_consulted); passive is an egress posture and does NOT hold spend. leak_only=true runs "
+    "just the leak fan-out (the harness runs it after round-1 collection, before frontier pivots).",
+    {"case": str},  # free_only, passive, reopen_legacy, leak_only: bool optional (tool_params.json)
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
@@ -1632,6 +1643,8 @@ async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
         cmd.append("--passive")
     if _flag(args, "reopen_legacy"):
         cmd.append("--reopen-legacy")
+    if _flag(args, "leak_only"):
+        cmd.append("--leak-only")
     r = _run(cmd, timeout=1800)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}
@@ -1892,27 +1905,57 @@ async def victim_profile(args: dict[str, Any]) -> dict[str, Any]:
     "machine it is (victim = credentials FOR the front-end; operator = the back office, i.e. the "
     "registrar/hosting/CMS/exchange logins behind it). Judgement lives in IntelAnalysis SKILL.md "
     "§1.7 + Workflows/StealerLog.md. Never quote a password/cookie/token — metadata only. "
+    "mode='item' OPENS one record: `selector` = the record's `storageid`, plus `bucket` (and "
+    "optionally `media` = its `media_id`, `ctype` = its `type`, `lines`, `systemid`) — returns a "
+    "bounded, REDACTED text preview (/file/preview; metered, usually paid-only). A search hit COUNT "
+    "only says the selector appears in the leak corpus; an infection/compromise claim MUST cite an "
+    "opened item. Every search returns `status`: 'clean' = IntelX finished every pass; "
+    "'partial (deadline)' / 'partial (poll limit)' / 'partial (budget)' = only what arrived before "
+    "the stop — missing records are NOT negatives. The whole search runs under one deadline "
+    "proportional to the buckets searched (override with `deadline` seconds). "
     "METERED and capped per run. With no INTELX_KEY the layer still runs at ~50%: it classifies the "
     "selector and returns the intelx.io / phonebook.cz URL to run by hand — say so rather than "
     "reporting an empty result as 'not in any leak'.",
-    {"selector": str},  # mode:'search'|'phonebook', buckets:str, max:int optional -> args.get()
+    {"selector": str},  # mode:'search'|'phonebook'|'item'|'budget', buckets, logs_only, max,
+                        # deadline, target; item: bucket, media, ctype, lines, systemid -> args.get()
     annotations=READONLY,
 )
 async def intelx_search(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("WebPivot", "tools", "wp_intelx.py")
     mode = str(args.get("mode") or "search").lower()
     sel = str(args["selector"])
-    if mode == "phonebook":
+    # The collector enforces its OWN deadline and returns a partial result when it expires; the
+    # wrapper must outlive that (cap + grace), never kill it first and lose the partial page.
+    limits = _load_ref(os.path.join(ROOT, "WebPivot", "references", "intelx.json"),
+                       {"result_limits": {"deadline_max_seconds": 900}})["result_limits"]
+    deadline = int(args.get("deadline") or limits.get("deadline_max_seconds", 900))
+    if mode == "budget":
+        cmd = [PY, script, "budget"]
+    elif mode == "phonebook":
         cmd = [PY, script, "phonebook", sel]
         if args.get("target"):
             cmd += ["--target", str(args["target"])]
+    elif mode == "item":
+        if not args.get("bucket"):
+            return _err("intelx_search mode='item' needs `bucket` (and `selector` = the record's "
+                        "storageid) — both are on every search records/read_these row.")
+        cmd = [PY, script, "item", sel, "--bucket", str(args["bucket"])]
+        for flag, key in (("--media", "media"), ("--type", "ctype"), ("--lines", "lines")):
+            if args.get(key) not in (None, ""):
+                cmd += [flag, str(int(args[key]))]
+        if args.get("systemid"):
+            cmd += ["--systemid", str(args["systemid"])]
     else:
         cmd = [PY, script, "search", sel]
         if args.get("buckets"):
             cmd += ["--buckets", str(args["buckets"])]
-    if args.get("max"):
+        elif _flag(args, "logs_only"):
+            cmd += ["--logs-only"]
+        if args.get("deadline"):
+            cmd += ["--deadline", str(deadline)]
+    if args.get("max") and mode in ("search", "phonebook"):
         cmd += ["--max", str(int(args["max"]))]
-    r = _run(cmd, timeout=180)
+    r = _run(cmd, timeout=deadline + 120)
     if r.returncode != 0 and not r.stdout:
         # rc=2 is the documented KEYLESS path: the stderr block explains what was not queried and
         # gives the UI URL. That is information, not a failure — surfacing it as an error would
@@ -3209,21 +3252,60 @@ async def traffic_rank(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "sharelink_resolve",
-    "Expand a share/short `url` (vm.tiktok.com, t.co, bit.ly …) and read the SHARER-IDENTITY "
-    "parameters platforms embed in it — u_code, sec_user_id, igshid, invite and affiliate codes — "
-    "which frequently name the account that generated the link. Follows the redirect chain on "
-    "headers alone: it never renders the page or runs JavaScript. NOT PASSIVE: the final host is "
-    "contacted and will see the request, so use a research egress for adversarial infrastructure. "
-    "A sharer parameter identifies who GENERATED the link, not necessarily who sent it to you.",
-    {"url": str},  # max_hops:int
+    "Expand a share/short `url` (vm.tiktok.com, t.co, bit.ly, facebook.com/share/r/… …) and read "
+    "the SHARER-IDENTITY parameters platforms embed in it — u_code, sec_user_id, igshid, mibextid, "
+    "invite and affiliate codes. Recursively unwraps redirect-carrier params (next/u/url/"
+    "redirect_uri/continue/target, bounded depth) so a chain ending on a LOGIN WALL still yields "
+    "the content URL, and returns `platform_ids`: Facebook page/profile/owner id, story_fbid, "
+    "fbid, reel/video id, share token; Instagram shortcode, username, igshid; TikTok video id, "
+    "@user, sec_user_id. Headers only, never renders. NOT PASSIVE: the final host is contacted — "
+    "use a research egress, or `no_follow=true` to parse a URL you already hold offline. A sharer "
+    "parameter or platform id names an ACCOUNT, not the person who sent the link.",
+    {"url": str},  # max_hops:int, no_follow:bool
     annotations=READONLY,
 )
 async def sharelink_resolve(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("sharelink_resolve.py"), str(args.get("url") or "")]
     if args.get("max_hops"):
         cmd += ["--max-hops", str(args["max_hops"])]
+    if args.get("no_follow"):
+        cmd.append("--no-follow")
     r = _run(cmd)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+@tool(
+    "meta_transparency",
+    "Keyless Meta ACCOUNT transparency for a Facebook Page (vanity / numeric id / URL) or an "
+    "Instagram account (@handle / URL, platform='instagram'): Page id + name via the Page plugin; "
+    "the Ad Library About tab — creation date, name-change/merge dates, admin countries, confirmed "
+    "owning organisation, linked Instagram, category, likes, active/total ads, shared-disclaimer "
+    "and related Pages, and the page_name each ad ran under; Instagram public profile (name, bio, "
+    "links, category, business email/phone if public, linked fbid). Name/username/bio/location "
+    "HISTORY rebuilt from Wayback captures. Per-field tri-state (found / not_exposed / "
+    "login_required / blocked / rate_limited), 429s backed off with Retry-After. Login-only panels "
+    "come back as a `capture_checklist` of screenshots to take — NEVER ask for cookies or session "
+    "tokens. Account-level facts, never person attribution. `search` = Ad Library page-name "
+    "search; `case` writes cases/<case>/enrichment/meta_transparency/.",
+    {"target": str},  # platform:str, search:str, case:str, no_wayback:bool, no_linked:bool
+    annotations=READONLY,
+)
+async def meta_transparency(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_meta.py"), "--json"]
+    if args.get("search"):
+        cmd += ["--search", str(args["search"])]
+    elif args.get("target"):
+        cmd.append(str(args["target"]))
+    if args.get("platform"):
+        cmd += ["--platform", str(args["platform"])]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    if args.get("no_wayback"):
+        cmd.append("--no-wayback")
+    if args.get("no_linked"):
+        cmd.append("--no-linked")
+    r = _run(cmd, timeout=1800)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
 
 
 @tool(
@@ -3317,7 +3399,9 @@ async def sellers_lookup(args: dict[str, Any]) -> dict[str, Any]:
     "store='appstore') → iTunes artistName, artistId, sellerName, sellerUrl and other apps. A "
     "developer website whose registrable domain equals a case domain is an OWNER link (rung "
     "app.developer_url); the email and any other website are seed CANDIDATES only, never "
-    "auto-seeded — a listing is self-declared. Pass `case` to scope the owner check.",
+    "auto-seeded — a listing is self-declared. Pass `case` to scope the owner check; the "
+    "resolved record is then saved to cases/<case>/appdev/ so build_report_data carries the "
+    "developer (legal name, email, website, other apps) into the report subjects and findings.",
     {"query": str},  # store:'auto'|'play'|'appstore', case:str, case_domains:str, timeout:int
     annotations=READONLY,
 )
@@ -3533,6 +3617,7 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       cert_pivot, crypto_balance, wayback_fetch, wayback_harvest, wayback_exhaust,
                       threat_check, msft_recon, username_enum,
                       subdomain_enum, github_harvest, github_osint, traffic_rank, sharelink_resolve,
+                      meta_transparency,
                       cn_recon, vn_corp, sellers_lookup, cti, quarry, deep_profile, wifi_ssid, cld,
                       kb_ingest, corpus_search, app_developer])
 ANALYZE_SERVER = create_sdk_mcp_server(
@@ -3570,7 +3655,8 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__username_enum", "mcp__collect__subdomain_enum",
                  "mcp__collect__github_harvest",
                  "mcp__collect__github_osint", "mcp__collect__traffic_rank",
-                 "mcp__collect__sharelink_resolve", "mcp__collect__cn_recon", "mcp__collect__vn_corp", "mcp__collect__cti", "mcp__collect__quarry",
+                 "mcp__collect__sharelink_resolve", "mcp__collect__meta_transparency",
+                 "mcp__collect__cn_recon", "mcp__collect__vn_corp", "mcp__collect__cti", "mcp__collect__quarry",
                  "mcp__collect__deep_profile", "mcp__collect__wifi_ssid", "mcp__collect__cld",
                  "mcp__collect__wayback_fetch", "mcp__collect__wayback_harvest",
                  "mcp__collect__wayback_exhaust",

@@ -184,7 +184,8 @@ def _classify_bindings(bindings):
     for s in bindings:
         for rel in s["rels"]:
             t = _tier(rel)
-            tiers[t].append((rel, s["indicator_type"], s["indicator"], s["domain_count"]))
+            tiers[t].append((rel, s["indicator_type"], s.get("display") or s["indicator"],
+                             s["domain_count"]))
     for t in tiers:
         tiers[t] = sorted(set(tiers[t]), key=lambda x: -x[3])
     return tiers
@@ -277,7 +278,7 @@ def main():
         print(f"# dropped {len(dropped)} broad indicator(s) — NOT clustered on (proxy/junk, or fan-out over cap):")
         for s in sorted(dropped, key=lambda x: -x["domain_count"])[:20]:
             tag = "  ⚠AGENCY-SUSPECT (service token — verify operator vs shared agency)" if s.get("_agency_suspect") else ""
-            print(f"    [{s['domain_count']}] {s['indicator_type']}:{s['indicator']}{tag}")
+            print(f"    [{s['domain_count']}] {s['indicator_type']}:{s.get('display') or s['indicator']}{tag}")
         print()
     if a.domain:
         clusters = [c for c in clusters if a.domain in c["domains"]]

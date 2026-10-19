@@ -74,9 +74,12 @@ drive clean actor/victim separation in both the bundle and the HTML report.
    aliases stay `network/domain`, a person's stay `identity/alias`); plus attached
    `selectors[]` (`{type,value,platform,url}`); plus a regex sweep of `notes`.
 2. **Top-level `indicators[]`** — analyst-curated entries forced in verbatim.
-3. **Findings** — regex sweep of `description` + `source_url` + `tags`, attributed to the
-   linked subject's role.
-4. **Sources** — `source.url` scanned for social/messaging profile links.
+3. **Findings** — regex sweep of `description` + `tags`, attributed to the linked subject's role.
+   `source_url` is PROVENANCE (kept as the record's `source`), never scanned; a finding marked
+   `ioc_scan: false` (analyst-graded, indicators tagged explicitly on its subjects) is not swept.
+4. **Sources** — provenance only; a `sources[]` row is scanned only when tagged `"indicator": true`.
+   Cited registries / search platforms / scam-check sites in
+   `scripts/references/ioc_reference_hosts.json` are never harvested from any prose.
 5. **Connections** → **attribution** edges (with a `reach` flag for `communicated_with` /
    `reaches` / `contacted` relationships).
 

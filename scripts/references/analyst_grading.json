@@ -1,0 +1,42 @@
+{
+  "_comment": "How build_report_data.py carries ANALYST-GRADED evidence (evidence_import outputs, analyst_findings*.json, findings.json, enrichment/, intelx/, appdev/) into the flat report JSON without losing its grading. The finding keeps its own `rung`, `rung_class`, `effective_rung` and `admiralty`; these tables only derive the report's numeric `confidence`, the `weight` and the connection `strength` the generators draw. Vocabulary only, never case data (RULE 1).",
+  "admiralty_credibility_confidence": {
+    "_comment": "Admiralty information-credibility digit (1 confirmed … 5 improbable, 6 cannot be judged) -> report confidence 0-100.",
+    "entries": {"1": 95, "2": 85, "3": 65, "4": 45, "5": 20, "6": 50}
+  },
+  "admiralty_reliability_penalty": {
+    "_comment": "Subtracted from the credibility confidence per source-reliability letter (A completely reliable … F cannot be judged).",
+    "entries": {"A": 0, "B": 0, "C": 5, "D": 10, "E": 20, "F": 25}
+  },
+  "candidate_reliability": {
+    "_comment": "Source-reliability letters that make a finding a CANDIDATE: kept in the narrative, never harvested as IOCs, and its selectors enter `ioc_exclude` unless an owner-rung finding also cites them.",
+    "values": ["E", "F"]
+  },
+  "rung_weight": {
+    "_comment": "Finding weight (severity column) per rung.",
+    "entries": {"owner": "HIGH", "kit": "MEDIUM", "neighbour": "LOW", "mention": "INFO"}
+  },
+  "rung_strength": {
+    "_comment": "Connection strength per rung of the finding that asserts a selector link.",
+    "entries": {"owner": "confirmed", "kit": "probable", "neighbour": "possible", "mention": "possible"}
+  },
+  "indicator_subject_types": {
+    "_comment": "Analyst indicator type -> report subject type (generate-cti-iocs.py SUBJECT_MAP vocabulary). A type not listed keeps its own name.",
+    "entries": {"org": "organization", "organisation": "organization", "company": "organization",
+                "name": "person", "person": "person", "ip": "ip", "ipv4": "ip", "ipv6": "ip",
+                "user": "username", "handle": "username"}
+  },
+  "contact_subject_types": {
+    "_comment": "Subject types that are a party's contact / identity selectors. On a benign_check intake they are identity EVIDENCE, not detection indicators, and are kept out of the IOC feed (same rule as the registrant triple).",
+    "values": ["email", "phone", "username", "person", "organization", "social", "tax_id"]
+  },
+  "social_profile_urls": {
+    "_comment": "Public profile URL template per platform for a `social` indicator written `platform:handle`, so the IOC exporter resolves it to a typed social selector. A platform not listed stays a bare handle selector.",
+    "entries": {"facebook": "https://www.facebook.com/{handle}", "instagram": "https://www.instagram.com/{handle}",
+                "threads": "https://www.threads.net/@{handle}", "x": "https://x.com/{handle}",
+                "twitter": "https://x.com/{handle}", "tiktok": "https://www.tiktok.com/@{handle}",
+                "youtube": "https://www.youtube.com/@{handle}", "telegram": "https://t.me/{handle}",
+                "github": "https://github.com/{handle}", "linkedin": "https://www.linkedin.com/in/{handle}",
+                "vk": "https://vk.com/{handle}", "reddit": "https://www.reddit.com/user/{handle}"}
+  }
+}

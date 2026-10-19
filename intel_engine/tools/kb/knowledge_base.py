@@ -49,6 +49,7 @@ class KB:
         os.makedirs(self.evidence_dir, exist_ok=True)
         self._edges = self._load_edges()
         self._edge_keys = {self._edge_key(e) for e in self._edges}
+        self._display_index = None      # org key -> registrar spelling (built lazily)
 
     # ---------------------------------------------------------------- entities
     def _ent_file(self, etype, value):
@@ -127,6 +128,7 @@ class KB:
         if k not in self._edge_keys:
             self._edge_keys.add(k)
             self._edges.append(e)
+            self._display_index = None
             with open(self.rel_path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(e, ensure_ascii=False) + "\n")
         self.touch(src_type, src, observed_at)
@@ -184,6 +186,31 @@ class KB:
                 out.append((e["src_type"], e["src"], e["rel"], e["confidence"]))
         return out
 
+    def display_value(self, etype, value):
+        """The human-readable form of an entity value. `org` nodes are keyed on
+        noise_filters.canonical_org_key ('company a ltd'); this returns the registrar's own spelling
+        instead — the one carried by the most `registered_by` edges (`display` attr), ties to the
+        earliest-seen, else the first-seen `display_name` fact, else the key. Other types: unchanged."""
+        if etype != "org":
+            return value
+        if self._display_index is None:
+            votes: dict = {}
+            for e in self._edges:
+                if e.get("dst_type") == "org" and e.get("display"):
+                    n, first = votes.setdefault(e["dst"], {}).get(e["display"], (0, None))
+                    obs = str(e.get("observed_at") or "")
+                    votes[e["dst"]][e["display"]] = (n + 1, obs if first is None else min(first, obs))
+            self._display_index = {k: min(v.items(), key=lambda kv: (-kv[1][0], kv[1][1], kv[0]))[0]
+                                   for k, v in votes.items()}
+        if value in self._display_index:
+            return self._display_index[value]
+        facts = [f for f in self.entity("org", value).get("facts") or []
+                 if f.get("attribute") == "display_name" and f.get("value")]
+        best = (min(facts, key=lambda f: (str(f.get("observed_at") or ""), str(f["value"])))["value"]
+                if facts else value)
+        self._display_index[value] = best
+        return best
+
     def shared_indicators(self, min_domains=2, drop_noise=True):
         """Indicators (favicon/tracker/token/registrant/…) linked to >= N domains.
         These are the same-operator cluster seeds — the auto-correlation payoff.
@@ -214,6 +241,7 @@ class KB:
             doms = set().union(*rels.values())
             if len(doms) >= min_domains:
                 out.append({"indicator_type": dtype, "indicator": dval,
+                            "display": self.display_value(dtype, dval),
                             "rels": sorted(rels), "domains": sorted(doms),
                             "domain_count": len(doms)})
         return sorted(out, key=lambda x: -x["domain_count"])

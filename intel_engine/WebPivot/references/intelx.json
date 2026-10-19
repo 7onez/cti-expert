@@ -173,23 +173,30 @@
     "warn_at_remaining": 50,
     "phonebook_costs": 5,
     "search_costs": 1,
+    "preview_costs": 1,
     "block_when_exhausted": false
   },
 
   "result_limits": {
-    "_comment": "Per-call ceilings the tool applies so one selector cannot dominate a case file or a poll loop. `max_records` is what is kept from a search, `poll_*` bound the two-step result fetch, and `preview_lines` is how much of an item's content is pulled when previewing.",
+    "_comment": "Per-call ceilings the tool applies so one selector cannot dominate a case file or a poll loop. `max_records` is what is kept from a search, `poll_*` bound the two-step result fetch, `preview_lines` / `preview_max_chars` bound an item read (`/file/preview`, redacted before output). DEADLINE: one search (all its passes) runs under ONE wall-clock budget = `deadline_base_seconds` + `deadline_per_bucket_seconds` x buckets searched (an unscoped all-bucket pass counts as `deadline_all_buckets_weight` buckets), capped at `deadline_max_seconds`; while time remains the poll keeps going on status 0/3, on expiry the records that arrived return with status 'partial (deadline)'. Generous on purpose — a slow single-email search has needed ~270s live; cutting it short only trades a timeout for a partial page. Subprocess wrappers must allow deadline + grace.",
     "max_records": 300,
     "max_selectors": 500,
     "poll_attempts": 8,
     "poll_sleep_seconds": 1,
     "search_timeout_seconds": 5,
-    "preview_lines": 8
+    "preview_lines": 8,
+    "preview_max_chars": 2000,
+    "deadline_base_seconds": 180,
+    "deadline_per_bucket_seconds": 120,
+    "deadline_all_buckets_weight": 3,
+    "deadline_max_seconds": 900
   },
 
   "ui_templates": {
     "_comment": "The KEYLESS deliverable. Every IntelX pivot emits these URLs so an analyst with only a free web account can run the identical selector by hand — the same degradation path as the Censys CenQL builder. `{term}` is URL-encoded by the caller.",
     "entries": {
       "search": "https://intelx.io/?s={term}",
+      "item": "https://intelx.io/?did={term}",
       "phonebook": "https://phonebook.cz/?q={term}",
       "signup": "https://intelx.io/signup",
       "developer_tab": "https://intelx.io/account?tab=developer"

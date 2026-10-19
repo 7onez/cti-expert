@@ -309,7 +309,8 @@ def parse_shared(text: str) -> list:
     """shared.txt -> [{count, indicator, rel, kb_wide, domains[]}]"""
     out, cur = [], None
     for line in text.splitlines():
-        m = re.match(r"\[(\d+)\]\s+(\S+)\s+\((\w+)\)(?:\s+\[KB-wide:\s*(\d+)\s+domains\])?", line)
+        # indicator may contain spaces — an org prints its registrar spelling ('org:Company A Co., Ltd')
+        m = re.match(r"\[(\d+)\]\s+(.+?)\s+\((\w+)\)(?:\s+\[KB-wide:\s*(\d+)\s+domains\])?\s*$", line)
         if m:
             cur = {"count": int(m.group(1)), "indicator": m.group(2), "rel": m.group(3),
                    "kb_wide": int(m.group(4)) if m.group(4) else None, "domains": []}

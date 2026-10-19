@@ -128,22 +128,24 @@ def generate_output_path(data: dict, output_path: str = None) -> str:
     return f"CTI-REPORT-{case_id}-{date}.docx"
 
 
-def build_report(data: dict) -> Document:
-    """Assemble the full CTI report document."""
+def build_report(data: dict, lang: str = "en") -> Document:
+    """Assemble the full CTI report document (`lang` selects the generated furniture strings)."""
+    from cti_refs import docx_strings
+    S = docx_strings(lang)
     doc = Document()
 
     # 1. Setup styles
     setup_styles(doc)
 
     # 2. Cover page
-    add_cover_page(doc, data)
+    add_cover_page(doc, data, lang)
 
     # 3. Header/footer (after cover to avoid header on cover)
     case = data["case"]
-    setup_header_footer(doc, case.get("id", "CTI-001"), case.get("classification", "OPEN SOURCE"))
+    setup_header_footer(doc, case.get("id", "CTI-001"), case.get("classification", "OPEN SOURCE"), lang)
 
     # 4. Table of contents (anchor now; entries baked after the body is built)
-    toc_anchor = begin_toc(doc)
+    toc_anchor = begin_toc(doc, S["contents"])
 
     # 5. Executive summary
     add_executive_summary(doc, data)
@@ -158,7 +160,7 @@ def build_report(data: dict) -> Document:
     # 9. Charts section
     findings = data.get("findings", [])
     if findings:
-        doc.add_heading("Statistical Analysis", level=1)
+        doc.add_heading(S["statistical_analysis"], level=1)
         add_finding_type_pie(doc, findings)
         doc.add_paragraph()
         add_severity_bar(doc, findings)
@@ -167,7 +169,7 @@ def build_report(data: dict) -> Document:
     # 9b. Visitor stats charts (if available)
     visitor_stats = data.get("visitor_stats", {})
     if visitor_stats:
-        doc.add_heading("Visitor Intelligence", level=1)
+        doc.add_heading(S["visitor_intelligence"], level=1)
         traffic_sources = visitor_stats.get("traffic_sources", {})
         if traffic_sources:
             add_traffic_sources_bar(doc, traffic_sources)
@@ -180,7 +182,7 @@ def build_report(data: dict) -> Document:
     # 10. Timeline
     timeline = data.get("timeline", [])
     if timeline:
-        doc.add_heading("Timeline", level=1)
+        doc.add_heading(S["timeline"], level=1)
         add_timeline_chart(doc, timeline)
         doc.add_paragraph()
 
@@ -188,11 +190,11 @@ def build_report(data: dict) -> Document:
     subjects = data.get("subjects", [])
     connections = data.get("connections", [])
     if subjects and connections:
-        doc.add_heading("Entity Relationships", level=1)
+        doc.add_heading(S["entity_relationships"], level=1)
         add_entity_diagram(doc, subjects, connections, data)
         doc.add_paragraph()
 
-        doc.add_heading("Network Topology", level=1)
+        doc.add_heading(S["network_topology"], level=1)
         add_network_topology(doc, subjects, connections, data)
         doc.add_paragraph()
         add_cloud_arch(doc, data)
@@ -218,13 +220,23 @@ def build_report(data: dict) -> Document:
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 generate-cti-docx.py <input.json> [output.docx]")
+    argv = sys.argv[1:]
+    lang = "en"
+    if "--lang" in argv:
+        i = argv.index("--lang")
+        lang = (argv[i + 1] if i + 1 < len(argv) else "en").strip().lower()
+        del argv[i:i + 2]
+    for a in list(argv):
+        if a.startswith("--lang="):
+            lang = a.split("=", 1)[1].strip().lower()
+            argv.remove(a)
+    if len(argv) < 1:
+        print("Usage: python3 generate-cti-docx.py <input.json> [output.docx] [--lang en|vi]")
         print("       Generates a professional CTI report in DOCX format.")
         sys.exit(1)
 
-    json_path = sys.argv[1]
-    output_path = sys.argv[2] if len(sys.argv) > 2 else None
+    json_path = argv[0]
+    output_path = argv[1] if len(argv) > 1 else None
 
     if not os.path.exists(json_path):
         print(f"Error: Input file not found: {json_path}")
@@ -234,7 +246,7 @@ def main():
     output_path = generate_output_path(data, output_path)
 
     print(f"Generating CTI Report: {output_path}")
-    doc = build_report(data)
+    doc = build_report(data, lang)
     doc.save(output_path)
     print(f"CTI Report saved: {output_path}")
     print(f"  Subjects: {len(data.get('subjects', []))}")

@@ -1,0 +1,23 @@
+{
+  "_comment": "REFERENCE / RESEARCH HOSTS for generate-cti-iocs.py — the services an analyst CITES (government and company registries, RDAP/WHOIS services, threat-intel and search platforms, scam-check and review sites, web archives), never the target's own infrastructure. A finding's `source_url` is provenance and is never scanned for indicators at all; this list stops the same hosts being harvested from finding/subject PROSE ('no listing on checkscam-style sites', 'per the RDAP record at …'). Matched exact-or-parent on the URL/domain host (`gov.vn` covers `dkkd.gov.vn`). Only the free-text scan is filtered: an explicit `indicators[]` row (analyst-tagged) is always exported, so a genuinely compromised registry subdomain can still be listed on purpose. Generic public services only — never case data (RULE 1).",
+  "apexes": {
+    "_comment": "Registrable domains / public suffixes matched exact-or-parent.",
+    "values": [
+      "gov", "gov.vn", "gov.uk", "gov.au", "gov.sg", "gov.cn", "go.id", "go.th", "gov.ph", "gov.my", "europa.eu",
+      "vnnic.vn", "icann.org", "iana.org", "ripe.net", "arin.net", "apnic.net", "lacnic.net", "afrinic.net",
+      "rdap.org", "who.is", "whois.com", "domaintools.com", "whoxy.com", "viewdns.info", "dnsdumpster.com",
+      "hackertarget.com", "bgp.he.net", "ipinfo.io", "builtwith.com",
+      "masothue.com", "hsctvn.com", "doanhnghiep.biz", "opencorporates.com",
+      "intelx.io", "urlscan.io", "alienvault.com", "abuseipdb.com", "censys.io", "censys.com", "fofa.info",
+      "hunter.how", "validin.com", "spamhaus.org", "abuse.ch", "phishtank.org", "any.run",
+      "hybrid-analysis.com", "threatcrowd.org", "greynoise.io", "talosintelligence.com",
+      "checkscam.vn", "tinnhiemmang.vn", "chongluadao.vn", "scamadviser.com", "scam-detector.com",
+      "trustpilot.com", "sitejabber.com",
+      "archive.ph", "archive.today", "archive.is", "webcache.googleusercontent.com"
+    ]
+  },
+  "host_first_labels": {
+    "_comment": "A host whose FIRST label is one of these is a registry lookup service whatever its parent (rdap.<registry>, whois.<registrar>).",
+    "values": ["rdap", "whois"]
+  }
+}

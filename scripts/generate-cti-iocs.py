@@ -16,9 +16,11 @@ classic network IOCs:
   * Financial ......... BTC / ETH wallets, IBANs (mod-97 verified), BIC, bank accounts
   * Attribution ....... who is linked to / can reach whom (case connections)
 
-Sources scanned: subjects (typed + aliases + attached selectors + notes),
-findings (description + source_url + tags), case connections, and source URLs,
-plus any explicit top-level `indicators[]`.
+Sources scanned: subjects (typed + aliases + attached selectors + notes), findings (description +
+tags), case connections, plus any explicit top-level `indicators[]`. A finding's `source_url` and
+the `sources[]` list are PROVENANCE — cited registries, search platforms and scam-check sites —
+and are never scanned; a `sources[]` row is harvested only when tagged `"indicator": true`.
+Hosts in references/ioc_reference_hosts.json are never harvested from prose either.
 
 Outputs three machine-readable formats for SIEM / TIP ingest and sharing.
 
@@ -102,6 +104,31 @@ COMMON_FP = set("""github.com linkedin.com twitter.com x.com facebook.com instag
 youtube.com youtu.be haveibeenpwned.com shodan.io crt.sh google.com docs.google.com medium.com
 reddit.com archive.org web.archive.org ssllabs.com grayhatwarfare.com securitytrails.com
 virustotal.com""".split())
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling cti_refs
+try:
+    from cti_refs import load_ref as _load_ref
+except Exception:  # noqa: BLE001 — standalone copy: embedded fallback only
+    _load_ref = None
+_REF_HOSTS_FALLBACK = {"apexes": ["gov.vn", "vnnic.vn", "intelx.io", "rdap.org", "urlscan.io"],
+                       "host_first_labels": ["rdap", "whois"]}
+_REF_HOSTS = (_load_ref("ioc_reference_hosts.json", _REF_HOSTS_FALLBACK) if _load_ref
+              else _REF_HOSTS_FALLBACK)
+REFERENCE_APEXES = {str(x).strip().lower().strip(".") for x in _REF_HOSTS["apexes"] if str(x).strip()}
+REFERENCE_FIRST_LABELS = {str(x).strip().lower() for x in _REF_HOSTS["host_first_labels"] if str(x).strip()}
+
+
+def is_reference_host(host):
+    """True for a cited research/registry/reference service host (never a target IOC)."""
+    h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return False
+    if h in COMMON_FP or ("." in h and h.split(".", 1)[0] in REFERENCE_FIRST_LABELS):
+        return True
+    parts = h.split(".")
+    return any(".".join(parts[i:]) in REFERENCE_APEXES for i in range(len(parts)))
+
+
 # final labels that are file / framework extensions, never a TLD — the domain regex otherwise reads
 # "next.js", "styles.min.css" or "index.php" in a tech fingerprint as a host. Deliberately NOT here:
 # md / py / zip / sh / app / io … are real TLDs (`.zip` is actively abused in lures) and must survive.
@@ -260,10 +287,12 @@ def extract(data):
             if mo:
                 add("messaging", mo["platform"], mo["handle"], role, conf, mo["platform"], u, sid)
                 continue
-            if host_of(u) in COMMON_FP:  # research/tool/source host, not a target IOC
+            if is_reference_host(host_of(u)):  # research/registry/source host, not a target IOC
                 continue
             add("network", "url", u, role, conf, None, source, sid)
         for v in RX["email"].findall(text):
+            if is_reference_host(v.rsplit("@", 1)[-1]):   # a registry / service contact mailbox
+                continue
             add("contact", "email", v.lower(), role, conf, None, source, sid)
         for v in RX["ipv4"].findall(text):
             add("network", "ipv4", v, role, conf, None, source, sid)
@@ -287,7 +316,7 @@ def extract(data):
         dl = RX["email"].sub(" ", RX["url"].sub(" ", text))
         for v in RX["domain"].findall(dl):
             v = v.lower().rstrip(".")
-            if v in COMMON_FP or "." not in v:
+            if "." not in v or is_reference_host(v):
                 continue
             if v.rsplit(".", 1)[-1] in NOT_TLDS:       # "next.js", "styles.css" — a file, not a host
                 continue
@@ -344,12 +373,17 @@ def extract(data):
         sub = by_id.get(f.get("subject_id"))
         role = role_of(sub) if sub else "unknown"
         conf = int(f.get("confidence") or 0)
-        text = "%s %s %s" % (f.get("description", ""), f.get("source_url", ""), " ".join(f.get("tags", []) or []))
+        # source_url is PROVENANCE (the registry / platform the claim cites), never an indicator.
+        # `ioc_scan: false` = an analyst-graded finding whose indicators are already tagged
+        # explicitly (its subjects); its prose cites references and is not harvested.
+        if f.get("ioc_scan") is False:
+            continue
+        text = "%s %s" % (f.get("description", ""), " ".join(f.get("tags", []) or []))
         scan(text, role, conf, f.get("source_url"), f.get("subject_id"))
 
-    # 4) source URLs
+    # 4) source URLs — provenance only, unless the row is explicitly tagged as an indicator
     for s in sources:
-        if s.get("url"):
+        if s.get("url") and (s.get("indicator") is True or "indicator" in (s.get("tags") or [])):
             scan(s["url"], "unknown", 55, s["url"], None)
 
     return out

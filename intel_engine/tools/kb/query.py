@@ -35,6 +35,7 @@ REGISTRANT_RELS = frozenset({"registered_by"})
 
 try:  # canonical registrant-noise predicates — single source of truth with both ingest paths
     from noise_filters import is_noise_email, is_bulk_registrant, BOILERPLATE_RELS  # noqa: E402
+    from noise_filters import canonical_org_key  # noqa: E402
 except Exception:  # noqa: BLE001 — degrade safely; a read-only query must never crash
     BOILERPLATE_RELS = frozenset({"same_inline_css", "same_comment", "same_template", "same_bundle"})
 
@@ -43,6 +44,9 @@ except Exception:  # noqa: BLE001 — degrade safely; a read-only query must nev
 
     def is_bulk_registrant(_):    # pragma: no cover
         return False
+
+    def canonical_org_key(_):     # pragma: no cover
+        return ""
 
 try:
     import kb_refs  # noqa: E402 — reference DATA lives in references/registrant_noise.json (RULE 3)
@@ -111,13 +115,17 @@ def _normalize_entity_value(raw):
 
 def _entity_variants(raw):
     """Candidate KB values to try for an --entity lookup, in order: the normalised value, then its
-    www./bare-apex counterpart (a case may hold the entity under either form)."""
+    www./bare-apex counterpart (a case may hold the entity under either form), then the canonical
+    org key — org nodes are keyed on it, so `--entity "Company A Co., Ltd"` finds 'company a ltd'."""
     norm = _normalize_entity_value(raw)
     out = [norm]
     if norm.startswith("www."):
         out.append(norm[4:])
     elif norm:
         out.append("www." + norm)
+    org = canonical_org_key(raw)
+    if org and org not in out:
+        out.append(org)
     return out
 
 
@@ -179,7 +187,7 @@ def main():
                     continue
             wide = (f"  [KB-wide: {s['domain_count']} domains]"
                     if restrict is not None and s["domain_count"] > len(doms) else "")
-            print(f"[{len(doms)}] {s['indicator_type']}:{s['indicator']}  "
+            print(f"[{len(doms)}] {s['indicator_type']}:{s.get('display') or s['indicator']}  "
                   f"({', '.join(s['rels'])}){wide}")
             print(f"     {', '.join(doms)}")
 
@@ -187,7 +195,9 @@ def main():
         print(f"\n# entities of type '{args.type}'")
         for e in sorted(kb.all_entities(), key=lambda x: x["value"]):
             if e["type"] == args.type:
-                print(f"  {e['value']}   ({len(e['facts'])} facts)")
+                shown = kb.display_value(e["type"], e["value"])
+                key_note = f"   [key: {e['value']}]" if shown != e["value"] else ""
+                print(f"  {shown}{key_note}   ({len(e['facts'])} facts)")
 
     if args.entity:
         # find it across types; exact match first, then normalised (lowercase/scheme/trailing dot)
@@ -205,14 +215,16 @@ def main():
         if not found:
             print(f"not in KB: {args.entity} (KB has {len(all_ents)} entities)")
         for e in found:
-            print(f"\n# {e['type']}: {e['value']}   (first {e.get('first_seen')} … last {e.get('last_seen')})")
+            shown = kb.display_value(e["type"], e["value"])
+            key_note = f"   [key: {e['value']}]" if shown != e["value"] else ""
+            print(f"\n# {e['type']}: {shown}{key_note}   (first {e.get('first_seen')} … last {e.get('last_seen')})")
             for f in e["facts"]:
                 print(f"  · {f['attribute']} = {f['value']}   [{f['source']}/{f['collector']} conf {f['confidence']}]")
             nb = kb.neighbors(e["type"], e["value"])
             if nb:
                 print("  edges:")
                 for dt, dv, rel, conf in nb:
-                    print(f"    -{rel}-> {dt}:{dv}   (conf {conf})")
+                    print(f"    -{rel}-> {dt}:{kb.display_value(dt, dv)}   (conf {conf})")
 
     if args.cluster:
         # 1-hop through shared indicators: domains that share any indicator with target
@@ -250,7 +262,7 @@ def main():
                             continue
                     elif prev > args.max_prevalence:
                         continue
-                peers.setdefault(e["src"], set()).add(f"{e['rel']}:{e['dst']}")
+                peers.setdefault(e["src"], set()).add(f"{e['rel']}:{kb.display_value(e['dst_type'], e['dst'])}")
         peers = {d: v for d, v in peers.items() if v}     # drop peers left with no (strong) link
         tag = " (strong links only — boilerplate excluded)" if args.strong else ""
         print(f"\n# Domains sharing an indicator with {target}{tag}\n")

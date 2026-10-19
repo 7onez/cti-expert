@@ -1,0 +1,41 @@
+{
+  "_comment": "Leak/stealer fan-out POLICY (case_state.leak_selectors / leak leads, run by enrichment_run — the case_enrich tool). Every CONFIRMED selector of a case (an analyst seed, an owner-rung typed node, a WHOIS registrant email/phone of a host within max_owner_hop of the seeds, an owned seed domain, a social-intake account username) is checked against every leak vendor its TYPE supports. Kit- and neighbour-rung selectors (co-tenants, shared-kit hosts, exchange counterparties) are NEVER leak-checked. Results are EXPOSURE facts, never attribution edges. `{v}` in argv is replaced by the selector. A vendor row with `na` is a static not-consulted reason; `via` means the row is read from another vendor's step (deep_profile already sends Hudson Rock + IntelX for an email, so they are never bought twice).",
+  "selection": {
+    "_comment": "max_owner_hop: registrant contacts are taken only from hosts at hop <= this (0 = seeds, 1 = first-round owner links). username_regex: a seeded string/handle that is shaped like an account username.",
+    "max_owner_hop": 1,
+    "username_regex": "^@?[A-Za-z0-9_.\\-]{3,64}$"
+  },
+  "vendors": {
+    "_comment": "Vendor columns of the per-selector coverage table, in report order.",
+    "values": ["cld", "intelx", "hudsonrock", "deep_profile"]
+  },
+  "plan": {
+    "_comment": "type -> vendor -> {op, argv[, key]} | {via} | {na}. op is an enrichment_run SCRIPTS op; key overrides the default leak:<vendor>:<type>:<v> lead key so an identical existing lead (email-deep:, cld-phone:) is shared, never re-run.",
+    "entries": {
+      "email": {
+        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "email"]},
+        "intelx": {"via": "deep_profile"},
+        "hudsonrock": {"via": "deep_profile"},
+        "deep_profile": {"op": "email-deep", "argv": ["{v}"], "key": "email-deep:{v}"}
+      },
+      "username": {
+        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "username"]},
+        "intelx": {"na": "IntelX refuses soft selectors — a username is not a strong selector"},
+        "hudsonrock": {"op": "hudsonrock", "argv": ["hudsonrock", "{v}", "--kind", "username"]},
+        "deep_profile": {"na": "email-only chain"}
+      },
+      "phone": {
+        "cld": {"op": "cld", "argv": ["route", "{v}"], "key": "cld-phone:{v}"},
+        "intelx": {"op": "intelx", "argv": ["search", "{v}", "--logs-only"]},
+        "hudsonrock": {"na": "Cavalier v3 has no phone endpoint"},
+        "deep_profile": {"na": "email-only chain"}
+      },
+      "domain": {
+        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "domain"]},
+        "intelx": {"op": "intelx", "argv": ["search", "{v}", "--logs-only"]},
+        "hudsonrock": {"op": "hudsonrock", "argv": ["hudsonrock", "{v}", "--kind", "domain"]},
+        "deep_profile": {"na": "email-only chain"}
+      }
+    }
+  }
+}

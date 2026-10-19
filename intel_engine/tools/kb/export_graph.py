@@ -75,7 +75,7 @@ def main():
         if not (2 <= len(doms) <= args.max_indicator_degree):
             continue
         for d1, d2 in combinations(sorted(doms), 2):
-            pair[(d1, d2)][rel].append(k[1])
+            pair[(d1, d2)][rel].append(kb.display_value(k[0], k[1]))   # org: registrar spelling
     def _clean(v):
         # strip the "kind:" prefix so the actual value reads cleanly (e.g. "G-PN…")
         s = str(v)

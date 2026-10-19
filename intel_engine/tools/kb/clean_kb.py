@@ -10,6 +10,10 @@ money trail stop resting on noise:
   * IP-literal "domains"     — 0.0.0.0, 45.223.137.200:12169 ingested as domain entities
   * WHOIS-label "persons"    — "Registrant State/Province: Rome", "REACTIVATION PERIOD", etc.
   * org-as-person            — "Ultima Markets Pty Ltd" reclassified from person -> org (kept, retyped)
+  * org spelling splits      — a `registered_by -> org` edge still keyed on a registrar's verbatim
+    spelling ('Company A Co., Ltd') is re-keyed to noise_filters.canonical_org_key, so the comma /
+    no-comma / legal-form / diacritic variants of one company collapse onto ONE org node (the old
+    spelling is kept as a `display_name` fact); a privacy/redaction org edge is dropped.
   * era-forbidden registrants — a `registered_by` edge whose target is a PREVIOUS owner's WHOIS
     value (drop-catch/resale) rather than the current owner's (whois_eras.py owner_values(); the
     ingester's flat `history.registrant_*` read predates that guard). Checked against the WHOIS the
@@ -41,6 +45,7 @@ from ingest_webpivot import (_is_role_placeholder, _ORG_SUFFIX,  # noqa: E402
 # The single ownership-era authority (WebPivot/tools/whois_eras.py) — a `registered_by` edge may
 # only carry a CURRENT-era value; anything else is a previous owner and belongs in a fact, not here.
 from whois_eras import owner_values  # noqa: E402
+from noise_filters import canonical_org_key, is_noise_org  # noqa: E402
 try:
     from wp_extract import valid_crypto_address as _valid_wallet
 except Exception:
@@ -79,6 +84,8 @@ def classify_edge(e):
         # edge silently merges every domain whose registrar emitted the same placeholder.
         if _is_role_placeholder(e["dst"]):
             return ("drop", "generic registrant role placeholder")
+    if e["rel"] == "registered_by" and e["dst_type"] == "org" and is_noise_org(e["dst"]):
+        return ("drop", "privacy/redaction registrant org")
     if e["rel"] == "registered_by" and e["dst_type"] == "person":
         k = _name_kind(e["dst"])
         if k is None:
@@ -120,7 +127,10 @@ def era_forbidden(e, kb_root):
     elif e["dst_type"] == "email":
         target = dst.strip().lower()
         pool = {str(v).strip().lower() for v in owner_values(wh, "email")}
-    else:  # person / org — the ingester draws both from the same registrant name/org pool
+    elif e["dst_type"] == "org":   # org edges carry canonical_org_key — compare keys, not spellings
+        target = canonical_org_key(dst)
+        pool = {canonical_org_key(v) for v in owner_values(wh, "name") + owner_values(wh, "org")}
+    else:  # person — the ingester draws it from the same registrant name/org pool
         target = re.sub(r"\s+", " ", dst.strip().lower())
         pool = {re.sub(r"\s+", " ", str(v).strip().lower())
                 for v in owner_values(wh, "name") + owner_values(wh, "org")}
@@ -163,6 +173,7 @@ def main():
     value_l = a.value.strip().lower() if a.value else None
 
     kept, drop_reasons, retyped = [], {}, 0
+    rekeyed, org_seen = {}, set()     # canonical org key -> {old spellings}; dedupe merged edges
     drop_domains, drop_persons, drop_wallets = set(), set(), set()
     era_dropped, value_dropped = [], []
     for e in edges:
@@ -191,12 +202,27 @@ def main():
         if action == "retype":
             e = dict(e, dst_type="org")
             retyped += 1
+        if e["rel"] == "registered_by" and e["dst_type"] == "org":
+            if is_noise_org(e["dst"]):        # a retyped person that is a privacy/redaction org
+                drop_reasons["privacy/redaction registrant org"] = \
+                    drop_reasons.get("privacy/redaction registrant org", 0) + 1
+                continue
+            key = canonical_org_key(e["dst"])
+            if key and key != e["dst"]:
+                rekeyed.setdefault(key, set()).add(e["dst"])
+                e = dict(e, dst=key, display=e.get("display") or e["dst"])
+            ek = (e["src_type"], e["src"], e["rel"], e["dst_type"], e["dst"], e["source"],
+                  e["collector"])
+            if ek in org_seen:                # two spellings of one org on one domain → one edge
+                continue
+            org_seen.add(ek)
         kept.append(e)
 
     scope_note = "".join([f"  [case={a.case}]" if a.case else "",
                          f"  [value={a.value}]" if a.value else ""])
     print(f"# KB hygiene sweep on {a.kb}  ({'APPLY' if a.apply else 'dry-run'}){scope_note}")
-    print(f"  edges: {len(edges)} -> {len(kept)}  (dropped {len(edges) - len(kept)}, retyped person→org {retyped})")
+    print(f"  edges: {len(edges)} -> {len(kept)}  (dropped {len(edges) - len(kept)}, retyped person→org {retyped}, "
+          f"re-keyed org spellings {sum(len(v) for v in rekeyed.values())} → {len(rekeyed)} org node(s))")
     for r, c in sorted(drop_reasons.items(), key=lambda x: -x[1]):
         print(f"    - {c:4} {r}")
     print(f"  entity files to remove: {len(drop_domains)} ip-domain, {len(drop_persons)} label-person, "
@@ -209,6 +235,8 @@ def main():
         print(f"  --value {a.value!r} selector purge ({len(value_dropped)}):")
         for e in value_dropped:
             print(f"      {e['src']} --{e['rel']}--> {e['dst_type']}:{e['dst']}")
+    for key, olds in sorted(rekeyed.items())[:10]:
+        print(f"      org {sorted(olds)} → {key!r}")
     if not a.apply:
         for label, s in (("ip-domain", drop_domains), ("label-person", drop_persons),
                          ("invalid-wallet", drop_wallets)):
@@ -238,6 +266,23 @@ def main():
         removed += _rm("person", v)
     for v in drop_wallets:
         removed += _rm("indicator", v)
+    # re-keyed orgs: move each old spelling's facts onto the canonical node and keep the spelling
+    # itself as a display_name fact, then drop the orphaned per-spelling entity file.
+    if rekeyed:
+        from knowledge_base import KB  # noqa: E402
+        kb = KB(kb_root)
+        for key, olds in rekeyed.items():
+            for old in sorted(olds):
+                ent = kb.entity("org", old)
+                for f in ent.get("facts") or []:
+                    kb.add_fact("org", key, f["attribute"], f["value"], f["source"], f["collector"],
+                                f.get("observed_at"), f.get("confidence", 0.5), f.get("evidence_ref"))
+                kb.add_fact("org", key, "display_name", old, "clean_kb", "kb/clean_kb",
+                            ent.get("last_seen"), "high")
+                old_f = kb._ent_file("org", old)
+                if old_f != kb._ent_file("org", key) and os.path.isfile(old_f):
+                    os.remove(old_f)
+                    removed += 1
     print(f"  applied: rewrote edges.jsonl, removed {removed} entity file(s).")
     print("  (retyped person→org entities will be recreated as type 'org' on next ingest.)")
 

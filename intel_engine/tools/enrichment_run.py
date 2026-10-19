@@ -29,8 +29,9 @@ SCRIPTS = {
     "cld": os.path.join(ROOT, "..", "scripts", "cld", "cld_api.py"),
     "intelx": os.path.join(ROOT, "WebPivot", "tools", "wp_intelx.py"),
     "github": os.path.join(ROOT, "WebPivot", "tools", "wp_github.py"),
+    "hudsonrock": os.path.join(ROOT, "..", "scripts", "osint", "keyed_feeds.py"),
 }
-METERED = {"email-deep", "intelx"}   # spend-gated legs held under free-only/no_spend/defer.
+METERED = {"email-deep", "intelx", "hudsonrock"}   # spend-gated legs held under free-only/no_spend/defer.
 # ChongLuaDao is NOT here: its usage is unlimited (no per-call credit / quota), so CLD legs run
 # under free-only and no_spend like a free source. The api_usage ledger still LOGS every CLD
 # request — a usage log never caps — but it is not a spend gate.
@@ -70,6 +71,7 @@ def _with_aliases(names):
 KEY_ENVS = {op: _with_aliases(names) for op, names in {
     "cld": ("CHONGLUADAO_API_KEY", "CLD_API_KEY", "CHONGLUADAO_KEY", "BURNER_API_KEY"),
     "intelx": ("INTELX_KEY", "INTELX_API_KEY"),
+    "hudsonrock": ("HUDSONROCK_API_KEY",),
     "email-deep": ("HUDSONROCK_API_KEY", "ZONECRUNCHER_API_KEY", "INTELX_KEY",
                    "INTELX_API_KEY", "WHOISXML_API_KEY"),
 }.items()}
@@ -373,12 +375,55 @@ def _judge_email(result, memo):
     return _email_outcome(merged), _email_summary(merged, data), merged
 
 
-def _judge(op, result, memo=None):
+_LEAK_COUNT_KEYS = frozenset({"count", "total", "total_count", "matched", "hits", "found",
+                              "exposed", "exposure_count", "records", "breaches", "leaks"})
+_LEAK_LIST_KEYS = frozenset({"items", "data", "results", "records", "accounts", "breaches",
+                             "sources", "leaks", "victims"})
+_LEAK_FLAG_KEYS = frozenset({"exposed", "found", "is_exposed", "leaked", "compromised"})
+
+
+def _leak_hits(obj, depth=0):
+    """Largest positive exposure signal anywhere in a leak-check response: a count, a non-empty
+    row list, or a true exposed/found flag. 0 means the vendor answered and found nothing."""
+    if depth > 4:
+        return 0
+    if isinstance(obj, list):
+        return len(obj)
+    if not isinstance(obj, dict):
+        return 0
+    best = 0
+    for k, v in obj.items():
+        kl = str(k).lower()
+        if isinstance(v, bool):
+            best = max(best, 1 if (v and kl in _LEAK_FLAG_KEYS) else 0)
+        elif isinstance(v, (int, float)) and kl in _LEAK_COUNT_KEYS:
+            best = max(best, int(v))
+        elif isinstance(v, list) and kl in _LEAK_LIST_KEYS:
+            best = max(best, len(v))
+        elif isinstance(v, dict):
+            best = max(best, _leak_hits(v, depth + 1))
+    return best
+
+
+def _judge(op, result, memo=None, argv=None):
     if op == "email-deep":
         return _judge_email(result, memo or {})
     data, err = _result_json(result)
     if err:
         return "retry", err, memo
+    if op == "hudsonrock":
+        status = str(data.get("status") or "")
+        if status == "ok":
+            hits = int(data.get("hits") or 0)
+            return ("ran" if hits else "empty"), f"hudsonrock {data.get('endpoint')}: hits={hits}", memo
+        if status.startswith("NOT CONSULTED") or status == "skipped":
+            return "unavailable", _short(data.get("skipped") or status), memo
+        return "retry", _short(f"hudsonrock {status or 'failed'}: {data.get('error') or ''}"), memo
+    if op == "cld" and argv and argv[0] == "exposure":
+        if not data.get("ok") or data.get("skipped"):
+            return "retry", _short(data.get("error") or "CLD exposure was skipped"), memo
+        hits = _leak_hits(data.get("result"))
+        return ("ran" if hits else "empty"), f"cld exposure ({argv[-1]}): hits={hits}", memo
     if op == "cld":
         if not data.get("ok") or data.get("skipped"):
             reason = data.get("error") or "CLD lookup was skipped"
@@ -543,7 +588,7 @@ def _run_step(invoke, case_dir, record, step):
         record["steps"][step_key] = {"outcome": outcome, "summary": summary, "memo": memo, **response}
     else:
         response = _invoke(invoke, op, argv, case_dir)
-        outcome, summary, _ = _judge(op, response)
+        outcome, summary, _ = _judge(op, response, argv=argv)
         record["steps"][step_key] = {"outcome": outcome, "summary": summary, **response}
     _save(_artifact(case_dir, record["key"]), record)
     credits = (record["steps"].get(step_key) or {}).get("credits") or []
@@ -553,11 +598,141 @@ def _run_step(invoke, case_dir, record, step):
     return outcome, summary, True
 
 
-def run_case(case, free_only=False, passive=False, call=None, defer_metered=False, reopen_legacy=False):
+_VIA_STEP = {"hudsonrock": "hudsonrock", "intelx": "intelx_search"}   # vendor -> email-deep memo step
+LEAK_COLLECTOR = "enrichment_run/leak_fanout"
+
+
+def _leak_cell(row, done_reason, key):
+    """(state, reason) for one runnable vendor leg from its index row: hit | clean | not_consulted."""
+    if not row:
+        if done_reason in FINAL_OUTCOMES:
+            return ("hit" if done_reason == "ran" else "clean"), f"closed as {done_reason} ({key})"
+        if done_reason:
+            return "not_consulted", f"closed as {done_reason} by analyst/legacy state ({key})"
+        return "not_consulted", "not run yet — lead open"
+    outcome, summary = row.get("outcome"), row.get("summary") or ""
+    if outcome == "ran":
+        return "hit", summary
+    if outcome == "empty":
+        return "clean", summary
+    if outcome == "held":
+        return "not_consulted", f"[{row.get('reason') or 'spend posture'}] {summary}"
+    if outcome == "unavailable":
+        return "not_consulted", f"missing key / unsupported: {summary}"
+    return "not_consulted", f"error, retryable: {summary}"
+
+
+def _email_memo(case_dir, key, email):
+    rec = _load(_artifact(case_dir, key), key)
+    step = rec["steps"].get(json.dumps(["email-deep", [email]], ensure_ascii=False)) or {}
+    return step.get("memo") or {}
+
+
+def _email_deep_cell(row, done_reason, key, memo):
+    """deep_profile's own cell: a finished chain is a hit when ANY metered step found rows."""
+    state, reason = _leak_cell(row, done_reason, key)
+    if state == "hit":           # email-deep `ran` = every keyed step done, not "found something"
+        hits = sum(int((memo.get(n) or {}).get("hits") or 0) for n in EMAIL_METERED)
+        state = "hit" if hits else "clean"
+    return state, reason
+
+
+def _via_cell(row, done_reason, key, memo, vendor):
+    """A vendor deep_profile sends for an email (never bought twice): read from its memo."""
+    sub = memo.get(_VIA_STEP.get(vendor, vendor)) or {}
+    st = sub.get("state")
+    if st == "done":
+        hits = int(sub.get("hits") or 0)
+        return ("hit" if hits else "clean"), f"via deep_profile: {vendor} hits={hits}"
+    if st:
+        return "not_consulted", f"via deep_profile: {vendor} {st} ({sub.get('status') or '?'})"
+    state, reason = _leak_cell(row, done_reason, key)
+    if state in ("hit", "clean"):
+        return "not_consulted", f"via deep_profile: no {vendor} step recorded"
+    return "not_consulted", f"via deep_profile — {reason}"
+
+
+def leak_coverage(case, case_dir=None, kb_root=None):
+    """Per-selector × per-vendor leak coverage for every CONFIRMED selector (case_state.
+    leak_selectors). Writes enrichment/leak_coverage.json and records consulted results (hit /
+    clean) as KB EXPOSURE FACTS (attribute leak_exposure) — never edges, never attribution."""
+    case_dir = case_dir or case_state._case_dir(case)
+    index = _load_index(case_dir)["leads"]
+    done = case_state._done_map(case_state.load_state(case))
+    rows = []
+    for sel in case_state.leak_selectors(case):
+        plan = case_state.leak_vendor_plan(sel["type"], sel["value"])
+        for vendor in case_state.LEAK_VENDORS:
+            step = plan.get(vendor) or {"na": "not planned"}
+            if step.get("na"):
+                state, reason, key = "not_consulted", f"n/a: {step['na']}", ""
+            elif step.get("via"):
+                via = plan.get(step["via"]) or {}
+                key = via.get("key", "")
+                memo = _email_memo(case_dir, key, sel["value"]) if key else {}
+                state, reason = _via_cell(index.get(key), done.get(key), key, memo, vendor)
+            else:
+                key = step["key"]
+                if step["op"] == "email-deep":
+                    state, reason = _email_deep_cell(index.get(key), done.get(key), key,
+                                                     _email_memo(case_dir, key, sel["value"]))
+                else:
+                    state, reason = _leak_cell(index.get(key), done.get(key), key)
+            rows.append({"type": sel["type"], "selector": sel["value"], "origin": sel["origin"],
+                         "vendor": vendor, "state": state, "reason": _short(reason, 200),
+                         "lead": key})
+    doc = {"case": str(case), "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "vendors": list(case_state.LEAK_VENDORS), "rows": rows}
+    _save(os.path.join(case_dir, "enrichment", "leak_coverage.json"), doc)
+    _leak_facts(case, case_dir, rows, kb_root)
+    return doc
+
+
+def _leak_facts(case, case_dir, rows, kb_root=None):
+    consulted = [r for r in rows if r["state"] in ("hit", "clean")]
+    if not consulted:
+        return 0
+    kb_dir = os.path.join(HERE, "kb")
+    if kb_dir not in sys.path:
+        sys.path.insert(0, kb_dir)
+    try:
+        from knowledge_base import KB
+        from selector_types import kb_key
+        kb = KB(kb_root or os.path.join(ROOT, os.environ.get("HARNESS_KB", "knowledge")))
+    except Exception as exc:  # noqa: BLE001 — coverage JSON is the record; the KB is best-effort
+        print(f"   leak coverage: KB facts not written ({type(exc).__name__}: {exc})")
+        return 0
+    when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    ref = "/".join(("cases", os.path.basename(os.path.normpath(case_dir)), "enrichment",
+                    "leak_coverage.json"))
+    for r in consulted:
+        et, ev = kb_key(r["type"], r["selector"])
+        kb.add_fact(et, ev, "leak_exposure",
+                    {"vendor": r["vendor"], "state": r["state"], "detail": r["reason"],
+                     "case": str(case)},
+                    r["vendor"], LEAK_COLLECTOR, when, "medium", ref)
+    return len(consulted)
+
+
+def _print_coverage(doc):
+    rows = doc.get("rows") or []
+    if not rows:
+        print("   leak coverage: no confirmed selector in this case yet")
+        return
+    print(f"   leak coverage ({len({(r['type'], r['selector']) for r in rows})} confirmed "
+          "selector(s); hit | clean | not_consulted — exposure, not attribution):")
+    for r in rows:
+        print(f"     {r['type']:8} {r['selector'][:48]:48} {r['vendor']:12} {r['state']:13} {r['reason']}")
+
+
+def run_case(case, free_only=False, passive=False, call=None, defer_metered=False, reopen_legacy=False,
+             leak_only=False):
     """Run eligible leads once; checkpoint results and close only accounted-for legs.
 
     `passive` is an egress posture flag and does not block third-party enrichment. Non-executable
     dork/secret query leads remain open for the slash-command agent to execute and review.
+    `leak_only` runs just the leak fan-out leads (the harness's round-1 step). Every run ends by
+    writing the per-selector leak coverage table (enrichment/leak_coverage.json).
     """
     case_dir = case_state._case_dir(case)
     constraints = _scope(case_dir)
@@ -572,6 +747,8 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
     invoke = call or _call
     results = []
     for lead in case_state.frontier(case).get("enrichment_leads", []):
+        if leak_only and not lead.get("leak"):
+            continue
         run = lead.get("run") or []
         if not run:
             continue
@@ -616,6 +793,10 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
     remaining = len(case_state.frontier(case).get("enrichment_leads", []))
     print(f"   enrichment: {len(results)} handled; {remaining} lead(s) still open "
           "(query-only, held, unavailable, and retryable leads require later review/run)")
+    try:
+        _print_coverage(leak_coverage(case, case_dir))
+    except Exception as exc:  # noqa: BLE001 — the table is a report; a failure never fails the run
+        print(f"   leak coverage: not computed ({type(exc).__name__}: {exc})")
     return results
 
 
@@ -627,11 +808,13 @@ def main():
                     help="third-party passive enrichment stays allowed; reserved for hostile egress")
     ap.add_argument("--reopen-legacy", action="store_true",
                     help="reopen old skipped/unavailable state rows that lack runner index evidence")
+    ap.add_argument("--leak-only", action="store_true",
+                    help="run only the leak/stealer fan-out leads on confirmed selectors")
     a = ap.parse_args()
     import intel  # noqa: E402 — the pipeline's env resolver is the one key store
     intel._load_env()
     run_case(a.case, free_only=a.free_only, passive=a.passive,
-             reopen_legacy=a.reopen_legacy)
+             reopen_legacy=a.reopen_legacy, leak_only=a.leak_only)
 
 if __name__ == "__main__":
     main()

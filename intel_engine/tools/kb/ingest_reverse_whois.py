@@ -27,7 +27,8 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "..", "..", "WebPivot", "tools"))
 from knowledge_base import KB  # noqa: E402
 from noise_filters import (is_noise_phone, is_noise_email,  # noqa: E402
-                           BULK_REGISTRANT_MAX_DOMAINS)
+                           BULK_REGISTRANT_MAX_DOMAINS, canonical_org_key, is_noise_org)
+from ingest_webpivot import _name_kind  # noqa: E402 — the ingester's own org/person split
 import whois_enrich  # noqa: E402
 
 
@@ -49,13 +50,19 @@ def main():
     kind = "email" if args.email else ("name" if args.name else "phone")
     etype = {"email": "email", "name": "person", "phone": "phone"}[kind]
     term_key = term.lower() if kind == "email" else term
+    # an ORGANISATION name keys the SAME org node ingest_webpivot writes (canonical_org_key), so a
+    # reverse-WHOIS hit joins the WHOIS-ingested cluster instead of forming a parallel person node
+    is_org = kind == "name" and _name_kind(term) == "org"
+    if is_org:
+        etype, term_key = "org", canonical_org_key(term)
 
     # DENYLIST GATE — before spending a preview call. A privacy-proxy/registrar phone or a
     # registrar role email is published across every domain that provider fronts, so linking it
     # would merge thousands of unrelated domains into one bogus operator hub. The bulk-count
     # guard below would often catch it too, but not always (a proxy fronting < --max-domains
     # still isn't a registrant), and this costs nothing.
-    if (kind == "phone" and is_noise_phone(term)) or (kind == "email" and is_noise_email(term)):
+    if (kind == "phone" and is_noise_phone(term)) or (kind == "email" and is_noise_email(term)) \
+            or (is_org and (is_noise_org(term) or not term_key)):
         print(f"  ⚠ DENYLIST: {kind} '{term}' is a registrar/privacy-proxy or malformed contact.")
         print("  It is shared by every domain at that provider = NOISE, not a registrant.")
         print("  NOT previewing, purchasing or linking.")
@@ -104,8 +111,12 @@ def main():
         if not d:
             continue
         kb.add_edge("domain", d, "registered_by", etype, term_key,
-                    "whoisxml", "reverse_whois", observed, "medium", ev)
+                    "whoisxml", "reverse_whois", observed, "medium", ev,
+                    attrs={"display": term.strip()} if is_org else None)
         n += 1
+    if is_org and n:
+        kb.add_fact("org", term_key, "display_name", term.strip(),
+                    "whoisxml", "reverse_whois", observed, "medium", ev)
     if args.person and args.email:
         kb.add_edge("email", args.email.lower(), "identity_of", "person", args.person,
                     "whoisxml", "reverse_whois", observed, "medium", ev)

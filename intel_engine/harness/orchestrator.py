@@ -1202,6 +1202,50 @@ def _binary_round(case: str, *, hostile: bool, free_only: bool) -> None:
         _log("  binary KB ingest failed: " + note[-500:])
 
 
+async def _leak_round(case: str, *, hostile: bool) -> None:
+    """MANDATORY leak/stealer fan-out on the case's CONFIRMED selectors (seeds, owner-rung nodes,
+    first-round registrant contacts — never kit/neighbour ones), run after collection and BEFORE
+    the cross-type step, so metered co-tenant/frontier pivots can never starve it. It is
+    case_enrich restricted to its leak leads: the spend gate still applies (scope.json no_spend →
+    keyless CLD only, metered vendors recorded as not consulted; HARNESS_NO_ENRICH smoke →
+    --free-only). ONCE PER CASE: the attempt is recorded in state.json `leak_round` (ran_at, exit)
+    whatever its outcome, so later rounds and resumes never re-fan-out — retryable / held legs stay
+    OPEN for `intel.py enrich <case> --leak-only` (or case_enrich), which reuses the checkpoints.
+    Off the event loop (a slow vendor must not block the stdin/MCP loop)."""
+    import case_state as cs
+    try:
+        if cs.load_state(case).get("leak_round"):
+            return
+    except Exception as e:  # noqa: BLE001 — unreadable state: skip rather than risk a repeat
+        _log(f"  leak fan-out skipped (state unreadable: {e}) — run intel.py enrich {case} --leak-only")
+        return
+    cmd = [sys.executable, os.path.join("tools", "intel.py"), "enrich", case, "--leak-only"]
+    if T.SMOKE:
+        cmd.append("--free-only")
+    if hostile:
+        cmd.append("--passive")
+    rc = None
+    try:
+        r = await asyncio.to_thread(T._run, cmd, 1800)
+        rc = r.returncode
+        for line in (r.stdout or "").splitlines():
+            if "leak coverage" in line or line.startswith("     ") or "enrichment" in line:
+                _log("  " + line.strip())
+        if rc != 0:
+            _log(f"  leak fan-out exit {rc}: {(r.stderr or '')[-300:]}")
+    except Exception as e:  # noqa: BLE001 — a failed leak step is reported, never fatal
+        _log(f"  leak fan-out failed: {e}")
+    if rc != 0:
+        _log(f"  → open leak legs stay on the frontier; rerun: intel.py enrich {case} --leak-only")
+    try:
+        st = cs.load_state(case)
+        st["leak_round"] = {"ran_at": datetime.datetime.now(datetime.timezone.utc)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"), "exit": rc}
+        cs.save_state(case, st)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (leak_round marker not written: {e})")
+
+
 # Stop reason -> the state.json status vocabulary the deterministic loop already uses
 # (tools/case_state.py: expanding | converged | cold | awaiting-analyst | awaiting-approval |
 # error). ONE vocabulary, ONE state file: `./intel status`, `case_state.py reopen` and
@@ -1368,6 +1412,7 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                     stop = "failed"
                     break
                 _binary_round(case, hostile=hostile, free_only=False)
+                await _leak_round(case, hostile=hostile)   # before any metered frontier pivot
                 table_md = _domain_table(case)
                 render.render_terminal(final, table_md=table_md)
                 snap = _persist_assessment(final, case, table_md)
@@ -1391,6 +1436,8 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                     break
             else:
                 _log(f"\n===== ROUND {rnd}/{depth} · cross-type pivots only (no new hosts to collect) =====")
+                if rnd == 1:                # typed-only seeds (email / handle / phone): leak first
+                    await _leak_round(case, hostile=hostile)
             P.set_loop_active(ROOT, case, True)   # the seed round is over: loop rules from here
             try:
                 new, xstop = await _xtype_step(case, current, hostile=hostile, round_no=rnd,
@@ -1766,6 +1813,7 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
                         _log(f"    ✗ {r['host']}: {why[-200:]}")
                 T.ingest(case)                                                       # ingest each round
                 _binary_round(case, hostile=hostile, free_only=False)
+                await _leak_round(case, hostile=hostile)   # before any metered frontier pivot
                 conv = _convergence_snapshot(case, failed=fails)
                 if conv:
                     _log("convergence · " + conv.splitlines()[0])
@@ -1776,6 +1824,8 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
                     _log(f"CONVERGED — last {stale} rounds added nothing. Stopping expansion.")
                     stop = "converged"
                     break
+            elif rnd == 1:                  # typed-only seeds (email / handle / phone): leak first
+                await _leak_round(case, hostile=hostile)
             collected_before = current
             P.set_loop_active(ROOT, case, True)   # the seed round is over: loop rules from here
             new, xstop = await _xtype_step(case, _all_collected(case), hostile=hostile,

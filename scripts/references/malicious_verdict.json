@@ -1,0 +1,23 @@
+{
+  "_comment": "MALICIOUS-CLASSIFICATION GATE for report figures (cti_refs.malicious_verdict / verdict_of; consumers: build_report_data.py `verdict`, cti_docx_postprocess heatmap gate, cti_report_figures registration-heatmap title). A figure may call a case's domains 'malicious' ONLY when the case's OWN recorded verdict supports it: scope.json `target_class` + assessment.json `premise_verdict` (harness/schemas.py vocabulary). Absent or unrecognised values are NOT malicious — a default never labels a domain malicious. Vocabulary only, never case data (RULE 1).",
+  "malicious_target_classes": {
+    "_comment": "Intake classes (WebPivot/references/intake.json) whose premise, when the collection SUPPORTS it, is a malicious classification.",
+    "values": ["confirmed_scam", "suspected_scam", "threat_actor_infra"]
+  },
+  "supporting_verdicts": {
+    "_comment": "premise_verdict values that mean the collection supported the stated malicious premise. not_supported / inconclusive mean nothing was shown either way and never count.",
+    "values": ["supported", "partially_supported"]
+  },
+  "benign_target_classes": {
+    "_comment": "Intake classes whose premise is that the target is legitimate.",
+    "values": ["benign_check"]
+  },
+  "benign_refuting_verdicts": {
+    "_comment": "premise_verdict values on a benign premise that amount to a malicious finding (the collection contradicted the legitimacy claim).",
+    "values": ["contradicted"]
+  },
+  "never_malicious_target_classes": {
+    "_comment": "Classes whose hosts are victims, never the operator's malicious estate, whatever the verdict.",
+    "values": ["victim_host"]
+  }
+}

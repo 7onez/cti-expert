@@ -107,6 +107,7 @@ def main():
         if a.case and a.case not in cases:
             continue
         rows.append({"indicator": f"{s['indicator_type']}:{s['indicator']}",
+                     "display": f"{s['indicator_type']}:{s.get('display') or s['indicator']}",
                      "rels": strong, "cases": sorted(cases), "n_cases": len(cases),
                      "domains": sorted(s.get("domains") or [])[:12],
                      "kb_wide_domains": s.get("domain_count")})
@@ -133,7 +134,7 @@ def main():
         out["verdict"] = f"{len(rows)} identifier(s) span >={a.min_cases} cases"
     print(f"crossref: {len(rows)} identifier(s) across {n_cases} case(s)", file=sys.stderr)
     for r in rows[:8]:
-        print(f"  {r['indicator']}  → {', '.join(r['cases'])}", file=sys.stderr)
+        print(f"  {r['display']}  → {', '.join(r['cases'])}", file=sys.stderr)
     txt = json.dumps(out, indent=2 if a.pretty else None, ensure_ascii=False)
     if a.out:
         open(a.out, "w", encoding="utf-8").write(txt)

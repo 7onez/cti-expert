@@ -181,7 +181,8 @@ DISPATCH = {
     "github-osint":  ("../scripts/osint/github_osint.py",    []),  # accounts, repos, commit emails
     "secrets":       ("../scripts/osint/github_osint.py",    ["--secrets"]),
     "traffic":       ("../scripts/osint/traffic_rank.py",    []),  # Tranco rank (absence matters)
-    "sharelink":     ("../scripts/osint/sharelink_resolve.py", []),# expand + sharer identity
+    "sharelink":     ("../scripts/osint/sharelink_resolve.py", []),# expand + sharer identity + platform ids
+    "meta-transparency": ("WebPivot/tools/wp_meta.py",       []),  # keyless FB Page / IG account transparency + history
     "docleak":       ("../scripts/osint/dork_builder.py",    []),  # emits queries, never scrapes
     "icp":           ("../scripts/osint/cn_recon.py",        []),  # ICP filing + serial pivot
     "cn-corp":       ("../scripts/osint/cn_recon.py",        []),  # PRC registry chain (gated)
@@ -293,7 +294,7 @@ BLURB = {
     "reopen": "re-open a converged case on newly discovered seeds",
     "enrichment-done": "close leak/breach/OSINT/dork leads (suppress from frontier once run)",
     "approve-cohost": "approve a cloud/VPS origin IP's co-tenants (seeded + linked next round)",
-    "enrich": "execute case-matched identity/OSINT leads and record evidence + closure reasons",
+    "enrich": "execute case-matched identity/OSINT leads + the mandatory leak fan-out (--leak-only); writes enrichment/leak_coverage.json",
     "cti": "one-call driver: recall -> Quarry (when enabled) -> cross-type harness loop (default; --pipeline = open/enrich/loop) -> JSON summary",
     "quarry": "Quarry scan bridge: sync --case ID --target DOMAIN [--quarry-scan] | status | lookup",
     "scope": "case intake: no-touch class, victim ownership, egress gate",
@@ -310,7 +311,7 @@ BLURB = {
     "capabilities": "which API keys exist and what each absence costs",
     "jarm": "JARM TLS-stack fingerprint of a host",
     "email-permute": "name/username -> ranked email CANDIDATES (hypotheses, never findings)",
-    "intelx": "IntelX: search a strong selector in leaks/pastes/darknet",
+    "intelx": "IntelX: search a strong selector in leaks/pastes/darknet; item <storageid> --bucket B opens one record (redacted)",
     "anyrun": "ANY.RUN TI Lookup (read-only; --submit needs confirmation)",
     "webamon": "Webamon scan corpus: seed report + same-kit siblings; scan <url> needs --confirm-submission",
     "docmeta": "document/image metadata: PDF /Info + XMP, EXIF incl. GPS",
@@ -345,7 +346,8 @@ BLURB = {
     "github-osint": "GitHub account/org/repo recon; commit-author emails",
     "secrets": "leaked-secret hunt queries for a target (code search needs auth — emits)",
     "traffic": "Tranco popularity rank; an UNRANKED 'established' site contradicts itself",
-    "sharelink": "expand a share/short link and read the sharer-identity parameters",
+    "sharelink": "expand a share/short link (login walls unwrapped) → sharer-identity params + FB/IG/TikTok platform ids",
+    "meta-transparency": "keyless FB Page / IG account transparency (Ad Library About tab, IG profile) + Wayback name/bio history; login-only panels → capture checklist",
     "docleak": "build document/leak-hunt queries across 18 hosts (emitted, never run)",
     "icp": "ICP filing via keyless mirrors + licence-serial sibling pivot",
     "cn-corp": "PRC corporate registry chain; names every CAPTCHA/geo gate it did not pass",

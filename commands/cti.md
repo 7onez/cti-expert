@@ -49,6 +49,7 @@ that `pipeline open` alone runs the identity/OSINT commands.
 | crypto wallet / IBAN | chain tracing in **and out** for wallets (outbound can identify cash-out); `/iban` validation for IBAN; IntelX on a strong selector when keyed; never route an unsupported selector to CLD |
 | file hash / APK / EXE | `/hash-id` first for any hash; `analyze_artifact` for local files; keyed `cld ioc hash <hash>` only for a confirmed **file hash**, never an ambiguous 64-hex cert fingerprint or a credential hash; never submit a sample to a public sandbox without the required confirmation |
 | Telegram handle / `t.me` URL | keyed `cld route t.me/<handle>` (Shield Telegram posts), not the domain route on `t.me` |
+| Facebook / Instagram / TikTok / LinkedIn URL, share link or handle | **Social intake (SKILL.md §2.5 "Social-media seed intake") — not the domain route on the platform host.** `sharelink <url>` (unwraps login walls → `platform_ids`; `--no-follow` for a pasted wall URL) → `meta-transparency <page-or-@handle> --case <case>` for Facebook/Instagram (tri-state fields + Wayback name/bio history) → `username` / `email-permute` on every discovered handle and display name → leak fan-out on the confirmed account usernames, business emails and phones (Step 2a) → relay the tool's `capture_checklist` to the analyst in round 1 (logged-in screenshots of Page transparency → See all, Ad Library Page → About, IG → About this account). **Never request cookies, session tokens, passwords or HAR files.** Account linkage (linked IG, owning organisation, admin countries, sharer id) ≠ owner identity |
 | CVE / `.onion` | keyed `cld route <selector>` (matching vulnerability / onion lookup); do not treat a CVE as a file hash |
 
 `cld route` itself selects matching Feeds and Shield endpoints; never fire every vendor endpoint
@@ -107,6 +108,35 @@ public tasks expose the sample worldwide and cannot be recalled.
 
 Hand-running a collector is a fallback, not the default. If you do it, **say so in the write-up**
 — evidence archiving, the versioned assessment and the convergence check will not have run.
+
+## Step 2a — Leak coverage on confirmed selectors (MANDATORY, round 1)
+
+Leak/stealer checks are not a follow-up the analyst has to ask for. The harness runs them
+itself right after round-1 collection, **before** the cross-type step, so metered
+co-tenant/frontier pivots can never starve them; the pipeline runs them inside `enrich`.
+They cover every **confirmed** selector: analyst seeds, owner-rung nodes, WHOIS registrant
+email/phone of seed and first-hop hosts, owned seed domains, and social-intake account
+usernames. Kit- and neighbour-rung selectors (co-tenants, shared-kit hosts, exchange
+counterparties) are **never** leak-checked.
+
+| Selector | ChongLuaDao | IntelX | Hudson Rock | deep_profile |
+|---|---|---|---|---|
+| email | `exposure --type email` | via deep_profile | via deep_profile (`search-by-login/emails`) | email/breach chain |
+| username / handle | `exposure --type username` | n/a (soft selector) | `search-by-login/usernames` | n/a |
+| phone | `route` (checkphone + IoC) | `search --logs-only` | n/a (no phone endpoint) | n/a |
+| owned domain | `exposure --type domain` | `search --logs-only` | `search-by-domain` | n/a |
+
+```bash
+python3 scripts/backend/intel.py enrich <CASE-ID> --leak-only [--free-only]   # rerun / resume; idempotent
+```
+
+The spend gate still applies: `--free-only` or `scope.json` `no_spend` runs only the keyless
+CLD leg, and each metered vendor is written as `not_consulted` with the hold reason. Missing
+keys read `not_consulted` with the key name, never as clean. Results land in
+`cases/<CASE-ID>/enrichment/leak_coverage.json` (one row per selector × vendor:
+`hit` / `clean` / `not_consulted` + reason), in the assessment's "Leak / stealer coverage"
+table, in the `cti` JSON line (`leak_coverage`) and as KB `leak_exposure` facts. They are
+exposure evidence, never an attribution edge.
 
 ## Step 2b — persist the versioned case, then deepen if it hasn't converged
 
@@ -289,6 +319,12 @@ overhead is not worth it. Fan-out earns its cost at 3+ live seeds.
 Report findings with two-axis confidence (Admiralty per finding, ICD-203 per judgment), state
 empty results as empty, and list what you did **not** cover. Write case artifacts to
 `$INTEL_HOME/cases/<CASE-ID>/` — never to a `cases/` directory at the repo root.
+
+**Leak coverage is part of every final answer.** For each confirmed selector, state which leak
+vendors (ChongLuaDao, IntelX, Hudson Rock, deep_profile) were consulted — with the result — and
+which were not, and why (missing key, `free_only`/`no_spend` hold, n/a for the type, retryable
+error). Read it from `enrichment/leak_coverage.json`; if that file is absent the fan-out never
+ran — say so and run `intel.py enrich <CASE-ID> --leak-only`, never report "no leaks".
 
 **Deliver — build the report bundle deterministically (do NOT hand-author the report JSON).** Once
 the case has an `assessment.md`, turn it into the presentation bundle via the converter, then the

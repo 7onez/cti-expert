@@ -28,7 +28,7 @@ box "LAYER 1 · broad collector" #F4F8FD
 end box
 
 box "typed surface" #FBFCFE
-  participant "**harness/tools.py**\n<size:10>92 @tool · MCP + SDK</size>\n<size:10>HARNESS_BACKEND: claude · codex · omp · OpenAI-compatible</size>" as MCP
+  participant "**harness/tools.py**\n<size:10>93 @tool · MCP + SDK</size>\n<size:10>HARNESS_BACKEND: claude · codex · omp · OpenAI-compatible</size>" as MCP
 end box
 
 box "LAYER 2 · intel_engine (vendored deep pipeline)" #F4F8FD

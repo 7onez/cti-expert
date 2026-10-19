@@ -1250,5 +1250,61 @@
       "108.174.0.0/20",
       "185.63.144.0/22"
     ]
+  },
+  "org_legal_form_suffixes": {
+    "_comment": "Registrant ORGANISATION legal-form phrases that END a name (English/international style 'Company A Co., Ltd'), mapped to ONE canonical class. noise_filters.canonical_org_key strips them (longest phrase first, repeatedly, never the last remaining name word) and appends the sorted class set, so 'Co., Ltd' / 'Co. Ltd' / 'Company Limited' all key as '<name> ltd' and one company is ONE KB org node. Phrases are matched on the FOLDED text (casefolded, diacritics stripped, punctuation collapsed to spaces), so write them in any case/accent. Keep classes DISTINCT where the legal form differs ('pty ltd' is not 'ltd', 'llc' is not 'jsc'): merging forms that name different entities manufactures false clusters. Every class must also appear as its own phrase (keys stay idempotent).",
+    "entries": {
+      "co ltd": "ltd",
+      "co limited": "ltd",
+      "company ltd": "ltd",
+      "company limited": "ltd",
+      "limited company": "ltd",
+      "limited liability company": "llc",
+      "ltd": "ltd",
+      "limited": "ltd",
+      "tnhh": "ltd",
+      "tnhh mtv": "ltd",
+      "llc": "llc",
+      "l l c": "llc",
+      "jsc": "jsc",
+      "j s c": "jsc",
+      "joint stock company": "jsc",
+      "joint stock co": "jsc",
+      "corp": "corp",
+      "corporation": "corp",
+      "inc": "inc",
+      "incorporated": "inc",
+      "co": "co",
+      "company": "co",
+      "pte ltd": "pte ltd",
+      "pte limited": "pte ltd",
+      "pty ltd": "pty ltd",
+      "pty limited": "pty ltd",
+      "plc": "plc",
+      "gmbh": "gmbh",
+      "sdn bhd": "sdn bhd"
+    }
+  },
+  "org_legal_form_prefixes": {
+    "_comment": "Registrant ORGANISATION legal-form phrases that START a name (Vietnamese style 'CÔNG TY TNHH Example' = 'Example Co., Ltd'), mapped to the SAME canonical classes as org_legal_form_suffixes, so a VN-registry spelling and the English transaction name of one company key the same KB org node. Matched on the FOLDED text (diacritics stripped: 'công ty cổ phần' is written 'cong ty co phan' or with accents, both work). Only unambiguous legal-form prefixes — never a word that can also begin a real trading name.",
+    "entries": {
+      "cong ty tnhh mot thanh vien": "ltd",
+      "cong ty tnhh mtv": "ltd",
+      "cong ty tnhh": "ltd",
+      "cty tnhh mtv": "ltd",
+      "cty tnhh": "ltd",
+      "tnhh mtv": "ltd",
+      "tnhh": "ltd",
+      "cong ty co phan": "jsc",
+      "cty co phan": "jsc",
+      "cty cp": "jsc",
+      "ctcp": "jsc",
+      "cong ty": "co",
+      "cty": "co"
+    }
+  },
+  "org_generic_legal_class": {
+    "_comment": "The canonical class that only says 'a company' without naming a legal form ('Co.', 'Company', 'Công ty'). canonical_org_key drops it when a specific class is also present, so 'Example Company, Inc.' keys like 'Example Inc' and 'Công ty Cổ phần Example' like 'Example JSC'. Alone it is kept: 'Example Co' and 'Example Ltd' stay distinct.",
+    "class": "co"
   }
 }

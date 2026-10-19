@@ -46,7 +46,7 @@ Locate compromised credential sets and exposed PII tied to a subject across know
 
 ### Hudson Rock — send the key when it is set
 
-`HUDSONROCK_API_KEY` is the Cavalier **v3** key. `scripts/osint/keyed_feeds.py` POSTs it as the `api-key` header to `https://api.hudsonrock.com/json/v3/search-by-login/emails` or `search-by-domain`. `/breach-deep` and `/email-deep` send it when the key is in `.env`. The keyless `cavalier.hudsonrock.com` host does **not** take this key; do not append it there. No key → the lookup is NOT CONSULTED, not a clean result.
+`HUDSONROCK_API_KEY` is the Cavalier **v3** key. `scripts/osint/keyed_feeds.py` POSTs it as the `api-key` header to `https://api.hudsonrock.com/json/v3/`, choosing the endpoint by selector type: email → `search-by-login/emails`, domain/URL → `search-by-domain`, bare username/handle → `search-by-login/usernames`; a phone or any other shape is skipped, never sent as a domain (`--kind email|domain|username` forces the type). `/breach-deep`, `/email-deep` and the case leak fan-out (`intel.py enrich <case>`) send it when the key is in `.env`. The keyless `cavalier.hudsonrock.com` host does **not** take this key; do not append it there. No key → the lookup is NOT CONSULTED, not a clean result.
 
 The endpoints below are the **keyless** Cavalier community API. Use them only when `HUDSONROCK_API_KEY` is absent. Do not put that key on these URLs.
 

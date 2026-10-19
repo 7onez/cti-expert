@@ -68,18 +68,36 @@ def _shrink_intelx(result):
     if not isinstance(result, dict):
         return {"status": "ok", "note": "unparsed"}
     recs = result.get("records") or []
-    return {"status": "ok" if not result.get("skipped") else "skipped",
-            "selector": result.get("selector"), "term": result.get("term"),
-            "records": len(recs) if isinstance(recs, list) else 0,
-            "logs_pass": result.get("logs_pass"),
-            "skipped": result.get("skipped"),
-            "ui_url": result.get("ui_url")}
+    out = {"status": "ok" if not result.get("skipped") else "skipped",
+           "selector": result.get("selector"), "term": result.get("term"),
+           "records": len(recs) if isinstance(recs, list) else 0,
+           "logs_pass": result.get("logs_pass"),
+           # 'clean' = IntelX finished; 'partial (…)' = missing records are NOT negatives.
+           "search_status": result.get("status"),
+           "skipped": result.get("skipped"),
+           "ui_url": result.get("ui_url")}
+    if out["records"]:
+        out["claim_note"] = ("hit count = the selector appears in the leak corpus only; an "
+                             "infection claim needs an opened item (intelx item <storageid>)")
+    return out
+
+
+def _intelx_timeout():
+    """wp_intelx's own logs-only deadline + grace. The collector returns 'partial (deadline)' when
+    its deadline expires, so this wrapper must never kill it first and lose the partial page."""
+    try:
+        if WP not in sys.path:
+            sys.path.insert(0, WP)
+        import wp_intelx
+        return int(wp_intelx.deadline_for(logs_first=True, general_pass=False)) + 120
+    except Exception:  # noqa: BLE001
+        return 1020    # deadline_max_seconds fallback (900) + grace
 
 
 def send_intelx(sel):
     """One logs-only search. The dispatcher cwd is the engine, so the case memo applies."""
     got = run(os.path.dirname(DISPATCHER), "intel.py", "intelx", "search", sel, "--logs-only",
-              timeout=120)
+              timeout=_intelx_timeout())
     if got.get("status") != "ok":
         return got
     inner = got.get("result")

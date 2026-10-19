@@ -126,10 +126,11 @@ def collect_registrations(json_data, case_dir=None):
 from cti_report_figures import registration_heatmap_png, cooccurrence_heatmap_png  # noqa: E402
 
 
-def add_registration_heatmap(doc, regs):
-    """Year x month heatmap; cell = count of malicious domains registered that month."""
+def add_registration_heatmap(doc, regs, malicious=False):
+    """Year x month heatmap; cell = count of estate domains registered that month (titled
+    'malicious' only when the case verdict supports it)."""
     from docx.shared import Inches   # lazy: python-docx only where a Document is in hand
-    png = registration_heatmap_png(regs)
+    png = registration_heatmap_png(regs, malicious=malicious)
     if not png:
         return False
     doc.add_picture(BytesIO(png), width=Inches(6.4))

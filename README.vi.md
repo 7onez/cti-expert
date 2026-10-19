@@ -664,7 +664,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-expert      # nạp skill trước — bốn lệnh dưới là lệnh quy ước
 /onboard         # hướng dẫn chạy lần đầu tương tác
 /capabilities    # lớp bằng chứng nào đang thiếu + đường miễn phí thay thế
-/backend         # xác nhận MCP có kiểu Tier-1 (92 công cụ) đang chạy, không phải Tier-3 stateless
+/backend         # xác nhận MCP có kiểu Tier-1 (93 công cụ) đang chạy, không phải Tier-3 stateless
 /apikeys status  # không key vẫn chạy; thêm key free/trả phí để mở khóa reverse pivot
 ```
 
@@ -739,7 +739,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 
 ```bash
 /cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
-/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 92 MCP tool)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 93 MCP tool)
 
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -1316,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (92 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (93 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)

@@ -67,12 +67,12 @@ def _hex(color) -> str:
     return f"{color:02X}" if isinstance(color, int) else str(color)
 
 
-def begin_toc(doc):
-    """Add the "Table of Contents" heading plus an invisible anchor paragraph at
-    the current position. Returns the anchor paragraph; pass it to
+def begin_toc(doc, title="Table of Contents"):
+    """Add the TOC heading (`title`, localised by the caller) plus an invisible anchor paragraph
+    at the current position. Returns the anchor paragraph; pass it to
     :func:`finalize_toc` after the rest of the body is built."""
     heading = doc.add_paragraph()
-    run = heading.add_run("Table of Contents")
+    run = heading.add_run(title)
     run.font.bold = True
     run.font.size = _pt(18)
     run.font.color.rgb = COLORS["primary"]

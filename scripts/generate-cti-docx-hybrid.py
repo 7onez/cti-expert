@@ -9,6 +9,13 @@ Usage:
     python3 generate-cti-docx-hybrid.py <report.md> <output.docx>   # MD-only mode
     python3 generate-cti-docx-hybrid.py <report.md>                 # MD-only, auto name
 
+Options:
+    --pdf / -p        also render the DOCX to PDF (LibreOffice)
+    --lang <code>     cover / header / footer / TOC / appendix-heading language (en default; vi);
+                      strings live in references/docx_i18n.json. The Markdown body is never translated.
+    --no-heatmaps     never draw the campaign heatmaps. They are drawn only when the case verdict
+                      supports a malicious classification (report JSON `verdict`), never by default.
+
 Phase 1: pandoc converts MD to DOCX (preserves all tables, lists, formatting).
 Phase 2: python-docx post-processes to add CTI styling, cover page, TOC, and
          injects charts/diagrams from JSON at matching section headings.
@@ -212,7 +219,7 @@ def resolve_output_path(md_path: str, json_data: dict) -> str:
 
 
 def parse_args():
-    """Parse CLI args into (md_path, json_path_or_none, output_path_or_none, want_pdf)."""
+    """Parse CLI args into (md_path, json_path_or_none, output_path_or_none, want_pdf, lang, heatmaps)."""
     args = sys.argv[1:]
     if not args:
         print(__doc__)
@@ -222,20 +229,29 @@ def parse_args():
     json_path = None
     output_path = None
     want_pdf = False
+    lang = "en"
+    heatmaps = True
 
-    for arg in args[1:]:
+    rest = iter(args[1:])
+    for arg in rest:
         if arg in ("--pdf", "-p"):
             want_pdf = True
+        elif arg == "--no-heatmaps":
+            heatmaps = False
+        elif arg == "--lang":
+            lang = next(rest, "en")
+        elif arg.startswith("--lang="):
+            lang = arg.split("=", 1)[1]
         elif arg.endswith(".json"):
             json_path = arg
         elif arg.endswith(".docx"):
             output_path = arg
 
-    return md_path, json_path, output_path, want_pdf
+    return md_path, json_path, output_path, want_pdf, (lang or "en").strip().lower(), heatmaps
 
 
 def main():
-    md_path, json_path, output_path, want_pdf = parse_args()
+    md_path, json_path, output_path, want_pdf, lang, heatmaps = parse_args()
 
     if not os.path.exists(md_path):
         print(f"Error: MD file not found: {md_path}")
@@ -262,10 +278,10 @@ def main():
 
         print("[Phase 2] Prepending cover page + TOC, injecting charts")
         case_dir = os.path.dirname(os.path.abspath(json_path)) if json_path else os.path.dirname(os.path.abspath(output_path))
-        rebuild_with_cover_toc_and_charts(doc, json_data, case_dir)
+        rebuild_with_cover_toc_and_charts(doc, json_data, case_dir, lang=lang, heatmaps=heatmaps)
 
         case = json_data["case"]
-        setup_header_footer_compat(doc, case["id"], case.get("classification", "OPEN SOURCE"))
+        setup_header_footer_compat(doc, case["id"], case.get("classification", "OPEN SOURCE"), lang=lang)
 
         doc.save(output_path)
         print(f"Saved: {output_path}")

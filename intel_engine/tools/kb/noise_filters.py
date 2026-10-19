@@ -32,6 +32,7 @@ False everywhere manufactures false clusters.
 import os
 import re
 import sys
+import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_refs  # noqa: E402 — the shared references/*.json loader
@@ -77,6 +78,11 @@ _FALLBACK = {
                             "linkedin.com", "tiktok.com", "youtube.com"],
     "saas_tenant_suffixes": ["pages.dev", "vercel.app", "github.io", "myshopify.com"],
     "social_platform_ip_ranges": [],
+    "org_legal_form_suffixes": {"co ltd": "ltd", "company limited": "ltd", "ltd": "ltd",
+                                "limited": "ltd", "llc": "llc", "jsc": "jsc", "corp": "corp",
+                                "inc": "inc", "co": "co", "company": "co"},
+    "org_legal_form_prefixes": {"cong ty tnhh": "ltd", "cong ty co phan": "jsc", "cong ty": "co"},
+    "org_generic_legal_class": {"class": "co"},
 }
 
 
@@ -336,6 +342,74 @@ def _is_privacy_text(text: str) -> bool:
     """Privacy-proxy test for a free-text registrant ORG: each word run judged like a label."""
     words = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
     return bool(words) and _privacy_label(words)
+
+
+# Registrant ORGANISATION identity. Registrars spell one legal entity many ways ('Company A Co.,
+# Ltd' / 'Company A Co. Ltd' / 'CÔNG TY TNHH Company A'); keyed verbatim each spelling is its own
+# KB org node and the cluster splits on punctuation. canonical_org_key is the ONE join key every
+# `registered_by -> org` edge carries; the registrar's original strings stay as display facts.
+# DATA: references/noise_filters.json -> org_legal_form_suffixes / _prefixes / org_generic_legal_class.
+_ORG_FOLD_MAP = str.maketrans({"đ": "d", "Đ": "d", "ð": "d", "ø": "o", "Ø": "o", "ł": "l", "Ł": "l"})
+
+
+def _fold_org(text) -> str:
+    """Casefold, NFKD + drop combining marks (Vietnamese diacritics; đ → d), every non-alphanumeric
+    run → one space. Non-Latin letters are kept as-is (a CJK org name must not fold to empty)."""
+    s = unicodedata.normalize("NFKD", str(text or "").translate(_ORG_FOLD_MAP)).casefold()
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join("".join(c if c.isalnum() else " " for c in s).split())
+
+
+def _legal_forms(entries) -> tuple:
+    """{phrase: class} → ((phrase tokens, class), ...) longest phrase first."""
+    out = []
+    for phrase, cls in (entries or {}).items():
+        toks, c = tuple(_fold_org(phrase).split()), _fold_org(cls)
+        if toks and c:
+            out.append((toks, c))
+    return tuple(sorted(out, key=lambda x: -len(x[0])))
+
+
+ORG_LEGAL_SUFFIXES = _legal_forms(_REF["org_legal_form_suffixes"])
+ORG_LEGAL_PREFIXES = _legal_forms(_REF["org_legal_form_prefixes"])
+_ORG_GENERIC_CLASS = _fold_org((_REF.get("org_generic_legal_class") or {}).get("class") or "co")
+
+
+def canonical_org_key(name) -> str:
+    """The KB identity / join key for a registrant ORGANISATION: folded text (see `_fold_org`)
+    with leading/trailing legal-form phrases stripped and replaced by their sorted canonical
+    classes — 'Company A Co., Ltd', 'Company A Co. Ltd', 'COMPANY A COMPANY LIMITED' and
+    'Công ty TNHH Company A' all → 'company a ltd'. Every distinguishing word is kept, the last
+    name word is never stripped, and distinct legal forms stay distinct ('… Ltd' ≠ '… JSC' ≠ '… Co').
+    Idempotent: a key re-keys to itself. Empty input → ''. Does NOT judge privacy — gate with
+    `is_noise_org` first."""
+    toks = _fold_org(name).split()
+    forms = set()
+    changed = True
+    while changed:
+        changed = False
+        for table, tail in ((ORG_LEGAL_SUFFIXES, True), (ORG_LEGAL_PREFIXES, False)):
+            for phrase, cls in table:
+                n = len(phrase)
+                if len(toks) > n and tuple(toks[-n:] if tail else toks[:n]) == phrase:
+                    toks = toks[:-n] if tail else toks[n:]
+                    forms.add(cls)
+                    changed = True
+                    break
+    if len(forms) > 1:
+        forms.discard(_ORG_GENERIC_CLASS)
+    return " ".join(toks + sorted(forms))
+
+
+def is_noise_org(name) -> bool:
+    """True if a registrant ORG must never be a join key: RDDS notice text, a privacy-proxy /
+    redaction org (word-run test on the raw AND the diacritic-folded text), or nothing left once
+    folded. Such a value is shared by every domain the provider fronts — canonicalising it would
+    only merge more strangers, so it never becomes an org entity at all."""
+    if is_whois_notice(name):
+        return True
+    folded = _fold_org(name)
+    return not folded or _is_privacy_text(str(name or "")) or _is_privacy_text(folded)
 
 
 def _is_provider_email_domain(dom: str) -> bool:

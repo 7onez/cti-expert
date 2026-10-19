@@ -23,6 +23,12 @@ LLM involvement and zero egress — reading only what the pipeline already wrote
   clusters.json        read only to flag a multi-operator case (>1 cluster) as a caveat
   assessment.md        analyst BLUF (-> executive_summary) + Recommendation(s) section
   knowledge/operators.jsonl   confirmed-operator ledger (attribution + estate domain set)
+  evidence/imported/, analyst_findings*.json, findings.json, enrichment/, intelx/, appdev/
+                       analyst-graded evidence + app-store developer records (cti_case_evidence):
+                       subjects / findings / connections with rung + Admiralty preserved — the
+                       ONLY source on a non-domain (social / selector) case with an empty raw/
+  scope.json + assessment.json   the case verdict -> `verdict.malicious_supported` (cti_refs),
+                       the gate for any figure that would call a domain malicious
 
 It degrades gracefully: a case missing any of these still yields a valid report JSON from
 whatever is present. §2.5 discipline is preserved mechanically — shared/CDN infrastructure,
@@ -46,6 +52,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling helpers
 from cti_case_meta import case_classification, expansion_anchor, raw_name_index  # noqa: E402
+from cti_case_evidence import build_layer, intake_seed  # noqa: E402
+from cti_refs import malicious_verdict  # noqa: E402
 from cti_text_normalize import normalize_obj  # noqa: E402
 
 
@@ -452,7 +460,8 @@ def build(case_dir, kb_dir, classification=None):
     raws = dict(_iter_raw(case_dir))
     hosts = sorted(raws)
     from cti_case_meta import resolve_seed
-    seed = resolve_seed(case_dir, hosts, [os.path.join(case_dir, "raw", h + ".json") for h in hosts]) if hosts else case_id
+    seed = (resolve_seed(case_dir, hosts, [os.path.join(case_dir, "raw", h + ".json") for h in hosts]) if hosts
+            else (intake_seed(case_dir) or case_id))     # non-domain intake: the social/selector seed
 
     op_rec = _operator_record(kb_dir, hosts)
     estate = sorted({d.lower() for d in (op_rec or {}).get("domains") or []} | set(hosts))
@@ -490,11 +499,12 @@ def build(case_dir, kb_dir, classification=None):
     timeline, sources, subjects, findings, connections, indicators = [], [], [], [], [], []
     seen_src = set()
 
-    def add_source(name, url, date):
+    def add_source(name, url, date, indicator=False):
         key = (name, url)
         if url and key not in seen_src:
             seen_src.add(key)
-            sources.append({"name": name, "url": url, "date": date})
+            # sources are provenance; only the case's own live page is an indicator (IOC export)
+            sources.append({"name": name, "url": url, "date": date, **({"indicator": True} if indicator else {})})
 
     # ---- per-host registrant match --------------------------------------------
     # Only the registrant e-mail / phone are decisive join keys. A collected host is wired to the
@@ -643,7 +653,7 @@ def build(case_dir, kb_dir, classification=None):
         # provenance from the seed's own live page / rdap
         if h == seed:
             add_source("Live page", raw.get("meta", {}).get("final_url") or f"https://{h}/",
-                       (raw.get("meta", {}).get("collected_at") or "")[:10] or None)
+                       (raw.get("meta", {}).get("collected_at") or "")[:10] or None, indicator=True)
 
     # estate domains attributed by the ledger but not individually collected -> IOC only (§2.5:
     # do not mint a per-domain subject node without per-domain evidence; keep the entity graph honest)
@@ -798,13 +808,26 @@ def build(case_dir, kb_dir, classification=None):
             indicators.append({"type": "url", "value": url, "category": "network",
                                "role": "infrastructure", "confidence": 90})
 
+    # ---- analyst-graded case evidence (evidence_import, analyst_findings*, findings.json,
+    # enrichment/, intelx/, appdev/) — the only source on a non-domain case, merged otherwise ----
+    layer = build_layer(case_dir, subjects=subjects, findings=findings, connections=connections,
+                        sub_by_host=sub_by_host, benign=(scope.get("target_class") or "") == "benign_check",
+                        default_sid=("SUB-001" if operator_exists else sub_by_host.get(seed)),
+                        seed_label=seed, today=_today())
+    subjects += layer["subjects"]
+    findings += layer["findings"]
+    connections += layer["connections"]
+    for s in layer["sources"]:
+        add_source(s["name"], s["url"], s["date"])
+    exclude |= set(layer["ioc_exclude"])
+
     # ---- gaps + recommendations + summary -----------------------------------
-    gaps = []
+    gaps = list(layer["gaps"])
     if estate_only:
         gaps.append(f"{len(estate_only)} attributed estate domain(s) are exported as indicators "
                     "but not individually collected — per-domain registration/live-state detail "
                     "was not gathered this run.")
-    if not reg_email:
+    if hosts and not reg_email:
         gaps.append("No current registrant triple recovered — attribution rests on the ledger only.")
     if leaves:
         gaps.append(f"{len(leaves)} collected host(s) sit at expansion hop >= {depth} (owner-linked to a "
@@ -830,6 +853,12 @@ def build(case_dir, kb_dir, classification=None):
             f"{seed} is attributed to {reg_name or op_name or 'a single operator'} with "
             f"{n_shared} domain(s) sharing the registrant identity. Shared infrastructure signals "
             "were excluded from operator-level clustering per §2.5.")
+    elif not hosts:
+        # non-domain intake (a social account, a person, a selector): nothing was collected as a host
+        fallback_sum = (
+            f"Non-domain case opened on {seed}: {len(layer['findings'])} graded finding(s) and "
+            f"{len(layer['subjects'])} subject(s) from the case evidence; no host infrastructure was "
+            "collected and no operator attribution is made beyond what each finding's grading states.")
     else:
         # No registrant name/org/e-mail/phone and no ledger row: there is no operator to name, so the
         # default must not claim one (an empty or all-failed case used to read "attributed to a single
@@ -886,6 +915,8 @@ def build(case_dir, kb_dir, classification=None):
                     f"with the estate (see related_hosts): {promoted} reach two agreeing origin checks. "
                     "None is the estate's hosting or a takedown recipient.")
 
+    verdict_ok, verdict_basis = malicious_verdict(case_dir)
+
     report = {
         "generator": GENERATOR,
         "case": {
@@ -898,6 +929,10 @@ def build(case_dir, kb_dir, classification=None):
             "status": "complete",
         },
         "executive_summary": exec_sum,
+        # the case's own verdict — the gate for any figure that would call a domain "malicious"
+        "verdict": {"target_class": scope.get("target_class") or None,
+                    "premise_verdict": assessment.get("premise_verdict") or None,
+                    "malicious_supported": verdict_ok, "basis": verdict_basis},
         "subjects": subjects,
         "findings": findings,
         "connections": connections,

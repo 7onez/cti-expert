@@ -90,6 +90,8 @@ overrides the API root when your account is issued against a different instance.
 CLI:
   python3 wp_intelx.py search registrant@example.com          # logs pass + general pass (2 units)
   python3 wp_intelx.py search example.com --logs-only         # 1 unit: whose machine held creds?
+  python3 wp_intelx.py search example.com --deadline 300      # override the bucket-proportional deadline
+  python3 wp_intelx.py item <storageid> --bucket leaks.logs   # OPEN one record: bounded, redacted preview
   python3 wp_intelx.py search example.com --no-logs-first     # 1 unit, general only (noisier)
   python3 wp_intelx.py phonebook example.com [--target emails]   # PAID endpoint
   python3 wp_intelx.py query example.com          # OFFLINE — selector class + UI URLs, no key
@@ -127,7 +129,8 @@ _INTELX_FALLBACK = {
     "endpoints": {"search_start": "/intelligent/search", "search_result": "/intelligent/search/result",
                   "search_terminate": "/intelligent/search/terminate",
                   "phonebook_start": "/phonebook/search", "phonebook_result": "/phonebook/search/result",
-                  "capabilities": "/authenticate/info", "item_selectors": "/item/selector/list/human"},
+                  "capabilities": "/authenticate/info", "item_selectors": "/item/selector/list/human",
+                  "file_preview": "/file/preview"},
     "search_status": {"0": "results", "1": "complete", "2": "unknown id", "3": "still aggregating"},
     "selector_types": {
         "email": {"regex": r"^[^@\s]+@[a-z0-9.-]+\.[a-z]{2,}$", "strong": True},
@@ -151,12 +154,17 @@ _INTELX_FALLBACK = {
     # spend than the analyst signed up for.
     "search_budget": {"daily_searches": 500, "monthly_searches": 500, "max_searches_per_run": 25,
                       "warn_at_remaining": 50, "phonebook_costs": 5, "search_costs": 1,
-                      "block_when_exhausted": True},
+                      "preview_costs": 1, "block_when_exhausted": True},
+    # The deadline knobs are conservative in the OTHER direction: a missing data file must never
+    # cut a slow-but-live search short, so the fallback is generous and the cap is high.
     "result_limits": {"max_records": 200, "max_selectors": 500, "poll_attempts": 8,
                       "poll_sleep_seconds": 1, "search_timeout_seconds": 5, "preview_lines": 8,
-                      "max_concurrent_searches": 4, "http_timeout_seconds": 30},
+                      "preview_max_chars": 2000,
+                      "max_concurrent_searches": 4, "http_timeout_seconds": 30,
+                      "deadline_base_seconds": 180, "deadline_per_bucket_seconds": 120,
+                      "deadline_all_buckets_weight": 3, "deadline_max_seconds": 900},
     "ui_templates": {"search": "https://intelx.io/?s={term}", "phonebook": "https://phonebook.cz/?q={term}",
-                     "signup": "https://intelx.io/signup"},
+                     "item": "https://intelx.io/?did={term}", "signup": "https://intelx.io/signup"},
     # Fails CLOSED: with no readable policy the module clusters on nothing, which costs leads but
     # never manufactures an operator link out of a shared breach corpus.
     "clustering_policy": {"cluster_on": [], "never_cluster_on": []},
@@ -229,11 +237,12 @@ _STATUS_REASON = {
 
 
 def _call(path: str, *, method: str = "GET", params: dict = None, body: dict = None,
-          timeout: int = 30):
+          timeout: int = 30, raw: bool = False):
     """One IntelX API call -> (data, error_dict). Never raises.
 
     `error_dict` is `{"skipped": reason}` for the entitlement/credit/auth conditions the caller is
-    expected to survive, and `{"error": ...}` for anything genuinely unexpected."""
+    expected to survive, and `{"error": ...}` for anything genuinely unexpected. `raw=True` returns
+    the body as text (the file endpoints answer with content, not JSON)."""
     if not intelx_configured():
         return None, {"skipped": "no INTELX_KEY configured"}
     url = api_root() + path
@@ -246,11 +255,13 @@ def _call(path: str, *, method: str = "GET", params: dict = None, body: dict = N
     try:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8", "replace")
+            raw_body = r.read().decode("utf-8", "replace")
+            if raw:
+                return raw_body, None
             try:
-                return json.loads(raw), None
+                return json.loads(raw_body), None
             except ValueError:
-                return {"raw": raw}, None
+                return {"raw": raw_body}, None
     except urllib.error.HTTPError as e:
         reason = _STATUS_REASON.get(e.code)
         msg = f"HTTP {e.code}" + (f" — {reason}" if reason else "")
@@ -467,7 +478,10 @@ def _covers(cached, want_passes) -> bool:
     if cached.get("skipped"):
         return True    # authoritative: no key / soft selector / budget exhausted — asking again
                         # hits the exact same wall, so the skip IS the cached answer
-    ran = {p.get("pass") for p in (cached.get("passes") or []) if p.get("ran")}
+    # A pass cut short by the deadline/poll limit is NOT coverage: reusing it would freeze a
+    # partial page into the case memo as if IntelX had finished. Legacy entries lack `complete`.
+    ran = {p.get("pass") for p in (cached.get("passes") or [])
+           if p.get("ran") and p.get("complete", True)}
     return set(want_passes) <= ran
 
 
@@ -652,6 +666,8 @@ def summarise_record(rec: dict) -> dict:
         # though the corpus it lives in can never carry an automatic operator edge.
         "read_item": item_evidence(bucket),
         "media": MEDIA_TYPES.get(str(rec.get("media")), rec.get("media")),
+        # The raw ids the item-read (`/file/preview`) needs: `m` = media, `c` = content type.
+        "media_id": rec.get("media"),
         "size": rec.get("size"),
         "systemid": rec.get("systemid"),
         "storageid": rec.get("storageid"),
@@ -662,33 +678,89 @@ def summarise_record(rec: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- search (2-step)
-def _poll(path: str, ident: str, key: str, limit: int):
-    """Drive IntelX's two-step result fetch: GET until `status` says stop.
+# How each poll ending is reported. Only "complete" lets an empty page stand as a negative.
+POLL_STATE_LABEL = {"complete": "clean", "deadline": "partial (deadline)",
+                    "poll_limit": "partial (poll limit)", "expired": "partial (search id expired)",
+                    "error": "partial (error)"}
+
+
+def _remaining(deadline):
+    """Seconds left before `deadline` (a time.monotonic() stamp); None when unbounded."""
+    return None if deadline is None else deadline - time.monotonic()
+
+
+def _http_timeout(deadline, cap) -> int:
+    """Per-request timeout: the usual cap, shortened so one slow request cannot overrun the
+    search's own deadline."""
+    rem = _remaining(deadline)
+    return int(cap) if rem is None else max(1, min(int(cap), int(rem) + 1))
+
+
+def search_deadline(passes) -> int:
+    """Overall wall-clock budget (seconds) for a search, proportional to the buckets it covers.
+
+    An unscoped (all-bucket) pass weighs `deadline_all_buckets_weight` buckets. Tunables live in
+    `references/intelx.json -> result_limits`; the cap bounds the whole search, every pass."""
+    base = float(RESULT_LIMITS.get("deadline_base_seconds", 180))
+    per = float(RESULT_LIMITS.get("deadline_per_bucket_seconds", 120))
+    allw = float(RESULT_LIMITS.get("deadline_all_buckets_weight", 3))
+    cap = float(RESULT_LIMITS.get("deadline_max_seconds", 900))
+    n = sum((len(p.get("buckets") or []) or allw) for p in (passes or []))
+    return int(min(cap, base + per * max(1, n)))
+
+
+def deadline_for(buckets=None, logs_first=None, general_pass=None) -> int:
+    """`search_deadline` for the plan a `search(...)` call with these arguments would run — what a
+    subprocess wrapper must exceed (plus a small grace) so it never kills the collector before the
+    collector's own deadline returns its partial result."""
+    return search_deadline(_plan_passes(buckets, logs_first, general_pass))
+
+
+def _poll(path: str, ident: str, key: str, limit: int, deadline=None):
+    """Drive IntelX's two-step result fetch: GET until `status` says stop -> (rows, err, state).
 
     status 3 means "still aggregating" — returning on the first empty page would turn a slow
-    backend into a false negative, which is the whole failure mode this layer must not have."""
+    backend into a false negative, which is the whole failure mode this layer must not have. With
+    a `deadline` the loop polls until IntelX reports completion or time runs out (state
+    'deadline', rows so far kept); without one it stops after `poll_attempts` ('poll_limit').
+    status 1 ends the loop at once — a finished-empty search returns on its first page."""
     rows, attempts = [], int(RESULT_LIMITS.get("poll_attempts", 8))
     sleep = float(RESULT_LIMITS.get("poll_sleep_seconds", 1))
-    for _ in range(max(1, attempts)):
-        data, err = _call(path, params={"id": ident, "limit": limit})
+    cap = int(RESULT_LIMITS.get("http_timeout_seconds", 30))
+    n = 0
+    while True:
+        rem = _remaining(deadline)
+        if rem is not None and rem <= 0:
+            return rows, None, "deadline"
+        if deadline is None and n >= max(1, attempts):
+            return rows, None, "poll_limit"
+        n += 1
+        data, err = _call(path, params={"id": ident, "limit": limit},
+                          timeout=_http_timeout(deadline, cap))
         if err:
-            return rows, err
-        page = (data or {}).get(key) or []
+            rem = _remaining(deadline)
+            return (rows, None, "deadline") if rem is not None and rem <= 0 else (rows, err, "error")
+        page = (data.get(key) or []) if isinstance(data, dict) else []
         rows += [r for r in page if isinstance(r, dict)]
-        status = (data or {}).get("status")
-        if status in (1, 2) or len(rows) >= limit:
-            break
-        time.sleep(sleep)
-    return rows, None
+        status = data.get("status") if isinstance(data, dict) else None
+        if status == 1 or len(rows) >= limit:
+            return rows, None, "complete"
+        if status == 2:
+            return rows, None, "expired"
+        rem = _remaining(deadline)
+        time.sleep(sleep if rem is None else max(0.0, min(sleep, rem)))
 
 
 STEALER_LOG_NOTE = (
-    "Stealer-log items matched. Open them ONE BY ONE — a log is one machine at one moment, so the "
-    "question is WHOSE machine: a victim of this campaign (holds credentials FOR the scam's "
-    "front-end → victim/access-vector layer) or the OPERATOR's own box (holds the admin panel, and "
-    "the registrar / CMS / hosting / exchange logins behind it → direct attribution). Corpus "
-    "co-membership is still not an operator link. Handle as real victim credentials: cite the "
-    "item's metadata, never paste secrets into the case file.")
+    "Stealer-log items matched. A hit COUNT says only that the selector appears in the leak "
+    "corpus — it is not evidence that any machine or person was infected. Open the items ONE BY "
+    "ONE (mode 'item': `wp_intelx.py item <storageid> --bucket <bucket>`) and cite the opened "
+    "record — a log is one machine at one moment, so the question is WHOSE machine: a victim of "
+    "this campaign (holds credentials FOR the scam's front-end → victim/access-vector layer) or "
+    "the OPERATOR's own box (holds the admin panel, and the registrar / CMS / hosting / exchange "
+    "logins behind it → direct attribution). Corpus co-membership is still not an operator link. "
+    "Handle as real victim credentials: cite the item's metadata, never paste secrets into the "
+    "case file.")
 
 
 def _plan_passes(buckets, logs_first=None, general_pass=None):
@@ -720,45 +792,63 @@ def _plan_passes(buckets, logs_first=None, general_pass=None):
     return passes
 
 
-def _search_once(norm, buckets, limit, media, datefrom, dateto, timeout):
-    """One IntelX search -> (summarised_records, error_dict_or_None). `[]` with no error is a REAL
-    negative: the search ran and IntelX has nothing for this selector in these buckets."""
+def _search_once(norm, buckets, limit, media, datefrom, dateto, timeout, deadline=None):
+    """One IntelX search -> (summarised_records, error_dict_or_None, state).
+
+    state 'failed' = the search never started (auth / soft selector / entitlement / network) and
+    `err` says why; otherwise a POLL_STATE_LABEL key. `[]` with state 'complete' is a REAL
+    negative: the search ran to completion and IntelX has nothing in these buckets."""
     body = {"term": norm, "buckets": list(buckets or []), "lookuplevel": 0,
             "maxresults": limit, "media": media, "sort": 4, "terminate": [],
             "datefrom": datefrom, "dateto": dateto,
             "timeout": int(RESULT_LIMITS.get("search_timeout_seconds", 5))}
     data, err = _call(ENDPOINTS.get("search_start", "/intelligent/search"),
-                      method="POST", body=body, timeout=timeout)
+                      method="POST", body=body, timeout=_http_timeout(deadline, timeout))
     if err:
-        return [], err
-    ident = (data or {}).get("id")
+        rem = _remaining(deadline)
+        if rem is not None and rem <= 0 and "error" in err:
+            return [], None, "deadline"      # cut by our own deadline, not refused by IntelX
+        return [], err, "failed"
+    ident = (data or {}).get("id") if isinstance(data, dict) else None
     if not ident:
         # status 1 with no id = IntelX accepted the selector and has nothing. That IS a real
         # negative — but only because the search ran, which is exactly the distinction the
         # keyless mode cannot make.
-        return [], None
-    rows, perr = _poll(ENDPOINTS.get("search_result", "/intelligent/search/result"),
-                       ident, "records", limit)
+        return [], None, "complete"
+    rows, perr, state = _poll(ENDPOINTS.get("search_result", "/intelligent/search/result"),
+                              ident, "records", limit, deadline=deadline)
     _call(ENDPOINTS.get("search_terminate", "/intelligent/search/terminate"),
-          params={"id": ident})              # free the backend slot; costs nothing
+          params={"id": ident}, timeout=5)   # free the backend slot; costs nothing
     recs = [r for r in (summarise_record(r) for r in rows) if r]
-    return recs[:limit], ({"partial": perr} if perr else None)
+    return recs[:limit], ({"partial": perr} if perr else None), state
+
+
+PARTIAL_NOTE = (
+    "IntelX did NOT report this search as finished — the records below are only what arrived "
+    "before the stop named in `status`. An absent record is NOT a negative; re-run the selector "
+    "(optionally `--deadline <seconds>`, or `--logs-only` to narrow the buckets).")
 
 
 def search(term: str, maxresults: int = None, buckets: list = None, media: int = 0,
            datefrom: str = "", dateto: str = "", timeout: int = None, logs_first: bool = None,
-           general_pass: bool = None):
-    """Search IntelX for one strong selector -> {'term','selector','records':[…],'by_bucket':{…}}.
+           general_pass: bool = None, deadline_seconds: int = None):
+    """Search IntelX for one strong selector -> {'term','selector','status','records':[…],…}.
 
     Runs the STEALER LOGS in their own pass first (see `_plan_passes`), then the general pass, and
     merges — so a hundred recycled combolist rows can never crowd the one infostealer record out of
-    a bounded page. `logs_pass` records whether that pass actually ran, which is what makes an
-    empty `read_these` a real negative rather than a budget artefact. Pass `buckets` to override
-    the plan, or `logs_first=False` for a single general pass.
+    a bounded page. `logs_pass` records whether that pass actually ran TO COMPLETION, which is
+    what makes an empty `read_these` a real negative rather than a budget/deadline artefact. Pass
+    `buckets` to override the plan, or `logs_first=False` for a single general pass.
+
+    The whole search runs under ONE wall-clock deadline proportional to the buckets searched
+    (`search_deadline`, override with `deadline_seconds`). `status` is 'clean' when every pass
+    finished, else 'partial (deadline)' / 'partial (poll limit)' / 'partial (budget)' / … with the
+    records that did arrive — never a bare timeout.
 
     Memoised ONCE PER SELECTOR PER CASE regardless of which pass-plan the caller wants (shared
     between the collector's own enrich_result call and a later enrich/email-deep ask) — see
-    `_covers`. An explicit `buckets` override is the one exception and is never cached this way.
+    `_covers`; a partial pass never counts as coverage. An explicit `buckets` override is cached
+    under its own key.
 
     Returns None with no key. `{"skipped": …}` when the selector is soft, the budget is spent, or
     the account is not entitled — in every one of those cases the emitted UI URL is still the
@@ -771,26 +861,37 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
     if not cls:
         return {"skipped": "not a strong selector — IntelX searches email/domain/URL/IP/CIDR/phone/"
                            "wallet/MAC/UUID/IBAN only, never a brand or person name",
-                "term": term, "ui_url": ui}
+                "status": "skipped", "term": term, "ui_url": ui}
     limit = int(maxresults or RESULT_LIMITS.get("max_records", 200))
     cost = int(SEARCH_BUDGET.get("search_costs", 1))
     plan = _plan_passes(buckets, logs_first, general_pass)
+    budget_s = int(deadline_seconds) if deadline_seconds else search_deadline(plan)
 
     def run():
+        started = time.monotonic()
+        deadline = started + budget_s
         out = {"term": norm, "selector": cls, "ui_url": ui, "passes": [],
-               "logs_pass": False}
+               "logs_pass": False, "deadline_seconds": budget_s}
         recs, seen, hard_err = [], set(), None
         for p in plan:
+            if _remaining(deadline) <= 0:
+                # Out of time before this pass started: nothing spent, and said so.
+                out["passes"].append(dict(p, ran=False, complete=False,
+                                          status=POLL_STATE_LABEL["deadline"],
+                                          skipped="deadline reached before this pass started"))
+                continue
             blocked = _budget_block(cost, f"{cls} {p['pass']} search")
             if blocked:
                 # A pass NOT run is recorded as such. The logs pass is first precisely so that a
                 # tight allowance buys log coverage and drops the combolists, never the reverse.
-                out["passes"].append(dict(p, ran=False, skipped=blocked))
+                out["passes"].append(dict(p, ran=False, complete=False,
+                                          status="partial (budget)", skipped=blocked))
                 continue
-            got, err = _search_once(norm, p["buckets"], limit, media, datefrom, dateto, timeout)
-            if err and "partial" not in err:
+            got, err, state = _search_once(norm, p["buckets"], limit, media, datefrom, dateto,
+                                           timeout, deadline=deadline)
+            if state == "failed":
                 _record("search", 0, norm, ok=False)
-                out["passes"].append(dict(p, ran=False, **err))
+                out["passes"].append(dict(p, ran=False, complete=False, **err))
                 hard_err = hard_err or err
                 break                    # auth / soft selector / entitlement — later passes fail too
             _record("search", cost, norm, results=len(got))
@@ -802,12 +903,15 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
                 seen.add(ident)
                 recs.append(r)
                 fresh += 1
-            entry = dict(p, ran=True, records=len(got), new=fresh)
+            complete = state == "complete"
+            entry = dict(p, ran=True, complete=complete, status=POLL_STATE_LABEL.get(state, state),
+                         records=len(got), new=fresh)
             if err:
                 entry.update(err)
             out["passes"].append(entry)
-            if p["pass"] in ("logs", "explicit"):
+            if p["pass"] in ("logs", "explicit") and complete:
                 out["logs_pass"] = out["logs_pass"] or any(item_evidence(b) for b in p["buckets"])
+        out["elapsed_seconds"] = round(time.monotonic() - started, 1)
         ran = [p for p in out["passes"] if p.get("ran")]
         if not ran:
             # Nothing was queried at all — keep the legacy `skipped` shape so callers that test
@@ -815,8 +919,16 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
             reason = hard_err or {}
             return {"skipped": reason.get("skipped") or reason.get("error")
                     or (out["passes"][0].get("skipped") if out["passes"] else "no pass ran"),
+                    "status": "skipped",
                     "term": norm, "selector": cls, "ui_url": ui, "passes": out["passes"],
                     "budget": budget_status()}
+        # First non-clean pass names the overall status; 'clean' only when every pass finished.
+        out["status"] = next((p.get("status") for p in out["passes"]
+                              if p.get("status") and p.get("status") != "clean"),
+                             "clean" if all(p.get("complete") for p in out["passes"])
+                             else "partial (error)")
+        if out["status"] != "clean":
+            out["partial_note"] = PARTIAL_NOTE
         recs = recs[:limit]
         # Rank order, newest first within a rank. IntelX returns whatever matched, and on a
         # long-exposed address that is overwhelmingly recycled combolist rows — sorting by bucket
@@ -842,27 +954,27 @@ def search(term: str, maxresults: int = None, buckets: list = None, media: int =
                                 "returned nothing for this selector — a real negative, not a "
                                 "truncated page.")
         if not recs:
-            out["note"] = "IntelX ran the search and returned no records for this selector."
+            out["note"] = ("IntelX ran the search and returned no records for this selector."
+                           if out["status"] == "clean" else
+                           "No records arrived before the search stopped — NOT a negative.")
         return out
-    named_plan = not buckets   # an explicit analyst `--buckets` override is a one-off query, never
-                                # part of the shared per-selector cache (it must not downgrade a
-                                # broader collector/enrich result already cached for this selector)
-    if not named_plan:
-        return _memoised("search", f"{norm}|explicit|{','.join(buckets)}|{limit}", run)
     # One search per SELECTOR per case — shared between the collector's own default (logs+general)
     # pass and enrich/email-deep's later ask (often `--logs-only`), regardless of which bucket/pass
     # plan each caller wants: keyed by the selector ALONE (not buckets/limit/passes), so a narrower
     # later ask reuses the earlier broader result instead of re-buying it. A cached entry that ran
-    # FEWER passes than THIS call needs is not reused as-is — it is recomputed and the cache is
-    # upgraded, so the ordering can never go the other way and hide the general pass from a later,
-    # broader caller.
+    # FEWER (complete) passes than THIS call needs is not reused as-is — it is recomputed and the
+    # cache is upgraded, so the ordering can never go the other way and hide the general pass from
+    # a later, broader caller, and a deadline-cut pass is retried rather than frozen.
+    # An explicit analyst `--buckets` override is a one-off query with its own key: it must not
+    # downgrade a broader collector/enrich result already cached for this selector.
+    key = norm if not buckets else f"{norm}|explicit|{','.join(buckets)}|{limit}"
     want = {p["pass"] for p in plan}
-    cached = _cache_get("search", norm)
+    cached = _cache_get("search", key)
     if _covers(cached, want):
-        _store_memo("search", norm, cached)
+        _store_memo("search", key, cached)
         return copy.deepcopy(cached)
     val = run()
-    _store_memo("search", norm, val)
+    _store_memo("search", key, val)
     return copy.deepcopy(val)
 
 
@@ -903,8 +1015,8 @@ def phonebook(domain: str, target: str = "all", maxresults: int = None, timeout:
         if not ident:
             _record("phonebook", cost, norm, results=0)
             return {"term": norm, "ui_url": ui, "emails": [], "domains": [], "urls": []}
-        rows, perr = _poll(ENDPOINTS.get("phonebook_result", "/phonebook/search/result"),
-                           ident, "selectors", limit)
+        rows, perr, pstate = _poll(ENDPOINTS.get("phonebook_result", "/phonebook/search/result"),
+                                   ident, "selectors", limit)
         groups = {"email": [], "domain": [], "url": [], "url query": [], "other": []}
         for r in rows:
             val = r.get("selectorvalue") or r.get("selectorvaluehash") or ""
@@ -915,9 +1027,11 @@ def phonebook(domain: str, target: str = "all", maxresults: int = None, timeout:
                "emails": uniq([v for v in groups.get("email", []) if v])[:limit],
                "domains": uniq([v for v in groups.get("domain", []) if v])[:limit],
                "urls": uniq([v for v in groups.get("url", []) if v])[:limit],
-               "total": len(rows)}
+               "total": len(rows), "status": POLL_STATE_LABEL.get(pstate, pstate)}
         if perr:
             out["partial"] = perr
+        if pstate != "complete":
+            out["partial_note"] = PARTIAL_NOTE
         return out
     return _memoised("phonebook", f"{norm}|{tgt}|{limit}", run)
 
@@ -939,6 +1053,110 @@ def item_selectors(systemid: str, timeout: int = 30):
         _record("item_selectors", 0, systemid, results=len(vals or []))
         return {"systemid": systemid, "selectors": vals}
     return _memoised("item_selectors", systemid, run)
+
+
+# --------------------------------------------------------------------------- item READ (preview)
+# Opening the record is what turns "this selector appears in a stealer-log corpus" into a citable
+# statement about ONE machine. The preview is bounded (`result_limits.preview_lines` /
+# `preview_max_chars`) and REDACTED before it leaves this module: identifiers that answer "whose
+# machine" (URLs, logins, hostnames, dates) stay; secrets (passwords, cookies, tokens) never do.
+_SECRET_LABEL_RE = re.compile(
+    r"^(\s*(?:pass(?:word)?|pwd|passwd|pin|otp|token|access[_ -]?token|refresh[_ -]?token|"
+    r"cookies?|secret|api[_ -]?key|auth(?:orization)?|session(?:[_ -]?id)?|seed|mnemonic|"
+    r"private[_ -]?key)\s*[:=]\s*)(\S.*)$", re.I)
+_CRED_PAIR_RE = re.compile(r"^(\s*[^\s:;|@]+@[^\s:;|@]+\.[A-Za-z]{2,}\s*[:;|]\s*)(\S.*)$")
+_LONG_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-+=%]{32,}")
+
+
+def _mask(secret: str) -> str:
+    return f"[REDACTED:{len(secret)} chars]"
+
+
+def redact_line(line: str):
+    """(redacted_line, n_redactions) — masks credential VALUES, keeps the identifiers around them:
+    `label: value` secrets, `email:password` combolist rows, `url:login:password` stealer rows,
+    Netscape cookie-file values, and any long opaque token (session ids, JWT parts, hashes)."""
+    n = 0
+    m = _SECRET_LABEL_RE.match(line)
+    if m:
+        return m.group(1) + _mask(m.group(2)), 1
+    m = _CRED_PAIR_RE.match(line)
+    if m:
+        return m.group(1) + _mask(m.group(2)), 1
+    if "://" in line and line.count(":") >= 3:
+        head, user, pw = line.rsplit(":", 2)
+        if "/" not in user and "/" in head and pw.strip():
+            line, n = f"{head}:{user}:{_mask(pw)}", n + 1
+    cols = line.split("\t")
+    if len(cols) >= 7 and cols[1].upper() in ("TRUE", "FALSE"):      # Netscape cookie file row
+        cols[6] = _mask(cols[6])
+        line, n = "\t".join(cols), n + 1
+    line, k = _LONG_TOKEN_RE.subn(lambda mm: _mask(mm.group(0)), line)
+    return line, n + k
+
+
+ITEM_READ_NOTE = (
+    "Opened record (bounded, redacted preview). THIS is what an infection/compromise statement may "
+    "cite — the storageid/bucket below plus what the lines show (whose machine, which logins). A "
+    "search hit count alone only says the selector appears in the leak corpus. Secrets are masked "
+    "by design; never re-fetch them into the case file.")
+
+
+def read_item(storageid: str, bucket: str, media=None, ctype=None, lines: int = None,
+              systemid: str = "", timeout: int = None):
+    """Open ONE search record via IntelX `/file/preview` (`c`=content type, `m`=media, `f`=0 text,
+    `sid`=storageid, `b`=bucket, `l`=lines — the official SDK's FILE_PREVIEW) and return a bounded,
+    redacted text preview. `storageid`, `bucket`, `media_id` and `type` are all on every search
+    `records` / `read_these` row. Metered: recorded in api_usage as `file_preview`; a free key
+    usually gets HTTP 402/403 here and this returns `{"skipped": …}` with the UI link."""
+    if not intelx_configured():
+        return None
+    sid, bkt = str(storageid or "").strip(), str(bucket or "").strip()
+    ui = intelx_url(systemid, "item") if systemid else intelx_url(sid)
+    if not sid or not bkt:
+        return {"skipped": "item read needs the record's storageid AND bucket (both are on every "
+                           "search `records` / `read_these` row)", "status": "skipped"}
+    n = max(1, int(lines or RESULT_LIMITS.get("preview_lines", 8)))
+    max_chars = int(RESULT_LIMITS.get("preview_max_chars", 2000))
+    cost = int(SEARCH_BUDGET.get("preview_costs", 1))
+    http_t = int(timeout or RESULT_LIMITS.get("http_timeout_seconds", 30))
+
+    def run():
+        blocked = _budget_block(cost, "item preview")
+        if blocked:
+            return {"skipped": blocked, "status": "skipped", "storageid": sid, "bucket": bkt,
+                    "ui_url": ui, "budget": budget_status()}
+        params = {"c": int(ctype) if ctype not in (None, "") else 1,
+                  "m": int(media) if media not in (None, "") else 0,
+                  "f": 0, "sid": sid, "b": bkt, "e": 0, "l": n, "k": intelx_key()}
+        text, err = _call(ENDPOINTS.get("file_preview", "/file/preview"), params=params,
+                          timeout=http_t, raw=True)
+        if err:
+            _record("file_preview", 0, sid, ok=False)
+            return dict(err, status="skipped" if "skipped" in err else "failed",
+                        storageid=sid, bucket=bkt, ui_url=ui)
+        raw_lines = str(text or "").splitlines()
+        shown, redactions, used, cut = [], 0, 0, len(raw_lines) > n
+        for ln in raw_lines[:n]:
+            red, k = redact_line(ln)
+            redactions += k
+            if used + len(red) > max_chars:
+                shown.append(red[:max(0, max_chars - used)])
+                cut = True
+                break
+            shown.append(red)
+            used += len(red) + 1
+        _record("file_preview", cost, sid, results=len(shown))
+        out = {"status": "read", "storageid": sid, "bucket": bkt, "ui_url": ui,
+               "lines": shown, "line_count": len(shown), "truncated": cut,
+               "redactions": redactions, "note": ITEM_READ_NOTE}
+        if systemid:
+            out["systemid"] = systemid
+        if not shown:
+            out["note"] = ("IntelX returned no text preview for this item (binary, picture or "
+                           "empty) — open it in the web UI; nothing here supports a claim yet.")
+        return out
+    return _memoised("item_read", f"{sid}|{bkt}|{n}", run)
 
 
 def capabilities(timeout: int = 20):
@@ -1114,6 +1332,9 @@ def enrich_result(result: dict, do_phonebook: bool = True, free_only: bool = Fal
                                 # Did the logs-scoped pass actually run for this selector? Without
                                 # it, zero `read_these` says nothing — with it, it is a negative.
                                 "logs_pass": bool(hits.get("logs_pass")),
+                                # 'clean' only when IntelX finished every pass; anything else is
+                                # a partial page whose missing records are NOT negatives.
+                                "status": hits.get("status"),
                                 "skipped": hits.get("skipped")})
         if hits.get("read_these"):
             out.setdefault("stealer_log_items", []).extend(hits["read_these"][:10])
@@ -1192,10 +1413,11 @@ def banner_lines(free_only: bool = False) -> list:
 
 __all__ = ["intelx_key", "intelx_configured", "api_root", "classify_selector", "is_searchable",
            "selector_for_kind", "intelx_url", "intelx_queries", "attach_intelx_queries",
-           "search", "phonebook", "item_selectors", "capabilities", "enrich_result",
+           "search", "search_deadline", "deadline_for", "phonebook", "item_selectors",
+           "read_item", "redact_line", "capabilities", "enrich_result",
            "capability", "banner_lines",
            "bucket_grade", "bucket_rank", "item_evidence", "clusterable", "summarise_record",
-           "budget_status", "month_spent", "STEALER_LOG_NOTE", "SEARCH_PLAN",
+           "budget_status", "month_spent", "STEALER_LOG_NOTE", "ITEM_READ_NOTE", "SEARCH_PLAN",
            "ENDPOINTS", "SELECTOR_TYPES", "PIVOT_KIND_MAP", "BUCKETS", "PHONEBOOK_TARGETS",
            "PLAN_CAPABILITIES", "SEARCH_BUDGET", "RESULT_LIMITS", "UI_TEMPLATES",
            "CLUSTERING_POLICY"]
@@ -1218,12 +1440,26 @@ def main():
     p.add_argument("--max", type=int, default=None)
     p.add_argument("--datefrom", default="")
     p.add_argument("--dateto", default="")
+    p.add_argument("--deadline", type=int, default=None,
+                   help="overall wall-clock seconds for the whole search (default: proportional "
+                        "to buckets searched, references/intelx.json result_limits.deadline_*); "
+                        "on expiry the records so far return with status 'partial (deadline)'")
     p = sub.add_parser("phonebook", help="domain -> emails/subdomains/URLs (PAID endpoint)")
     p.add_argument("domain")
     p.add_argument("--target", default="all", choices=sorted(PHONEBOOK_TARGETS.keys()))
     p.add_argument("--max", type=int, default=None)
     p = sub.add_parser("selectors", help="selectors extracted from one item, by systemid")
     p.add_argument("systemid")
+    p = sub.add_parser("item", help="OPEN one search record (/file/preview): bounded, redacted "
+                                    "text preview — what an infection claim must cite")
+    p.add_argument("storageid", help="the record's `storageid` (on every records/read_these row)")
+    p.add_argument("--bucket", required=True, help="the record's `bucket`, e.g. leaks.logs")
+    p.add_argument("--media", type=int, default=None, help="the record's `media_id` (default 0)")
+    p.add_argument("--type", dest="ctype", type=int, default=None,
+                   help="the record's content `type` (default 1 = text)")
+    p.add_argument("--lines", type=int, default=None,
+                   help="preview lines (default result_limits.preview_lines)")
+    p.add_argument("--systemid", default="", help="optional: the record's systemid, for the UI link")
     p = sub.add_parser("query", help="OFFLINE: classify a selector + build its UI URLs (no key)")
     p.add_argument("term")
     sub.add_parser("caps", help="what this key is entitled to (/authenticate/info)")
@@ -1269,11 +1505,14 @@ def main():
         out = search(args.term, maxresults=args.max, buckets=bk,
                      logs_first=(True if logs_only else args.logs_first),
                      general_pass=(False if logs_only else None),
-                     datefrom=args.datefrom, dateto=args.dateto)
+                     datefrom=args.datefrom, dateto=args.dateto, deadline_seconds=args.deadline)
     elif args.cmd == "phonebook":
         out = phonebook(args.domain, target=args.target, maxresults=args.max)
     elif args.cmd == "selectors":
         out = item_selectors(args.systemid)
+    elif args.cmd == "item":
+        out = read_item(args.storageid, args.bucket, media=args.media, ctype=args.ctype,
+                        lines=args.lines, systemid=args.systemid)
     else:
         out = capabilities()
     print(json.dumps(out, indent=2, ensure_ascii=False))

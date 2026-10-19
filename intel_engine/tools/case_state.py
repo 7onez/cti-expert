@@ -1403,6 +1403,175 @@ def _enrichment_leads_from_raw(obj, leads):
             "why": f"GitHub account linked from {host}: harvest committer e-mails and former logins"}
 
 
+# Leak/stealer FAN-OUT (case_enrich): every CONFIRMED selector of the case — never a kit/neighbour
+# one — gets every leak vendor its type supports, as ordinary machine-executable enrichment leads
+# (same checkpointing, spend gate and enrichment_done closure as every other lead). POLICY is
+# reference DATA (tools/kb/references/leak_fanout.json); the fallback is the conservative minimum:
+# the unlimited CLD leg only, every other vendor stated as not consulted.
+_LEAK_NA_FALLBACK = {"na": "leak_fanout.json unreadable — vendor not planned"}
+_LEAK_FALLBACK = {
+    "selection": {"max_owner_hop": 0, "username_regex": r"^@?[A-Za-z0-9_.\-]{3,64}$"},
+    "vendors": ["cld", "intelx", "hudsonrock", "deep_profile"],
+    "plan": {
+        "email": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "email"]}},
+        "username": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "username"]}},
+        "phone": {"cld": {"op": "cld", "argv": ["route", "{v}"], "key": "cld-phone:{v}"}},
+        "domain": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "domain"]}},
+    },
+}
+try:
+    _LEAK_REF = _kb_refs.load_ref(_kb_refs.ref_path(_kb_refs.__file__, "leak_fanout.json"), _LEAK_FALLBACK)
+except Exception:
+    _LEAK_REF = dict(_LEAK_FALLBACK)
+_LEAK_SEL = _LEAK_REF.get("selection") or _LEAK_FALLBACK["selection"]
+LEAK_VENDORS = tuple(_LEAK_REF.get("vendors") or _LEAK_FALLBACK["vendors"])
+LEAK_PLAN = _LEAK_REF.get("plan") or _LEAK_FALLBACK["plan"]
+_LEAK_USER_RE = re.compile(str(_LEAK_SEL.get("username_regex") or _LEAK_FALLBACK["selection"]["username_regex"]))
+_LEAK_MAX_HOP = int(_LEAK_SEL.get("max_owner_hop", 0))
+
+
+def leak_vendor_plan(type_, value):
+    """{vendor: {"op","argv","key"} | {"via": vendor} | {"na": reason}} for one selector — every
+    LEAK_VENDORS column is present, so a coverage table never silently drops a vendor."""
+    plan = LEAK_PLAN.get(type_) or {}
+    out = {}
+    for vendor in LEAK_VENDORS:
+        row = plan.get(vendor) or _LEAK_NA_FALLBACK
+        if row.get("op"):
+            argv = [str(a).replace("{v}", value) for a in (row.get("argv") or [])]
+            key = str(row.get("key") or f"leak:{vendor}:{type_}:{{v}}").replace("{v}", value)
+            out[vendor] = {"op": row["op"], "argv": argv, "key": key}
+        elif row.get("via"):
+            out[vendor] = {"via": str(row["via"])}
+        else:
+            out[vendor] = {"na": str(row.get("na") or "not planned for this selector type")}
+    return out
+
+
+def _leak_owner_node(n):
+    """True for an analyst seed (hop-0, route seed) or a node holding an OWNER rung class. A node
+    reached only through kit / neighbour rows (co-tenant, shared kit, exchange) is never confirmed."""
+    from selector_types import rung_for
+    if n.get("route") == "seed" and int(n.get("hop") or 0) == 0:
+        return True
+    classes = [c for c in (n.get("rung_classes") or [n.get("rung_class") or ""]) if c]
+    return any(rung_for(c) == "owner" for c in classes)
+
+
+def leak_selectors(case):
+    """Confirmed selectors to leak-check: [{type, value, origin}] with type email|username|phone|
+    domain. Sources, each restricted to the OWNER side of the case:
+      * typed nodes that are analyst seeds or carry an owner rung class (state.json nodes);
+      * the analyst's seed domains (harness_seeds.json, hop-0 hosts) — the registrable apex, never a
+        platform / shared-infra / vendor apex (never_seed);
+      * WHOIS registrant email / phone of collected hosts at hop <= max_owner_hop that are not
+        kit/neighbour tier hosts (current owner era only — whois_eras);
+      * social-intake account usernames (enrichment/meta_transparency/*.json handles, kind=username).
+    Kit- and neighbour-rung selectors are excluded by construction."""
+    cdir = _case_dir(case)
+    st = load_state(case)
+    tiers = tier_hosts(cdir)
+    hops, depth = _hops_and_depth(st)
+    benign = _benign_set()
+    out = {}
+
+    def add(t, v, origin):
+        v = str(v or "").strip()
+        if t == "username":
+            v = v.lstrip("@")
+            if not _LEAK_USER_RE.match(v):
+                return
+            v = v.lower()
+        elif t == "email":
+            v = v.lower()
+            if not v or "*" in v or v in benign or _is_privacy(v) or _is_noise_email(v):
+                return
+        elif t == "domain":
+            v = _frontier_apex(v.split("://", 1)[-1].split("/")[0].split(":")[0].lower().rstrip("."))
+            if not v or v in tiers or never_seed(v):
+                return
+        if not v or t not in LEAK_PLAN:
+            return
+        out.setdefault((t, v), {"type": t, "value": v, "origin": origin})
+
+    for n in (st.get("nodes") or {}).values():
+        if not isinstance(n, dict) or not _leak_owner_node(n):
+            continue
+        t, sel = str(n.get("type") or "").lower(), str(n.get("selector") or "")
+        seed = n.get("route") == "seed"
+        origin = "seed" if seed else f"owner-node:{(n.get('origins') or ['?'])[0]}"
+        if t in ("email", "phone", "domain", "username"):
+            add(t, sel, origin)
+        elif t == "telegram":
+            add("username", sel.rsplit("/", 1)[-1], origin)
+        elif t == "string" and seed:
+            add("username", sel, origin)
+    seeds = set()
+    try:
+        with open(os.path.join(cdir, "harness_seeds.json"), encoding="utf-8") as fh:
+            seeds = {str(s).lower() for s in (json.load(fh) or [])}
+    except Exception:  # noqa: BLE001
+        pass
+    seeds |= {h for h, hop in hops.items() if hop == 0}
+    for s in sorted(seeds):
+        add("domain", s, "seed")
+    for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        meta = obj.get("meta") or {}
+        host = str(meta.get("host") or os.path.basename(path)[:-5]).lower()
+        if host in tiers or _frontier_apex(host) in tiers or meta.get("kind") == "ip":
+            continue
+        if hops.get(host, _unknown_hop(hops, depth)) > _LEAK_MAX_HOP:
+            continue
+        who = (obj.get("artifacts") or {}).get("whois") or {}
+        owner_emails = {str(e).lower() for e in _whois_eras.owner_values(who, "email") if e}
+        for em in owner_emails:
+            add("email", em, f"whois-registrant:{host}")
+        for piv in obj.get("pivots", []) or []:
+            if piv.get("kind") == "whois:registrant_phone" and piv.get("value"):
+                add("phone", piv["value"], f"whois-registrant:{host}")
+    for path in sorted(glob.glob(os.path.join(cdir, "enrichment", "meta_transparency", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        for h in (doc.get("handles") or []) if isinstance(doc, dict) else ():
+            if isinstance(h, dict) and h.get("kind") == "username":
+                add("username", h.get("value"), f"social:{h.get('platform') or '?'}")
+    return sorted(out.values(), key=lambda r: (r["type"], r["value"]))
+
+
+def _leak_leads(case, leads):
+    """Fold the leak fan-out into the enrichment-lead map. A lead whose key already exists (the
+    registrant email-deep / cld-phone leads) is tagged, never duplicated."""
+    try:
+        selectors = leak_selectors(case)
+    except Exception:  # noqa: BLE001 — a broken selector read never blocks the frontier
+        return
+    for s in selectors:
+        for vendor, step in leak_vendor_plan(s["type"], s["value"]).items():
+            if not step.get("op"):
+                continue
+            key = step["key"]
+            tag = {"vendor": vendor, "type": s["type"], "selector": s["value"], "origin": s["origin"]}
+            slot = next((v for v in leads.values() if v.get("key") == key), None)
+            if slot is not None:
+                slot.setdefault("leak", []).append(tag)
+                continue
+            leads[("leak", key)] = {
+                "tool": f"leak fan-out ({vendor})", "value": s["value"], "key": key,
+                "cost": "metered" if step["op"] in ("email-deep", "intelx", "hudsonrock") else "free",
+                "run": [{"op": step["op"], "argv": step["argv"]}], "leak": [tag],
+                "why": (f"mandatory leak/stealer check of confirmed {s['type']} {s['value']} "
+                        f"({s['origin']}) — exposure, not attribution")}
+
+
+
 def _censys_search_candidates(cdir, cands, seed_apexes, deferred=None):
     """Frontier seeds from cases/<id>/censys_search.json — hostnames Censys saw serving one of the
     estate's EXACT leaf certificates. An exact cert SHA-256 match is an owner link (the same standard
@@ -1758,6 +1927,9 @@ def frontier(case, max_new=8):
     expanding = []            # (host, raw) of non-leaf DOMAIN hosts — the origin-IP sweep's input
     shared_ips = set()
     approved = _oh.approved_cohosts(cdir) if _oh is not None else {}
+    # kit/neighbour tier hosts (co-tenants, shared-kit hits) are collected, never leak/identity
+    # checked: their registrant contacts belong to third parties
+    tiers = tier_hosts(cdir)
     for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
@@ -1782,7 +1954,9 @@ def frontier(case, max_new=8):
             expanding.append((host, obj))
         _shared_ips_in(obj, shared_ips)
         _metered_leads_from_raw(obj, leads)
-        _enrichment_leads_from_raw(obj, enr)
+        if host not in tiers:
+            _enrichment_leads_from_raw(obj, enr)
+    _leak_leads(case, enr)
     # MO-neighbour: seed ONLY from the CLASSIFIED case-wide file (Phase B), never from the raw
     # per-host discovery block — a same_mo / unrelated co-tenant must not grow the estate.
     _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred)
@@ -1893,6 +2067,7 @@ def reopen(case, new_seeds=None):
     st["reopen_count"] = st.get("reopen_count", 0) + 1
     st["note"] = f"reopened {_now()}"
     st["dropped"] = {}          # a reopened case re-judges what an earlier Plan phase vetoed
+    st.pop("leak_round", None)  # new seeds / new evidence: the harness re-runs the leak fan-out once
     if new_seeds:
         have = {h.lower() for h in st.get("pending", [])} | {h.lower() for h in st.get("consumed", [])}
         for s in new_seeds:

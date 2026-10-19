@@ -17,6 +17,7 @@ The token/key is scrubbed out of error strings — urllib puts it in the URL.
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -219,25 +220,62 @@ def hudsonrock_key():
     return secret("HUDSONROCK_API_KEY")
 
 
-def hudsonrock_lookup(selector, timeout=30):
+_HR_DOMAIN_RE = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$")
+_HR_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{2,64}$")
+_HR_PHONE_RE = re.compile(r"^\+?[\d\s().\-]{6,}$")
+
+
+def hudsonrock_kind(selector, kind=""):
+    """Type a selector for Cavalier v3: email | domain | username | '' (unsupported). An explicit
+    `kind` wins. A bare username is NEVER sent to search-by-domain (it would query a host that does
+    not exist and read as a clean domain). Phones have no Cavalier v3 login endpoint."""
+    k = (kind or "").strip().lower()
+    if k in ("email", "domain", "username"):
+        return k
+    sel = (selector or "").strip()
+    if not sel or " " in sel:
+        return ""
+    if "@" in sel and not sel.startswith("@"):
+        return "email"
+    if "://" in sel:
+        return "domain"
+    if _HR_PHONE_RE.match(sel) and sum(c.isdigit() for c in sel) >= 6 and not re.search(r"[A-Za-z]", sel):
+        return ""
+    if _HR_DOMAIN_RE.match(sel.lower().split("/")[0].split(":")[0]):
+        return "domain"
+    if _HR_USERNAME_RE.match(sel.lstrip("@")):
+        return "username"
+    return ""
+
+
+def hudsonrock_lookup(selector, timeout=30, kind=""):
     """Premium Cavalier v3. Sends `api-key`. No key → no request (the free
-    Cavalier host does not accept this key and must not be pretended to)."""
+    Cavalier host does not accept this key and must not be pretended to). The selector is typed
+    first: email → search-by-login/emails, domain/URL → search-by-domain, bare username →
+    search-by-login/usernames (vendor OpenAPI, api.hudsonrock.com/openapi.json). Anything else is
+    skipped, never misrouted."""
+    sel = (selector or "").strip()
+    kind = hudsonrock_kind(sel, kind)
+    if not kind:
+        return {"status": "skipped", "skipped": "no Cavalier v3 endpoint for this selector type",
+                "auth": None, "kind": "unsupported"}
     key = hudsonrock_key()
     if not key:
-        return {"status": "NOT CONSULTED — no HUDSONROCK_API_KEY set", "auth": None}
-    sel = (selector or "").strip()
+        return {"status": "NOT CONSULTED — no HUDSONROCK_API_KEY set", "auth": None, "kind": kind}
     host = sel.split("://", 1)[-1].split("/")[0].split(":")[0].lower()
-    if "@" in sel and " " not in sel:
+    if kind == "email":
         url = "https://api.hudsonrock.com/json/v3/search-by-login/emails"
         body = {"logins": [sel]}
-        kind = "email"
+    elif kind == "username":
+        url = "https://api.hudsonrock.com/json/v3/search-by-login/usernames"
+        body = {"logins": [sel.lstrip("@")]}
     else:
         url = "https://api.hudsonrock.com/json/v3/search-by-domain"
         body = {"domains": [host]}
-        kind = "domain"
+    action = url.split("/json/v3/", 1)[-1]
     data, err = _post(url, body, {"api-key": key}, timeout, key, form=False)
     if err:
-        _ledger("hudsonrock", f"search-by-{kind}", sel, ok=False)
+        _ledger("hudsonrock", action, sel, ok=False)
         return {"status": "unavailable", "auth": "api-key", "kind": kind, **err}
     clean = redact(data if isinstance(data, dict) else {"data": data})
     rows = clean.get("data") if isinstance(clean, dict) else None
@@ -251,8 +289,8 @@ def hudsonrock_lookup(selector, timeout=30):
                         ("date_compromised", "date_uploaded", "stealer_family", "stealer",
                          "computer_name", "operating_system", "ip", "employeeAt", "clientAt")
                         if row.get(k)})
-    _ledger("hudsonrock", f"search-by-{kind}", sel, results=len(rows))
-    return {"status": "ok", "auth": "api-key", "kind": kind, "endpoint": url.split("/json/v3/", 1)[-1],
+    _ledger("hudsonrock", action, sel, results=len(rows))
+    return {"status": "ok", "auth": "api-key", "kind": kind, "endpoint": action,
             "hits": len(rows), "credentials_redacted": True, "records": summary,
             "nextCursor": bool(isinstance(clean, dict) and clean.get("nextCursor"))}
 
@@ -426,7 +464,8 @@ def main():
     ap = argparse.ArgumentParser(description="Send a configured key to its vendor. No key → NOT CONSULTED.")
     ap.add_argument("vendor", choices=["abusech", "hudsonrock", "zonecruncher", "spamhaus"])
     ap.add_argument("selector")
-    ap.add_argument("--kind", default="", help="abusech/spamhaus: url|domain|ip|hash (default: guess)")
+    ap.add_argument("--kind", default="", help="abusech/spamhaus: url|domain|ip|hash; "
+                                               "hudsonrock: email|domain|username (default: guess)")
     ap.add_argument("--pretty", action="store_true")
     a = ap.parse_args()
     if a.vendor == "abusech":
@@ -436,7 +475,7 @@ def main():
         kind = a.kind or ("ip" if a.selector.replace(".", "").isdigit() else "domain")
         out = spamhaus_lookup(a.selector, kind)
     elif a.vendor == "hudsonrock":
-        out = hudsonrock_lookup(a.selector)
+        out = hudsonrock_lookup(a.selector, kind=a.kind)
     else:
         out = zonecruncher_lookup(a.selector)
     print(json.dumps(out, indent=2 if a.pretty else None, ensure_ascii=False))

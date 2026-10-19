@@ -32,7 +32,8 @@ from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
                            is_noise_social_handle, is_bulk_registrant, is_noise_phone,
                            is_boilerplate_comment, is_shared_infra_apex, DOM_SKELETON_MIN_TAGS,
-                           is_shared_hosting_ip, social_handle, is_whois_notice)
+                           is_shared_hosting_ip, social_handle, is_whois_notice,
+                           canonical_org_key, is_noise_org)
 
 # reuse the collector's validator so bad wallets — checksum failures, spec test vectors and token
 # CONTRACTS (wp_crypto_refs) — can't enter via a stale raw file either. Imported from wp_extract, not
@@ -1392,8 +1393,21 @@ def ingest_file(kb, path):
                 kind = _name_kind(nm)          # org / person / None(junk label — skip)
                 if not kind:
                     continue
-                kb.add_edge("domain", host, "registered_by", kind,
-                            canonical_person(nm) if kind == "person" else nm.strip(),
+                if kind == "org":
+                    # ONE org node per legal entity: the canonical key is the identity/join key
+                    # ('Company A Co., Ltd' == 'Company A Co. Ltd'); the registrar's spelling is
+                    # kept as a display fact. A privacy/redaction org never becomes a node.
+                    key = canonical_org_key(nm)
+                    if not key or is_noise_org(nm):
+                        continue
+                    kb.add_edge("domain", host, "registered_by", "org", key,
+                                "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
+                                attrs={"display": nm.strip()})
+                    kb.add_fact("org", key, "display_name", nm.strip(),
+                                "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                    n += 1
+                    continue
+                kb.add_edge("domain", host, "registered_by", kind, canonical_person(nm),
                             "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
                 n += 1
             elif nm and _is_role_placeholder(nm):   # generic role boilerplate — fact, never an edge
