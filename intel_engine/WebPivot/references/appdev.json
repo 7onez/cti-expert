@@ -1,11 +1,13 @@
 {
   "_comment": "wp_appdev — keyless app-store DEVELOPER lookup: a Google Play package name, or an Apple App Store numeric id / bundle id, resolved to the developer account behind it (display name, legal name, contact email, website, the account's other apps). Endpoint templates, the fetch profile, the Play page labels the parser anchors on, and the hosts that are never a developer's own website live here (RULE 3) so a store markup or label change is a data edit, not a code change. `{id}` / `{country}` are URL-encoded by the caller before substitution. Nothing here is case data — these are public store hostnames and generic store vocabulary.",
   "settings": {
-    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests); timeout_seconds is the socket timeout per store fetch; max_other_apps caps the developer's other-apps list returned; country is the iTunes storefront for lookups; about_block_max bounds how many text nodes after the 'About the developer' heading are read as that block.",
+    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests); timeout_seconds is the socket timeout per store fetch; max_other_apps caps the developer's other-apps list returned; country is the default iTunes storefront; lookup_countries are tried in order until one knows the app id (an app sold only in some storefronts answers resultCount 0 elsewhere); eu_storefronts are English EU App Store storefronts tried in order for the product page that carries the EU Digital Services Act trader block (empty list = skip that fetch); about_block_max bounds how many text nodes after the Play 'About the developer' heading are read as that block.",
     "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
     "timeout_seconds": 20,
     "max_other_apps": 200,
     "country": "us",
+    "lookup_countries": ["us", "vn", "gb", "sg"],
+    "eu_storefronts": ["ie", "mt", "cy"],
     "about_block_max": 8
   },
   "endpoints": {
@@ -15,7 +17,8 @@
       "play_base": "https://play.google.com",
       "itunes_lookup_id": "https://itunes.apple.com/lookup?id={id}&country={country}",
       "itunes_lookup_bundle": "https://itunes.apple.com/lookup?bundleId={id}&country={country}",
-      "itunes_artist_apps": "https://itunes.apple.com/lookup?id={id}&entity=software&limit=200&country={country}"
+      "itunes_artist_apps": "https://itunes.apple.com/lookup?id={id}&entity=software&limit=200&country={country}",
+      "appstore_page": "https://apps.apple.com/{country}/app/id{id}"
     }
   },
   "play_labels": {
@@ -26,6 +29,16 @@
       "email": ["Email", "Support email"],
       "block_end": ["Similar apps", "More by", "Data safety", "Ratings and reviews", "What's new"],
       "section_icon": ["arrow_forward"]
+    }
+  },
+  "appstore_page": {
+    "_comment": "apps.apple.com product page, English EU storefront. Its <script id=serialized-server-data> JSON carries an Annotation titled by provider_titles whose rawText items state whether the provider declared itself a TRADER under the EU Digital Services Act (trader_declared / trader_not_declared sentence fragments, matched case-insensitively; not_declared is checked first) and, when declared, '**Label**\\nvalue' markdown fields mapped by trader_fields. Apple DISPLAYS these values but they are self-declared by the developer. ProductPageLink items whose text matches link_labels give the listing's website / support / privacy-policy URLs.",
+    "entries": {
+      "provider_titles": ["Provider"],
+      "trader_declared": ["has identified itself as a trader"],
+      "trader_not_declared": ["has not identified itself as a trader"],
+      "trader_fields": {"address": ["Address"], "phone": ["Phone Number", "Phone"], "email": ["Email"]},
+      "link_labels": {"website": ["Developer Website", "Website"], "support_url": ["Support", "App Support"], "privacy_url": ["Privacy Policy"]}
     }
   },
   "noise_hosts": {

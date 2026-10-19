@@ -431,6 +431,8 @@ def build_layer(case_dir, *, subjects, findings, connections, sub_by_host, benig
             "store": store, "developer_page": dev.get("developer_page"),
             "developer_id": dev.get("developer_id") or dev.get("artist_id"),
             "address": dev.get("address"),
+            "eu_trader_status": (dev.get("trader") or {}).get("status"),
+            "support_url": dev.get("support_url"), "privacy_url": dev.get("privacy_url"),
             "other_apps": [a.get("package") or a.get("name") or a.get("bundle_id")
                            for a in rec.get("other_apps") or [] if isinstance(a, dict)] or None,
         }.items() if v})
@@ -446,7 +448,9 @@ def build_layer(case_dir, *, subjects, findings, connections, sub_by_host, benig
                  f"developer email {dev['developer_email']}" if dev.get("developer_email") else None,
                  f"website {dev['website']}" if dev.get("website") else None,
                  f"address {dev['address']}" if dev.get("address") else None,
-                 f"phone {dev['phone']}" if dev.get("phone") else None]
+                 f"phone {dev['phone']}" if dev.get("phone") else None,
+                 f"support link {dev['support_url']}" if dev.get("support_url") else None,
+                 f"privacy policy {dev['privacy_url']}" if dev.get("privacy_url") else None]
         desc = f"{store} developer of {rec.get('query')}: " + ", ".join(x for x in facts if x) + "."
         if owners:
             desc += " " + " ".join(
@@ -455,6 +459,18 @@ def build_layer(case_dir, *, subjects, findings, connections, sub_by_host, benig
                 f"{o.get('rung_class') or 'app.developer_url'})." for o in owners)
         elif dev.get("website"):
             desc += " The developer website is outside the case — a lead, not an owner link."
+        tstat = (dev.get("trader") or {}).get("status")
+        if tstat == "declared":
+            desc += (" On the EU storefront the provider declared itself a trader under the EU Digital "
+                     "Services Act; Apple displays the trader address/phone/email above, as declared "
+                     "by the developer.")
+        elif tstat == "not_declared":
+            desc += (" On the EU storefront the provider has NOT declared itself a trader, so Apple "
+                     "publishes no trader address/phone/email.")
+        elif tstat == "geo_redirected":
+            desc += (" The EU trader block was NOT read: the collection egress was redirected to the "
+                     f"{(dev.get('trader') or {}).get('served_storefront') or 'local'} storefront, so "
+                     "absence of a trader address/phone/email here is not evidence.")
         desc += " A store listing is self-declared: the legal name is who the account claims to be."
         src = (rec.get("source_urls") or [None])[0]
         add_finding({"claim": desc, "source_url": src, "type": "identity",

@@ -425,7 +425,7 @@ BLURB = {
     "engage-report": "shareable engagement write-up (no case store in it)",
     "eval": "run the engine's self-test / eval suite",
     "sellers": "AdSense pub id → legal payee name/domain via Google's public sellers.json (cached, keyless); a named payee is an owner-rung signal",
-    "app-developer": "Play package / App Store id → developer name, legal name, email, address, phone, website, other apps (keyless); website on a case domain = owner link",
+    "app-developer": "Play package / App Store id → developer name, legal name, email, address, phone, website, other apps; App Store EU trader block (keyless); website on a case domain = owner link",
 }
 
 

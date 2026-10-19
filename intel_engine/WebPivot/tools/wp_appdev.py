@@ -9,7 +9,11 @@ id with `--store appstore`) and resolve the developer ACCOUNT behind it:
              the 'About the developer' LEGAL name, emails, postal address, phone, developer website, then the
              developer page the listing links to → the account's other apps.
   App Store  the iTunes lookup API (https://itunes.apple.com/lookup?id=…) → artistName, artistId,
-             sellerName, sellerUrl, then `lookup?id=<artistId>&entity=software` → other apps.
+             sellerName, sellerUrl, then `lookup?id=<artistId>&entity=software` → other apps; then
+             the app's apps.apple.com page on an English EU storefront, whose embedded page data
+             carries the EU Digital Services Act TRADER block — whether the provider declared itself
+             a trader and, if it did, the address, phone and email Apple displays — plus the
+             listing's Website / Support / Privacy Policy links.
 
 Attribution rail (SKILL.md RULE 5): a developer website whose REGISTRABLE domain equals a case
 domain is an owner link (rung class `app.developer_url` → owner in tools/kb/references/rungs.json).
@@ -50,7 +54,8 @@ from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in
 _APPDEV_FALLBACK = {
     "settings": {"ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 20, "max_other_apps": 50, "country": "us", "about_block_max": 8},
+                 "timeout_seconds": 20, "max_other_apps": 50, "country": "us", "about_block_max": 8,
+                 "lookup_countries": ["us"], "eu_storefronts": ["ie"]},
     "endpoints": {"play_details": "https://play.google.com/store/apps/details?id={id}&hl=en&gl=US",
                   "itunes_lookup_id": "https://itunes.apple.com/lookup?id={id}&country={country}"},
     "play_labels": {"about_developer": ["About the developer"], "website": ["Website"],
@@ -66,6 +71,9 @@ DEFAULT_TIMEOUT = int(_SETTINGS.get("timeout_seconds") or 20)
 MAX_OTHER_APPS = int(_SETTINGS.get("max_other_apps") or 50)
 COUNTRY = str(_SETTINGS.get("country") or "us")
 ABOUT_BLOCK_MAX = int(_SETTINGS.get("about_block_max") or 8)
+LOOKUP_COUNTRIES = [str(c).lower() for c in (_SETTINGS.get("lookup_countries") or []) if c] or [COUNTRY]
+EU_STOREFRONTS = [str(c).lower() for c in (_SETTINGS.get("eu_storefronts") or []) if c]
+APPSTORE_PAGE = _REFS.get("appstore_page") or {}
 ENDPOINTS = _REFS["endpoints"]
 PLAY_LABELS = _REFS["play_labels"]
 NOISE_HOSTS = [str(h).lower() for h in _REFS["noise_hosts"]]
@@ -303,6 +311,98 @@ def parse_play_developer_page(text, exclude=""):
     return [{"package": p} for p in seen[:MAX_OTHER_APPS]]
 
 
+# ---------------------------------------------------------------- App Store product-page parser
+_SERVER_DATA_RE = re.compile(r'<script[^>]*\bid="serialized-server-data"[^>]*>(.*?)</script>', re.S)
+_MD_FIELD_RE = re.compile(r"^\s*\*\*(.+?)\*\*\s*\n(.*)$", re.S)
+
+
+def _walk(o):
+    """Every dict in a JSON tree, depth-first, document order."""
+    stack = [o]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            yield x
+            stack.extend(reversed(list(x.values())))
+        elif isinstance(x, list):
+            stack.extend(reversed(x))
+
+
+def _link_url(link):
+    act = link.get("clickAction") or {}
+    if isinstance(act.get("url"), str):
+        return act["url"]
+    for d in _walk(act):
+        u = d.get("fields", {}).get("actionUrl") if isinstance(d.get("fields"), dict) else None
+        if isinstance(u, str) and u.startswith(("http://", "https://")):
+            return u
+    return None
+
+
+def parse_appstore_page(text):
+    """apps.apple.com product page HTML -> {provider, trader, address, phone, email, website,
+    support_url, privacy_url, served_storefront, product_page}, or None when the page carries no
+    parseable page data. `product_page` False = Apple served another page (geo-redirect); every
+    other field is then None. `trader` is
+    'declared' / 'not_declared' / None (block absent or wording unrecognised). Address, phone and
+    email are only ever read from a DECLARED trader block — never guessed from page text."""
+    if not isinstance(text, str):
+        return None
+    m = _SERVER_DATA_RE.search(text)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return None
+    titles = {str(t).lower() for t in APPSTORE_PAGE.get("provider_titles") or ["Provider"]}
+    declared = [str(t).lower() for t in APPSTORE_PAGE.get("trader_declared") or []]
+    not_declared = [str(t).lower() for t in APPSTORE_PAGE.get("trader_not_declared") or []]
+    field_map = {str(lbl).lower(): key for key, lbls in (APPSTORE_PAGE.get("trader_fields") or {}).items()
+                 for lbl in lbls}
+    link_map = {str(lbl).lower(): key for key, lbls in (APPSTORE_PAGE.get("link_labels") or {}).items()
+                for lbl in lbls}
+    intent = {}
+    first = (data.get("data") or [None])[0] if isinstance(data, dict) and isinstance(data.get("data"), list) else None
+    if isinstance(first, dict) and isinstance(first.get("intent"), dict):
+        intent = first["intent"]
+    out = {"provider": None, "trader": None, "address": None, "phone": None, "email": None,
+           "website": None, "support_url": None, "privacy_url": None,
+           "served_storefront": intent.get("storefront"),
+           "product_page": str(intent.get("$kind") or "").startswith("ProductPage")}
+    if not out["product_page"]:
+        # Apple served another page (an egress IP in a storefront that does not sell the app is
+        # redirected to that storefront's Today page) — nothing on it describes this app.
+        return out
+    ann = next((d for d in _walk(data) if d.get("$kind") == "Annotation"
+                and str(d.get("title") or "").lower() in titles), None)
+    if ann is not None:
+        out["provider"] = _clean(str(ann.get("summary") or "")) or None
+        texts = [d["rawText"] for d in _walk(ann.get("items")) if isinstance(d.get("rawText"), str)]
+        blob = " ".join(texts).lower()
+        # 'not declared' first: its sentence contains the declared phrase's words.
+        if any(p in blob for p in not_declared):
+            out["trader"] = "not_declared"
+        elif any(p in blob for p in declared):
+            out["trader"] = "declared"
+            for t in texts:
+                fm = _MD_FIELD_RE.match(t)
+                key = field_map.get(fm.group(1).strip().lower()) if fm else None
+                if key and not out.get(key):
+                    lines = [_clean(x) for x in fm.group(2).splitlines()]
+                    out[key] = ", ".join(x for x in lines if x) or None
+    for d in _walk(data):
+        if d.get("$kind") != "ProductPageLink":
+            continue
+        key = link_map.get(str(d.get("text") or "").strip().lower())
+        url = _link_url(d)
+        if key and url and not out.get(key) and not _is_noise_host(_host(url)):
+            out[key] = url
+    if out["email"] and not (_EMAIL_RE.fullmatch(out["email"]) and _email_ok(out["email"])):
+        out["email"] = None
+    return out
+
+
 # ---------------------------------------------------------------- iTunes lookup parser
 def parse_itunes_lookup(text):
     """iTunes lookup JSON -> its `results` list, or None when unparseable / empty."""
@@ -355,6 +455,17 @@ def classify_links(dev, case_domains, source):
             cands.append({"type": "domain", "value": reg, "url": site, "owner_link": False,
                           "auto_seed": False, "source": f"{source}.developer_url",
                           "note": "developer website outside the case — a lead, not an owner link"})
+    seen_regs = {_registrable(_host(site))} if site and _host(site) else set()
+    for key in ("support_url", "privacy_url"):
+        u = dev.get(key)
+        h = _host(u) if u else ""
+        reg = _registrable(h) if h else ""
+        if reg and reg not in seen_regs and not _is_noise_host(h):
+            seen_regs.add(reg)
+            cands.append({"type": "domain", "value": reg, "url": u, "owner_link": False,
+                          "auto_seed": False, "source": f"{source}.{key}",
+                          "note": "listing support/privacy link — often a hosted-policy or helpdesk "
+                                  "service, never an owner link on its own"})
     for key, typ in (("email", "email"), ("developer_email", "email"), ("phone", "phone")):
         if dev.get(key):
             cands.append({"type": typ, "value": dev[key], "auto_seed": False,
@@ -408,17 +519,24 @@ def appstore_developer(ident, case_domains=None, timeout=None, bundle=False):
         tpl = ENDPOINTS.get("itunes_lookup_bundle")
         if not tpl:
             return {"error": "no itunes_lookup_bundle endpoint configured"}
-        url = _fill(tpl, id=q, country=COUNTRY)
     else:
         m = _APPSTORE_ID_RE.match(q)
         if not m:
             return {"error": f"not an App Store id: {ident!r}"}
         q = m.group(1)
-        url = _fill(ENDPOINTS["itunes_lookup_id"], id=q, country=COUNTRY)
-    body, err, status = _fetch(url, timeout, accept="application/json")
-    if err:
-        return None if status == 404 else {"error": err, "url": url}
-    res = parse_itunes_lookup(body)
+        tpl = ENDPOINTS["itunes_lookup_id"]
+    # An app sold only outside the first storefront answers resultCount 0 there: try each
+    # configured storefront in order and stop at the first that knows the id.
+    res, url, country = None, None, COUNTRY
+    for cc in LOOKUP_COUNTRIES:
+        url = _fill(tpl, id=q, country=cc)
+        body, err, status = _fetch(url, timeout, accept="application/json")
+        if err:
+            return None if status == 404 else {"error": err, "url": url}
+        res = parse_itunes_lookup(body)
+        if res is not None:
+            country = cc
+            break
     if res is None:
         return None
     app = res[0]
@@ -428,11 +546,21 @@ def appstore_developer(ident, case_domains=None, timeout=None, bundle=False):
            "seller_name": app.get("sellerName"), "website": app.get("sellerUrl"),
            "developer_page": app.get("artistViewUrl"), "email": None,
            "app": {"track_id": app.get("trackId"), "bundle_id": app.get("bundleId"),
-                   "name": app.get("trackName")}}
+                   "name": app.get("trackName")}, "storefront": country}
     sources = [url]
+    page = _appstore_trader(app.get("trackId"), timeout)
+    if page:
+        sources.append(page.pop("source_url"))
+        dev["trader"] = {k: page.get(k) for k in ("status", "storefront", "provider",
+                                                  "served_storefront", "note") if page.get(k)}
+        for k in ("address", "phone", "email", "support_url", "privacy_url"):
+            if page.get(k):
+                dev[k] = page[k]
+        if not dev.get("website") and page.get("website"):
+            dev["website"] = page["website"]
     other = None
     if dev["artist_id"] and ENDPOINTS.get("itunes_artist_apps"):
-        aurl = _fill(ENDPOINTS["itunes_artist_apps"], id=dev["artist_id"], country=COUNTRY)
+        aurl = _fill(ENDPOINTS["itunes_artist_apps"], id=dev["artist_id"], country=country)
         abody, aerr, _ = _fetch(aurl, timeout, accept="application/json")
         ares = None if aerr else parse_itunes_lookup(abody)
         if ares is not None:
@@ -445,6 +573,38 @@ def appstore_developer(ident, case_domains=None, timeout=None, bundle=False):
     owners, cands = classify_links(dev, case_domains, "appstore")
     return {"store": "appstore", "query": q, "developer": dev, "other_apps": other,
             "owner_links": owners, "seed_candidates": cands, "source_urls": sources}
+
+
+def _appstore_trader(track_id, timeout=None):
+    """The app's product page on the first configured EU storefront that lists it -> the parsed
+    trader block + links with `status` ('declared' | 'not_declared' | 'unknown'), `storefront` and
+    `source_url`; a `status` 'not_listed_in_eu' / 'unavailable' stub when no storefront answered;
+    None when no storefront or page endpoint is configured. Never raises."""
+    tpl = ENDPOINTS.get("appstore_page")
+    if not (track_id and tpl and EU_STOREFRONTS):
+        return None
+    last = None
+    for cc in EU_STOREFRONTS:
+        url = _fill(tpl, id=track_id, country=cc)
+        body, err, status = _fetch(url, timeout)
+        if err:
+            last = {"status": "not_listed_in_eu" if status == 404 else "unavailable",
+                    "storefront": cc, "source_url": url, "error": err}
+            continue
+        parsed = parse_appstore_page(body)
+        if parsed is None:
+            last = {"status": "unknown", "storefront": cc, "source_url": url}
+            continue
+        if not parsed.pop("product_page"):
+            # Every EU storefront redirects the same egress the same way: stop, say why.
+            return {"status": "geo_redirected", "storefront": cc, "source_url": url,
+                    "served_storefront": parsed.get("served_storefront"),
+                    "note": "Apple served a non-product page for this storefront (egress IP "
+                            "geolocates to a storefront that redirects); the EU trader block "
+                            "needs an egress outside that region"}
+        parsed.update(status=parsed.pop("trader") or "unknown", storefront=cc, source_url=url)
+        return parsed
+    return last
 
 
 def normalise_query(raw, store="auto"):
