@@ -6,7 +6,7 @@ App Store numeric id / bundle id (`1234567890`, `id1234567890`, an apps.apple.co
 id with `--store appstore`) and resolve the developer ACCOUNT behind it:
 
   Play       the public listing page (fetched with an Android UA, hl=en) → developer display name,
-             the 'About the developer' LEGAL name, contact email, developer website, then the
+             the 'About the developer' LEGAL name, emails, postal address, phone, developer website, then the
              developer page the listing links to → the account's other apps.
   App Store  the iTunes lookup API (https://itunes.apple.com/lookup?id=…) → artistName, artistId,
              sellerName, sellerUrl, then `lookup?id=<artistId>&entity=software` → other apps.
@@ -50,11 +50,12 @@ from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in
 _APPDEV_FALLBACK = {
     "settings": {"ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
                        "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 20, "max_other_apps": 50, "country": "us"},
+                 "timeout_seconds": 20, "max_other_apps": 50, "country": "us", "about_block_max": 8},
     "endpoints": {"play_details": "https://play.google.com/store/apps/details?id={id}&hl=en&gl=US",
                   "itunes_lookup_id": "https://itunes.apple.com/lookup?id={id}&country={country}"},
     "play_labels": {"about_developer": ["About the developer"], "website": ["Website"],
-                    "email": ["Email"]},
+                    "email": ["Email"], "block_end": ["Similar apps", "More by"],
+                    "section_icon": ["arrow_forward"]},
     "noise_hosts": ["google.com", "apple.com"],
     "rung_classes": {"developer_url": "app.developer_url"},
 }
@@ -64,6 +65,7 @@ UA = _SETTINGS.get("ua") or _APPDEV_FALLBACK["settings"]["ua"]
 DEFAULT_TIMEOUT = int(_SETTINGS.get("timeout_seconds") or 20)
 MAX_OTHER_APPS = int(_SETTINGS.get("max_other_apps") or 50)
 COUNTRY = str(_SETTINGS.get("country") or "us")
+ABOUT_BLOCK_MAX = int(_SETTINGS.get("about_block_max") or 8)
 ENDPOINTS = _REFS["endpoints"]
 PLAY_LABELS = _REFS["play_labels"]
 NOISE_HOSTS = [str(h).lower() for h in _REFS["noise_hosts"]]
@@ -217,20 +219,35 @@ def parse_play_details(text, package=""):
     dev_id = (urllib.parse.parse_qs(urllib.parse.urlparse(dev_href).query).get("id") or [None])[0]
 
     about, web_lbl, mail_lbl = _labels("about_developer"), _labels("website"), _labels("email")
+    ends, icons = _labels("block_end"), _labels("section_icon")
     all_labels = about | web_lbl | mail_lbl
 
-    # Legal name: the first plain text node after the 'About the developer' heading that is not a
-    # label, an email, a URL or a phone number.
-    legal = None
+    # The 'About the developer' block: the text nodes after its heading, up to the next section —
+    # a block_end heading (prefix match: 'More by <dev>') or any node followed by a section_icon
+    # glyph (that node is the next section's heading). Play renders the block as legal name, email,
+    # postal address, phone; each is optional, so every node is typed, never taken by position.
+    block = []
     about_idx = next((i for i, t in enumerate(p.texts) if t.lower() in about), None)
     if about_idx is not None:
-        for t in p.texts[about_idx + 1: about_idx + 12]:
-            tl = t.lower()
-            if (tl in all_labels or _EMAIL_RE.fullmatch(t) or "://" in t or tl.startswith("www.")
-                    or _PHONE_RE.match(t)):
-                continue
-            legal = t
-            break
+        window = p.texts[about_idx + 1: about_idx + 1 + ABOUT_BLOCK_MAX]
+        for j, t in enumerate(window):
+            nxt = window[j + 1].lower() if j + 1 < len(window) else ""
+            if t.lower() in icons or any(t.lower().startswith(e) for e in ends) or nxt in icons:
+                break
+            block.append(t)
+
+    def _plain(t):
+        tl = t.lower()
+        return not (tl in all_labels or _EMAIL_RE.fullmatch(t) or "://" in t
+                    or tl.startswith("www.") or _PHONE_RE.match(t))
+
+    # Legal name: the first plain node of the block. Address: the next plain node — the block
+    # holds nothing else plain, and a lone legal name (no address published) leaves it None.
+    plain = [t for t in block if _plain(t)]
+    legal = plain[0] if plain else None
+    address = plain[1] if len(plain) > 1 else None
+    phone = next((t for t in block if _PHONE_RE.match(t) and sum(c.isdigit() for c in t) >= 7), None)
+    block_email = next((t for t in block if _EMAIL_RE.fullmatch(t) and _email_ok(t)), None)
 
     # Email: a mailto: link off the store's own domains; else an email-shaped text node right after
     # an Email label or inside the About-the-developer block.
@@ -265,7 +282,9 @@ def parse_play_details(text, package=""):
             break
 
     base = ENDPOINTS.get("play_base") or "https://play.google.com"
-    return {"name": name or None, "legal_name": legal, "email": email, "website": website,
+    return {"name": name or None, "legal_name": legal, "email": email,
+            "developer_email": block_email if block_email and block_email != email else None,
+            "address": address, "phone": phone, "website": website,
             "developer_id": dev_id, "developer_page": urllib.parse.urljoin(base, dev_href)}
 
 
@@ -336,10 +355,11 @@ def classify_links(dev, case_domains, source):
             cands.append({"type": "domain", "value": reg, "url": site, "owner_link": False,
                           "auto_seed": False, "source": f"{source}.developer_url",
                           "note": "developer website outside the case — a lead, not an owner link"})
-    if dev.get("email"):
-        cands.append({"type": "email", "value": dev["email"], "auto_seed": False,
-                      "source": f"{source}.developer_email",
-                      "note": "self-declared store contact — seed only on analyst decision"})
+    for key, typ in (("email", "email"), ("developer_email", "email"), ("phone", "phone")):
+        if dev.get(key):
+            cands.append({"type": typ, "value": dev[key], "auto_seed": False,
+                          "source": f"{source}.{key}",
+                          "note": "self-declared store contact — seed only on analyst decision"})
     return owners, cands
 
 

@@ -1,11 +1,12 @@
 {
   "_comment": "wp_appdev — keyless app-store DEVELOPER lookup: a Google Play package name, or an Apple App Store numeric id / bundle id, resolved to the developer account behind it (display name, legal name, contact email, website, the account's other apps). Endpoint templates, the fetch profile, the Play page labels the parser anchors on, and the hosts that are never a developer's own website live here (RULE 3) so a store markup or label change is a data edit, not a code change. `{id}` / `{country}` are URL-encoded by the caller before substitution. Nothing here is case data — these are public store hostnames and generic store vocabulary.",
   "settings": {
-    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests); timeout_seconds is the socket timeout per store fetch; max_other_apps caps the developer's other-apps list returned; country is the iTunes storefront for lookups.",
+    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests); timeout_seconds is the socket timeout per store fetch; max_other_apps caps the developer's other-apps list returned; country is the iTunes storefront for lookups; about_block_max bounds how many text nodes after the 'About the developer' heading are read as that block.",
     "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
     "timeout_seconds": 20,
     "max_other_apps": 200,
-    "country": "us"
+    "country": "us",
+    "about_block_max": 8
   },
   "endpoints": {
     "_comment": "Keyless store endpoints. play_details = the app's public listing page; play_base is joined to the developer-page href the listing links to (/store/apps/dev?id=… or /store/apps/developer?id=…) to list the account's other apps; itunes_lookup_id / itunes_lookup_bundle resolve an App Store numeric id / bundle id; itunes_artist_apps lists every app under the artistId (the developer account).",
@@ -18,11 +19,13 @@
     }
   },
   "play_labels": {
-    "_comment": "English Play listing labels (the page is fetched with hl=en). about_developer heads the developer-identity block whose first plain text line is the LEGAL name; website labels the developer website link; email labels the contact email. Compared case-insensitively against whole text nodes.",
+    "_comment": "English Play listing labels (the page is fetched with hl=en). about_developer heads the developer-identity block: legal name, email, postal address, phone (each optional, typed per node); website labels the developer website link; email labels the contact email. block_end headings (prefix match) and the node before a section_icon glyph end the About block. Compared case-insensitively against whole text nodes.",
     "entries": {
       "about_developer": ["About the developer"],
       "website": ["Website"],
-      "email": ["Email", "Support email"]
+      "email": ["Email", "Support email"],
+      "block_end": ["Similar apps", "More by", "Data safety", "Ratings and reviews", "What's new"],
+      "section_icon": ["arrow_forward"]
     }
   },
   "noise_hosts": {

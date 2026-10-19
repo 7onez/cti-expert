@@ -3394,14 +3394,16 @@ async def sellers_lookup(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "app_developer",
     "Keyless app-store DEVELOPER lookup: a Google Play package (or play.google.com URL) → the "
-    "listing's developer name, 'About the developer' LEGAL name, contact email, website and the "
+    "listing's developer name, 'About the developer' LEGAL name, contact email (plus a distinct "
+    "developer email), postal address, phone, website and the "
     "account's other apps; an App Store id / apps.apple.com URL (or bundle id with "
     "store='appstore') → iTunes artistName, artistId, sellerName, sellerUrl and other apps. A "
     "developer website whose registrable domain equals a case domain is an OWNER link (rung "
     "app.developer_url); the email and any other website are seed CANDIDATES only, never "
     "auto-seeded — a listing is self-declared. Pass `case` to scope the owner check; the "
     "resolved record is then saved to cases/<case>/appdev/ so build_report_data carries the "
-    "developer (legal name, email, website, other apps) into the report subjects and findings.",
+    "developer (legal name, emails, address, phone, website, other apps) into the report subjects "
+    "and findings; emails and phone are seed candidates, never auto-seeded.",
     {"query": str},  # store:'auto'|'play'|'appstore', case:str, case_domains:str, timeout:int
     annotations=READONLY,
 )

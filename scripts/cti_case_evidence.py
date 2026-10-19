@@ -421,8 +421,9 @@ def build_layer(case_dir, *, subjects, findings, connections, sub_by_host, benig
             if alias and alias != org["label"] and alias not in org.setdefault("aliases", []):
                 org["aliases"].append(alias)
         sels = org.setdefault("selectors", [])
-        if dev.get("email") and not any(s.get("value") == dev["email"] for s in sels):
-            sels.append({"type": "email", "value": dev["email"], "platform": store})
+        for key, typ in (("email", "email"), ("developer_email", "email"), ("phone", "phone")):
+            if dev.get(key) and not any(s.get("value") == dev[key] for s in sels):
+                sels.append({"type": typ, "value": dev[key], "platform": store})
         if dev.get("website") and not any(s.get("value") == dev["website"] for s in sels):
             sels.append({"type": "website", "value": dev["website"], "url": dev["website"]})
         attrs = org.setdefault("attributes", {})
@@ -442,8 +443,10 @@ def build_layer(case_dir, *, subjects, findings, connections, sub_by_host, benig
                  f"legal name {dev['legal_name']}" if dev.get("legal_name") else None,
                  f"seller {dev['seller_name']}" if dev.get("seller_name") else None,
                  f"contact email {dev['email']}" if dev.get("email") else None,
+                 f"developer email {dev['developer_email']}" if dev.get("developer_email") else None,
                  f"website {dev['website']}" if dev.get("website") else None,
-                 f"address {dev['address']}" if dev.get("address") else None]
+                 f"address {dev['address']}" if dev.get("address") else None,
+                 f"phone {dev['phone']}" if dev.get("phone") else None]
         desc = f"{store} developer of {rec.get('query')}: " + ", ".join(x for x in facts if x) + "."
         if owners:
             desc += " " + " ".join(
