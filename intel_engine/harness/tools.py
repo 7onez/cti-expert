@@ -3523,7 +3523,8 @@ async def signature_scan(args: dict[str, Any]) -> dict[str, Any]:
     "deep_profile",
     "Run the email-deep / breach-deep chain over a `selector`. When the key is set and "
     "`free_only` is not set, this SENDS Hudson Rock, ZoneCruncher, one IntelX stealer-log "
-    "search, and a WhoisXML reverse-WHOIS (preview, then purchase only if the count is not "
+    "search, OSINT Industries account existence, and a WhoisXML reverse-WHOIS (preview, then "
+    "purchase only if the count is not "
     "bulk). Pass `case` so the case memo dedups a second call. HIBP stays a collection gap "
     "unless HIBP_API_KEY is set. Set `mode` to 'breach' for the breach-weighted variant. "
     "Do not ingest reverse-WHOIS domains from this result as operator edges. Absence of a "
@@ -3544,6 +3545,40 @@ async def deep_profile(args: dict[str, Any]) -> dict[str, Any]:
     if _flag(args, "free_only"):
         cmd.append("--free-only")
     r = _run(cmd, timeout=240)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "osint_industries",
+    "OSINT Industries account-existence lookup for ONE strong selector (`type` email | phone "
+    "E.164 | username | name | wallet; default guesses email/phone/username). Returns the "
+    "platforms with an account registered to it TODAY, self-declared display names/handles, "
+    "profile URLs, masked email/phone hints, HIBP breach rows and, for an email, WHOIS rows. "
+    "1 credit per lookup (+3 with premium); `type='credits'` reads the balance free. Pass `case` "
+    "to save the raw response and reuse it instead of buying the same lookup again. LEADS ONLY: "
+    "a hit is not attribution, never links two domains, never names an operator; masked hints "
+    "are not identity evidence either way, and the current holders of a phone are never pivoted "
+    "to. A name search returns namesakes — join on a case selector before using any row. For a "
+    "registrant email prefer deep_profile, which already sends this.",
+    {"query": str},  # type, premium, exact_match, case, refresh, timeout — tool_params.json
+    annotations=READONLY,
+)
+async def osint_industries(args: dict[str, Any]) -> dict[str, Any]:
+    typ = str(args.get("type") or "auto")
+    cmd = [PY, _os_("osint_industries.py"), typ]
+    if typ != "credits":
+        cmd.append(str(args.get("query") or ""))
+    if _flag(args, "premium"):
+        cmd.append("--premium")
+    if "exact_match" in (args or {}) and not _flag(args, "exact_match"):
+        cmd.append("--no-exact-match")
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
+    if _flag(args, "refresh"):
+        cmd.append("--refresh")
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd, timeout=180)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
@@ -3624,7 +3659,7 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       subdomain_enum, github_harvest, github_osint, traffic_rank, sharelink_resolve,
                       meta_transparency,
                       cn_recon, vn_corp, sellers_lookup, cti, quarry, deep_profile, wifi_ssid, cld,
-                      kb_ingest, corpus_search, app_developer])
+                      kb_ingest, corpus_search, app_developer, osint_industries])
 ANALYZE_SERVER = create_sdk_mcp_server(
     "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
                       reverse_whois, cert_overlap, reference_check, reference_add, reference_mirrors,
@@ -3666,7 +3701,8 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__wayback_fetch", "mcp__collect__wayback_harvest",
                  "mcp__collect__wayback_exhaust",
                  "mcp__collect__kb_ingest", "mcp__collect__corpus_search",
-                 "mcp__collect__app_developer", "mcp__collect__sellers_lookup"]
+                 "mcp__collect__app_developer", "mcp__collect__sellers_lookup",
+                 "mcp__collect__osint_industries"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
                  "mcp__analyze__reverse_whois", "mcp__analyze__cert_overlap",

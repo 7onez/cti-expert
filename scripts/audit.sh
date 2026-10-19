@@ -156,7 +156,7 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_wayback_exhaust.py tests/test_quarry_bridge.py tests/test_quarry_reuse.py \
          tests/test_extract_accuracy.py tests/test_idn_selectors.py tests/test_ct_client.py \
          tests/test_ct_reporting.py tests/test_cert_queries.py tests/test_register_agents.py \
-         tests/test_report_data_hygiene.py tests/test_crypto_reference.py; do
+         tests/test_report_data_hygiene.py tests/test_crypto_reference.py tests/test_osint_industries.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
   # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
   # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.

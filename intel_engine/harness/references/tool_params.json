@@ -831,7 +831,42 @@
         },
         "free_only": {
           "type": "boolean",
-          "description": "Hold every metered send (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS). Use on a no-spend posture."
+          "description": "Hold every metered send (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS, OSINT Industries). Use on a no-spend posture."
+        }
+      },
+      "osint_industries": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "email",
+            "phone",
+            "username",
+            "name",
+            "wallet",
+            "credits"
+          ],
+          "description": "Selector type. auto guesses email / phone / username; a person name or a wallet must be typed. credits reads the balance free and ignores query."
+        },
+        "premium": {
+          "type": "boolean",
+          "description": "Include premium modules (TikTok, Snapchat…). Costs +3 credits when one applies — leave off unless the analyst asked."
+        },
+        "exact_match": {
+          "type": "boolean",
+          "description": "Name searches only: true (default) keeps exact or near-exact name matches; false adds loose matches and more namesakes."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case id. Saves the raw response under cases/<case>/osint_industries/ and answers a repeat lookup from it instead of buying it again."
+        },
+        "refresh": {
+          "type": "boolean",
+          "description": "Ignore the saved case response and buy the lookup again."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Module deadline sent to the API in seconds (25-80, default 60); slower modules are skipped."
         }
       },
       "cld": {

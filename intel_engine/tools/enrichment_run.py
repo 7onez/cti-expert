@@ -73,13 +73,14 @@ KEY_ENVS = {op: _with_aliases(names) for op, names in {
     "intelx": ("INTELX_KEY", "INTELX_API_KEY"),
     "hudsonrock": ("HUDSONROCK_API_KEY",),
     "email-deep": ("HUDSONROCK_API_KEY", "ZONECRUNCHER_API_KEY", "INTELX_KEY",
-                   "INTELX_API_KEY", "WHOISXML_API_KEY"),
+                   "INTELX_API_KEY", "WHOISXML_API_KEY", "OSINT_INDUSTRIES_API_KEY"),
 }.items()}
 EMAIL_METERED = {step: _with_aliases(names) for step, names in {
     "hudsonrock": ("HUDSONROCK_API_KEY",),
     "zonecruncher": ("ZONECRUNCHER_API_KEY",),
     "intelx_search": ("INTELX_KEY", "INTELX_API_KEY"),
     "reverse_whois": ("WHOISXML_API_KEY",),
+    "osint_industries": ("OSINT_INDUSTRIES_API_KEY",),
 }.items()}
 FINAL_OUTCOMES = ("ran", "empty")
 
@@ -274,7 +275,7 @@ def _cld_summary(data):
 def _email_hits(name, row):
     if not isinstance(row, dict):
         return 0
-    if name in ("hudsonrock", "zonecruncher"):
+    if name in ("hudsonrock", "zonecruncher", "osint_industries"):
         return int(row.get("hits") or 0)
     if name == "intelx_search":
         return int(row.get("records") or 0)

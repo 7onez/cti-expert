@@ -1,0 +1,36 @@
+{
+  "_comment": "OSINT Industries v2 API (docs.osint.industries/reference/search-1). Reference DATA for scripts/osint/osint_industries.py — endpoints, request defaults, the selector types the API accepts, and the caveat every result carries. Auth is the `api-key` header (OSINT_INDUSTRIES_API_KEY). Billing: 1 credit per lookup, +3 when a premium module applies (premium=true); the credit lookup is free.",
+  "settings": {
+    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests). timeout_seconds is the module deadline sent to the API (docs: recommended 60, min 25, max 80). socket_grace_seconds is added to it for the HTTP read. max_modules caps the module rows a compact summary returns.",
+    "ua": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    "timeout_seconds": 60,
+    "timeout_min": 25,
+    "timeout_max": 80,
+    "socket_grace_seconds": 40,
+    "max_modules": 60
+  },
+  "endpoints": {
+    "_comment": "base + paths. request is POST with a JSON body {type, query, timeout, premium, exact_match}. credits is GET and costs nothing.",
+    "base": "https://api.osint.industries",
+    "request": "/v2/request",
+    "credits": "/misc/credits"
+  },
+  "types": {
+    "_comment": "Selector types the v2 API accepts. `name` honours exact_match; `wallet` is a crypto address.",
+    "values": ["email", "phone", "username", "name", "wallet"]
+  },
+  "status_reasons": {
+    "_comment": "HTTP status → reason shown to the analyst. 402 is the vendor's own credit limit (never a local cap).",
+    "entries": {
+      "400": "bad request — check the selector type and format",
+      "401": "OSINT Industries rejected the key (OSINT_INDUSTRIES_API_KEY missing or revoked)",
+      "402": "out of OSINT Industries credits — the vendor's limit, not a local cap",
+      "429": "rate limited by OSINT Industries",
+      "500": "OSINT Industries server error"
+    }
+  },
+  "caveat": {
+    "_comment": "Printed with every result. It is the attribution rail for this source: account existence is collected, never attributed.",
+    "text": "A module hit means an account is registered to this selector TODAY; it does not say who registered it or when. Display names are self-declared. Masked email/phone hints are tail-character comparisons and are NOT identity evidence in either direction: a different hint may be a second number on the same account, and a matching tail can be coincidence. Never treat a hit as a link between two domains, never name the account holder as the operator from this alone, and never pivot to the current holders of a number that may have changed hands."
+  }
+}

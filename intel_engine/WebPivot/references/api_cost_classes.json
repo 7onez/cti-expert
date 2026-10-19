@@ -21,6 +21,7 @@
       "fofa": "metered",
       "dnslytics": "metered",
       "intelx": "metered",
+      "osintindustries": "metered",
       "urlscan": "quota",
       "censys": "quota",
       "shodan": "quota",

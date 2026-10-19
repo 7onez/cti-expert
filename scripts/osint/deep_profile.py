@@ -34,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 WEBPIVOT = os.path.join(os.path.dirname(HERE), "webpivot")
 sys.path.insert(0, HERE)
 import keyed_feeds  # noqa: E402 — sends HUDSONROCK_API_KEY / ZONECRUNCHER_API_KEY
+import osint_industries  # noqa: E402 — sends OSINT_INDUSTRIES_API_KEY (account existence)
 EMAIL_RE = re.compile(r"^[^@\s]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})$")
 
 
@@ -131,13 +132,29 @@ def send_reverse_whois(email):
             "domains": [d for d in domains if isinstance(d, str)][:50]}
 
 
+def send_osint_industries(email, case):
+    """One account-existence lookup. The case memo answers a repeat without buying it again.
+    Keep the profile compact: module, display name/handle, profile URL and masked hints only."""
+    got = osint_industries.lookup("email", email, case=case)
+    if got.get("status") != "ok":
+        return got
+    keep = ("module", "name", "username", "profile_url", "creation_date", "last_seen",
+            "email_hint", "phone_hint", "location")
+    return {"status": "ok", "source": got.get("source"), "hits": got.get("hits", 0),
+            "accounts": [{k: a[k] for k in keep if k in a} for a in got.get("accounts", [])][:25],
+            "accounts_total": got.get("accounts_total", 0),
+            "breaches": got.get("breaches", [])[:25], "whois": got.get("whois", [])[:25],
+            "caveat": got.get("caveat")}
+
+
 
 def main():
     ap = argparse.ArgumentParser(description="Compose the email-deep / breach-deep chain.")
     ap.add_argument("selector", help="an email address (or a domain for the infra half)")
     ap.add_argument("--mode", choices=["email", "breach"], default="email")
     ap.add_argument("--free-only", action="store_true",
-                    help="do not send metered keys (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS)")
+                    help="do not send metered keys (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS, "
+                         "OSINT Industries)")
     ap.add_argument("--case", help="case dir; sets WP_CASE_DIR so IntelX and reverse-WHOIS dedup")
     ap.add_argument("-o", "--out", help="also write the JSON profile here")
     ap.add_argument("--pretty", action="store_true")
@@ -159,11 +176,12 @@ def main():
     if a.mode == "email":
         out["ran"]["subdomains"] = run(HERE, "subdomain_enum.py", domain, timeout=120)
 
-    # Hudson Rock and ZoneCruncher send when keyed. IntelX and reverse-WHOIS send
-    # through the dispatcher so the case memo applies. HIBP stays planned.
+    # Hudson Rock, ZoneCruncher and OSINT Industries send when keyed. IntelX and reverse-WHOIS
+    # send through the dispatcher so the case memo applies. HIBP stays planned.
     if a.case:
         os.environ["WP_CASE_DIR"] = a.case
-        # every keyed leg (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS) ledgers under the case
+        # every keyed leg (Hudson Rock, ZoneCruncher, IntelX, reverse-WHOIS, OSINT Industries)
+        # ledgers under the case
         os.environ.setdefault("INTEL_CASE", os.path.basename(os.path.normpath(a.case)))
     q = sel if m else domain
     hold = no_spend(a.free_only)
@@ -181,6 +199,10 @@ def main():
         ("reverse_whois", f"python3 intel_engine/WebPivot/tools/whois_enrich.py --reverse-email '{sel}'",
          "WhoisXML reverse-WHOIS of this email. Preview first; purchase only if count <= 150. Not WHOIS history",
          bool(m and os.environ.get("WHOISXML_API_KEY"))),
+        ("osint_industries", f"python3 scripts/osint/osint_industries.py email '{sel}'",
+         "account existence across OSINT Industries' module set (1 credit). Display names are "
+         "self-declared; masked hints are not identity evidence",
+         bool(m and os.environ.get("OSINT_INDUSTRIES_API_KEY"))),
         ("hibp", "HaveIBeenPwned API", "breach membership — needs HIBP_API_KEY, which is not set",
          bool(os.environ.get("HIBP_API_KEY"))),
     ]
@@ -189,6 +211,7 @@ def main():
         "zonecruncher": lambda: keyed_feeds.zonecruncher_lookup(q),
         "intelx_search": lambda: send_intelx(sel),
         "reverse_whois": lambda: send_reverse_whois(sel),
+        "osint_industries": lambda: send_osint_industries(sel, a.case),
     }
     for name, cmd, why, have in keyed:
         if hold and name in sendable:
@@ -199,9 +222,10 @@ def main():
         elif have:
             status = "READY — not run"
         else:
-            status = "BLOCKED — key absent" if name != "reverse_whois" or m else "n/a — not an email"
-            if name == "reverse_whois" and not m:
-                status = "n/a — reverse-WHOIS needs an email, not a domain"
+            status = "BLOCKED — key absent" if name not in ("reverse_whois", "osint_industries") or m \
+                else "n/a — not an email"
+            if name in ("reverse_whois", "osint_industries") and not m:
+                status = f"n/a — {name} in this chain needs an email, not a domain"
             elif name == "intelx_search" and not intelx_ok:
                 status = "n/a — not a strong selector"
             elif not have:

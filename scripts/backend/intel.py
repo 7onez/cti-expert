@@ -191,6 +191,7 @@ DISPATCH = {
     "drift":         ("../scripts/osint/case_drift.py",      []),  # what changed between runs
     "signatures":    ("../scripts/osint/signature_scan.py",  []),  # behavioural signature catalog
     "email-deep":    ("../scripts/osint/deep_profile.py",    []),  # sends keyed lookups; --case dedups
+    "osint-industries": ("../scripts/osint/osint_industries.py", []),  # account existence (1 credit; --case memo)
     "breach-deep":   ("../scripts/osint/deep_profile.py",    ["--mode", "breach"]),
     "cld":           ("../scripts/cld/cld_api.py",           []),  # Feeds + Shield, route by selector
     "wifi":          ("../scripts/osint/wifi_ssid.py",       []),  # WiGLE (keyed; discloses gap)
@@ -355,7 +356,8 @@ BLURB = {
     "crossref": "identifiers appearing across MORE THAN ONE case (strongest operator signal)",
     "drift": "what changed in a case between two collections",
     "signatures": "evaluate observations against analysis/signature-catalog.md",
-    "email-deep": "email profile: sends Hudson Rock, ZoneCruncher, one IntelX search, reverse-WHOIS preview when keyed",
+    "email-deep": "email profile: sends Hudson Rock, ZoneCruncher, one IntelX search, reverse-WHOIS preview, OSINT Industries when keyed",
+    "osint-industries": "OSINT Industries account-existence lookup: email|phone|username|name|wallet → registered platforms, self-declared names, masked hints, HIBP + WHOIS rows (1 credit; `credits` free; --case memo) — leads only, never attribution",
     "breach-deep": "same chain, breach-weighted; --free-only holds every metered send",
     "cld": "ChongLuaDao Feeds + Shield. `route <selector>` fires only the endpoints that match",
     "wifi": "WiGLE SSID geolocation (needs a WiGLE account; discloses the gap without one)",

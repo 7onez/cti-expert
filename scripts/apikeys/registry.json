@@ -251,6 +251,22 @@
       }
     },
     {
+      "id": "osintindustries",
+      "name": "OSINT Industries",
+      "env": "OSINT_INDUSTRIES_API_KEY",
+      "category": "breach",
+      "tier": "paid",
+      "url": "https://docs.osint.industries/docs/api-keys",
+      "unlocks": "/osint-industries + /email-deep: account existence for an email/phone/username/name/wallet (registered platforms, self-declared names, masked hints, HIBP + WHOIS rows). 1 credit per lookup, +3 with premium modules; `apikeys test` reads the free credit balance. Leads only, never attribution",
+      "test": {
+        "url": "https://api.osint.industries/misc/credits",
+        "header": {
+          "api-key": "{key}"
+        },
+        "expect_status": 200
+      }
+    },
+    {
       "id": "abusech",
       "name": "abuse.ch",
       "env": "ABUSE_CH_API_KEY",

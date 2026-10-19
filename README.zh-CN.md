@@ -664,7 +664,7 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 /cti-expert      # 先加载技能 —— 下面四条是约定命令
 /onboard         # 交互式首次运行引导
 /capabilities    # 当前缺失哪些证据类别 + 可替代的免费路径
-/backend         # 确认 Tier-1 类型化 MCP（93 个工具）在跑，而非 Tier-3 无状态
+/backend         # 确认 Tier-1 类型化 MCP（94 个工具）在跑，而非 Tier-3 无状态
 /apikeys status  # 无密钥也能跑；添加免费/付费密钥以解锁反向枢轴
 ```
 
@@ -733,13 +733,13 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 
 ### 7 &mdash; 完整流水线与完整 harness（最深模式）
 
-`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 93 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
+`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 94 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
 
 > **`/case` 本身就会持久化一个带版本的案件 —— 持久化这一步没有任何额外出网。** 当 `/backend` 在线（Tier 1/2）时，一次 `/case` 运行会**复用它刚刚采集到的枢轴**（**不会**重新抓取）：把它们写入 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/`，并以复用模式运行确定性流水线 —— `intel.py pipeline open <CASE-ID> <seeds> --no-collect` —— 跳过实时抓取，在这份原始数据上跑完整条链（入库 → recall → 风险 → 聚类 → `case_graph.json` → ICD-203 `assessment.md`）。完整的带版本案件落在 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/`（**不是你的当前目录**），并与每一个既往案件做关联。**如果案件尚未收敛**（`intel.py convergence <ID>` 报告的状态 ≠ `converged`，或 `/frontier` 仍列出未结线索）**且**姿态为主动，`/case` 随后会**自动升级到 `/harness` 深化循环** —— 免密钥优先（使用 CLI 自身的模型），对敌对基础设施的出网**硬性设闸**（harness 的 `audit.py` 在 `hostile=True` 时拒绝出站采集），用 `--no-harness` 关闭。不带 `--no-collect` 的普通 `/pipeline open` 与 `/cti-case` 仍会**采集** —— 它们直接重新抓取每个种子 —— 因此只应在设置好出网姿态（`/scope`、`/cti-proxy`，或对敌对基础设施用 `--passive`）之后，为一个此前从未采集过的**全新**案件手动运行。Tier 3 / 没有主机种子 → `/case` 静默跳过这次交接。
 
 ```bash
 /cti-expert                           # 先加载技能（下面是约定命令）
-/backend                              # 确认深度层在线（Tier-1 = 93 个 MCP 工具）
+/backend                              # 确认深度层在线（Tier-1 = 94 个 MCP 工具）
 
 # A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -922,7 +922,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 57 项技术，以及运行在内置 `intel_engine` 之上的 93 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
+**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 57 项技术，以及运行在内置 `intel_engine` 之上的 94 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -1316,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（93 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（94 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
     ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）
@@ -1446,7 +1446,7 @@ CTI Expert 站在开源社区与免费公益数据提供方的肩膀上。在此
 | **代理与运行时** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · `/cti` 同时注册进的代理：[OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
 | **浏览器与网页采集** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
 | **用户名、人物与社交** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
+| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
 | **域名、DNS、证书与基础设施** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) · [CertKit](https://certkit.io) · [CertIndex](https://ctindex.io) · [IANA RDAP bootstrap](https://data.iana.org/rdap/) · [Hurricane Electric BGP Toolkit](https://bgp.he.net) · [ip-api](https://ip-api.com) · [JARM — Salesforce](https://github.com/salesforce/jarm) · [mmh3](https://github.com/hajimes/mmh3) |
 | **威胁情报与沙箱** | [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [Webamon](https://webamon.com) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) · [Spamhaus](https://www.spamhaus.org) |
 | **搜索引擎与广告** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) · [Google sellers.json](https://iabtechlab.com/sellers-json/)（IAB Tech Lab） |

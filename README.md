@@ -664,7 +664,7 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /cti-expert      # load the skill first — the four below are convention commands
 /onboard         # interactive first-run guide
 /capabilities    # which evidence classes are unavailable now + the free path that substitutes
-/backend         # confirm Tier-1 typed MCP (93 tools) is live, not Tier-3 stateless
+/backend         # confirm Tier-1 typed MCP (94 tools) is live, not Tier-3 stateless
 /apikeys status  # keyless works; add free/paid keys to unlock reverse pivots
 ```
 
@@ -733,13 +733,13 @@ Before your first real case, run these once in Claude Code so you're not silentl
 
 ### 7 &mdash; Full pipeline & full harness (deepest mode)
 
-`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 93 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
+`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 94 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
 
 > **`/case` already persists a versioned case — with NO extra egress on the persist step.** When `/backend` is live (Tier 1/2), a `/case` run **reuses the pivots it just collected** (it does **not** re-fetch): it writes them under `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` and runs the deterministic pipeline in reuse mode — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — which skips the live fetch and runs the whole chain (ingest → recall → risk → clusters → `case_graph.json` → ICD-203 `assessment.md`) over that raw. The complete versioned case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**not your CWD**) and is correlated across every prior case. **If the case has not converged** (`intel.py convergence <ID>` reports status ≠ `converged`, or `/frontier` still lists open leads) **and** posture is active, `/case` then **auto-escalates to the `/harness` deepening loop** — keyless-first (it uses the CLI's own model), egress **hard-gated** on hostile infra (the harness `audit.py` denies outbound collection on `hostile=True`), `--no-harness` opts out. Plain `/pipeline open` (without `--no-collect`) and `/cti-case` still **collect** — they re-fetch every seed directly — so run those by hand only for a **fresh** case with no prior collection, after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive` for hostile infra). Tier 3 / no host seeds → `/case` skips the handoff silently.
 
 ```bash
 /cti-expert                           # load the skill first (the commands below are convention commands)
-/backend                              # confirm the deep layer is live (Tier-1 = 93 MCP tools)
+/backend                              # confirm the deep layer is live (Tier-1 = 94 MCP tools)
 
 # A — full DETERMINISTIC pipeline (no LLM key, reproducible, persisted to cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -922,7 +922,7 @@ Every investigation follows four automated phases:
 
 ### Workflow diagrams
 
-**End-to-end tool &amp; skill flow** — one `/cti` call runs recall, intake, an optional Quarry reuse, collection, the cross-type enrich loop with per-round approval, assessment and delivery across both layers: 9 registered commands and 57 techniques in Layer 1, and 93 harness `@tool`s over the vendored `intel_engine` (claude, codex, omp or any OpenAI-compatible backend):
+**End-to-end tool &amp; skill flow** — one `/cti` call runs recall, intake, an optional Quarry reuse, collection, the cross-type enrich loop with per-round approval, assessment and delivery across both layers: 9 registered commands and 57 techniques in Layer 1, and 94 harness `@tool`s over the vendored `intel_engine` (claude, codex, omp or any OpenAI-compatible backend):
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert end-to-end tool and skill flow — sequence diagram across both layers" width="900">
@@ -1316,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (93 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (94 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
@@ -1446,7 +1446,7 @@ CTI Expert stands on the shoulders of the open-source community and free, public
 | **Agents & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · agents `/cti` also registers into: [OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
 | **Browser & web collection** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) |
 | **Username, people & social** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
+| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
 | **Domains, DNS, certificates & infrastructure** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) · [CertKit](https://certkit.io) · [CertIndex](https://ctindex.io) · [IANA RDAP bootstrap](https://data.iana.org/rdap/) · [Hurricane Electric BGP Toolkit](https://bgp.he.net) · [ip-api](https://ip-api.com) · [JARM — Salesforce](https://github.com/salesforce/jarm) · [mmh3](https://github.com/hajimes/mmh3) |
 | **Threat intelligence & sandboxing** | [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [Webamon](https://webamon.com) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) · [Spamhaus](https://www.spamhaus.org) |
 | **Search engines & ads** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) · [Google sellers.json](https://iabtechlab.com/sellers-json/) (IAB Tech Lab) |
