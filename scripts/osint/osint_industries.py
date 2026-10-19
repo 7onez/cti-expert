@@ -257,12 +257,16 @@ def _case_dir(case):
     return os.path.join(home, "cases", c)
 
 
-def memo_path(case_dir, typ, query):
+def memo_path(case_dir, typ, query, exact_match=True):
+    """One file per (type, query) — and, for a name, per match mode: an exact and a loose name
+    search return different namesake sets, so they must never overwrite or answer each other.
+    The exact-mode path is the plain one, so a memo saved before the mode was keyed still reads."""
+    suffix = "_loose" if typ == "name" and not exact_match else ""
     slug = re.sub(r"[^A-Za-z0-9._+-]", "_", f"{typ}_{query}")[:180]
-    return os.path.join(case_dir, "osint_industries", slug + ".json")
+    return os.path.join(case_dir, "osint_industries", slug + suffix + ".json")
 
 
-def _memo_read(path, typ, query, premium):
+def _memo_read(path, typ, query, premium, exact_match=True):
     try:
         with open(path, encoding="utf-8") as fh:
             rec = json.load(fh)
@@ -273,6 +277,8 @@ def _memo_read(path, typ, query, premium):
         return None
     if premium and not q.get("premium"):
         return None                     # a standard-module memo does not answer a premium ask
+    if typ == "name" and bool(q.get("exact_match", True)) != bool(exact_match):
+        return None                     # an exact-name memo does not answer a loose ask, or back
     return rec
 
 
@@ -303,9 +309,9 @@ def lookup(typ, selector, *, timeout=None, premium=False, exact_match=True, case
     if not query:
         return {"status": "skipped", "skipped": "empty selector", "type": typ}
     cdir = _case_dir(case)
-    path = memo_path(cdir, typ, query) if cdir else None
+    path = memo_path(cdir, typ, query, exact_match) if cdir else None
     if path and not refresh:
-        rec = _memo_read(path, typ, query, premium)
+        rec = _memo_read(path, typ, query, premium, exact_match)
         if rec:
             return _summary(typ, query, rec, "case memo (not re-bought)")
     if no_spend(free_only):
