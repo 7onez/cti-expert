@@ -4,7 +4,7 @@
     "purpose": "Known hosting/CDN ASNs -> GENERIC provider facts, used by wp_ippivot to decide whether an IP is same-operator signal or shared noise, and to route abuse/takedown contact.",
     "opsec": "Provider-level metadata ONLY (ASN, org name, abuse contact, noise flag, kind). NEVER a target IP, domain, or case id (repo CLAUDE.md RULE 1). wp_ippivot.asn_registry_upsert enforces this.",
     "fields": "asns[ASxxxx] = {asn, name, abuse_contacts[], noise(bool), kind: cdn|cloud|hosting|transit|unknown}",
-    "noise": "noise=true means a reverse-IP on this ASN returns many unrelated tenants -> mark the IP as INFORMATION, do not cluster on it."
+    "noise": "noise=true means a reverse-IP on ANY address of this ASN returns many unrelated tenants -> mark the IP as INFORMATION, do not cluster on it. It is a whole-network claim: wp_ippivot sets it only when the IP sits in a published CDN/cloud edge range; a per-IP reason (one shared box over SHARED_TENANT_MAX tenants, IPinfo's per-IP hosting flag) banks name/abuse only. Any other noise=true row is an analyst call."
   },
   "asns": {
     "AS13335": {
@@ -14,7 +14,7 @@
         "abuse@cloudflare.com"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "cdn"
     },
     "AS15169": {
       "asn": "AS15169",
@@ -32,7 +32,7 @@
         "abuse@amazonaws.com"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "cloud"
     },
     "AS14618": {
       "asn": "AS14618",
@@ -75,7 +75,7 @@
       "name": "Twitter Inc.",
       "abuse_contacts": [],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "hosting"
     },
     "AS396982": {
       "asn": "AS396982",
@@ -102,7 +102,7 @@
         "abuse@ovh.net"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "hosting"
     },
     "AS24940": {
       "asn": "AS24940",
@@ -111,7 +111,7 @@
         "abuse@hetzner.com"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "hosting"
     },
     "AS63949": {
       "asn": "AS63949",
@@ -120,7 +120,7 @@
         "abuse@linode.com"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "hosting"
     },
     "AS20473": {
       "asn": "AS20473",
@@ -129,18 +129,18 @@
         "abuse@vultr.com"
       ],
       "noise": true,
-      "kind": "origin_candidate"
+      "kind": "hosting"
     },
     "AS63760": {
       "asn": "AS63760",
       "name": "AZDIGI Corporation",
-      "kind": "origin_candidate",
+      "kind": "hosting",
       "noise": true
     },
     "AS47846": {
       "asn": "AS47846",
       "name": "SEDO GmbH",
-      "kind": "origin_candidate",
+      "kind": "hosting",
       "noise": true
     }
   }

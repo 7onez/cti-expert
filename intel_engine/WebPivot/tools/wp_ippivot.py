@@ -633,14 +633,22 @@ def build_ip_result(ip: str, args=None, fofa_full: bool = False, free_only: bool
 
     if noise:
         # Not an operator pivot — record as INFORMATION and bank the provider for later enrichment.
+        # Only a WHOLE-NETWORK reason (the IP sits in a published CDN/cloud edge range) may flag the
+        # ASN as noise. A per-IP reason — this box has >SHARED_TENANT_MAX tenants, or IPinfo calls
+        # it hosting — says nothing about the provider's other addresses (a dedicated VPS on the
+        # same ASN is a real origin), so it banks name/abuse only and leaves the ASN's flag as is.
+        whole_asn = classified.get("cdn") is True
         if asn:
-            asn_registry_upsert(asn, name=org, abuse=abuse_emails, noise=True,
-                                kind=(classified.get("kind") or "hosting"), reg=registry)
+            asn_registry_upsert(asn, name=org, abuse=abuse_emails,
+                                noise=True if whole_asn else None,
+                                kind=classified.get("kind") if whole_asn else None, reg=registry)
         add("ip:information", ip, "information", [
             {"service": "IPinfo", "query": f"https://ipinfo.io/{ip}"},
             {"service": "note", "query": noise_reason},
         ], f"IP on a NOISE provider — not a same-operator pivot. {noise_reason}. Provider "
-           f"{asn or ''} {org or ''} banked to asn_registry for enrichment.")
+           f"{asn or ''} {org or ''} banked to asn_registry "
+           + ("(flagged noise: CDN/cloud edge range)." if whole_asn else
+              "(name/abuse only — the reason is per-IP, the ASN is not flagged)."))
     else:
         # Origin candidate — the FOFA/reverse-IP co-tenants ARE same-operator leads.
         add("ip", ip, "high", [
