@@ -142,6 +142,18 @@
       "name": "SEDO GmbH",
       "kind": "hosting",
       "noise": true
+    },
+    "AS135905": {
+      "asn": "AS135905",
+      "name": "VIETNAM POSTS AND TELECOMMUNICATIONS GROUP"
+    },
+    "AS24066": {
+      "asn": "AS24066",
+      "name": "Vietnam Internet Network Information Center"
+    },
+    "AS32244": {
+      "asn": "AS32244",
+      "name": "Liquid Web, L.L.C"
     }
   }
 }

@@ -74,10 +74,11 @@ def ct_summary(ct):
     if not ct:
         return None
     st = ct.get("ct_status") or ct.get("sources") or {}
-    if not st:
-        return {"completeness": "unknown", "sources": {}, "cert_total": ct.get("cert_count"),
-                "completeness_line": ("CT status not recorded (collected before per-source status "
-                                      "existed) — completeness unknown, not 'no certificates'")}
+    if not isinstance(st, dict) or not st:
+        return {"completeness": "unknown", "sources": {},
+                "cert_total": ct.get("cert_total", ct.get("cert_count")),
+                "completeness_line": ("CT source status not recorded — completeness unknown, "
+                                      "not 'no certificates'")}
     return {"completeness": ct.get("completeness"), "completeness_line": ct.get("completeness_line"),
             "sources": {s: {"status": v.get("status"), "window": v.get("window"), "n": v.get("n", 0)}
                         for s, v in st.items()},
