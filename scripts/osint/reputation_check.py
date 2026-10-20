@@ -198,10 +198,10 @@ def chongluadao(ind, kind):
             a.type, a.value = "url", ind if "://" in ind else "https://" + ind
             st, res, err = cld_api.op_ioc(cld_api._api_key(), a)
             out["ioc"] = res if err is None else {"error": err}
-            st, res, err = cld_api.op_ransomware(cld_api._api_key(), a)
+            st, res, err = cld_api.op_catalog(cld_api._api_key(), a, "ransomware")
             _filtered, n = cld_api.filter_host_hits(res if err is None else {}, apex)
             out["ransomware_matched"] = n
-            st, res, err = cld_api.op_clickfix(cld_api._api_key(), a)
+            st, res, err = cld_api.op_catalog(cld_api._api_key(), a, "clickfix")
             _filtered, n = cld_api.filter_host_hits(res if err is None else {}, apex)
             out["clickfix_matched"] = n
         elif kind == "email":

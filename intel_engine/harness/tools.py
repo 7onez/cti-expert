@@ -3587,7 +3587,8 @@ async def osint_industries(args: dict[str, Any]) -> dict[str, Any]:
     "ChongLuaDao Feeds + Shield for one selector, using the same key as the collector. "
     "`route` (the default) fires only the endpoints that match: a domain gets checkurl, "
     "IoC, and host-matched ransomware/ClickFix/Phaas; a t.me handle gets Telegram posts, "
-    "not a domain lookup; an email gets burner + IoC; a phone gets checkphone + IoC. "
+    "not a domain lookup; an email gets burner + IoC; a phone gets checkphone + IoC; "
+    "`bank:<digits>` gets the VN bank-account IoC (reported holder name + bank). "
     "Do not re-run it for a host the pipeline already collected. Internal-leak urls are "
     "the paste the document was found on, not the target host.",
     {"target": str},

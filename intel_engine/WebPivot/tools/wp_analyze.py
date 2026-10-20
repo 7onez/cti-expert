@@ -718,7 +718,7 @@ def enrich_live(result: dict, fofa_full: bool = False, free_only: bool = False) 
     # same_registrant ever seeds the frontier; the raw block is never mined by the frontier.
     have_mo_neighbours = HAVE_WHOIS and whois_enrich.whois_configured() and not free_only
     # ChongLuaDao first-party reputation (checkurl denylist verdict + IoC URL analyzer + .vn WHOIS).
-    # UNLIMITED usage (no per-call credit / quota), so — like Validin/Webamon — it runs EVEN under
+    # No per-call credit (rate-limited per key only), so — like Validin/Webamon — it runs EVEN under
     # --free-only; CLD fetches the target server-side, so it is posture-safe.
     # Reputation only — a verdict is an add_fact at ingest, never a same-operator edge.
     have_cld = wp_cld.cld_configured()

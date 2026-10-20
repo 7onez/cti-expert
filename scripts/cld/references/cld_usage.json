@@ -1,10 +1,10 @@
 {
-  "_comment": "Ledger units for every ChongLuaDao HTTP endpoint cld_api.py calls. CLD usage is UNLIMITED, so every unit is 0: cld_api still ledgers EACH request (route legs, async starts and status polls, probe) to MEMORY/api_usage.jsonl as provider=chongluadao, action=<tier>:<action>, but with 0 billable credits — the row is a call COUNT, never spend. A rejected call is ledgered ok=false/0; a pre-flight failure sends and ledgers nothing. If this file is missing or malformed, every call falls back to 1 unit (conservative over-report). Set units when ChongLuaDao publishes per-endpoint pricing.",
+  "_comment": "Ledger units for every ChongLuaDao HTTP endpoint cld_api.py calls. CLD has NO per-call credits, so every unit is 0: cld_api still ledgers EACH request (route legs, async starts and status polls, probe, 429 retries) to MEMORY/api_usage.jsonl as provider=chongluadao, action=<tier>:<action>, but with 0 billable credits — the row is a call COUNT, never spend. Calls ARE rate-limited per key (X-RateLimit-* headers: TI 10/s, 100/min, 10,000/day; Feeds 60/s) — cld_api waits out second/minute 429s and reports day-window 429s. A rejected call is ledgered ok=false/0; a pre-flight failure sends and ledgers nothing. If this file is missing or malformed, every call falls back to 1 unit (conservative over-report). Set units when ChongLuaDao publishes per-endpoint pricing.",
   "provider": "chongluadao",
   "pricing": {
     "published": false,
-    "basis": "unlimited",
-    "note": "ChongLuaDao usage is UNLIMITED (no per-call credit or account quota). Units are 0 so the ledger logs each request as a CALL with zero billable units — a usage log, not spend. Async status polls are also 0. If CLD ever introduces per-call pricing, set the affected endpoint units and default_units accordingly."
+    "basis": "rate-limited",
+    "note": "ChongLuaDao charges no per-call credit; the binding constraint is the per-key rate limit (TI 10/s, 100/min, 10,000/day; Feeds 60/s, read from X-RateLimit-* headers on 2026-10-20). Units are 0 so the ledger logs each request as a CALL with zero billable units — a usage log, not spend. Async status polls are also 0. If CLD ever introduces per-call pricing, set the affected endpoint units and default_units accordingly."
   },
   "tiers": {
     "feeds": {
@@ -85,14 +85,7 @@
           "action": "feed/stix1",
           "units": 0
         },
-        "/api/v1/data-leaks/external/leaked-accounts/exposure": {
-          "action": "exposure",
-          "units": 0
-        },
-        "/api/v1/data-leaks/external/search": {
-          "action": "leaks",
-          "units": 0
-        },
+        "/api/v1/data-leaks/external/search": {"action": "leaks", "units": 0},
         "/api/v1/data-leaks/external/breaches/search": {
           "action": "breaches",
           "units": 0
@@ -113,92 +106,59 @@
           "action": "cookies",
           "units": 0
         },
-        "/api/v1/data-leaks/external/leaked-accounts/search/start": {
-          "action": "leaked-accounts/start",
-          "units": 0,
-          "kind": "start"
-        },
-        "/api/v1/data-leaks/external/leaked-accounts/search/poll": {
-          "action": "leaked-accounts/poll",
-          "units": 0,
-          "kind": "poll"
-        },
-        "/api/v1/data-leaks/external/leaked-accounts/devices/search/start": {
-          "action": "devices/start",
-          "units": 0,
-          "kind": "start"
-        },
-        "/api/v1/data-leaks/external/leaked-accounts/devices/search/poll": {
-          "action": "devices/poll",
-          "units": 0,
-          "kind": "poll"
-        },
-        "/api/v1/data-leaks/external/leaked-accounts/devices/detail": {
-          "action": "device-detail",
-          "units": 0
-        },
-        "/api/v1/data-leaks/external/leaked-accounts/devices/credentials": {
-          "action": "device-credentials",
-          "units": 0
-        },
-        "/api/v1/data-leaks/external/full-export/start": {
-          "action": "full-export/start",
-          "units": 0,
-          "kind": "start"
-        },
-        "/api/v1/data-leaks/external/full-export/poll/{job_id}": {
-          "action": "full-export/poll",
-          "units": 0,
-          "kind": "poll"
-        },
-        "/api/v1/data-leaks/external/internal-leaks": {
-          "action": "internal-leaks",
-          "units": 0
-        },
-        "/api/v1/brand-protection/external/domains": {
-          "action": "brand-domains",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/vulnerabilities": {
-          "action": "vulns",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/vulnerabilities/{cve}": {
-          "action": "vuln",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/threat-actors": {
-          "action": "actors",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/threat-actor-usernames": {
-          "action": "actor-usernames",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/incidents": {
-          "action": "incidents",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/onion-blocklist/check": {
-          "action": "onion",
-          "units": 0
-        },
-        "/api/v1/ransomware/external/victims": {
-          "action": "ransomware",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/clickfix": {
-          "action": "clickfix",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/phaas": {
-          "action": "phaas",
-          "units": 0
-        },
-        "/api/v1/threat-feeds/external/telegram/posts": {
-          "action": "telegram",
-          "units": 0
-        }
+        "/api/v1/data-leaks/external/full-export/start": {"action": "full-export/start", "units": 0, "kind": "start"},
+        "/api/v1/data-leaks/external/full-export/poll/{job_id}": {"action": "full-export/poll", "units": 0, "kind": "poll"},
+        "/api/v1/data-leaks/external/internal-leaks": {"action": "internal-leaks", "units": 0},
+        "/api/v1/data-leaks/external/internal-leaks/{id}": {"action": "internal-leak", "units": 0},
+        "/api/v1/brand-protection/external/domains": {"action": "brand-domains", "units": 0},
+        "/api/v1/brand-protection/external/domains/{domain_id}": {"action": "brand-domain", "units": 0},
+        "/api/v1/threat-feeds/external/vulnerabilities": {"action": "vulns", "units": 0},
+        "/api/v1/threat-feeds/external/vulnerabilities/{cve}": {"action": "vuln", "units": 0},
+        "/api/v1/threat-feeds/external/threat-actors": {"action": "actors", "units": 0},
+        "/api/v1/threat-feeds/external/threat-actors/{actor_id}": {"action": "actor", "units": 0},
+        "/api/v1/threat-feeds/external/threat-actor-usernames": {"action": "actor-usernames", "units": 0},
+        "/api/v1/threat-feeds/external/actor-channels": {"action": "actor-channels", "units": 0},
+        "/api/v1/threat-feeds/external/c2-frameworks": {"action": "c2", "units": 0},
+        "/api/v1/threat-feeds/external/c2-frameworks/{framework_id}": {"action": "c2", "units": 0},
+        "/api/v1/threat-feeds/external/living-off-the-land": {"action": "lolbin", "units": 0},
+        "/api/v1/threat-feeds/external/living-off-the-land/{entry_id}": {"action": "lolbin", "units": 0},
+        "/api/v1/threat-feeds/external/defacements": {"action": "defacements", "units": 0},
+        "/api/v1/threat-feeds/external/defacements/{id}": {"action": "defacement", "units": 0},
+        "/api/v1/threat-feeds/external/underground-directory": {"action": "underground", "units": 0},
+        "/api/v1/threat-feeds/external/underground-directory/categories": {"action": "underground-categories", "units": 0},
+        "/api/v1/threat-feeds/external/seized-markets": {"action": "seized-markets", "units": 0},
+        "/api/v1/threat-feeds/external/clickfix": {"action": "clickfix", "units": 0},
+        "/api/v1/threat-feeds/external/clickfix/{id}": {"action": "clickfix", "units": 0},
+        "/api/v1/threat-feeds/external/phaas": {"action": "phaas", "units": 0},
+        "/api/v1/threat-feeds/external/phaas/{id}": {"action": "phaas", "units": 0},
+        "/api/v1/threat-feeds/external/telegram/posts": {"action": "telegram", "units": 0},
+        "/api/v1/threat-feeds/external/telegram/channels": {"action": "telegram-channels", "units": 0},
+        "/api/v1/threat-feeds/external/incidents": {"action": "incidents", "units": 0},
+        "/api/v1/threat-feeds/external/incidents/{incident_id}": {"action": "incident", "units": 0},
+        "/api/v1/threat-feeds/external/onion-blocklist/check": {"action": "onion", "units": 0},
+        "/api/v1/threat-feeds/external/stats/{view}": {"action": "tf-stats", "units": 0},
+        "/api/v1/threat-feeds/external/stats/{group}/{view}": {"action": "tf-stats", "units": 0},
+        "/api/v1/ransomware/external/victims": {"action": "ransomware", "units": 0},
+        "/api/v1/ransomware/external/victims/{victim_id}": {"action": "ransomware-victim", "units": 0},
+        "/api/v1/ransomware/external/statistics": {"action": "ransomware-stats", "units": 0},
+        "/api/v1/ransomware/external/statistics/{view}": {"action": "ransomware-stats", "units": 0},
+        "/api/v1/ransomware/external/groups": {"action": "ransomware-groups", "units": 0},
+        "/api/v1/ransomware/external/groups/{name}": {"action": "ransomware-group", "units": 0},
+        "/api/v1/ransomware/external/press": {"action": "ransomware-press", "units": 0},
+        "/api/v1/ransomware/external/sec-filings": {"action": "sec-filings", "units": 0},
+        "/api/v1/ransomware/external/decryptors": {"action": "decryptors", "units": 0},
+        "/api/v1/ioc/external/taxii2": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii2/default": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii2/default/collections": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii2/default/collections/{collection_id}": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii2/default/collections/{collection_id}/objects": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii2/default/collections/{collection_id}/manifest": {"action": "taxii2", "units": 0},
+        "/api/v1/ioc/external/taxii1/discovery": {"action": "taxii1", "units": 0},
+        "/api/v1/ioc/external/taxii1/poll/{collection_id}": {"action": "taxii1", "units": 0},
+        "/api/v1/webhooks": {"action": "webhooks", "units": 0},
+        "/api/v1/webhooks/{subscription_id}": {"action": "webhook", "units": 0},
+        "/api/v1/webhooks/{subscription_id}/test": {"action": "webhook-test", "units": 0},
+        "/api/v1/webhooks/{subscription_id}/deliveries": {"action": "webhook-deliveries", "units": 0}
       }
     }
   }

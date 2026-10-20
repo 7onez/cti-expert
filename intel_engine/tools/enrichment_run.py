@@ -32,7 +32,7 @@ SCRIPTS = {
     "hudsonrock": os.path.join(ROOT, "..", "scripts", "osint", "keyed_feeds.py"),
 }
 METERED = {"email-deep", "intelx", "hudsonrock"}   # spend-gated legs held under free-only/no_spend/defer.
-# ChongLuaDao is NOT here: its usage is unlimited (no per-call credit / quota), so CLD legs run
+# ChongLuaDao is NOT here: it charges no per-call credit (keys are rate-limited only), so CLD legs run
 # under free-only and no_spend like a free source. The api_usage ledger still LOGS every CLD
 # request — a usage log never caps — but it is not a spend gate.
 _KEY_REGISTRY = os.path.join(ROOT, "WebPivot", "references", "api_keys.json")
@@ -420,11 +420,17 @@ def _judge(op, result, memo=None, argv=None):
         if status.startswith("NOT CONSULTED") or status == "skipped":
             return "unavailable", _short(data.get("skipped") or status), memo
         return "retry", _short(f"hudsonrock {status or 'failed'}: {data.get('error') or ''}"), memo
-    if op == "cld" and argv and argv[0] == "exposure":
+    if op == "cld" and argv and argv[0] == "leaks":
         if not data.get("ok") or data.get("skipped"):
-            return "retry", _short(data.get("error") or "CLD exposure was skipped"), memo
-        hits = _leak_hits(data.get("result"))
-        return ("ran" if hits else "empty"), f"cld exposure ({argv[-1]}): hits={hits}", memo
+            return "retry", _short(data.get("error") or "CLD leak search was skipped"), memo
+        blocks = [b for b in ((data.get("result") or {}).get("results") or []) if isinstance(b, dict)]
+        hits = sum(int(b.get("total") or 0) for b in blocks)
+        open_blocks = [b for b in blocks if b.get("status") in ("pending", "unavailable")]
+        if open_blocks and not hits:
+            return "retry", _short("CLD leak search incomplete: " + ", ".join(
+                f"{b.get('kind')}={b.get('status')}" for b in open_blocks)), memo
+        kinds = ", ".join(f"{b.get('kind')}={b.get('total') or 0}" for b in blocks)
+        return ("ran" if hits else "empty"), f"cld leaks ({argv[-1]}): hits={hits} [{kinds}]", memo
     if op == "cld":
         if not data.get("ok") or data.get("skipped"):
             reason = data.get("error") or "CLD lookup was skipped"

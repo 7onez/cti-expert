@@ -1413,10 +1413,10 @@ _LEAK_FALLBACK = {
     "selection": {"max_owner_hop": 0, "username_regex": r"^@?[A-Za-z0-9_.\-]{3,64}$"},
     "vendors": ["cld", "intelx", "hudsonrock", "deep_profile"],
     "plan": {
-        "email": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "email"]}},
-        "username": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "username"]}},
+        "email": {"cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "email", "--limit", "100"]}},
+        "username": {"cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "username", "--limit", "100"]}},
         "phone": {"cld": {"op": "cld", "argv": ["route", "{v}"], "key": "cld-phone:{v}"}},
-        "domain": {"cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "domain"]}},
+        "domain": {"cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "domain", "--limit", "100"]}},
     },
 }
 try:

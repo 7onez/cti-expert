@@ -288,9 +288,10 @@ def _whois_leg(api, key, host, timeout):
 
 
 def cld_domain(host: str, timeout: int = _DEFAULT_TIMEOUT, page_title: str = None) -> dict | None:
-    """CLD reputation block for one host. None when the layer is off (no key). CLD usage is
-    unlimited (no per-call credit / quota), so there is NO free-only spend gate — it runs like
-    Validin/Webamon, server-side, posture-safe (never touches the target directly).
+    """CLD reputation block for one host. None when the layer is off (no key). CLD charges no
+    per-call credit (calls are rate-limited per key; cld_api._request waits out short 429 windows),
+    so there is NO free-only spend gate — it runs like Validin/Webamon, server-side, posture-safe
+    (never touches the target directly).
 
     `page_title`, if the caller has it (pivot_extract's own <title> extraction), adds any
     product-label token found there to the denylist brand-label search (#14) — a shared wordmark
@@ -389,7 +390,7 @@ def cld_domain(host: str, timeout: int = _DEFAULT_TIMEOUT, page_title: str = Non
 
 def cld_whois(host: str, timeout: int = 25) -> dict | None:
     """CLD WHOIS (checkwhois) for one .vn host — the WHOIS leg on its own (no checkurl/ioc_url).
-    None when the layer is off or host is not .vn. CLD is unlimited, so no free-only gate applies.
+    None when the layer is off or host is not .vn. CLD has no per-call credit, so no free-only gate applies.
     Used by whois_enrich so a .vn WHOIS backfill is one call, not the three cld_domain fires."""
     if not cld_configured():
         return None
@@ -408,8 +409,8 @@ def cld_whois(host: str, timeout: int = 25) -> dict | None:
 
 def cld_email(email: str, timeout: int = 25) -> dict | None:
     """CLD IoC lookup for an e-mail (POST /api/v1/ioc/external/email). Corroborates a registrant
-    address against CLD's leak/abuse index. None when the layer is off. CLD is unlimited, so no
-    free-only spend gate applies. Never raises."""
+    address against CLD's leak/abuse index. None when the layer is off. CLD has no per-call credit,
+    so no free-only spend gate applies. Never raises."""
     if not cld_configured():
         return None
     email = (email or "").strip().lower()

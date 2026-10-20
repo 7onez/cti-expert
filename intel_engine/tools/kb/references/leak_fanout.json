@@ -13,13 +13,13 @@
     "_comment": "type -> vendor -> {op, argv[, key]} | {via} | {na}. op is an enrichment_run SCRIPTS op; key overrides the default leak:<vendor>:<type>:<v> lead key so an identical existing lead (email-deep:, cld-phone:) is shared, never re-run.",
     "entries": {
       "email": {
-        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "email"]},
+        "cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "email", "--limit", "100"]},
         "intelx": {"via": "deep_profile"},
         "hudsonrock": {"via": "deep_profile"},
         "deep_profile": {"op": "email-deep", "argv": ["{v}"], "key": "email-deep:{v}"}
       },
       "username": {
-        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "username"]},
+        "cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "username", "--limit", "100"]},
         "intelx": {"na": "IntelX refuses soft selectors — a username is not a strong selector"},
         "hudsonrock": {"op": "hudsonrock", "argv": ["hudsonrock", "{v}", "--kind", "username"]},
         "deep_profile": {"na": "email-only chain"}
@@ -31,7 +31,7 @@
         "deep_profile": {"na": "email-only chain"}
       },
       "domain": {
-        "cld": {"op": "cld", "argv": ["exposure", "{v}", "--type", "domain"]},
+        "cld": {"op": "cld", "argv": ["leaks", "{v}", "--input-type", "domain", "--limit", "100"]},
         "intelx": {"op": "intelx", "argv": ["search", "{v}", "--logs-only"]},
         "hudsonrock": {"op": "hudsonrock", "argv": ["hudsonrock", "{v}", "--kind", "domain"]},
         "deep_profile": {"na": "email-only chain"}
