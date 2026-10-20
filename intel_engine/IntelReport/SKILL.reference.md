@@ -134,7 +134,8 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
     path under `cases/<id>/`, and if no reference is given it **reuses** the one already logged for
     that case (reproducible) or **mints** `RPT-YYYY-MMDD-NN`. Every render records
     `{report_ref → case_id, title, date, outputs}` there, so we can always resolve a reference
-    privately (`grep <ref> cases/report_registry.jsonl`) while the shared PDF never carries the case id.
+    privately (`grep <ref> cases/report_registry.jsonl`). The PDF cover and DOCX title subtitle
+    show that external reference; neither shared document carries the internal case id.
 12. **Never expose internal working anywhere in the report.** No internal tool / script / MCP / API
     names (the collectors, the KB, the registry, Claude APIs), no internal file paths, no case-store
     ids. In the body and appendix, cite only **public source CLASSES** — WHOIS, passive DNS / IP,
@@ -352,6 +353,14 @@ enforces the typography (Roman numbering, compact tables, wrapped code); YOU enf
       cell). Put the full hash in the ledger row; keep it OUT of the prose caption (a 64-char string
       breaks a caption's line) — the caption says what and when, the ledger row carries the hash.
     - If a public copy did not exist, create one before asserting the fact, then cite what you created.
+    - **Cite inline AND list it.** Every claim that rests on a public link carries a hyperlinked
+      citation number at the claim (`… Source: web archive capture of site-a.example, 2025-02-01
+      [3]`, the `[3]` linking straight to the URL), and the body closes with a **References**
+      section (`Tài liệu tham khảo` in Vietnamese) listing each number with its source class and the
+      full clickable URL. A finding that says only "Source: archived vendor page" with no link is a
+      defect — the reader cannot open it. `house_report.py` does this automatically for every public
+      http(s) URL in the case evidence and analyst text; a hand-written or translated report must do
+      the same. Loopback / private-address links are internal working and are never cited.
 
 22. **Alternative analysis section (required, explicit) — the benign explanations you considered and
     what killed them.** Do not leave this implicit in the rejected-links narrative: a reader auditing
@@ -406,6 +415,7 @@ appears and says so (Rule 19: an absent finding and an absent search look identi
 | … | Rejected links | what was tested and did NOT survive, with the prevalence/benign reason | 15, 22 |
 | … | Gaps & limitations | what could not be verified; what a keyless / passive / blocked collection could not have seen | 19 |
 | … | Recommendations / consumer note | referral pathways, preservation targets — scoped to the Rule 0 decision | 18 |
+| … | References | `[n]` source class · full clickable URL, one row per link cited in the text | 21 |
 | A | Artifact register | Artifact · Value · Source class · Admiralty grade | 7, 13 |
 | B | Evidence ledger | When (UTC) · Indicator · Claim · Source (Admiralty) · Evidence link | 21 |
 | C | Domain & infrastructure profiles | one Field·Value dossier per domain in scope | 17 |
@@ -705,7 +715,8 @@ Word/LibreOffice, and keep it case-data-free.
   one exists, and its rejections are echoed by the dotted/struck edges in the figures.
 - **Both appendices are present (Rules 7 and 21)**: the artifact register AND the evidence ledger.
   Every ledger row has a link that resolves for someone who has never seen our disk; inference rows
-  are labelled as inference.
+  are labelled as inference. Every sourced claim in the body carries its hyperlinked `[n]`, and the
+  References section lists each one.
 - **A Glossary appendix exists (Rule 23)** and every acronym / jargon term used in the body appears
   in it; every such term was also glossed in plain words at its first use in the body (Rule 1c).
 - **Plain, human voice (Rule 1c):** read a section aloud — it must sound like a colleague explaining

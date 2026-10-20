@@ -388,7 +388,8 @@ _TYPO = load_ref(ref_path(__file__, "typography.json"), _TYPO_FALLBACK)
 # Kept in ONE constant so the PDF and DOCX readers can never drift apart — a
 # highlight that renders in the PDF but shows as literal "==" in the DOCX is the
 # kind of defect nobody notices until a reviewer opens the Word copy.
-PANDOC_FROM = "markdown+yaml_metadata_block+pipe_tables+grid_tables+mark"
+# `autolink_bare_uris` makes any bare http(s) URL in a hand-written report a live link.
+PANDOC_FROM = "markdown+yaml_metadata_block+pipe_tables+grid_tables+mark+autolink_bare_uris"
 
 SERIF_PREF = _TYPO["serif_families"]
 SANS_PREF = _TYPO["sans_families"]
@@ -727,10 +728,12 @@ def render_pdf(body, stem, m, resource_dir):
 
 def render_docx(body, stem, m, resource_dir):
     out = f"{stem}.docx"
+    lang = m.get("lang") or DEFAULT_LANG
     sub = m["subtitle"] or ""
+    if m.get("ref"):
+        sub = f"{S(lang, 'reference')}: {m['ref']}" + (f" — {sub}" if sub else "")
     if m["classification"]:
         sub = (m["classification"] + (" — " + sub if sub else "")).strip()
-    lang = m.get("lang") or DEFAULT_LANG
     cmd = ["pandoc", body, "-o", out,
            "--from", PANDOC_FROM,
            "--number-sections", "--toc", "--toc-depth=%d" % m.get("toc_depth", 3),

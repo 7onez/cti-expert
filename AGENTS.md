@@ -144,8 +144,10 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   `operator_lead`, never an edge; the harness cross-type loop MAY collect such hosts (source
   `kit:`/`cotenant:`/`cpty:`) but they never cluster, never attribute, and render as kit siblings /
   neighbours with a rung caveat.
-- **Report scrub (IntelReport Rule 12).** `house_report.scrub()` maps vendor/tool/path names to public source
-  classes and keeps indicator values; evidence rows are `E<n> [B2] <claim> — <source>` with no URLs.
+- **Report scrub (IntelReport Rule 12) and citations (Rule 21).** `house_report.scrub()` maps vendor/tool/path
+  names to public source classes and keeps indicator values; URLs pass through it untouched. Every public
+  evidence URL (archive capture, published document, live page) is cited inline as a hyperlinked `[n]` and
+  listed in a `# References` section before the appendices; only loopback/private links are dropped.
   Third-party e-mails/phones/case-ids are masked unless in the case-scoped `_KEEP`.
 - **Analyst ownership.** Never clobber a hand-written `assessment.md`/`.json`; the loop writes
   `loop_assessment.*` when the producer signature does not match (`may_overwrite_assessment`).

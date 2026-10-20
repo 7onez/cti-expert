@@ -409,11 +409,129 @@ def scrub_vendors(line: str) -> str:
     return line
 
 
+# --------------------------------------------------------------------------- evidence links
+# IntelReport Rule 21: a claim is cited to a link a reader can re-open. Every public http(s) URL in
+# the composed report becomes a numbered hyperlinked citation `[n]` and a row in the References
+# section. URLs are shielded from scrub() so the vendor/path rewrites never mangle a link; a
+# loopback / private-address URL is internal working (Rule 12) and is never cited.
+_URL_RE = re.compile(r"https?://[^\s<>\"'`|\[\]()]+[^\s<>\"'`|\[\]().,;:!?]")
+_URL_SLOT_RE = re.compile("\x00URL(\\d+)\x00")
+# spans the citation pass must leave alone: code spans, markdown links/images, <autolinks>
+_CITE_SKIP_RE = re.compile(r"(`+)(?:(?!\1).)+?\1|!?\[[^\]\n]*\]\([^)\n]*\)|<https?://[^>\s]+>", re.S)
+_ARCHIVE_HOSTS = ("archive.org", "archive.today", "archive.ph", "archive.is", "archive.li", "archive.md",
+                  "archive.vn", "ghostarchive.org", "webcitation.org")
+_SCAN_HOSTS = ("urlscan.io",)
+
+
+def _url_host(url: str) -> str:
+    m = re.match(r"https?://(?:[^@/]*@)?([^/:?#]+)", url, re.I)
+    host = (m.group(1) if m else "").lower().rstrip(".")
+    return host[4:] if host.startswith("www.") else host
+
+
+def _is_public_url(url: str) -> bool:
+    host = _url_host(url)
+    if not host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return "." in host
+
+
+def url_class(url: str, estate=None) -> str:
+    """The public source CLASS of a cited link (Rule 12 wording for the Source column)."""
+    host = _url_host(url)
+    if any(host == a or host.endswith("." + a) for a in _ARCHIVE_HOSTS):
+        return "web archive capture"
+    if any(host == s or host.endswith("." + s) for s in _SCAN_HOSTS):
+        return "public web-scan capture"
+    estate = _HOSTS if estate is None else estate
+    if any(host == d or host.endswith("." + d) for d in estate):
+        return "live operator page"
+    if url.lower().split("?", 1)[0].split("#", 1)[0].endswith(".pdf"):
+        return "published document"
+    return "published web page"
+
+
+def url_label(url: str, estate=None) -> str:
+    """A reader-facing label for a citation: source class, publisher host, capture date when known."""
+    cls = url_class(url, estate)
+    if cls == "web archive capture":
+        m = re.search(r"/web/(\d{4})(\d{2})(\d{2})\d*", url)
+        archived = re.sub(r"^https?://web\.archive\.org/web/\d+[a-z_]*/", "", url)
+        orig = _url_host(archived) if archived != url else ""
+        return cls + (f" of {orig}" if orig else "") + (f", {m.group(1)}-{m.group(2)}-{m.group(3)}" if m else "")
+    return f"{cls}, {_url_host(url)}"
+
+
+def strip_urls(text: str) -> str:
+    """The claim without its URLs and the separators that carried them."""
+    t = _URL_RE.sub("", text)
+    t = re.sub(r"\(\s*\)", "", t)
+    prev = None
+    while prev != t:
+        prev = t
+        t = re.sub(r"\s*[;,]\s*(?=[;,.]|$)", "", t)
+    t = re.sub(r"\s+—\s*$", "", t)
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
+
+
+def cited(claim: str, urls) -> str:
+    """`claim. Source: <class> URL; …` — the citation pass turns each URL into a linked `[n]`."""
+    urls = [u for u in dict.fromkeys(urls) if _is_public_url(u)]
+    if not urls:
+        return claim
+    claim = claim.rstrip()
+    if claim and claim[-1] not in ".!?":
+        claim += "."
+    return claim + " Source: " + "; ".join(f"{_md_escape(url_label(u))} {u}" for u in urls) + "."
+
+
+def _md_link_target(url: str) -> str:
+    return url.replace("(", "%28").replace(")", "%29").replace(" ", "%20")
+
+
+def cite_urls(md: str, refs: dict) -> str:
+    """Every bare public URL outside code spans / existing links -> a hyperlinked `[n]`, registered
+    in `refs` (url -> n, first-seen order). A non-public URL is internal working: dropped."""
+    def one(m):
+        url = m.group(0)
+        if not _is_public_url(url):
+            return "the case record"
+        n = refs.setdefault(url, len(refs) + 1)
+        return f"[\\[{n}\\]]({_md_link_target(url)})"
+
+    out, pos = [], 0
+    for m in _CITE_SKIP_RE.finditer(md):
+        out.append(_URL_RE.sub(one, md[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_URL_RE.sub(one, md[pos:]))
+    return "".join(out)
+
+
+def references_md(refs: dict) -> str:
+    lines = ["Each bracketed number in the text links to the public location below; open it to "
+             "re-check the claim it supports. Archive captures are frozen copies and stay valid "
+             "after the live page changes.", ""]
+    for url, n in sorted(refs.items(), key=lambda kv: kv[1]):
+        lines.append(f"- \\[{n}\\] {_md_escape(url_label(url))}: <{_md_link_target(url)}>")
+    return "\n".join(lines)
+
+
 def scrub(text: str, escape: bool = True) -> str:
     """Rule 12: drop collection-method tags, internal paths and vendor names; keep evidence values.
     `escape` (default): the result is house MARKDOWN — `<` is entity-escaped outside code spans so an
     attacker/analyst string like `Sign in to <Acme Bank>` survives pandoc. Pass escape=False for
-    plain-text sinks (figure labels)."""
+    plain-text sinks (figure labels). URLs pass through untouched (Rule 21 citations)."""
+    urls: list = []
+
+    def _slot(m):
+        urls.append(m.group(0))
+        return f"\x00URL{len(urls) - 1}\x00"
+
+    text = _URL_RE.sub(_slot, text)
     out = []
     for line in text.splitlines():
         if _DROP_LINE_RE.search(line):
@@ -432,6 +550,7 @@ def scrub(text: str, escape: bool = True) -> str:
     text = re.sub(r"(?<!`)(<!--.*?-->)(?!`)", r"`\1`", text)
     if escape:
         text = _escape_angles(text)
+    text = _URL_SLOT_RE.sub(lambda m: urls[int(m.group(1))], text)
     # collapse the blank runs the drops leave behind
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
@@ -674,6 +793,17 @@ def _icd_word(conf: str, level: str) -> str:
             "low": "roughly even chance (45–55%)"}.get(conf, "likely")
 
 
+def _alt_parts(alt) -> tuple[str, str, str]:
+    """One assessment `alternatives` row -> (explanation, STATUS WORDS, why). The harness schema
+    (harness/schemas.py Alternative) names the field `explanation` and spells status in snake case
+    (`cannot_rule_out`); older hand-written rows use `hypothesis`. Plain strings pass through whole."""
+    if isinstance(alt, str):
+        return alt, "", ""
+    head = alt.get("explanation") or alt.get("hypothesis") or ""
+    status = str(alt.get("status") or "").replace("_", " ").upper()
+    return str(head), status, str(alt.get("why") or "")
+
+
 def fig_attribution_chain(c: dict, rep_dir: str) -> str | None:
     """Inference chain: seed -> supporting evidence (solid) / tested-and-rejected (dashed) -> verdict."""
     a = c["assessment"]
@@ -689,7 +819,7 @@ def fig_attribution_chain(c: dict, rep_dir: str) -> str | None:
         if not isinstance(e, str):
             continue
         # keep the strongest rungs / grades; strip the source suffix and the id
-        body = re.sub(r"^E\d+\s*\[[^\]]*\]\s*", "", e).split(" — ")[0]
+        body = strip_urls(re.sub(r"^E\d+\s*\[[^\]]*\]\s*", "", e).split(" — ")[0])
         rung = re.search(r"rung (\d+)", e)
         grade = re.search(r"\[([A-F][1-6])", e)
         strong = (rung and int(rung.group(1)) <= 8) or (grade and grade.group(1)[0] in "AB")
@@ -699,8 +829,8 @@ def fig_attribution_chain(c: dict, rep_dir: str) -> str | None:
 
     rejected, open_alts = [], []
     for alt in a.get("alternatives") or []:
-        s = alt if isinstance(alt, str) else f"{alt.get('hypothesis','')} — {alt.get('status','')}"
-        head = s.split(" — ")[0]
+        head, status, _why = _alt_parts(alt)
+        s = f"{head} — {status}"
         if "REJECTED" in s.upper() and "CANNOT" not in s.upper():
             rejected.append("x " + _wrap(head, 36))
         elif "CANNOT RULE OUT" in s.upper():
@@ -833,15 +963,22 @@ def artifact_register(c: dict) -> str:
 
 
 def evidence_ledger(c: dict) -> str:
+    """Rule 21: every row carries its link (cited `[n]` by the composer's citation pass); a row with
+    no public link says so instead of borrowing a neighbour's."""
     ev = c["assessment"].get("evidence") or []
-    rows = ["| # | Evidence | Grade | Source (public class) |", "|:-:|:----------------------|:--:|:----------|"]
+    rows = ["| # | Evidence | Grade | Source (public class) | Link |",
+            "|:-:|:----------------------|:--:|:----------|:--|"]
     for i, e in enumerate(ev, 1):
         if not isinstance(e, str):
             e = json.dumps(e, ensure_ascii=False)
         grade = re.search(r"\[([A-F][1-6])", e)
-        body = re.sub(r"^E\d+\s*\[[^\]]*\]\s*", "", e)
+        urls = [u for u in dict.fromkeys(_URL_RE.findall(e)) if _is_public_url(u)]
+        body = strip_urls(re.sub(r"^E\d+\s*\[[^\]]*\]\s*", "", e))
         claim, src = (body.rsplit(" — ", 1) + [""])[:2] if " — " in body else (body, "")
-        rows.append(f"| {i} | {_md_escape(scrub(claim))} | {grade.group(1) if grade else '—'} | {_md_escape(scrub(src) or 'case evidence')} |")
+        src = scrub(src) or "; ".join(dict.fromkeys(url_class(u) for u in urls)) or "case evidence"
+        link = " ".join(urls) if urls else "no public link"
+        rows.append(f"| {i} | {_md_escape(scrub(claim))} | {grade.group(1) if grade else '—'} | "
+                    f"{_md_escape(src)} | {link} |")
     return "\n".join(rows) if ev else "_No evidence ledger in the assessment._"
 
 
@@ -1092,8 +1229,7 @@ def _nominee_uncertain(c: dict) -> bool:
     'cannot rule out' — the registrant is then a WHOIS persona, not an asserted real-world operator
     (IntelAnalysis persona doctrine). Never assert 'the operator' in that case."""
     for alt in (c["assessment"].get("alternatives") or []):
-        s = alt if isinstance(alt, str) else f"{alt.get('hypothesis','')} {alt.get('status','')} {alt.get('why','')}"
-        s = str(s)
+        s = " ".join(_alt_parts(alt))
         if _NOMINEE_RE.search(s) and _CANNOT_RULE_OUT_RE.search(s):
             return True
     return False
@@ -1198,8 +1334,14 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
             L += [f"## {j['title']}", "", j["body"], ""]
     else:
         for e in a.get("evidence") or []:
-            L.append(f"- {scrub(e if isinstance(e, str) else json.dumps(e, ensure_ascii=False))}")
+            raw = e if isinstance(e, str) else json.dumps(e, ensure_ascii=False)
+            L.append(f"- {cited(scrub(strip_urls(raw)), _URL_RE.findall(raw))}")
         L.append("")
+    # the analyst's dated evidence table carries the per-claim source links (Rule 21) the summary
+    # evidence list does not; without it those links never reach the report
+    ev_table = find_section(secs, "evidentiary finding", "evidence detail")
+    if ev_table:
+        L += ["## Evidence detail", "", demote_headings(scrub(ev_table)), ""]
 
     # V — The cluster
     L += ["# The cluster", ""]
@@ -1302,12 +1444,15 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     if alts:
         L += ["| Alternative explanation | Status | Why |", "|:----------------------|:------|:------------------------|"]
         for alt in alts:
-            s = alt if isinstance(alt, str) else f"{alt.get('hypothesis','')} — {alt.get('status','').upper()}: {alt.get('why','')}"
-            m = re.match(r"(.+?)\s+—\s+([A-Z][A-Z0-9 ]+?):\s*(.*)", s)
-            if m:
-                L.append(f"| {_md_escape(scrub(m.group(1)))} | **{m.group(2).strip().lower()}** | {_md_escape(scrub(m.group(3)))} |")
+            if isinstance(alt, str):
+                m = re.match(r"(.+?)\s+—\s+([A-Z][A-Z0-9_ ]+?):\s*(.*)", alt)
+                head, status, why = (m.group(1), m.group(2), m.group(3)) if m else (alt, "", "")
             else:
-                L.append(f"| {_md_escape(scrub(s))} | | |")
+                head, status, why = _alt_parts(alt)
+            if status:
+                L.append(f"| {_md_escape(scrub(head))} | **{status.strip().replace('_', ' ').lower()}** | {_md_escape(scrub(why))} |")
+            else:
+                L.append(f"| {_md_escape(scrub(head))} | | |")
         L.append("")
     else:
         L += ["_No alternative hypotheses recorded._", ""]
@@ -1348,6 +1493,13 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
           "# Domain and infrastructure profiles", "", domain_profiles(c), "",
           "# Cluster enumeration", "", cluster_enumeration(c), ""]
     body = "\n".join(L)
+    # Rule 21: every public URL anywhere in the report -> hyperlinked [n] + a References section
+    # closing the body, so a reader can open each source without the case store.
+    refs: dict = {}
+    body = cite_urls(body, refs)
+    if refs:
+        head, sep, tail = body.partition("\n\\appendix\n")
+        body = head + "\n# References\n\n" + references_md(refs) + "\n" + sep + tail
     return body + "\n# Glossary\n\n" + hrd.glossary_md(body) + "\n"
 
 

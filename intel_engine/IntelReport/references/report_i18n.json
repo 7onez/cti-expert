@@ -65,6 +65,7 @@
       "alternative_hypotheses": {"en": "Alternative Hypotheses", "vi": "Giả thuyết thay thế"},
       "rejected_links": {"en": "Rejected Links", "vi": "Liên kết đã bác bỏ"},
       "recommendations": {"en": "Recommendations", "vi": "Khuyến nghị"},
+      "references": {"en": "References", "vi": "Tài liệu tham khảo"},
       "artifact_register": {"en": "Artifact Register", "vi": "Danh mục chỉ dấu"},
       "evidence_ledger": {"en": "Evidence Ledger", "vi": "Sổ chứng cứ"},
       "domain_profiles": {"en": "Domain Profiles", "vi": "Hồ sơ từng tên miền"},
