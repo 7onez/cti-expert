@@ -145,8 +145,10 @@ DISPATCH = {
                                                                # RAN vs silently never fired
     "netlas":        ("WebPivot/tools/wp_netlas.py", []),    # Netlas DNS/scan/WHOIS/cert index —
                                                              # ip|ns|spf|domain|san|title|plan|raw
-    "buckets":       ("WebPivot/tools/wp_buckets.py", []),   # GrayHatWarfare open-bucket /
-                                                             # exposed-file search (/secrets, /docleak)
+    "buckets":       ("WebPivot/tools/wp_buckets.py", []),   # GrayHatWarfare client: buckets / files /
+                                                             # short-* / git-* / account (stdout only)
+    "grayhatwarfare":("tools/ghw_exposure.py",      []),     # same lookups persisted into a case +
+                                                             # KB facts; `exposure <CASE> <apex…>`
 
     # ── repo-root collectors (scripts/webpivot/ — one level ABOVE $INTEL_HOME). These
     # existed and worked but were reachable only as raw `python3 …` lines documented in
@@ -325,7 +327,8 @@ BLURB = {
     "liveness": "parked / soft-404 / bot-walled vs genuinely dead",
     "exhaust": "which collection layers RAN vs silently never fired",
     "netlas": "Netlas index: reverse a NON-CDN origin IP / NS / SPF include to apexes (ip|ns|spf|domain|san|title|plan|raw; --count)",
-    "buckets": "GrayHatWarfare open-bucket / exposed-file search (/secrets, /docleak)",
+    "buckets": "GrayHatWarfare client: open buckets/files, shortener corpus (short-subdomains|short-urls|short-handle), git corpus (git-committers|git-code|git-secrets), account tier",
+    "grayhatwarfare": "GrayHatWarfare into a case: `exposure <CASE> <apex…>` (buckets + shortener hosts/URLs + committers) or `lookup <mode> <selector> --case <CASE>`; facts only, never edges",
     "cert-pivot": "leaf-cert fingerprint → other hosts serving it; SANs = siblings",
     "rank-relations": "score same-operator links across a case's raw/*.json (noise-filtered)",
     "pivot-suggest": "rank what to pivot on next from case findings",

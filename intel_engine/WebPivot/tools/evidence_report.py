@@ -910,6 +910,131 @@ def _origin_history_section(results):
     return L
 
 
+def _md_link(url: str, width: int = 90) -> str:
+    """A table-safe markdown link: pipes/spaces escaped, the destination in <> so parentheses survive."""
+    u = str(url or "").replace("|", "%7C").replace(" ", "%20").replace(">", "%3E")
+    shown = u if len(u) <= width else u[:width - 1] + "…"
+    return f"[{shown.replace('[', '%5B').replace(']', '%5D')}](<{u}>)"
+
+
+def _ghw_state(blk) -> Optional[str]:
+    """Why a GrayHatWarfare block has no rows to show, or None when it does."""
+    if not isinstance(blk, dict):
+        return "not run"
+    if blk.get("error"):
+        return f"query failed ({blk['error']}) — retry"
+    if blk.get("skipped"):
+        return str(blk["skipped"]) + (f" — dork: `{blk['dork']}`" if blk.get("dork") else "")
+    return None
+
+
+def _ghw_lines(doc: Optional[dict], case: Optional[str] = None, max_urls: int = 12) -> list:
+    """The GrayHatWarfare part of the Exposure section (tools/ghw_exposure.py document). Every row is
+    a thing to READ, never a same-operator link."""
+    if not isinstance(doc, dict) or not (doc.get("apexes") or doc.get("lookups")):
+        return []
+    tier = doc.get("tier")
+    L = [f"GrayHatWarfare{f' ({tier} account)' if tier and tier != 'unknown' else ''} — open buckets, the "
+         "shortener corpus (long URLs public link shorteners expanded to; discovered 2017–2025, so a row "
+         "proves the URL existed and was shared, not that it is live) and the public-git corpus "
+         "(author e-mails are self-asserted). None of these rows is a same-operator link.", ""]
+    for apex, blk in sorted((doc.get("apexes") or {}).items()):
+        blk = blk if isinstance(blk, dict) else {}
+        L += [f"### {apex}", ""]
+        b = blk.get("buckets")
+        label = (b or {}).get("keyword") or apex.split(".")[0]
+        st = _ghw_state(b)
+        rows = (b or {}).get("buckets") or []
+        if st:
+            L.append(f"- Open buckets matching `{label}`: {st}.")
+        elif rows:
+            L.append(f"- Open buckets matching `{label}` ({b.get('results', len(rows))} indexed; the label "
+                     "match may be the brand's own, a squatter's or an unrelated tenant's): "
+                     + ", ".join(f"`{x.get('bucket')}` ({x.get('fileCount') or '?'} files)" for x in rows[:10]))
+        else:
+            L.append(f"- Open buckets matching `{label}`: none indexed.")
+        s = blk.get("short_subdomains")
+        st = _ghw_state(s)
+        subs = (s or {}).get("subdomains") or []
+        if st:
+            L.append(f"- Shortener-corpus hosts under `{apex}`: {st}.")
+        elif subs:
+            L.append(f"- Shortener-corpus hosts under `{apex}` ({len(subs)}): "
+                     + ", ".join(f"`{x['host']}` ({x.get('urls')})" for x in subs[:12])
+                     + (" …" if len(subs) > 12 else ""))
+        else:
+            L.append(f"- Shortener-corpus hosts under `{apex}`: none — no short link ever pointed here.")
+        u = blk.get("short_urls")
+        st = _ghw_state(u)
+        urls = (u or {}).get("urls") or []
+        if st:
+            L.append(f"- Historical short-link URLs: {st}.")
+        elif urls:
+            L += [f"- {len(urls)} historical short-link URL(s) on those hosts "
+                  f"({u.get('results', len(urls))} indexed), newest first — hidden paths, documents and "
+                  "invite/ref parameters to read:", "",
+                  "| Discovered | URL | Short link |", "|---|---|---|"]
+            for x in urls[:max_urls]:
+                L.append(f"| {x.get('discovered') or '?'} | {_md_link(x.get('url'))} | "
+                         f"{_md_link(x['short'], 40) if x.get('short') else '—'} |")
+            L.append("")
+            L.append(f"  Kit-path analysis over all of them: url_paths mode='patterns' "
+                     f"paths='cases/{case or '<case>'}/grayhatwarfare/short_urls.json'.")
+        else:
+            L.append("- Historical short-link URLs on the estate's hosts: none indexed.")
+        g = blk.get("git_committers")
+        st = _ghw_state(g)
+        com = (g or {}).get("committers") or []
+        if st:
+            L.append(f"- Git committers on `@{apex}`: {st}.")
+        elif com:
+            L.append(f"- {len(com)} git committer(s) with an `@{apex}` author e-mail (self-asserted — a LEAD; "
+                     "confirm each account with github_harvest): "
+                     + ", ".join(f"`{c['email']}` ({c.get('name') or '—'}, {c.get('repos') or 0} repos)"
+                                 for c in com[:10]) + (" …" if len(com) > 10 else ""))
+        else:
+            L.append(f"- Git committers on `@{apex}`: none indexed.")
+        L.append("")
+    looks = doc.get("lookups") or {}
+    if looks:
+        L += ["### On-demand GrayHatWarfare lookups", ""]
+        for key, res in sorted(looks.items()):
+            res = res if isinstance(res, dict) else {}
+            mode, _, sel = key.partition("|")
+            st = _ghw_state(res)
+            if st:
+                L.append(f"- {mode} `{sel}`: {st}.")
+            elif mode == "git_secrets":
+                fl = res.get("files") or []
+                if not res.get("indexed", True):
+                    L.append(f"- git_secrets `{sel}`: repository not in the index.")
+                else:
+                    L.append(f"- git_secrets `{sel}`: {len(fl)} file(s) TruffleHog flagged (detector tags only, "
+                             "never the secret): " + ", ".join(
+                                 f"{_md_link(f.get('link') or f.get('path'), 60)} ({', '.join(f.get('tags') or [])})"
+                                 for f in fl[:8]))
+            elif mode == "git_code":
+                fl = res.get("files") or []
+                ver = [f for f in fl if f.get("verified")]
+                L.append(f"- git_code `{sel}`: {res.get('results', len(fl))} indexed hit(s), {len(ver)} verified "
+                         "in the raw file (same KIT, not same operator): "
+                         + (", ".join(_md_link(f.get("link") or f.get("repo"), 70) for f in ver[:8]) or "none verified"))
+            elif mode in ("short_handle", "short_urls"):
+                fl = res.get("urls") or []
+                L.append(f"- {mode} `{sel}`: {len(fl)} short link(s)"
+                         + (": " + ", ".join(f"{_md_link(x.get('short') or x.get('url'), 40)} ({x.get('discovered') or '?'})"
+                                             for x in fl[:8]) if fl else "."))
+            elif mode == "git_committers":
+                fl = res.get("committers") or []
+                L.append(f"- git_committers `{sel}`: {len(fl)} identity(ies) (self-asserted): "
+                         + (", ".join(f"`{c['email']}` ({c.get('repos') or 0} repos)" for c in fl[:8]) or "none"))
+            else:
+                n = next((len(res[k]) for k in ("buckets", "files", "subdomains") if isinstance(res.get(k), list)), 0)
+                L.append(f"- {mode} `{sel}`: {n} row(s).")
+        L.append("")
+    return L
+
+
 def render_cluster_report(results: list,
                           case: Optional[str] = None,
                           classification: str = "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
@@ -918,7 +1043,8 @@ def render_cluster_report(results: list,
                           kb_dir: Optional[str] = None,
                           whois_history: str = "off",
                           whois_history_for: Optional[set] = None,
-                          free_only: bool = False) -> str:
+                          free_only: bool = False,
+                          ghw: Optional[dict] = None) -> str:
     """Render ONE ICD-203 assessment across a whole case (many pivot_extract results).
 
     Rolls per-host artifacts up into cluster-level Key Judgments: hosts sharing >=2
@@ -1180,11 +1306,13 @@ def render_cluster_report(results: list,
                      + ", ".join(f"{ip} ({prov})" for ip, prov in list(suppressed_ips.items())[:6]))
         L.append("")
 
-    # Exposure — leak surface, NEVER attribution. GrayHatWarfare open-bucket hits (when a collection
-    # carried them under artifacts.buckets) and the per-label bucket check as an open lead otherwise.
-    # Deliberately not "discovered infrastructure": a bucket carrying the brand label may be the
-    # brand's own, a squatter's, or an unrelated tenant's — it is a thing to READ, not a host to seed.
-    exposure, labels = [], []
+    # Exposure — leak surface, NEVER attribution. GrayHatWarfare (wp_buckets via tools/ghw_exposure.py,
+    # persisted at cases/<case>/grayhatwarfare/exposure.json): open buckets for the brand label, the
+    # shortener corpus's historical long URLs on the estate's hosts, git committers on the apex mail
+    # domain, plus any on-demand lookup. Deliberately not "discovered infrastructure": a bucket carrying
+    # the label may be the brand's own, a squatter's or an unrelated tenant's; a short link says a URL
+    # existed and was shared; a git author e-mail is self-asserted — all things to READ.
+    apexes = []
     for r in results:
         host = _norm(r["meta"]["host"])
         try:
@@ -1192,22 +1320,17 @@ def render_cluster_report(results: list,
             apex = _reg(host) or host
         except Exception:  # noqa: BLE001
             apex = host
-        label = apex.split(".")[0]
-        if label and label not in labels and not _is_infra_noise_host(host):
-            labels.append(label)
-        for b in ((r.get("artifacts") or {}).get("buckets") or {}).get("buckets") or []:
-            if isinstance(b, dict) and b.get("bucket"):
-                exposure.append((host, b.get("bucket"), b.get("fileCount") or b.get("files") or "?"))
+        if apex and apex not in apexes and not _is_infra_noise_host(host):
+            apexes.append(apex)
     L += ["## Exposure (leak surface — not attribution)", ""]
-    if exposure:
-        L += ["| Host | Open bucket | Files |", "|---|---|---|"]
-        for host, bucket, n in exposure[:20]:
-            L.append(f"| {host} | `{bucket}` | {n} |")
+    L += _ghw_lines(ghw, case)
+    checked = set(((ghw or {}).get("apexes") or {}))
+    todo = [x for x in apexes if x not in checked]
+    if todo:
+        L.append("- GrayHatWarfare check (open buckets, shortener corpus, git committers; keyless dork "
+                 "fallback) still open for: " + ", ".join(f"`{x}`" for x in todo[:8])
+                 + " — graded EXPOSURE when it returns, never a same-operator link.")
         L.append("")
-    L.append("- Open-bucket check (GrayHatWarfare, keyless dork fallback) for the estate's label(s): "
-             + ", ".join(f"`{x}`" for x in labels[:8]) + " — "
-             + ("results above." if exposure else "open lead; graded EXPOSURE when it returns, never a same-operator link."))
-    L.append("")
 
     # Gaps
     L += ["## Intelligence Gaps & Recommended Collection", ""]

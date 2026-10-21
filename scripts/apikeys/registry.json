@@ -419,9 +419,9 @@
       "category": "breach",
       "tier": "freemium",
       "url": "https://grayhatwarfare.com/account",
-      "unlocks": "/secrets + /docleak: scriptable open-bucket (S3/Azure/GCS/DO Spaces) + exposed-file keyword/domain search — upgrades the keyless site:buckets.grayhatwarfare.com dork to a filterable, paginated API. Graded EXPOSURE, not a same-operator pivot",
+      "unlocks": "/grayhatwarfare, /secrets, /docleak: open buckets + exposed files, the shortener corpus (hosts + historical long URLs behind short links, a handle's short links) and the git corpus (committers, token-in-code, TruffleHog-flagged files) — auto-fired per apex in pipeline open. Graded EXPOSURE / leads, not a same-operator pivot",
       "test": {
-        "url": "https://buckets.grayhatwarfare.com/api/v2/buckets?limit=1",
+        "url": "https://grayhatwarfare.com/api/account",
         "bearer": true,
         "expect_status": 200
       }

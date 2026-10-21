@@ -1,0 +1,56 @@
+{
+  "_comment": "GrayHatWarfare reference DATA for wp_buckets.py (buckets + shorteners + git indexes behind one GRAYHATWARFARE_API_KEY). Code holds the matching logic; endpoints, limits, the handle hosts and the managed-mail refusal list live here. Every hit these indexes return is EXPOSURE or a lead — never a same-operator edge (rungs.json git.committer_email / git.code are kit). RULE 1: provider constants only, never case data.",
+
+  "endpoints": {
+    "_comment": "API base per index. The account endpoint is FREE (no search spent) and is the entitlement probe wp_capabilities reads: accountType free|premium|enterprise + expirationDate.",
+    "entries": {
+      "buckets": "https://buckets.grayhatwarfare.com/api/v2",
+      "shorteners": "https://shorteners.grayhatwarfare.com/api/v1",
+      "git": "https://git.grayhatwarfare.com/api/v1",
+      "account": "https://grayhatwarfare.com/api/account",
+      "buckets_ui": "https://buckets.grayhatwarfare.com/buckets/keywords/any/"
+    }
+  },
+
+  "limits": {
+    "_comment": "timeout/content_timeout seconds (git content search is a full-text scan — a zero-hit query ran past 30 s live); page_max = the API's per-page ceiling; parallel = the account's concurrent-request cap (HTTP 429 above it, measured 3; regex is 1 and is not used here); retry_429/retry_sleep = back-off on that cap; verify_raw = how many git_code hits get their raw file fetched to prove the token is really in it; raw_max_bytes bounds that fetch; exposure_subdomains / exposure_urls / committers size the per-apex auto-fire; ingest_rows caps KB facts per result (the full list stays in the case file).",
+    "timeout": 25,
+    "content_timeout": 90,
+    "page_max": 1000,
+    "parallel": 3,
+    "retry_429": 2,
+    "retry_sleep": 1.5,
+    "verify_raw": 10,
+    "raw_max_bytes": 2000000,
+    "exposure_subdomains": 50,
+    "exposure_urls": 1000,
+    "committers": 100,
+    "ingest_rows": 50
+  },
+
+  "handle_hosts": {
+    "_comment": "Messaging hosts the shortener corpus is searched on for short_handle — a short link that expanded to the operator's Telegram handle or WhatsApp number. kind -> exact hosts (the API's `domains` filter matches the exact host only).",
+    "entries": {
+      "telegram": ["t.me", "telegram.me"],
+      "whatsapp": ["wa.me", "api.whatsapp.com"]
+    }
+  },
+
+  "managed_mail_domains": {
+    "_comment": "Mail domains git_committers REFUSES in domain mode: a committer list for a shared mailbox provider is millions of strangers, never the operator (the same managed-vs-self-hosted split as RULE 5's nameservers). An exact e-mail address on one of these is still looked up. Add providers as you meet them.",
+    "values": [
+      "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com",
+      "yahoo.com", "ymail.com", "icloud.com", "me.com", "mac.com", "aol.com",
+      "proton.me", "protonmail.com", "pm.me", "tutanota.com", "zoho.com", "gmx.com", "gmx.de",
+      "mail.com", "mail.ru", "yandex.ru", "yandex.com", "qq.com", "163.com", "126.com",
+      "foxmail.com", "sina.com", "naver.com", "daum.net",
+      "users.noreply.github.com", "noreply.github.com", "users.noreply.gitlab.com",
+      "localhost", "localhost.localdomain", "example.com", "example.org", "example.net"
+    ]
+  },
+
+  "raw_hosts": {
+    "_comment": "The ONLY hosts git_code may fetch a repository file from to verify a token (https only; every redirect hop must also be listed). The `raw` link comes from the vendor response and is untrusted — without this list a poisoned hit could make the analyst's box fetch a target or a private-network address. github.com/…/raw/<sha>/<path> redirects to raw.githubusercontent.com; GitLab and Bitbucket serve raw from their own host. Exact hostnames, no wildcards.",
+    "values": ["github.com", "raw.githubusercontent.com", "gitlab.com", "bitbucket.org"]
+  }
+}

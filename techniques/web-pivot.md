@@ -345,7 +345,7 @@ reverse-lookups, attaching each hit to the pivot as `live_results` (shown in `--
 | `WHOISXML_API_KEY` | domain; `--whois-reverse`; origin co-tenants | current WHOIS; reverse WHOIS; **history only on `--whois-history purchase`** (seeds/cluster, ~50 DRS/domain); **MO-neighbour** verification of an origin's co-tenants (bulk-guarded, once per origin per case) |
 | `INTELX_KEY` | pipeline `open` (key); loop `--full` | selector search / phonebook, once per selector per CASE |
 | `NETLAS_API_KEY` / `VALIDIN_API_KEY` | origin IP | reverse-IP candidates for the MO-neighbour pivot (Validin also runs keyless-free elsewhere) |
-| `GRAYHATWARFARE_API_KEY` | estate label | exposure lead (`/secrets`), rendered under *Exposure* — never a same-operator pivot |
+| `GRAYHATWARFARE_API_KEY` | estate apex | auto-fired exposure (buckets · shortener hosts + long URLs · committers on a self-hosted mail domain), rendered under *Exposure*; shortener hosts also feed `subdomain_enum` — never a same-operator pivot |
 
 Entitlement is **measured** once per case into `meta.capability.plans` (`cases/<id>/capability_plans.json`)
 from free account probes; nothing is assumed from a key's presence. Each premium enricher is

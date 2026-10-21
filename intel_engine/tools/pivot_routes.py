@@ -216,6 +216,15 @@ def _anyrun_configured():
     return AR.anyrun_configured()
 
 
+def _ghw_configured():
+    import wp_buckets as GB
+    return GB.ghw_configured()
+
+
+# GrayHatWarfare corpus route → wp_buckets lookup mode.
+_GHW_ROUTE_MODE = {"ghw.git_code": "git_code", "ghw.git_committers": "git_committers",
+                   "ghw.short_handle": "short_handle"}
+
 # Single-credential corpus routes → the collector's own configured() gate. Without the key the
 # runner only answers `skipped`, so propose() must not offer the route at all.
 _ROUTE_GATES = {
@@ -223,6 +232,7 @@ _ROUTE_GATES = {
     "publicwww.source": _publicwww_configured,
     "webamon.corpus": _webamon_configured,
     "anyrun.lookup": _anyrun_configured,
+    **{r: _ghw_configured for r in _GHW_ROUTE_MODE},
 }
 
 
@@ -251,6 +261,7 @@ def query_for(route: str, type_: str, selector: str):
     if spec is None:
         # still allow known hardcoded routes so unit tests don't need the full map
         if r not in _URLSCAN_ROUTE_FIELD and r not in _WAYBACK_ROUTE_COLLECTION \
+                and r not in _GHW_ROUTE_MODE \
                 and r not in ("wayback.news", "fofa.body", "publicwww.source", "webamon.corpus",
                               "email.deep", "phone.osint", "rwhois.purchase",
                               "crypto.counterparties", "anyrun.lookup", "binary.analyze",
@@ -332,6 +343,15 @@ def query_for(route: str, type_: str, selector: str):
 
     if r in ("email.deep", "phone.osint", "rwhois.purchase",
              "crypto.counterparties", "anyrun.lookup", "binary.analyze", "enrich.host"):
+        return sel
+
+    if r in _GHW_ROUTE_MODE:
+        if r == "ghw.git_code" and t == "string":
+            # content search tokenises: only a tracker id or one distinctive token (no spaces, ≥ 10
+            # chars) is worth a metered query — a page title or a word never is
+            from selector_types import tracker_label
+            if not (tracker_label(sel) or re.fullmatch(r"[A-Za-z0-9_.:/\-]{10,}", sel)):
+                return None
         return sel
 
     return None
@@ -783,6 +803,26 @@ def _run_binary(selector, *, free_only=False):
     return {"rows": rows, "total": len(rows)}
 
 
+def _run_ghw(route, query, *, case="", free_only=False):
+    """One GrayHatWarfare lookup as a corpus route. With a case the raw result is also persisted in
+    cases/<case>/grayhatwarfare/exposure.json (lookups) for the report; ingest stays with execute()."""
+    if free_only:
+        return {"skipped": f"{route} is metered; free_only"}
+    mode = _GHW_ROUTE_MODE.get(route)
+    import wp_buckets as GB
+    if case:
+        import ghw_exposure as GX
+        res = GX.lookup(mode, query, case=case, ingest=False)
+    else:
+        res = GB.lookup(mode, query)
+    if not isinstance(res, dict) or res.get("error"):
+        return {"error": str((res or {}).get("error") or "empty result")}
+    if res.get("skipped"):
+        return {"skipped": str(res["skipped"])}
+    rows = GB.rows_for(res)
+    return {"rows": rows, "total": res.get("results", len(rows))}
+
+
 # ---------------------------------------------------------------- run
 def run(route: str, query: str, *, case="", free_only: bool = False, hostile: bool = False):
     """Execute one corpus route. Returns {rows,total} | {error} | {skipped}. Never raises."""
@@ -816,6 +856,8 @@ def run(route: str, query: str, *, case="", free_only: bool = False, hostile: bo
             return _run_anyrun(q, free_only=free_only)
         if r == "binary.analyze":
             return _run_binary(q, free_only=free_only)
+        if r in _GHW_ROUTE_MODE:
+            return _run_ghw(r, q, case=case, free_only=free_only)
         if r == "enrich.host":
             # Full keyed collection of a host is run by the harness loop's executor (it owns the
             # collector config and the approval), never as a bare corpus query.

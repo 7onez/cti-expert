@@ -307,6 +307,36 @@
           "description": "mode=patterns: a path must recur on at least this many hosts to be reported as a kit."
         }
       },
+      "grayhatwarfare": {
+        "mode": {
+          "type": "string",
+          "description": "'exposure' (default, needs case) sweeps buckets + shortener hosts/URLs + committers for the selector apex(es); the others run one lookup: buckets/files (keyword), short_subdomains (apex), short_urls (comma list of exact hosts), short_handle (t.me/<h>, @h, wa.me/<n>), git_committers (e-mail or self-hosted mail domain), git_code (distinctive token), git_secrets (owner/repo), account (plan tier).",
+          "enum": [
+            "exposure",
+            "buckets",
+            "files",
+            "short_subdomains",
+            "short_urls",
+            "short_handle",
+            "git_committers",
+            "git_code",
+            "git_secrets",
+            "account"
+          ]
+        },
+        "case": {
+          "type": "string",
+          "description": "Case ID. Persists the result under cases/<case>/grayhatwarfare/ and ingests it as KB facts (never edges); required for mode=exposure."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Rows to fetch (API ceiling 1000). Default per mode from WebPivot/references/grayhatwarfare.json."
+        },
+        "ext": {
+          "type": "string",
+          "description": "mode=short_urls: comma list of file extensions to keep, e.g. pdf,xlsx,docx — the documents a short link exposed."
+        }
+      },
       "serp_ads": {
         "mode": {
           "type": "string",

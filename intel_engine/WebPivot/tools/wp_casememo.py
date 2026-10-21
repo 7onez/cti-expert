@@ -36,8 +36,9 @@ def case_dir():
     return os.environ.get(CASE_DIR_ENV) or ""
 
 
-def _dir(ns):
-    cd = case_dir()
+def _dir(ns, cdir=None):
+    """`cdir` scopes the memo to an explicit case directory; default is the process env scope."""
+    cd = cdir or case_dir()
     if not cd:
         return None
     d = os.path.join(cd, ns)
@@ -48,15 +49,15 @@ def _dir(ns):
     return d
 
 
-def _path(ns, key):
-    d = _dir(ns)
+def _path(ns, key, cdir=None):
+    d = _dir(ns, cdir)
     if not d:
         return None
     return os.path.join(d, hashlib.sha1(str(key).encode("utf-8")).hexdigest()[:24] + ".json")
 
 
-def get(ns, key):
-    p = _path(ns, key)
+def get(ns, key, cdir=None):
+    p = _path(ns, key, cdir)
     if not p or not os.path.isfile(p):
         return None
     try:
@@ -92,12 +93,12 @@ def memoisable(value) -> bool:
     return bool(_ENTITLEMENT_RE.search(txt))
 
 
-def put(ns, key, value):
+def put(ns, key, value, cdir=None):
     """Memoise `value` unless it is a transport error or a transient (cap/budget/quota) skip. Returns
     True when written."""
     if not memoisable(value):
         return False
-    p = _path(ns, key)
+    p = _path(ns, key, cdir)
     if not p:
         return False
     try:

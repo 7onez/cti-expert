@@ -104,29 +104,49 @@ site:github.com "<org_name>" ".env" OR "config.json" password
 site:github.com "<domain.com>" "db_password" OR "database_url"
 ```
 
-## 4a. GrayHatWarfare — open buckets & exposed files (`/secrets`, `/docleak`)
+## 4a. GrayHatWarfare — buckets, short links, public git (`/grayhatwarfare`, `/secrets`, `/docleak`)
 
-Beyond source-code secrets, `/secrets` and `/docleak` also search publicly readable object
-storage (S3, Azure Blob, GCS, DO Spaces) and the files inside it via GrayHatWarfare
-(`wp_buckets.py`). With `GRAYHATWARFARE_API_KEY` set the search is filterable and paginated; with
-no key it degrades to the keyless `site:buckets.grayhatwarfare.com` dork (never an error).
+One `GRAYHATWARFARE_API_KEY` opens three corpora (`wp_buckets.py`); keyless, each degrades to its
+`site:<index>.grayhatwarfare.com` dork (never an error, never "no exposure"):
 
-**Pipeline lead (auto-fired):** the deterministic case pipeline emits a `grayhatwarfare:<apex>`
-enrichment lead for every estate apex (closable via `enrichment-done`) and the cluster assessment
-carries an *Exposure (leak surface — not attribution)* section for any bucket rows a collection
-recorded. Bucket hits are graded EXPOSURE: a bucket carrying the brand label may be the brand's own,
-a squatter's, or an unrelated tenant's — it is never a same-operator pivot and never seeds the frontier.
+- **Buckets** — publicly readable S3 / Azure Blob / GCS / DO Spaces and the files inside them.
+- **Shortener corpus** — the long URLs goo.gl / bit.ly / tinyurl links expanded to, with the short link
+  and its discovery date (2017–2025; historical, so a row proves the URL existed and was shared, not
+  that it is live). Per apex it lists every host a short link ever pointed at (also a
+  `subdomain_enum` source) and the long URLs on them: hidden paths, documents, invite/ref parameters.
+  `short-handle` finds the short links an operator spread for a Telegram handle or WhatsApp number.
+- **Git corpus** — committers whose author e-mail sits on a **self-hosted** mail domain (a managed
+  provider such as gmail.com is refused — that list is strangers), repository files whose content
+  carries a token (only hits whose raw file was fetched and the token found count as code reuse),
+  and the files of one repository TruffleHog flagged (detector tags + commits, never the secret).
+
+**Auto-fired:** `pipeline open` runs the per-apex sweep (buckets for the label, shortener hosts + URLs,
+committers) once per apex per case when keyed — the loop only under `--full`, never under
+`--free-only` / `no_spend` — into `cases/<id>/grayhatwarfare/` (`exposure.json`, `short_urls.json`),
+closes the `grayhatwarfare:<apex>` enrichment lead, and renders the assessment's *Exposure (leak
+surface — not attribution)* section. Per apex it pulls up to 50 shortener hosts and 1000 long URLs
+(`limits` in `WebPivot/references/grayhatwarfare.json`). In the cross-type harness loop the same key
+adds three metered corpus routes — `ghw.git_code`, `ghw.git_committers`, `ghw.short_handle` — that
+`propose()` offers only inside the round's approval proposal.
 
 ```bash
 # buckets whose NAME matches the org/domain keyword (→ /secrets asset discovery)
 uv run intel.py buckets buckets <org-or-domain> --limit 20
 # exposed FILES matching the keyword (→ /docleak leaked-document discovery)
 uv run intel.py buckets files <domain> --limit 20
+# documents short links exposed on the estate's hosts
+uv run intel.py buckets short-urls portal.example.com,files.example.com --ext pdf,xlsx,docx
+# persist into a case + KB facts (on-demand form of the auto-fire)
+uv run intel.py grayhatwarfare lookup git-secrets owner/repo --case CASE-0001
+# kit-path recurrence across every historical long URL the case collected
+uv run intel.py paths patterns "$INTEL_HOME/cases/CASE-0001/grayhatwarfare/short_urls.json"
 ```
 
-**Grading:** an exposed bucket is graded **EXPOSURE**, never a same-operator cluster edge — two
-sites in one public bucket share a hosting provider, not an operator. Findings feed the exposure
-layer and responsible disclosure, not attribution edges.
+**Grading (rungs.json):** buckets, short links and secret files are **EXPOSURE** — facts, never a
+cluster edge (two sites in one public bucket share a hosting provider, not an operator). A committer
+on the apex mail domain is `git.committer_email` and verified code reuse is `git.code` — both **kit**:
+git author e-mails are self-asserted and shared code is shared kit, so confirm the account behind a
+committer with `/github-osint` before naming anyone.
 
 ---
 

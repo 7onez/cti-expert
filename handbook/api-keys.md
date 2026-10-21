@@ -61,7 +61,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | Spamhaus SIA | `SPAMHAUS_USERNAME` + `SPAMHAUS_PASSWORD` | free (Developer License: 6 months, 5,000 queries/month) | `/threat-check`,`/scam-check` **fallback** — queried only when the primary feeds did not corroborate MALICIOUS: IP → XBL/CSS/BCL listing history (active = signal, expired = note), domain → DBL listing or abuse tag on a negative score (sinkhole/neverlist tags override, compromised/abused = victim note). No credits, so it runs under `--free-only`; the vendor's 429 is the only limit. A lapsed licence fails login → `unavailable`, never clean. 24 h token cached in `.spamhaus-token.json`; 1 query/IP, 2/domain | spamhaus.com/data-access/intelligence-api-developer-license |
 | **ChongLuaDao** ⭐ | `CHONGLUADAO_API_KEY` | premium | **first-party** — `/cld`,`/scam-check`,`/threat-check`,`/phone`,`/breach-deep`,`/email-deep`,`/vuln-check`,`/impersonate`,`/webpivot --whois`: URL/IP/hash/email/phone/bank IoC verdicts (server-side + passive), 20M-URL denylist search, data-leak/breach exposure, deep AI URL analysis, brand lookalikes, CVE/KEV feeds. See [`connectors/chongluadao-api.md`](../connectors/chongluadao-api.md) | chongluadao.vn |
 | Intelligence X | `INTELX_API_KEY` | freemium | `/breach-deep`, darknet: dark-web/paste/leak selectors | intelx.io |
-| GrayHatWarfare | `GRAYHATWARFARE_API_KEY` | freemium | `/secrets`,`/docleak`: open S3/Azure/GCS/Spaces buckets + exposed files by keyword/domain — **EXPOSURE, not a same-operator pivot** | grayhatwarfare.com/account |
+| GrayHatWarfare | `GRAYHATWARFARE_API_KEY` | freemium | `/grayhatwarfare`,`/secrets`,`/docleak`: open S3/Azure/GCS/Spaces buckets + files; **shortener corpus** (hosts + historical long URLs behind goo.gl/bit.ly links; a Telegram/WhatsApp handle's short links); **git corpus** (committers on a self-hosted mail domain, repo files carrying a token, TruffleHog-flagged files) — **EXPOSURE / leads, never a same-operator pivot** | grayhatwarfare.com/account |
 | ANY.RUN | `ANYRUN_API_KEY` | freemium | `/anyrun` is TI Lookup (separate licence). Keyed `/cti` spending runs automatically download, statically analyse and privately submit discovered APKs/installers; `--free-only`, `no_spend`, default `loop` and hostile/no-direct-contact posture suppress uploads. A public-only plan refuses unless `ANYRUN_ALLOW_PUBLIC=1`; direct `anyrun_submit` stays ask-first and harness-gated by `HARNESS_ALLOW_SUBMIT=1`. | app.any.run/profile |
 | **Code / repos** ||||
 | GitHub token | `GITHUB_TOKEN` | free | `/github-osint`,`/secrets`: higher limits, repo/code discovery | github.com/settings/tokens |
@@ -104,11 +104,13 @@ of the 50/month Free key), **urlscan PRO** (content search; **hostname lifecycle
 NS/A eras, left-censored when the walk is truncated; verdict rows), **WhoisXML** (reverse WHOIS;
 **WHOIS history** is explicit opt-in — `--whois-history purchase`, seeds/cluster members only, ~50 DRS
 per domain; the render path never buys it), **IntelX** (auto-fires in `pipeline open`; in the loop
-only under `--full`; a selector is searched once per CASE), **GrayHatWarfare** (an exposure lead per
-apex, never a same-operator pivot).
+only under `--full`; a selector is searched once per CASE), **GrayHatWarfare** (auto-fires per apex in
+`pipeline open`, loop only under `--full`: buckets + shortener hosts/URLs + committers — exposure and
+leads, never a same-operator pivot).
 
 Two cross-cutting rules. **Entitlement is measured, not assumed:** free account probes (urlscan
-quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`, Validin
+quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`, GrayHatWarfare
+`/api/account`, Validin
 `/api/paths`) fill `meta.capability.plans` once per case (`cases/<id>/capability_plans.json`); a key
 measured `free` on urlscan skips the Pro calls that would 403. **Bought once per case, not once per
 host:** the collector runs one process per host, so per-origin reverse-IP verification, IntelX

@@ -130,7 +130,7 @@ CLI-first cascade:
 
 **Cloud Storage Exposure:**
 - Search: `site:buckets.grayhatwarfare.com "example"` (indexed open buckets)
-- API (keyed): `uv run "$SKILL_DIR/intel_engine/WebPivot/tools/wp_buckets.py" buckets <name>` / `files <name>` — GrayHatWarfare open buckets + exposed files by keyword/domain, filterable and paginated (needs `GRAYHATWARFARE_API_KEY`; the dork above is the keyless fallback). Graded EXPOSURE, not a same-operator pivot
+- API (keyed): `uv run "$SKILL_DIR/intel_engine/WebPivot/tools/wp_buckets.py" buckets <name>` / `files <name>` — GrayHatWarfare open buckets + exposed files by keyword/domain, filterable and paginated (needs `GRAYHATWARFARE_API_KEY`; the dork above is the keyless fallback). Same key: `short-urls <host>` lists the historical long URLs public short links pointed at on a host (documents a bucket search never sees), `git-secrets <owner/repo>` the files TruffleHog flagged. Graded EXPOSURE, not a same-operator pivot
 - Run: `s3scanner scan --bucket example-name` or `cloud_enum -k example`
 - Search: `"example" site:s3.amazonaws.com OR site:blob.core.windows.net OR site:storage.googleapis.com`
 - Look for: Open S3 buckets, Azure blobs, GCS buckets with directory listing enabled

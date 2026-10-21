@@ -198,9 +198,9 @@
         "metered": true,
         "impact": "medium",
         "power_without_key": 20,
-        "unlocks": "scriptable open-bucket (S3/Azure/GCS/DO Spaces) and exposed-file search by keyword/domain/extension, filterable and paginated — the exposure-discovery layer for /secrets and /docleak. Graded EXPOSURE, never a same-operator cluster edge",
-        "without_it": "public-bucket exposure is only reachable via the keyless site:buckets.grayhatwarfare.com dork — first page, no filetype/date/keyword filters and no pagination — so a domain's exposed buckets/files are undercounted, not proven absent",
-        "free_fallback": "the site:buckets.grayhatwarfare.com Google/Bing dork and the s3:GetObject / directory-listing probes in discovery-paths.md",
+        "unlocks": "three corpora behind one key: open-bucket (S3/Azure/GCS/DO Spaces) + exposed-file search; the shortener corpus (every host and historical long URL public short links pointed at under an apex, and a Telegram/WhatsApp handle's short links); the git corpus (committers on a self-hosted mail domain, repo files carrying a token — raw-verified, TruffleHog-flagged files of a repo). Auto-fires per apex in pipeline open. Graded EXPOSURE / leads, never a same-operator cluster edge",
+        "without_it": "only the keyless site:buckets / site:shorteners / site:git .grayhatwarfare.com dorks — first page, no filters, no pagination — so exposed buckets, historical short-link URLs and committer identities are undercounted, not proven absent",
+        "free_fallback": "the site:<index>.grayhatwarfare.com Google/Bing dorks, the s3:GetObject / directory-listing probes in discovery-paths.md, and /github-osint for committer identities",
         "signup": "https://grayhatwarfare.com/account"
       },
       "VALIDIN_API_KEY": {

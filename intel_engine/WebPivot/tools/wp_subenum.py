@@ -309,8 +309,44 @@ def enumerate_apex(apex, tools=None, timeout=None, env=None, extra_env=None, pc_
             if n:
                 names.setdefault(n, set()).add("findomain")
                 runs["findomain"]["names"] += 1
+    if _ghw_on(free_only):
+        # GrayHatWarfare shortener corpus: every host a public short link ever pointed at under the
+        # apex — portals and file hosts passive DNS / CT never saw. Keyed; never under free_only.
+        try:
+            import wp_buckets
+            res = wp_buckets.short_subdomains(apex)
+            runs["grayhatwarfare"] = {"rc": 1 if res.get("error") else 0, "names": 0,
+                                      "stderr": str(res.get("error") or "")[-300:]}
+            for s in res.get("subdomains") or []:
+                n = _clean(s.get("host"), apex)
+                if n:
+                    names.setdefault(n, set()).add("grayhatwarfare")
+                    runs["grayhatwarfare"]["names"] += 1
+        except Exception as e:  # noqa: BLE001
+            runs["grayhatwarfare"] = {"rc": -1, "names": 0, "stderr": str(e)[-300:]}
     names.pop(apex, None)
     return names, runs
+
+
+def _ghw_on(free_only=False):
+    """True when the GrayHatWarfare shortener source may run (keyed and not a free-only posture)."""
+    if free_only:
+        return False
+    try:
+        import wp_buckets
+        return bool(wp_buckets.ghw_configured())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ghw_case_scope(case_dir):
+    """wp_buckets.case_scope(case_dir), or a no-op when the client is unavailable."""
+    try:
+        import wp_buckets
+        return wp_buckets.case_scope(case_dir)
+    except Exception:  # noqa: BLE001
+        import contextlib
+        return contextlib.nullcontext()
 
 
 def _resolve(name, timeout=4.0):
@@ -359,12 +395,13 @@ def run(apex, case_dir=None, timeout=None, no_resolve=False, free_only=False, sy
            "free_only": free_only, "provider_config": None if free_only else cfg,
            "provider_sync": {"filled": sync["filled"], "kept": sync["kept"], "missing": sync["missing"]},
            "subdomains": [], "live": [], "dead": [], "runs": {}}
-    if not tools:
+    if not tools and not _ghw_on(free_only):
         res["error"] = ("no enumerator installed (subfinder / amass / assetfinder / findomain) — "
                         "scripts/install.sh --all installs subfinder")
     else:
-        names, runs = enumerate_apex(apex, tools, timeout=timeout, env=env,
-                                     pc_path=None if free_only else cfg, free_only=free_only)
+        with _ghw_case_scope(case_dir):   # the GHW source memoises under THIS case (set in-thread)
+            names, runs = enumerate_apex(apex, tools, timeout=timeout, env=env,
+                                         pc_path=None if free_only else cfg, free_only=free_only)
         res["runs"] = runs
         ips = {} if no_resolve else resolve_many(sorted(names))
         for n in sorted(names):

@@ -75,7 +75,7 @@
 | [**Censys**](https://censys.com) | 全网主机与证书扫描——服务器侧视角；返回同一叶证书上的每个主机（免费版即可用） | `/censys` · `/cert-pivot` |
 | [**URLScan.io**](https://urlscan.io) | 被动网站扫描——页面提供了什么、与谁通信，无需触碰目标即可抓取 | `/webpivot` · `/impersonate` |
 | [**SerpApi**](https://serpapi.com) | 搜索引擎 + Google 广告透明度结果 API——谁**付费**引流，以及多引擎 dork 结果 | `/serp` · `/search-pivot` |
-| [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）——评级为**暴露**，并非同一运营者枢轴 | `/secrets` · `/docleak` |
+| [**GrayHatWarfare**](https://grayhatwarfare.com) | 开放云存储桶与暴露文件检索（S3/Azure/GCS/Spaces）、短链接语料库（goo.gl/bit.ly 短链背后的历史长 URL）与公开 git 语料库（提交者、代码中的令牌、泄露密钥文件）——评级为**暴露**，并非同一运营者枢轴 | `/grayhatwarfare` · `/secrets` · `/docleak` · 在 `pipeline open` 中按 apex 自动执行 |
 | [**Social Links**](https://sociallinks.io) | OSINT 调查平台——覆盖社交媒体、区块链与暗网的 1000+ 方法（SL Professional / Crimewall、Maltego transforms） | OSINT 方法论与数据 |
 | [**Validin**](https://validin.com) | DNS + 证书 + favicon + 响应体哈希汇于一张图谱——被动 DNS、子域枚举、反向 IP 与主机响应哈希枢轴（免费 Community 密钥） | 已原生接入 `/webpivot`（域名查询、信誉、按证书与 favicon 反查主机）· MO-neighbour 数据源 · `/cti-pivot` |
 | [**Netlas**](https://netlas.io) | 独立的互联网资产索引——一把密钥背后的 DNS、扫描响应、WHOIS 与证书四个集合；`domains a:<origin-ip>` 可把一个未经 CDN 的源站反查到每个 apex 并附带日期 | `/webpivot` MO-neighbour 数据源 · `intel.py netlas` · 套餐权益探测 |
@@ -664,7 +664,7 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 /cti-expert      # 先加载技能 —— 下面四条是约定命令
 /onboard         # 交互式首次运行引导
 /capabilities    # 当前缺失哪些证据类别 + 可替代的免费路径
-/backend         # 确认 Tier-1 类型化 MCP（94 个工具）在跑，而非 Tier-3 无状态
+/backend         # 确认 Tier-1 类型化 MCP（95 个工具）在跑，而非 Tier-3 无状态
 /apikeys status  # 无密钥也能跑；添加免费/付费密钥以解锁反向枢轴
 ```
 
@@ -733,13 +733,13 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 
 ### 7 &mdash; 完整流水线与完整 harness（最深模式）
 
-`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 94 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
+`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 95 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
 
 > **`/case` 本身就会持久化一个带版本的案件 —— 持久化这一步没有任何额外出网。** 当 `/backend` 在线（Tier 1/2）时，一次 `/case` 运行会**复用它刚刚采集到的枢轴**（**不会**重新抓取）：把它们写入 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/`，并以复用模式运行确定性流水线 —— `intel.py pipeline open <CASE-ID> <seeds> --no-collect` —— 跳过实时抓取，在这份原始数据上跑完整条链（入库 → recall → 风险 → 聚类 → `case_graph.json` → ICD-203 `assessment.md`）。完整的带版本案件落在 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/`（**不是你的当前目录**），并与每一个既往案件做关联。**如果案件尚未收敛**（`intel.py convergence <ID>` 报告的状态 ≠ `converged`，或 `/frontier` 仍列出未结线索）**且**姿态为主动，`/case` 随后会**自动升级到 `/harness` 深化循环** —— 免密钥优先（使用 CLI 自身的模型），对敌对基础设施的出网**硬性设闸**（harness 的 `audit.py` 在 `hostile=True` 时拒绝出站采集），用 `--no-harness` 关闭。不带 `--no-collect` 的普通 `/pipeline open` 与 `/cti-case` 仍会**采集** —— 它们直接重新抓取每个种子 —— 因此只应在设置好出网姿态（`/scope`、`/cti-proxy`，或对敌对基础设施用 `--passive`）之后，为一个此前从未采集过的**全新**案件手动运行。Tier 3 / 没有主机种子 → `/case` 静默跳过这次交接。
 
 ```bash
 /cti-expert                           # 先加载技能（下面是约定命令）
-/backend                              # 确认深度层在线（Tier-1 = 94 个 MCP 工具）
+/backend                              # 确认深度层在线（Tier-1 = 95 个 MCP 工具）
 
 # A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -922,7 +922,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 57 项技术，以及运行在内置 `intel_engine` 之上的 94 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
+**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 57 项技术，以及运行在内置 `intel_engine` 之上的 95 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -1316,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（94 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（95 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
     ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）

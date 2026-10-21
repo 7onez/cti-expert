@@ -17,9 +17,10 @@
   },
 
   "propose_type_exclude": {
-    "_comment": "Route → selector types case_state.propose() must never OFFER on that route (a manual corpus-search may still run it). anyrun.lookup on an IP returns sandbox detonations that merely contacted the address — no ownership yield. Fallback in code: {anyrun.lookup: [ip]}.",
+    "_comment": "Route → selector types case_state.propose() must never OFFER on that route (a manual corpus-search may still run it). anyrun.lookup on an IP returns sandbox detonations that merely contacted the address — no ownership yield. ghw.git_committers on a domain duplicates the per-apex GrayHatWarfare auto-fire the pipeline already ran for the estate. Fallback in code: {anyrun.lookup: [ip]}.",
     "entries": {
-      "anyrun.lookup": ["ip"]
+      "anyrun.lookup": ["ip"],
+      "ghw.git_committers": ["domain"]
     }
   },
 
@@ -136,6 +137,25 @@
       "types": ["hash"],
       "metered": false,
       "count_probe": "none"
+    },
+    "ghw.git_code": {
+      "_comment": "GrayHatWarfare git corpus: public repository files whose CONTENT carries the token (tracker id, wallet, distinctive kit string — a string with spaces or under 10 chars is rejected by query_for). Only raw-verified hits are git.code (kit, fact-only — never a node); the rest are mentions. Metered: always in the round's proposal.",
+      "types": ["string", "wallet"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "ghw.git_committers": {
+      "_comment": "GrayHatWarfare git corpus: committer identities for an exact e-mail (or, by manual corpus-search, a self-hosted mail domain — managed mail is refused). Rows are git.committer_email (kit): self-asserted author e-mails, leads to confirm with github_harvest.",
+      "types": ["email", "domain"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "ghw.short_handle": {
+      "_comment": "GrayHatWarfare shortener corpus: the goo.gl/bit.ly short links whose long URL is the Telegram handle or WhatsApp number — when and how the operator spread it. Historical (2017–2025).",
+      "types": ["telegram", "phone"],
+      "metered": true,
+      "count_probe": "none",
+      "mention_only": true
     },
     "enrich.host": {
       "_comment": "FULL keyed enrichment of a host the loop already collected free-only (pivot_extract's enrich_live engines + the default reverse-WHOIS purchase). Loop-driven collects always run --free-only; this metered item is how a host gets the keyed layers — only after the analyst approves it. collected_only: proposed for collected hosts, never for KB-linked peers.",

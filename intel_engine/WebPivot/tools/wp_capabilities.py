@@ -123,7 +123,7 @@ def key_status():
 # persisted per case (wp_plans) so N collector subprocesses probe once. Censys is deliberately NOT
 # here: nothing but its metered search can tell Free from Starter, so the search itself records
 # the verdict (wp_censys.censys_search) — gating it on a plan only it can discover would deadlock.
-# GrayHatWarfare has no quota endpoint at all -> "unknown" (presence only); we never spend to learn.
+# GrayHatWarfare answers the FREE /api/account endpoint (free|premium|enterprise + expiry) — no search spent.
 def _probe_urlscan():
     import wp_net
     q = wp_net.urlscan_quotas()
@@ -198,12 +198,8 @@ def _probe_validin():
 
 
 def _probe_grayhatwarfare():
-    try:
-        import wp_buckets
-        present = wp_buckets.ghw_configured()
-    except Exception:  # noqa: BLE001
-        present = bool(_secret("GRAYHATWARFARE_API_KEY", "GRAYHAT_API_KEY", "GHW_API_KEY"))
-    return {"tier": "unknown", "note": "no free quota endpoint — presence only"} if present else None
+    import wp_buckets
+    return wp_buckets.account()
 
 
 def _probe_webamon():
@@ -220,8 +216,7 @@ _PROBES = (("urlscan", _probe_urlscan), ("netlas", _probe_netlas), ("securitytra
 
 def _measured(entry) -> bool:
     """A stored entry counts as MEASURED unless it is `unknown` WITH an error — that is a failed probe
-    (timeout/5xx), not a fact, and must be re-tried next process rather than frozen for the case.
-    GrayHatWarfare's deliberate `unknown` (no error) is a fact and stays."""
+    (timeout/5xx), not a fact, and must be re-tried next process rather than frozen for the case."""
     if not isinstance(entry, dict):
         return entry is not None
     return not (entry.get("tier") == "unknown" and entry.get("error"))

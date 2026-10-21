@@ -745,7 +745,8 @@ async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
     "(owner edges; kit/neighbour/mention facts only — collecting is not attributing). "
     "`route` is a pivot_map key (urlscan.title, urlscan.identifier, wayback.telegram, "
     "wayback.pdf, wayback.news, fofa.body, publicwww.source, webamon.corpus, email.deep, "
-    "phone.osint, rwhois.purchase, crypto.counterparties, anyrun.lookup, binary.analyze, …). "
+    "phone.osint, rwhois.purchase, crypto.counterparties, anyrun.lookup, binary.analyze, "
+    "ghw.git_code, ghw.git_committers, ghw.short_handle, …). "
     "`query` is the corpus query string (from pivot_routes.query_for or a hand-built Lucene/"
     "collection query). `case` scopes the ingest provenance. Owner-rung hits become KB edges; "
     "kit/neighbour/mention hits are stored as facts only (collecting ≠ attributing). Tri-state: "
@@ -1963,6 +1964,51 @@ async def intelx_search(args: dict[str, Any]) -> dict[str, Any]:
         return _ok((r.stderr or "intelx produced no output") +
                    "\n\n(Keyless/limited IntelX: nothing was queried. Do NOT report this as "
                    "'the selector appears in no leak' — run the URL above by hand.)")
+    return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
+
+
+@tool(
+    "grayhatwarfare",
+    "GrayHatWarfare — three corpora behind one key, every hit EXPOSURE or a LEAD, never a same-operator "
+    "edge. mode='exposure' (default; `selector` = case domain(s), needs `case`) runs the per-apex sweep "
+    "the pipeline auto-fires: open S3/Azure/GCS/Spaces buckets for the brand label, every host the "
+    "SHORTENER corpus saw under the apex, the historical long URLs those short links expanded to "
+    "(hidden paths, documents, invite/ref params — run url_paths mode='patterns' over "
+    "cases/<case>/grayhatwarfare/short_urls.json), and git committers whose author e-mail is on the "
+    "apex. Single lookups: 'buckets'/'files' (keyword); 'short_subdomains' (apex); 'short_urls' "
+    "(comma list of EXACT hosts, optional `ext`); 'short_handle' (t.me/<h>, @h, wa.me/<n>, +<n> — the "
+    "short links an operator spread for that handle); 'git_committers' (an e-mail, or a SELF-HOSTED "
+    "mail domain — managed mail like gmail.com is refused); 'git_code' (a distinctive token: tracker "
+    "id, wallet, API host — only rows with verified=true, raw file fetched and token present, are "
+    "code reuse = same KIT; the index tokenises, the rest are mentions); 'git_secrets' (owner/repo or "
+    "repo URL — files TruffleHog flagged, tags and commits only, never the secret); 'account' (plan "
+    "tier, free). The shortener corpus is historical (discovered 2017–2025): a hit proves a URL existed "
+    "and was shared, never that it is live. Git author e-mails are self-asserted: confirm a committer "
+    "with github_harvest before naming anyone. With `case` results persist under "
+    "cases/<case>/grayhatwarfare/ and land in the KB as facts only. Keyless it returns the site: dork "
+    "to run by hand — never report that as 'no exposure'.",
+    {"selector": str},  # mode, case, limit, ext -> args.get()
+    annotations=READONLY,
+)
+async def grayhatwarfare(args: dict[str, Any]) -> dict[str, Any]:
+    script = os.path.join("tools", "ghw_exposure.py")
+    mode = str(args.get("mode") or "exposure").lower().replace("-", "_")
+    sel = str(args.get("selector") or "")
+    case = str(args.get("case") or "")
+    if mode == "exposure":
+        if not case:
+            return _err("grayhatwarfare mode='exposure' needs `case` — it persists into "
+                        "cases/<case>/grayhatwarfare/; use a single-lookup mode without one.")
+        cmd = [PY, script, "exposure", case, *sel.replace(",", " ").split()]
+    else:
+        cmd = [PY, script, "lookup", mode, sel]
+        if case:
+            cmd += ["--case", case]
+        if args.get("limit"):
+            cmd += ["--limit", str(int(args["limit"]))]
+        if args.get("ext"):
+            cmd += ["--ext", str(args["ext"])]
+    r = _run(cmd, timeout=900)
     return _ok((r.stdout or "") + ("\n" + r.stderr if r.stderr else ""))
 
 
@@ -3649,7 +3695,7 @@ for _t in list(globals().values()):
 
 COLLECT_SERVER = create_sdk_mcp_server(
     "collect", tools=[pivot_extract, doc_metadata, analyze_artifact, fallback_probe,
-                      impersonation_hunt, search_pivot, censys, intelx_search,
+                      impersonation_hunt, search_pivot, censys, intelx_search, grayhatwarfare,
                       anyrun_lookup, anyrun_submit, webamon_scan, capability_check,
                       url_paths, capture_evidence, capture_screenshot, serp_ads, passive_ssl, ip_info,
                       domain_liveness,
@@ -3679,7 +3725,7 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__analyze_artifact",
                  "mcp__collect__fallback_probe", "mcp__collect__impersonation_hunt",
                  "mcp__collect__search_pivot", "mcp__collect__censys",
-                 "mcp__collect__intelx_search",
+                 "mcp__collect__intelx_search", "mcp__collect__grayhatwarfare",
                  "mcp__collect__anyrun_lookup", "mcp__collect__anyrun_submit",
                  "mcp__collect__webamon_scan",
                  "mcp__collect__capability_check",

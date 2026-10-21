@@ -2,7 +2,7 @@
   "_comment": "Rung table for cross-type auto-pivot attribution (tools/selector_types.py rung_for). A shared artifact only becomes an owner-link, a kit fact, or a neighbour observation according to this table — collecting is not attributing. owner = may seed same-operator edges and operator_leads; kit = stored as add_fact only, never an edge/cluster member/operator_lead; neighbour = co-tenancy / exchange flow, collected but never attributed. Unknown classes resolve to kit (conservative). Edit a class here when evidence shows a token is owner-tied or merely template-shared. RULE 1: identifier CLASSES only, never case data.",
 
   "rungs": {
-    "_comment": "identifier class → owner|kit|neighbour. analytics.* (GA/GTM/gtag/FB/TikTok/Metrica) and exact cert / registrant WHOIS / bot-token / discord-webhook / non-exchange wallet are owner. Ad/affiliate IDs, other tokens, html-id, telegram.username, page-scraped contacts, bank account, username/string/filename/hash/title/favicon/tx_id are kit. Exchange wallets and IP co-tenants are neighbour. ads.* with no more-specific entry is treated as kit by rung_for. ads.payee (the legal payee name/domain Google's sellers.json names for an AdSense pub id — wp_sellers / sellers_lookup) is owner: the pub id is kit, the entity paid for its impressions is not. app.developer_url (a store listing's developer website whose registrable domain equals a case domain — wp_appdev / app_developer) and app.apple_team (the 10-char Apple Developer team ID in a Mach-O signing identity — BinaryPivot) are owner.",
+    "_comment": "identifier class → owner|kit|neighbour. analytics.* (GA/GTM/gtag/FB/TikTok/Metrica) and exact cert / registrant WHOIS / bot-token / discord-webhook / non-exchange wallet are owner. Ad/affiliate IDs, other tokens, html-id, telegram.username, page-scraped contacts, bank account, username/string/filename/hash/title/favicon/tx_id are kit. Exchange wallets and IP co-tenants are neighbour. ads.* with no more-specific entry is treated as kit by rung_for. ads.payee (the legal payee name/domain Google's sellers.json names for an AdSense pub id — wp_sellers / sellers_lookup) is owner: the pub id is kit, the entity paid for its impressions is not. app.developer_url (a store listing's developer website whose registrable domain equals a case domain — wp_appdev / app_developer) and app.apple_team (the 10-char Apple Developer team ID in a Mach-O signing identity — BinaryPivot) are owner. git.committer_email (a GrayHatWarfare git committer whose author e-mail sits on the case's self-hosted mail domain — wp_buckets git_committers) and git.code (a public repository file verified to carry the case token — git_code) are kit: git author e-mails are unauthenticated and shared code is shared kit.",
     "entries": {
       "owner_link": "owner",
       "kit_link": "kit",
@@ -47,15 +47,18 @@
       "title": "kit",
       "favicon": "kit",
       "tx_id": "kit",
+      "git.committer_email": "kit",
+      "git.code": "kit",
 
       "ip.cotenant": "neighbour"
     }
   },
 
   "fact_only_node_classes": {
-    "_comment": "Route → rung classes that are stored as KB facts on the origin page and NEVER registered as typed nodes in state.json (so propose() never pivots on them). A Quarry page export lists every contact the page scraped — a directory page yields hundreds of strangers' phones/emails. The \"*\" row applies to EVERY route: a token contract (wallet.token_contract — USDT-TRC20 and the like, WebPivot/references/crypto_reference_addresses.json) is a public constant, so a node on it would balance-look-up and pivot on every site that accepts the token. Owner classes (whois.registrant_*) on the same route are unaffected. Fallback in code: {quarry.page: [page.email, page.phone], *: [wallet.token_contract]}.",
+    "_comment": "Route → rung classes that are stored as KB facts on the origin page and NEVER registered as typed nodes in state.json (so propose() never pivots on them). A Quarry page export lists every contact the page scraped — a directory page yields hundreds of strangers' phones/emails. The \"*\" row applies to EVERY route: a token contract (wallet.token_contract — USDT-TRC20 and the like, WebPivot/references/crypto_reference_addresses.json) is a public constant, so a node on it would balance-look-up and pivot on every site that accepts the token. ghw.git_code rows are repository URLs (code reuse) — a fact to read, not a selector to pivot on. Owner classes (whois.registrant_*) on the same route are unaffected. Fallback in code: {quarry.page: [page.email, page.phone], *: [wallet.token_contract]}.",
     "entries": {
       "quarry.page": ["page.email", "page.phone"],
+      "ghw.git_code": ["git.code"],
       "*": ["wallet.token_contract"]
     }
   },
@@ -64,7 +67,9 @@
     "_comment": "Per-class caveats that travel with an owner link whose strength cannot be fully measured. Informational — rung_for never reads this group; it is the analyst-facing note for the class.",
     "entries": {
       "whois.privacy_customer": "Privacy-service customer id ('Contact Privacy Inc. Customer <digits>'). Owner-link candidate when two domains share one id, but its population CANNOT be measured: reverse-WHOIS tokenises the term and returns every domain behind the same privacy proxy, so never reverse it and never read a missing count as rarity.",
-      "txt.verification": "Site/mail verification token from an apex TXT record. Owner only after the collector checked the provider's own zone and the token is absent there; a token found in the provider zone is a provider-wide constant (never emitted), and an unchecked token is ingested as a lead fact, not an edge."
+      "txt.verification": "Site/mail verification token from an apex TXT record. Owner only after the collector checked the provider's own zone and the token is absent there; a token found in the provider zone is a provider-wide constant (never emitted), and an unchecked token is ingested as a lead fact, not an edge.",
+      "git.committer_email": "Git author e-mail is self-asserted: anyone can commit as anyone@<domain>. A committer on the case's own self-hosted mail domain is a LEAD to confirm on the hosting platform (github_harvest: the account behind the commits, its other repos and e-mails); a managed mail domain (gmail.com…) is never searched domain-wide.",
+      "git.code": "A repository file that hard-codes the case token (tracker id, wallet, API host) is the same KIT, not the same operator — resellers and forks share code. Only hits whose raw file was fetched and the token found count; the content index tokenises, so unverified hits stay mentions."
     }
   }
 }

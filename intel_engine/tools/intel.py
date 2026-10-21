@@ -379,6 +379,12 @@ def cmd_open(a):
         _subenum_once(case_dir, [h for h in hosts if h not in onions],
                       free_only=getattr(a, "free_only", False), jobs=max(1, a.jobs))
 
+    # 1e) GrayHatWarfare exposure — ONCE per apex per case: open buckets for the brand label, the
+    #     shortener corpus's hosts + historical long URLs, committers on the apex mail domain. Keyed
+    #     like IntelX: never under --no-collect, --free-only or a no-spend posture.
+    if not getattr(a, "no_collect", False) and _ghw_fire(case_dir, free_only=getattr(a, "free_only", False)):
+        _write_ghw_exposure(case_dir, a.case, hosts)
+
     # 1d) EXPANSION ANCHOR: the analyst's seeds are hop 0 in state.json, so a later `loop` knows which
     #     hosts are the operator's own registrations and which were reached over owner-link hops.
     try:
@@ -469,7 +475,7 @@ def cmd_open(a):
             md = evidence_report.render_cluster_report(
                 results, case=a.case, analyst=a.analyst,
                 classification=a.classification, kb_dir=KB,
-                whois_history=whois_mode, whois_history_for=whois_for)
+                whois_history=whois_mode, whois_history_for=whois_for, ghw=_ghw_doc(case_dir))
             md += _enrichment_md(case_dir)
             if _is_loop_authored_md(assess_path):
                 with open(assess_path, "w", encoding="utf-8") as fh:
@@ -597,7 +603,8 @@ def _subenum_once(case_dir, hosts, timeout=None, free_only=False, jobs=4):
         import case_state as _cs
         import concurrent.futures as _cf
         tools = wp_subenum.which_tools()
-        if not tools:
+        no_spend = free_only or _case_no_spend(case_dir)
+        if not tools and not wp_subenum._ghw_on(no_spend):
             print("   subdomain enumeration: no enumerator installed (subfinder/amass/assetfinder/findomain) — skipped")
             return
         apexes = sorted({_cs._frontier_apex(h) for h in hosts if h and "." in h})
@@ -605,7 +612,7 @@ def _subenum_once(case_dir, hosts, timeout=None, free_only=False, jobs=4):
                 and not os.path.isfile(os.path.join(case_dir, "subenum", a + ".json"))]
         if not todo:
             return
-        no_spend = free_only or _case_no_spend(case_dir)
+        sources = list(tools) + (["grayhatwarfare"] if wp_subenum._ghw_on(no_spend) else [])
         sync = wp_subenum.sync_providers(free_only=no_spend)   # ONCE: threads must not rewrite the config
 
         def _one(apex):
@@ -620,7 +627,7 @@ def _subenum_once(case_dir, hosts, timeout=None, free_only=False, jobs=4):
                 p = os.path.join(case_dir, "subenum", apex + ".json")
                 filled = (res.get("provider_sync") or {}).get("filled") or []
                 print(f"   subdomains {apex}: {len(res.get('subdomains') or [])} name(s) via "
-                      f"{', '.join(tools)} — {len(res.get('live') or [])} resolving"
+                      f"{', '.join(sources)} — {len(res.get('live') or [])} resolving"
                       + (f" (subfinder keyed from .env: {', '.join(filled)})" if filled else "")
                       + f" -> {os.path.relpath(p, ROOT)}")
     except Exception as e:  # noqa: BLE001
@@ -783,6 +790,56 @@ def _intelx_flag(case_dir, loop=False, full=False):
     if not _intelx_keyed() or _case_no_spend(case_dir):
         return []
     return ["--intelx"]
+
+
+def _ghw_fire(case_dir, loop=False, full=False, free_only=False):
+    """True when the pipeline should auto-fire GrayHatWarfare exposure (buckets + shortener corpus +
+    git committers). Same spend rule as IntelX: a key, never --free-only, never a no-spend posture —
+    and in the loop ONLY under --full."""
+    if (loop and not full) or free_only or _case_no_spend(case_dir):
+        return False
+    try:
+        if WP not in sys.path:
+            sys.path.insert(0, WP)
+        import wp_buckets
+        return bool(wp_buckets.ghw_configured())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _write_ghw_exposure(case_dir, case, hosts):
+    """GrayHatWarfare exposure ONCE per apex per case (tools/ghw_exposure.py) ->
+    cases/<case>/grayhatwarfare/exposure.json + short_urls.json, ingested as KB FACTS (mentions / kit),
+    never edges, never frontier seeds. Onions never leave the box. Never raises."""
+    try:
+        sys.path.insert(0, HERE)
+        import ghw_exposure
+        import case_state as _cs
+        apexes = sorted({_cs._frontier_apex(h) for h in hosts
+                         if h and "." in h and not collect_core.wp_exhaust.is_onion_host(_host(h))})
+        apexes = [x for x in apexes if x and not re.fullmatch(r"[\d.]+", x)]
+        if not apexes:
+            return None
+        ran = ghw_exposure.run_apexes(case, apexes, case_dir=case_dir, kb_root=KB)
+        for s in ran.values():
+            print(f"   grayhatwarfare {s['apex']}: buckets {s['buckets']}, shortener hosts {s['short_hosts']}, "
+                  f"short-link URLs {s['short_urls']}, committers {s['committers']}")
+        if ran:
+            print(f"   -> {os.path.relpath(os.path.join(case_dir, ghw_exposure.DIRNAME, 'exposure.json'), ROOT)}")
+        return ran
+    except Exception as e:  # noqa: BLE001
+        print(f"   note: grayhatwarfare exposure failed ({e}); skipped.")
+        return None
+
+
+def _ghw_doc(case_dir):
+    """The case's GrayHatWarfare exposure document for the assessment, or None."""
+    try:
+        sys.path.insert(0, HERE)
+        import ghw_exposure
+        return ghw_exposure.load(case_dir) or None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _case_no_spend(case_dir):
@@ -1176,7 +1233,8 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None,
         sys.path.insert(0, WP)
         import evidence_report
         md = evidence_report.render_cluster_report(
-            results, case=case, analyst=a.analyst, classification=a.classification, kb_dir=KB)
+            results, case=case, analyst=a.analyst, classification=a.classification, kb_dir=KB,
+            ghw=_ghw_doc(case_dir))
         md += _enrichment_md(case_dir)
         # Never clobber a hand-written assessment — the SAME rule assessment.json follows below.
         mdpath = os.path.join(case_dir, "assessment.md")
@@ -1537,6 +1595,10 @@ def cmd_loop(a):
                     # must not start doing that as a side effect of a refactor. `open` still
                     # archives; that run is analyst-driven.
                     timeout=a.timeout, no_archive=True, extra_flags=extra, force=force_flag)
+        # GrayHatWarfare exposure — the loop's other keyed layer: ONLY under --full, keyed, never on a
+        # no-spend posture, and only for hosts that may still expand the estate (IntelX's leaf rule).
+        if _ghw_fire(case_dir, loop=True, full=getattr(a, "full", False)):
+            _write_ghw_exposure(case_dir, case, expanding_batch)
         # CONSUME OR RETRY: a host that failed this round (a true miss, or collect_core's
         # 'unreachable' collection failure) is not written off after one bad attempt — a 403/SSL
         # blip is often transient. It stays OUT of `consumed` and is re-offered next round (see

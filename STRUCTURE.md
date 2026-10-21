@@ -49,7 +49,8 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
   `dashboard/` (loopback-only run inspector)
 - `intel_engine/tools/` — `intel.py` (deterministic pipeline), `case_state.py` (frontier/reopen +
   `propose`; `ips_pending` = historical origin IPs from `WebPivot/tools/wp_origin_history.py`),
-  `selector_types.py`, `pivot_routes.py` (`corpus-search` dispatcher op),
+  `selector_types.py`, `pivot_routes.py` (`corpus-search` dispatcher op), `ghw_exposure.py`
+  (GrayHatWarfare per-apex exposure → `cases/<id>/grayhatwarfare/`, facts only),
   `kb/*` (KB + correlation + `ingest_typed.py` + `references/rungs.json`), `cert_overlap`,
   `case_store`, …
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)

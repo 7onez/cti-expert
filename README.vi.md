@@ -75,7 +75,7 @@
 | [**Censys**](https://censys.com) | Quét host &amp; chứng chỉ trên toàn Internet — góc nhìn phía máy chủ; mọi host trên đúng một leaf cert (dùng được ở gói miễn phí) | `/censys` · `/cert-pivot` |
 | [**URLScan.io**](https://urlscan.io) | Quét website bị động — trang phục vụ gì và nói chuyện với ai, ghi lại mà không chạm vào mục tiêu | `/webpivot` · `/impersonate` |
 | [**SerpApi**](https://serpapi.com) | API kết quả công cụ tìm kiếm + Google Ads Transparency — ai **trả tiền** để kéo traffic, cùng kết quả dork đa công cụ | `/serp` · `/search-pivot` |
-| [**GrayHatWarfare**](https://grayhatwarfare.com) | Tìm kiếm bucket lưu trữ mở &amp; tệp bị phơi nhiễm (S3/Azure/GCS/Spaces) — xếp loại **phơi nhiễm**, không phải pivot cùng-người-vận-hành | `/secrets` · `/docleak` |
+| [**GrayHatWarfare**](https://grayhatwarfare.com) | Tìm kiếm bucket lưu trữ mở &amp; tệp bị phơi nhiễm (S3/Azure/GCS/Spaces), kho link rút gọn (URL dài lịch sử sau link goo.gl/bit.ly) và kho git công khai (người commit, token trong mã, tệp lộ bí mật) — xếp loại **phơi nhiễm**, không phải pivot cùng-người-vận-hành | `/grayhatwarfare` · `/secrets` · `/docleak` · tự chạy theo apex trong `pipeline open` |
 | [**Social Links**](https://sociallinks.io) | Nền tảng điều tra OSINT — hơn 1000 phương pháp trên mạng xã hội, blockchain và dark web (SL Professional / Crimewall, Maltego transforms) | Phương pháp luận &amp; dữ liệu OSINT |
 | [**Validin**](https://validin.com) | DNS + chứng chỉ + favicon + hash nội dung phản hồi gộp trong một đồ thị — passive DNS, liệt kê subdomain, reverse-IP và pivot hash host-response trên key Community miễn phí | Tích hợp gốc trong `/webpivot` (tra cứu domain, uy tín, host theo chứng chỉ &amp; favicon) · nguồn MO-neighbour · `/cti-pivot` |
 | [**Netlas**](https://netlas.io) | Chỉ mục tài sản Internet độc lập — các bộ sưu tập DNS, phản hồi quét, WHOIS và chứng chỉ sau một key; `domains a:<origin-ip>` đảo ngược một origin không qua CDN ra mọi apex kèm ngày tháng | Nguồn MO-neighbour của `/webpivot` · `intel.py netlas` · thăm dò quyền hạn gói |
@@ -664,7 +664,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-expert      # nạp skill trước — bốn lệnh dưới là lệnh quy ước
 /onboard         # hướng dẫn chạy lần đầu tương tác
 /capabilities    # lớp bằng chứng nào đang thiếu + đường miễn phí thay thế
-/backend         # xác nhận MCP có kiểu Tier-1 (94 công cụ) đang chạy, không phải Tier-3 stateless
+/backend         # xác nhận MCP có kiểu Tier-1 (95 công cụ) đang chạy, không phải Tier-3 stateless
 /apikeys status  # không key vẫn chạy; thêm key free/trả phí để mở khóa reverse pivot
 ```
 
@@ -739,7 +739,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 
 ```bash
 /cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
-/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 94 MCP tool)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 95 MCP tool)
 
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -1316,7 +1316,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (94 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (95 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
