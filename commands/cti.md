@@ -47,7 +47,7 @@ that `pipeline open` alone runs the identity/OSINT commands.
 | username / operator handle | `username <handle>`; keyed `cld actor-usernames <handle>` only for an operator handle, never a brand social account; pivot on exposed emails; dork sweep |
 | phone number | `phone <number>` + dork sweep; keyed `cld route <number>` (Feeds phone + Shield IoC); reverse-WHOIS preview only when it is a verified registrant contact, not a number scraped from page text |
 | crypto wallet / IBAN | chain tracing in **and out** for wallets (outbound can identify cash-out); `/iban` validation for IBAN; IntelX on a strong selector when keyed; never route an unsupported selector to CLD |
-| file hash / APK / EXE | `/hash-id` first for any hash; `analyze_artifact` for local files; keyed `cld ioc hash <hash>` only for a confirmed **file hash**, never an ambiguous 64-hex cert fingerprint or a credential hash; never submit a sample to a public sandbox without the required confirmation |
+| file hash / APK / EXE | **A binary seed routes itself:** `/cti <local file>` or `/cti <URL ending .apk/.exe/.dmg/.msi/.asar/…>` (`binary_indicators.json → binary_extensions`) is statically analysed first (BinaryPivot + REA, kept under `cases/<case>/bin/`, ingested, REA findings registered as kit nodes), then the run continues on the sample's **sha256** — the URL is never collected as a web page. Under `--passive`/hostile posture a binary URL is refused (pass the local path). `/hash-id` first for any hash; keyed `cld ioc hash <hash>` only for a confirmed **file hash**, never an ambiguous 64-hex cert fingerprint or a credential hash; never submit a sample to a public sandbox without the required confirmation |
 | Telegram handle / `t.me` URL | keyed `cld route t.me/<handle>` (Shield Telegram posts), not the domain route on `t.me` |
 | Facebook / Instagram / TikTok / LinkedIn URL, share link or handle | **Social intake (SKILL.md §2.5 "Social-media seed intake") — not the domain route on the platform host.** `sharelink <url>` (unwraps login walls → `platform_ids`; `--no-follow` for a pasted wall URL) → `meta-transparency <page-or-@handle> --case <case>` for Facebook/Instagram (tri-state fields + Wayback name/bio history) → `username` / `email-permute` on every discovered handle and display name → leak fan-out on the confirmed account usernames, business emails and phones (Step 2a) → relay the tool's `capture_checklist` to the analyst in round 1 (logged-in screenshots of Page transparency → See all, Ad Library Page → About, IG → About this account). **Never request cookies, session tokens, passwords or HAR files.** Account linkage (linked IG, owning organisation, admin countries, sharer id) ≠ owner identity |
 | CVE / `.onion` | keyed `cld route <selector>` (matching vulnerability / onion lookup); do not treat a CVE as a file hash |
@@ -234,7 +234,8 @@ does not collect — the job is checkpointed, and the next run resumes it. Colle
   analyst; `next` is then `["approve","report"]`.
 - **`--pipeline` / `--quick` / `--passive`, inside a harness run, or no harness backend** (nothing
   collected): collect (`pipeline open`
-  for a domain/URL; otherwise the type-matched op — `email-deep`/`phone`/`pivot-extract`/`hash-id`/
+  for a domain/URL; a binary seed is first analysed by BinaryPivot + REA and continues as its
+  sha256; otherwise the type-matched op — `email-deep`/`phone`/`pivot-extract`/`hash-id`/
   `crypto-balance`/`search-pivot`) → `enrich` → a read of `frontier`/`convergence` → `loop` when
   the case has not converged and posture allows.
 - Called from inside a harness phase, it always uses the pipeline (no recursion).

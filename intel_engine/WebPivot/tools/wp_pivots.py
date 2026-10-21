@@ -339,7 +339,7 @@ def build_pivots(art: dict, base_host: str):
             {"service": "reverse-IP (backend host)", "query": apk_host},
         ], f"Sideloaded APK download — the host serving it ({apk_host}) is backend infra. "
            f"Run BinaryPivot on the file to pull its signing-cert SHA-256, package, embedded backend "
-           f"hosts and wallets — those become shared indicators that cluster this app's whole portfolio.")
+           f"hosts and wallets — the signing cert clusters the app portfolio; backend hosts are leads.")
     for inst in app.get("desktop_installers", []):
         inst_host = strip_www(urlparse(inst).netloc)
         ext = re.search(r"\.(exe|msi|dmg|pkg|appimage|deb|rpm|jar)(\?|$)", inst, re.I)

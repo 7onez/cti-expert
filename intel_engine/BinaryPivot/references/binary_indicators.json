@@ -283,6 +283,11 @@
       "3rd Party Mac Developer Installer"
     ]
   },
+  "binary_extensions": {
+    "_comment": "File extensions (lower-case, with the dot) that mark a target as a BINARY rather than a web page: a `/cti` seed that is an existing local file, or an http(s) URL whose path ends in one of these, is routed to BinaryPivot static analysis (+ REA) instead of the web collector; the same list names the kept copy of a downloaded sample (cases/<case>/bin/<sha256><ext>, anything else is .bin). `.asar` is an Electron archive with no magic bytes — the name is the only signal, so analyze_artifact types it `asar` by extension. `.zip` is included because scam funnels ship terminals zipped; a zip URL that is really a document archive just analyses as zip.",
+    "values": [".apk", ".aab", ".xapk", ".apks", ".ipa", ".exe", ".msi", ".dll", ".dmg", ".pkg",
+               ".jar", ".zip", ".deb", ".rpm", ".appimage", ".asar", ".so", ".elf", ".bin"]
+  },
   "android_user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
   "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }

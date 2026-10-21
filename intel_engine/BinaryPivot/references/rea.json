@@ -1,0 +1,91 @@
+{
+  "_comment": "REA (morluto/rea, npm rea-agents) — the OPTIONAL deep-static layer behind tools/bp_rea.py. REA is never installed or updated by this skill: the analyst installs the pinned version by hand (npm install --global rea-agents@<pinned>) and points REA_BIN at it when the binary is not on PATH (nvm installs usually are not). Only STATIC commands that read the file without executing it or touching the network ever run; bp_rea.py holds a hard ceiling of such commands in code, and any command listed here that is not under that ceiling is refused with a warning. Everything REA yields stays a fact or a cited lead: embedded hosts flow into app_backend_host (fact-only, tools/kb/references/rungs.json binary_fact_only_trackers), build identities into the rea_* fact labels listed there.",
+
+  "install": {
+    "_comment": "pinned_version is what the adapter was verified against; a different installed version still runs but the result and the banner say so (output shapes may drift). env names the variable that overrides PATH lookup.",
+    "pinned_version": "6.7.0",
+    "env": "REA_BIN",
+    "install_hint": "npm install --global rea-agents@6.7.0"
+  },
+
+  "commands": {
+    "_comment": "BinaryPivot file kind -> REA CLI commands run for it, in order. `asar` is a pseudo-kind for an Electron archive named *.asar (no magic bytes). `when` = a previous command's normalized_result flag that must be true first (inspect-dart-aot only runs on a detected Flutter build). `args` are extra CLI arguments. Timeouts are seconds per command.",
+    "entries": {
+      "apk": [
+        {"command": "identify-flutter-build", "timeout": 300},
+        {"command": "inspect-dart-aot", "timeout": 600, "when": "flutter_detected"}
+      ],
+      "pe": [
+        {"command": "inspect-managed-members", "timeout": 600},
+        {"command": "inspect-go-binary", "timeout": 300}
+      ],
+      "elf": [
+        {"command": "inspect-go-binary", "timeout": 300}
+      ],
+      "macho": [
+        {"command": "inspect-go-binary", "timeout": 300}
+      ],
+      "asar": [
+        {"command": "analyze-javascript-application", "timeout": 900, "args": ["--artifact-format", "asar"]}
+      ]
+    }
+  },
+
+  "limits": {
+    "_comment": "Caps on what one run keeps: literal strings scanned for indicators, citations retained in the result (value + source location), and facts per label.",
+    "max_literals": 20000,
+    "max_citations": 200,
+    "max_facts_per_label": 40
+  },
+
+  "ioc_labels": {
+    "_comment": "The ONLY path from an indicator found in a REA literal into artifacts.trackers: REA indicator kind (analyze_artifact.scan_iocs) -> tracker label. REA indicators are never merged into the sample's base iocs, because the base labels for wallets, Firebase hosts, S3 buckets and messenger handles are KB EDGES — a wallet or Firebase host copied from a shared SDK, template or kit config would silently cluster unrelated apps. Every label on the right MUST be in tools/kb/references/rungs.json binary_fact_only_trackers (tests/test_references.py fails otherwise), so mapping a kind to an edge label is a deliberate, reviewed change, never a data typo. A kind not listed here stays a cited lead in artifacts.binary.rea and is not ingested.",
+    "entries": {
+      "host": "app_backend_host",
+      "ip_port": "app_c2_endpoint",
+      "btc_wallet": "rea_btc_wallet",
+      "eth_wallet": "rea_eth_wallet",
+      "tron_wallet": "rea_tron_wallet",
+      "firebase": "rea_firebase_host",
+      "s3_bucket": "rea_s3_bucket",
+      "google_api_key": "rea_google_api_key",
+      "telegram": "rea_telegram",
+      "whatsapp": "rea_whatsapp",
+      "email": "rea_email",
+      "onion": "rea_onion"
+    }
+  },
+
+  "pivot": {
+    "_comment": "How REA findings feed the cross-type harness loop. bp_rea.pivot_nodes() turns them into node rows that tools/binary_auto.ingest registers via case_state.add_nodes (route binary.rea); propose() then offers them like any other node — a domain is a free single-host collect, other types get their routes. rung_class is looked up in tools/kb/references/rungs.json (binary.rea -> kit), so everything reached ONLY through a REA literal is tiered kit by case_state.tier_hosts: collected, kept out of the same-operator partition, never attributed. The KB side is unchanged — REA values stay facts (ioc_labels). max_nodes caps rows per sample.",
+    "rung_class": "binary.rea",
+    "max_nodes": 40
+  },
+
+  "pivot_nodes": {
+    "_comment": "REA indicator kind -> node type registered for the harness. url_host = hosts parsed from a real http(s):// URL literal (bare dotted tokens like .NET type names are never nodes); ip_port is reduced to its IP. A host under an apex the case already holds is NOT registered (it stays a frontier binary_host_lead) so an estate host can never be re-tiered as kit. Left out on purpose: Firebase/S3/API-key/onion (no collect route worth running on a cloud tenant or a key) and build identities (corpus-string noise).",
+    "entries": {
+      "url_host": "domain",
+      "ip_port": "ip",
+      "btc_wallet": "wallet",
+      "eth_wallet": "wallet",
+      "tron_wallet": "wallet",
+      "telegram": "telegram",
+      "email": "email"
+    }
+  },
+
+  "dart_package_noise": {
+    "_comment": "package: URIs from a Dart AOT string pool that name the Flutter SDK or ubiquitous pub.dev libraries — every Flutter app carries them, so they are dropped before the remaining first-party package names are recorded as rea_dart_package facts. Extend when a common library shows up as a 'project name'.",
+    "values": ["flutter", "flutter_web_plugins", "sky_engine", "vector_math", "collection", "meta",
+               "characters", "material_color_utilities", "async", "typed_data", "path", "http",
+               "http_parser", "provider", "dio", "shared_preferences", "url_launcher", "intl",
+               "get", "crypto", "convert", "plugin_platform_interface", "web", "firebase_core",
+               "flutter_localizations", "cupertino_icons", "string_scanner", "source_span",
+               "term_glyph", "clock", "fake_async", "stack_trace", "stream_channel", "matcher",
+               "boolean_selector", "leak_tracker", "vm_service", "uuid", "logger", "equatable",
+               "rxdart", "bloc", "flutter_bloc", "go_router", "cached_network_image",
+               "webview_flutter", "image_picker", "path_provider", "package_info_plus",
+               "device_info_plus", "connectivity_plus", "permission_handler", "sqflite"]
+  }
+}

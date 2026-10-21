@@ -50,7 +50,9 @@
       "git.committer_email": "kit",
       "git.code": "kit",
 
-      "ip.cotenant": "neighbour"
+      "ip.cotenant": "neighbour",
+
+      "binary.rea": "kit"
     }
   },
 
@@ -61,6 +63,14 @@
       "ghw.git_code": ["git.code"],
       "*": ["wallet.token_contract"]
     }
+  },
+
+  "binary_fact_only_trackers": {
+    "_comment": "BinaryPivot tracker labels (artifacts.trackers in bin/analysis/<sha256>.json) that tools/kb/ingest_webpivot.py _ingest_binary stores as add_fact on the sample (and on its self-hosted download domain) and NEVER as an edge. A host or ip:port recovered from a sample's strings or decompiled code can be a shared backend, a SaaS/BaaS API, a kit default or plain string-sweep rubbish, so two unrelated apps calling one third-party host must not cluster. The host is surfaced as a frontier related_lead (source binary_backend_host, case_state._NON_OWNER_SOURCES) and joins the estate only through an independent owner link. The rea_* labels come from the optional REA deep-static layer (BinaryPivot/tools/bp_rea.py): build identities (Go module path, first-party Dart package names, Flutter libapp.so sha256, .NET module MVID) and every indicator kind REA literals map to through BinaryPivot/references/rea.json ioc_labels (wallets, Firebase host, S3 bucket, API key, messenger handles, e-mail, onion) — a value copied from a shared SDK, template or kit config would otherwise cluster unrelated apps, so they are kit-level facts. apk_signing_cert (the developer key) is deliberately absent: it stays an edge. Fallback in code: the same list.",
+    "values": ["app_backend_host", "app_c2_endpoint", "rea_go_module", "rea_dart_package",
+               "rea_flutter_libapp", "rea_managed_mvid", "rea_btc_wallet", "rea_eth_wallet",
+               "rea_tron_wallet", "rea_firebase_host", "rea_s3_bucket", "rea_google_api_key",
+               "rea_telegram", "rea_whatsapp", "rea_email", "rea_onion"]
   },
 
   "caveats": {

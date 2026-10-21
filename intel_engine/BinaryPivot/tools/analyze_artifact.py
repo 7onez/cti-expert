@@ -21,8 +21,8 @@ survive re-skinning and cluster an operator's whole app portfolio:
       (UPX / VMProtect / Qihoo Jiagu / Tencent Legu / …) is also a weak, kit-level clustering hint.
 
 Output is WebPivot-shaped JSON ({meta, artifacts, pivots}) so the SAME KB ingester and case
-graph consume it — the APK's backend host / signing cert become shared indicators that cluster
-with the web infrastructure WebPivot already mapped.
+graph consume it — the APK's signing cert becomes a shared indicator that clusters with the web
+infrastructure WebPivot already mapped; its embedded backend hosts stay cited leads (facts).
 
 Zero required dependencies (Python 3 stdlib). Optional accelerators, used only if present:
   requests (nicer download), keytool (APK signing cert), openssl (cert fallback),
@@ -53,6 +53,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bp_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 import bp_anyrun  # noqa: E402 — ANY.RUN TI Lookup: query builder (keyless) + live lookups (--anyrun)
+import bp_rea  # noqa: E402 — REA deep-static layer (on by default; --no-rea); static commands only
 # Per-call ceiling for helper binaries (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
 # 5000s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
 try:
@@ -89,12 +90,17 @@ _BP_FALLBACK = {
     "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "apple_signing_identity_prefixes": ["Developer ID Application"],
+    "binary_extensions": [".apk", ".aab", ".exe", ".msi", ".dmg", ".pkg", ".jar", ".zip", ".deb",
+                          ".rpm", ".appimage"],
 }
 _BP_REF = bp_refs.load_ref(bp_refs.ref_path(__file__, "binary_indicators.json"), _BP_FALLBACK)
 
 ANDROID_UA = _BP_REF["android_user_agent"]
 DESKTOP_UA = _BP_REF["desktop_user_agent"]
 APPLE_IDENTITY_PREFIXES = [str(p) for p in _BP_REF["apple_signing_identity_prefixes"] if p]
+# What a binary target looks like by name: /cti routing (binary_auto.is_binary_target), the kept
+# sample's extension, and the only signal for an Electron .asar (no magic bytes).
+BINARY_EXTENSIONS = frozenset(str(e).lower() for e in _BP_REF["binary_extensions"] if e)
 APPLE_TEAM_RUNG_CLASS = "app.apple_team"   # tools/kb/references/rungs.json -> owner
 DEFAULT_UA = ANDROID_UA
 MAX_DOWNLOAD = 400 * 1024 * 1024      # 400 MB cap — scam APKs/installers are well under this
@@ -141,8 +147,7 @@ def acquire(target, keep_dir=None, timeout=60, ua=None):
             os.makedirs(keep_dir, exist_ok=True)
             name = os.path.basename(urlparse(dl_meta.get("final_url", target)).path)
             ext = os.path.splitext(name)[1].lower()
-            if ext not in (".apk", ".aab", ".exe", ".msi", ".dmg", ".pkg", ".jar",
-                           ".zip", ".deb", ".rpm", ".appimage"):
+            if ext not in BINARY_EXTENSIONS:
                 ext = ".bin"
             dest = os.path.join(keep_dir, hashlib.sha256(raw).hexdigest() + ext)
             with open(dest, "wb") as f:
@@ -248,6 +253,10 @@ def detect_type(raw, meta):
                 kind = "ooxml"    # docx/xlsx/pptx
         except Exception:
             pass
+    if kind == "unknown":
+        name = urlparse(str(meta.get("final_url") or meta.get("filename") or meta.get("source") or "")).path
+        if name.lower().endswith(".asar"):
+            kind = "asar"    # Electron archive: no magic bytes, the name is the only signal
     ftype = None
     if have("file"):
         rc, out = _run(["file", "-b", "-"], input_bytes=raw[:1 << 20])
@@ -1101,14 +1110,16 @@ def build_pivots(kind, hashes, art, iocs, meta):
             {"service": "crt.sh", "query": f"%.{h}"},
             {"service": "urlscan.io", "query": f"domain:{h}"},
             {"service": "Validin / FOFA", "query": h},
-        ], "Host hard-coded in the binary — the app's real backend / API (not always the download site). "
-           "Pivot it as a domain: it ties the app to the web infrastructure and to sibling apps calling the same API.")
+        ], "Host hard-coded in the binary — candidate backend / API (not always the download site). A LEAD, "
+           "not an operator link: it may be a shared backend, SaaS API or kit default, so it is stored as a fact "
+           "and joins the estate only when an owner link (CT SAN, registrant, co-host) reaches it.")
     for ipp in (iocs.get("ip_port") or [])[:15]:
         P("app:c2_endpoint", ipp, "medium", [
             {"service": "Shodan", "query": ipp.split(":")[0]},
             {"service": "Censys", "query": ipp.split(":")[0]},
             {"service": "FOFA", "query": f'ip="{ipp.split(":")[0]}"'},
-        ], "Hard-coded IP:port endpoint — candidate C2 / API server. Reverse the IP for co-hosted infra.")
+        ], "Hard-coded IP:port endpoint — candidate C2 / API server (a lead, stored as a fact). Reverse the "
+           "IP for co-hosted infra; the co-tenancy guards decide what may seed.")
 
     # --- wallets ---
     for label, svc in (("btc_wallet", "bitcoin"), ("eth_wallet", "ethereum"), ("tron_wallet", "tron")):
@@ -1171,8 +1182,9 @@ def build_pivots(kind, hashes, art, iocs, meta):
 
 # ----------------------------------------------------------------------------- KB-shaped output
 def to_trackers(art, iocs):
-    """Fold the operator-clustering indicators into artifacts.trackers so the WebPivot KB
-    ingester (ingest_webpivot.py) turns them into shared indicator nodes automatically."""
+    """Fold the indicators into artifacts.trackers for the WebPivot KB ingester. Signing cert /
+    package / Firebase project become shared indicator edges; app_backend_host / app_c2_endpoint
+    stay facts (kb/references/rungs.json binary_fact_only_trackers) — an embedded host may be shared."""
     tr = {}
 
     def put(label, vals):
@@ -1210,11 +1222,44 @@ def to_trackers(art, iocs):
                   and not d["name"].lower().startswith(("high-entropy", "encrypted ", "mach-o "))]
     put("app_protector", protectors)
     put("apple_team", [t.get("team_id") for t in art.get("apple_team") or []])
+    # REA build identities (Go module, Dart packages, libapp.so, .NET MVID): fact-only labels
+    for label, vals in ((art.get("rea") or {}).get("trackers") or {}).items():
+        put(label, vals)
     return tr
 
 
+_KIND_SUFFIX = {"apk": ".apk", "pe": ".exe", "asar": ".asar"}
+
+
+def _rea_layer(target, raw, kind, meta, keep_dir):
+    """Run bp_rea on a local copy of the bytes: the kept file, the local target, or a temp file
+    (named with the source extension so an .asar stays recognisable). REA evidence JSON is kept
+    under <keep_dir>/rea/ when a keep dir is set."""
+    import tempfile
+    path = meta.get("saved_to") or (target if os.path.isfile(target) else None)
+    tmp = None
+    if not path:
+        ext = os.path.splitext(urlparse(meta.get("final_url") or target).path)[1].lower()
+        fd, tmp = tempfile.mkstemp(prefix="bp_rea_", suffix=ext or _KIND_SUFFIX.get(kind, ".bin"))
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        path = tmp
+    try:
+        return bp_rea.enrich(os.path.abspath(path), kind,
+                             evidence_dir=os.path.join(keep_dir, "rea") if keep_dir else None)
+    except Exception as e:  # noqa: BLE001 — an optional layer never fails the static analysis
+        return {"status": "error", "error": f"{type(e).__name__}: {e}",
+                "limitation": bp_rea.limitation(f"the adapter failed: {type(e).__name__}")}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 # ----------------------------------------------------------------------------- main analyze
-def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None):
+def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None, rea=True):
     raw, meta = acquire(target, keep_dir=keep_dir, timeout=timeout, ua=ua)
     if not raw:
         return {"meta": meta, "artifacts": {}, "pivots": [],
@@ -1245,6 +1290,12 @@ def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None):
             if teams:
                 art["apple_team"] = teams
         iocs = _merge_iocs(iocs, scan_iocs(strings_of(raw), label=kind))
+
+    # Deep-static layer (opt-in). Its indicators stay in art["rea"] — never merged into `iocs`,
+    # whose wallet/Firebase/S3/messenger labels become KB edges. They reach trackers only through
+    # bp_rea.IOC_LABELS, all fact-only (rungs.json binary_fact_only_trackers).
+    if rea:
+        art["rea"] = _rea_layer(target, raw, kind, meta, keep_dir)
 
     try:
         prot = detect_protection(raw, kind)
@@ -1333,6 +1384,7 @@ def render_leads(result):
               "tron_wallet", "telegram", "whatsapp", "email", "onion", "google_api_key"):
         if iocs.get(k):
             lines.append(f"{k:14s} {', '.join(iocs[k][:10])}")
+    lines += _rea_lead_lines(a)
     lines.append("")
     lines.append("## Pivots (high→low)")
     for p in result["pivots"]:
@@ -1341,6 +1393,29 @@ def render_leads(result):
         for q in p["queries"][:4]:
             lines.append(f"          · {q['service']}: {q['query']}")
     return "\n".join(lines)
+
+
+def _rea_lead_lines(a):
+    """The REA section of --leads: what ran, build identities, cited literals — or why it did not."""
+    r = a.get("rea")
+    if r is None:
+        return ["", "(REA deep-static layer skipped: --no-rea)"]
+    out = ["", f"## REA deep-static layer — {r.get('status')}"
+           + (f" (REA {r['version']})" if r.get("version") else "")]
+    if r.get("limitation"):
+        out.append(f"⚠ {r['limitation']}")
+    if r.get("version_note"):
+        out.append(f"⚠ {r['version_note']}")
+    for run in r.get("runs") or []:
+        out.append(f"  {run['command']}: {run['status']}"
+                   + (f"  evidence={run['evidence_id']}" if run.get("evidence_id") else "")
+                   + (f"  literals={run['literals']}" if run.get("literals") else "")
+                   + (f"  ({run['error']})" if run.get("error") else ""))
+    for label, vals in (r.get("trackers") or {}).items():
+        out.append(f"  {label:20s} {', '.join(vals[:6])}   [fact — never a cluster edge]")
+    for c in (r.get("citations") or [])[:12]:
+        out.append(f"  cited {c['kind']:10s} {c['value']}  ← {c['command']} @ {c['location']}")
+    return out
 
 
 # ----------------------------------------------------------------------------- cli
@@ -1363,12 +1438,19 @@ def main():
                          "with a TI Lookup licence) and bounded by the per-run cap in "
                          "references/anyrun.json. Nothing is ever SUBMITTED — read-only. Without "
                          "this flag every pivot still carries its TI Lookup query, built offline.")
+    ap.add_argument("--rea", action=argparse.BooleanOptionalAction, default=True,
+                    help="Run the REA deep-static layer (bp_rea.py) — ON by default: .NET user "
+                         "strings, Flutter build / Dart packages, Go module identity, Electron .asar "
+                         "literals with source locations. Static commands only — nothing is executed "
+                         "or fetched. --no-rea skips it. Needs REA installed by hand "
+                         "(references/rea.json pinned_version; REA_BIN if not on PATH); absent, the "
+                         "result records the limitation.")
     args = ap.parse_args()
 
     for _line in bp_anyrun.banner_lines():
         sys.stderr.write(_line + "\n")
     result = analyze(args.target, keep_dir=args.keep, timeout=args.timeout, anyrun=args.anyrun,
-                     ua={"android": ANDROID_UA, "desktop": DESKTOP_UA}.get(args.ua))
+                     ua={"android": ANDROID_UA, "desktop": DESKTOP_UA}.get(args.ua), rea=args.rea)
     if args.case:
         result["meta"]["case"] = args.case
 

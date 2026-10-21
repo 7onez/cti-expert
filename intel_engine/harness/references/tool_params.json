@@ -167,6 +167,10 @@
         "keep": {
           "type": "string",
           "description": "Directory to retain the downloaded artifact in instead of discarding it after analysis."
+        },
+        "rea": {
+          "type": "boolean",
+          "description": "REA deep-static layer — ON by default (.NET user strings, Flutter/Dart package identity, Go module, Electron .asar literals with source locations; static commands only, the sample is never executed). Pass false to skip it."
         }
       },
       "reverse_whois": {

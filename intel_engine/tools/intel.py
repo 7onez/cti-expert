@@ -1973,6 +1973,10 @@ def cmd_cti(a):
     if not target:
         sys.exit("cti: empty target")
     kind = _classify_selector(target)
+    # A binary seed (an existing local file, or a URL ending in a binary extension) is analysed by
+    # BinaryPivot + REA first; the run then continues on the sample's sha256 (see Step 0.3).
+    if binary_auto.is_binary_target(target):
+        kind = "binary"
     case = a.case or _default_case_for(target)
     case_dir = os.path.join(ROOT, "cases", case)
     os.makedirs(os.path.join(case_dir, "raw"), exist_ok=True)
@@ -1984,7 +1988,7 @@ def cmd_cti(a):
     print(f"== cti: '{target}' ({kind}) -> case '{case}' ==")
 
     # Step 0 — recall: a confirmed prior attribution ends the run unless the analyst extends it.
-    attributed = _recall_attribution(target, kind)
+    attributed = None if kind == "binary" else _recall_attribution(target, kind)
     if attributed and not getattr(a, "extend", False):
         summary.update(status="attributed", converged=True, operator=attributed, next=["report"])
         print(f"   already attributed to '{attributed}' — stop (pass --extend to continue anyway)")
@@ -1993,12 +1997,41 @@ def cmd_cti(a):
     # Step 0.25 — intake: target class + purpose, persisted to scope.json BEFORE any collection
     # (Quarry included). Asked only at a terminal; a scripted run uses --class/--purpose or the
     # reference default and says so — it never blocks on input.
-    summary["target_class"] = _cti_intake(a, case).get("target_class")
+    scope = _cti_intake(a, case)
+    summary["target_class"] = scope.get("target_class")
+    # Step 0.3 — binary seed: static analysis + REA into the case (kept under bin/, ingested, REA
+    # findings registered as kit nodes), then the rest of the run pivots on the sample's sha256 —
+    # never on the URL as a web page or the local path as a string.
+    if kind == "binary":
+        hostile = (passive or os.environ.get("HARNESS_HOSTILE", "").lower() in ("1", "true", "yes", "on")
+                   or binary_auto.case_scope.is_hostile(scope))
+        bres = binary_auto.analyze_target(target, case_dir=case_dir, kb=KB, hostile=hostile)
+        summary["binary"] = {k: bres.get(k) for k in ("ok", "error", "sha256", "saved", "host",
+                                                      "n_pivots", "packed")}
+        print(bres.get("leads") or "")
+        if not bres.get("ok") or not bres.get("sha256"):
+            summary.update(status="error", next=["binary"])
+            summary["open_leads"].append(f"binary analysis failed: {bres.get('error')}")
+            print(f"   binary: {bres.get('error')}")
+            print(json.dumps(summary, sort_keys=True))
+            return
+        print(f"   binary: analysed {target} → {bres['saved']} — continuing on sha256 {bres['sha256']}")
+        target, kind = bres["sha256"], "hash"
+        summary["engine_seed"] = target
+        attributed = _recall_attribution(target, kind)
+        if attributed and not getattr(a, "extend", False):
+            summary.update(status="attributed", converged=True, operator=attributed, next=["report"])
+            print(f"   already attributed to '{attributed}' — stop (pass --extend to continue anyway)")
+            print(json.dumps(summary, sort_keys=True))
+            return
     # Step 0.5 — Quarry. When enabled for this case, reuse or start a scan and WAIT for it
     # (hours or days on a large estate; transient faults retry, they never end the wait) before
     # any collection here spends the same vendor accounts. A nested run (inside the harness this
     # driver started) skips it — the outer run already waited. See tools/quarry_bridge.py.
-    if not _cti_in_harness():
+    if "binary" in summary:
+        if getattr(a, "quarry", False):
+            print("   quarry: skipped — the seed is a binary file, not a web estate")
+    elif not _cti_in_harness():
         qres = _cti_quarry_stage(a, case, target, free_only=free_only, passive=passive)
         if qres is not None:
             summary["quarry"] = {k: v for k, v in qres.items() if k != "imported"}

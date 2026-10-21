@@ -227,8 +227,9 @@ CTI Expert has no binary-analysis command. When the engine is present, `/binary 
 shells to `$INTEL_HOME/BinaryPivot` (APK signing-cert SHA-256, package name/permissions,
 embedded C2/backend hosts, Firebase/S3 tenants, wallets, Telegram/WhatsApp handles). Its
 output is **WebPivot-shaped**, so it flows through the same `kb_ingest` → the scam **app**
-clusters with the scam **web** infrastructure in one graph. Tier 3: note as *"run locally
-where the engine is available."*
+clusters with the scam **web** infrastructure on its signing cert / package / Firebase tenant.
+Embedded backend/C2 hosts stay KB facts and frontier `related_leads` (a sample's backend may be
+shared). Tier 3: note as *"run locally where the engine is available."*
 
 ---
 

@@ -644,7 +644,10 @@ _NON_OWNER_SOURCES = frozenset({"impersonation", "archive_related_domain",
                                 "urlscan_related", "urlscan_related_domain", "webamon_same_kit",
                                 # an origin IP's own PTR / self-hosted MX name: chosen by whoever runs
                                 # the box (the operator, or a hoster's naming scheme) — a lead to triage
-                                "ip_ptr", "ip_mx"})
+                                "ip_ptr", "ip_mx",
+                                # a host embedded in a sample (BinaryPivot app_backend_host): can be a
+                                # shared backend, SaaS API or kit default — seeds only if corroborated
+                                "binary_backend_host"})
 _LOOKALIKE_SOURCES = _NON_OWNER_SOURCES        # historical name, kept for callers/tests
 
 
@@ -1962,6 +1965,24 @@ def frontier(case, max_new=8):
     _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred)
     # Censys case-level cert search (exact leaf-cert match = owner link) — seeds directly.
     _censys_search_candidates(cdir, cands, seed_apexes, deferred)
+    # BinaryPivot: hosts embedded in a case sample are leads, never collected on their own. A host
+    # under a NEW apex is a related lead (seedable only with an independent owner-link source); a
+    # host under an apex the case already holds is listed in binary_host_leads instead of joining
+    # subdomains_pending, so nothing found in a sample is ever fetched automatically.
+    binary_host_leads = {}
+    for path in sorted(glob.glob(os.path.join(cdir, "bin", "analysis", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                bart = json.load(fh).get("artifacts") or {}
+        except Exception:
+            continue
+        sample = os.path.basename(path)[:-5]
+        for h in ((bart.get("trackers") or {}).get("app_backend_host") or []):
+            name = _clean_name(h)
+            if name and _frontier_apex(name) in seed_apexes:
+                binary_host_leads.setdefault(name.lower(), set()).add(sample)
+            else:
+                _add_cand(cands, h, "binary_backend_host", seed_apexes)
     # subdomain enumerators (wp_subenum: subfinder / amass / assetfinder / findomain) — the seed
     # apex's own hosts, DNS-verified by the tool run; a name under a NEW apex is a normal candidate
     for path in sorted(glob.glob(os.path.join(cdir, "subenum", "*.json"))):
@@ -2015,10 +2036,16 @@ def frontier(case, max_new=8):
         # non-owner-sourced apexes (urlscan related pages, lookalikes): NOT seeded, surfaced for triage
         "related_leads": [{"apex": a, "sources": sorted(v["sources"]), "examples": sorted(v["examples"])[:4],
                            "why": ("only non-owner sources (" + ", ".join(sorted(v["sources"])) +
-                                   ") — a page that loaded the host's resources, a lookalike, or a "
-                                   "same-kit deployment, not the operator's registration; triage by "
-                                   "hand, never auto-collected")}
+                                   ") — a page that loaded the host's resources, a lookalike, a "
+                                   "same-kit deployment or a host embedded in a sample, not the "
+                                   "operator's registration; triage by hand, never auto-collected")}
                           for a, v in sorted(related.items(), key=lambda kv: (-len(kv[1]["sources"]), kv[0]))],
+        # hosts embedded in a case sample under an apex the case already holds: NOT queued as
+        # subdomains — a sample's string can name any host; triage and collect by hand
+        "binary_host_leads": [{"host": h, "samples": sorted(s)[:4],
+                               "why": "embedded in a case sample under a collected apex — never auto-collected"}
+                              for h, s in sorted(binary_host_leads.items())
+                              if h not in {c.lower() for c in collected}],
         "subdomains_pending": sub_pending,          # {apex: [host, …]} — next-round collection
         "subdomains": sub_detail,                   # {host: {apex, sources, dns}} incl. dead names
         # historical ORIGIN IPs (non-CDN / non-parking addresses the expanding hosts resolved to) —
@@ -3247,6 +3274,12 @@ def main():
                 print(f"    [{cl['check']}] {cl.get('ip') or cl.get('cert_id') or cl.get('artifact') or cl.get('term') or ''}   — {cl['why']}")
                 if cl.get("domains"):
                     print(f"        {len(cl['domains'])} domain(s): {', '.join(cl['domains'])}")
+        if fr.get("binary_host_leads"):
+            bl = fr["binary_host_leads"]
+            print(f"  {len(bl)} host(s) embedded in case samples under a collected apex — NOT queued "
+                  f"(a sample can name any host; triage by hand):")
+            for b in bl[:12]:
+                print(f"    {b['host']}   — samples {', '.join(s[:12] for s in b['samples'])}")
         if fr.get("related_leads"):
             rl = fr["related_leads"]
             print(f"  {len(rl)} related/lookalike lead(s) NOT seeded (non-owner sources — pages that loaded "

@@ -20,13 +20,106 @@ BP_TOOLS = os.path.join(ROOT, "BinaryPivot", "tools")
 HARNESS = os.path.join(ROOT, "harness")
 sys.path.insert(0, BP_TOOLS)
 sys.path.append(HARNESS)
+sys.path.append(os.path.join(ROOT, "WebPivot", "tools"))
 import bp_anyrun  # noqa: E402
 import case_scope  # noqa: E402
+# The analyzer now runs the REA deep-static layer by default, so its subprocess gets the shared
+# per-call ceiling (CTI_CALL_TIMEOUT) instead of a fixed 300 s that would kill the whole analysis.
+from wp_timeouts import floor as _floor  # noqa: E402
+import analyze_artifact  # noqa: E402 — BINARY_EXTENSIONS (references/binary_indicators.json)
 
 
 KINDS = {"app:apk", "app:desktop_installer"}
 FILE_KINDS = {"apk", "pe", "elf", "macho", "jar", "zip", "dex", "gzip",
-              "msi", "deb", "rpm", "pkg", "dmg"}
+              "msi", "deb", "rpm", "pkg", "dmg", "asar"}
+
+
+def is_binary_target(target):
+    """True for a `/cti` seed that is a binary, not a web page: an existing local file, or an
+    http(s) URL whose path ends in a BinaryPivot binary extension (binary_indicators.json)."""
+    t = str(target or "").strip()
+    if not t:
+        return False
+    if not re.match(r"^https?://", t, re.I):
+        return os.path.isfile(os.path.expanduser(t))
+    try:
+        path = urlsplit(t).path.lower()
+    except ValueError:
+        return False
+    return os.path.splitext(path)[1] in analyze_artifact.BINARY_EXTENSIONS
+
+
+def analyze_target(target, *, case_dir=None, kb=None, keep=None, hostile=False, rea=True,
+                   root=ROOT, timeout=240):
+    """Statically analyze ONE binary (local path or URL), REA included unless rea=False. With a
+    case_dir the sample is kept under <case>/bin, the JSON lands in bin/analysis/<sha256>.json, and
+    it is ingested into `kb` — which also registers REA's kit nodes for the harness. Shared by
+    `/cti <binary>` and the harness analyze_artifact tool. Returns a summary dict, never raises."""
+    out = {"ok": False, "error": None, "leads": "", "saved": None, "host": None, "sha256": None,
+           "n_pivots": 0, "packed": False}
+    t = str(target or "").strip()
+    is_url = bool(re.match(r"^https?://", t, re.I))
+    if hostile and is_url:
+        out["error"] = (f"BLOCKED by egress policy: refusing a direct download of {t} on hostile "
+                        "infra (it would touch attacker infra from your IP). Pull it from "
+                        "non-attributable egress (research VPS/VPN) and re-run with the LOCAL path.")
+        return out
+    if not is_url:
+        t = os.path.abspath(os.path.expanduser(t))
+    analysis_dir = os.path.join(case_dir, "bin", "analysis") if case_dir else None
+    if analysis_dir:
+        os.makedirs(analysis_dir, exist_ok=True)
+    fd, tmp_out = tempfile.mkstemp(suffix=".json", prefix="binpivot_", dir=analysis_dir)
+    os.close(fd)
+    cmd = [sys.executable, os.path.join(root, "BinaryPivot", "tools", "analyze_artifact.py"),
+           t, "--leads", "-o", tmp_out]
+    if case_dir:
+        cmd += ["--case", os.path.basename(os.path.normpath(case_dir))]
+    if not rea:
+        cmd.append("--no-rea")
+    if is_url:
+        ext = os.path.splitext(urlsplit(t).path.lower())[1]
+        cmd += ["--ua", "android" if ext in (".apk", ".aab", ".xapk", ".apks") else "desktop"]
+    # A case's bin/ is the canonical store the completeness gate and the sandbox uploader key off
+    # (save_analysis requires saved_to to live under <case>/bin), so it wins over a custom keep dir.
+    keep_dir = os.path.join(case_dir, "bin") if case_dir else keep
+    if keep_dir:
+        cmd += ["--keep", keep_dir]
+    try:
+        res = subprocess.run(cmd, cwd=root, capture_output=True, text=True,
+                             timeout=_floor(timeout), check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        os.unlink(tmp_out)
+        out["error"] = f"analyze_artifact failed for {t}: {exc}"
+        return out
+    data = _load(tmp_out)
+    os.unlink(tmp_out)
+    if not data:
+        out["error"] = f"analyze_artifact failed for {t}: {(res.stderr or '')[-500:]}"
+        return out
+    binary = (data.get("artifacts") or {}).get("binary") or {}
+    prot = binary.get("protection") or {}
+    out.update(leads=res.stdout or "", host=(data.get("meta") or {}).get("host") or "artifact",
+               sha256=(binary.get("hashes") or {}).get("sha256"),
+               n_pivots=len(data.get("pivots", [])),
+               packed=bool(prot.get("packed") or prot.get("obfuscated")))
+    error = data.get("error")
+    if case_dir and not error:
+        try:
+            out["saved"] = save_analysis(case_dir, data)
+            if out["saved"] is None:
+                error = ("not a complete binary: truncated, non-2xx, non-binary, or the saved "
+                         "file does not match its hash — nothing was stored or ingested")
+            elif kb:
+                ingested, note = ingest(case_dir, kb)
+                out["ingest_note"] = note
+                if not ingested:
+                    error = f"binary KB ingest failed: {note[-500:]}"
+        except (OSError, ValueError) as exc:
+            error = f"binary case save failed: {exc}"
+    out["error"] = error
+    out["ok"] = not error
+    return out
 
 
 def _save(path, data):
@@ -127,9 +220,44 @@ def ingest(case_dir, kb):
         result = subprocess.run([sys.executable, os.path.join(HERE, "kb", "ingest_webpivot.py"),
                                  "--kb", kb, *files], capture_output=True, text=True,
                                 timeout=120, check=False)
-        return result.returncode == 0 and "[skip]" not in result.stderr, result.stdout + result.stderr
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
+    ok = result.returncode == 0 and "[skip]" not in result.stderr
+    note = result.stdout + result.stderr
+    if ok:
+        note += register_rea_nodes(case_dir, files)
+    return ok, note
+
+
+def register_rea_nodes(case_dir, files):
+    """Hand each sample's REA pivot rows (artifacts.binary.rea.nodes, kit rung class) to the
+    cross-type loop's node registry, so the harness collects/pivots them automatically while
+    case_state.tier_hosts keeps every host reached only this way out of the operator partition.
+    A host under an apex the case already collected is skipped — it stays a frontier
+    binary_host_lead, and an estate host is never re-tiered as kit. Never raises; returns a note."""
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import case_state
+        have = {case_state._frontier_apex(h) for h in case_state.collected_hosts(case_dir)}
+    except Exception as exc:  # noqa: BLE001 — node registration never fails the ingest
+        return f"\nbinary: REA nodes not registered ({type(exc).__name__}: {exc})"
+    added = 0
+    for path in files:
+        doc = _load(path)
+        binary = (doc.get("artifacts") or {}).get("binary") or {}
+        sha = (binary.get("hashes") or {}).get("sha256")
+        rows = [r for r in ((binary.get("rea") or {}).get("nodes") or []) if isinstance(r, dict)
+                and not (r.get("type") == "domain"
+                         and case_state._frontier_apex(str(r.get("value") or "")) in have)]
+        if not rows or not sha:
+            continue
+        try:
+            added += case_state.add_nodes(case_dir, rows, origin_type="hash", origin_value=sha,
+                                          route="binary.rea")
+        except Exception as exc:  # noqa: BLE001
+            return f"\nbinary: REA nodes not registered ({type(exc).__name__}: {exc})"
+    return f"\nbinary: {added} REA kit node(s) registered for the harness" if added else ""
 
 
 def _saved_sample_matches(path, bin_dir, sha):
@@ -212,7 +340,7 @@ def run(case, *, hostile=False, free_only=False, root=ROOT):
                 res = subprocess.run([sys.executable, os.path.join(BP_TOOLS, "analyze_artifact.py"),
                                       url, "--keep", bin_dir, "-o", temp, "--ua",
                                       "android" if kind == "app:apk" else "desktop"], cwd=root,
-                                     capture_output=True, text=True, timeout=300, check=False)
+                                     capture_output=True, text=True, timeout=_floor(300), check=False)
                 doc = _load(temp)
                 meta = doc.get("meta") or {}
                 binary = (doc.get("artifacts") or {}).get("binary") or {}

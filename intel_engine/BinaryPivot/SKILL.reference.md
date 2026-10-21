@@ -69,7 +69,8 @@ python3 "$BP/tools/analyze_artifact.py" https://cdn.evil.example/Setup.exe --lea
 ```
 
 Flags: `--leads` (human-readable ranked pivots), `-o FILE` (full result JSON), `--pretty`
-(pretty JSON to stdout), `--keep DIR` (save the downloaded file), `--case NAME` (stamped in meta).
+(pretty JSON to stdout), `--keep DIR` (save the downloaded file), `--case NAME` (stamped in meta),
+`--anyrun` (TI Lookup, metered), `--no-rea` (skip the REA deep-static layer, which runs by default — see below).
 
 ## What it extracts
 
@@ -92,20 +93,99 @@ cert via `keytool`/`openssl`), **JAR/ZIP**, **PE** (.exe/.dll), **Mach-O**, **EL
 ## How it clusters with the web case (the whole point)
 
 The result is **WebPivot-shaped JSON** (`meta.host` + `artifacts.trackers{label:[values]}` +
-`pivots[]`). The operator-clustering IOCs (`apk_signing_cert`, `apk_package`, `firebase_project`,
-`app_backend_host`, `app_c2_endpoint`, wallets) are placed in `artifacts.trackers` so the **existing**
-WebPivot KB ingester turns them into shared indicator nodes with no code changes:
+`pivots[]`), persisted as `cases/<id>/bin/analysis/<sha256>.json` and ingested by
+`tools/kb/ingest_webpivot.py` (`_ingest_binary`; `binary_auto.ingest` / `kb_ingest` run it):
 
 ```bash
-# from the intelligence_assist project root — same ingest path as WebPivot
-python3 tools/kb/ingest_webpivot.py --kb knowledge "$CASE"/raw/*.json
+# from the engine root — the binary branch of the WebPivot ingester
+python3 tools/kb/ingest_webpivot.py --kb knowledge "$CASE"/bin/analysis/*.json
 python3 tools/kb/query.py --kb knowledge --shared --min 2
 ```
 
-A web domain and an APK that share a signing cert / backend host / Firebase project now land in the
-**same cluster** in the case graph and the ICD-203 rollup — which is exactly how the app exposes the
-operator behind a re-skinned website. Set `meta.host` to the **download host** (default when you pass
-a URL) so the artifact anchors onto the site that served it.
+The labels in `artifacts.trackers` carry different weight:
+
+| Label | KB write | Why |
+|---|---|---|
+| `apk_signing_cert`, `apk_package`, `firebase_project`, wallets | **edge** on the sample (and on its download domain when that domain is a collected, self-hosted seed) | the developer key / tenant is chosen by whoever built the app — an APK and a web domain sharing one land in the **same cluster** |
+| `app_backend_host`, `app_c2_endpoint` | **fact only** (`kb/references/rungs.json → binary_fact_only_trackers`) | a host recovered from strings or decompiled code can be a shared backend, a SaaS/BaaS API, a kit default or string-sweep rubbish — two unrelated apps calling one third-party host must not cluster |
+
+An embedded backend host surfaces in the case frontier as a **`related_lead`** (source
+`binary_backend_host`), never a seed on its own: it joins the estate only when an independent
+owner-link source (CT SAN, registrant reverse, co-host…) reaches the same apex. One under an apex
+the case already holds is listed in **`binary_host_leads`** and is NOT queued as a subdomain, so
+nothing named inside a sample is ever fetched automatically. Set `meta.host` to
+the **download host** (default when you pass a URL) so the artifact anchors onto the site that
+served it; a managed storage/CDN download host never receives the sample's edges.
+
+## REA — the deep-static layer, on by default (`tools/bp_rea.py`)
+
+The ASCII sweep above cannot read three structures that matter in scam apps: **.NET user strings**
+(`ldstr` literals are UTF-16), **which Dart packages a Flutter build compiled** (the app's own
+project name) and **where in an Electron bundle a literal lives**. [REA](https://github.com/morluto/rea)
+(npm `rea-agents`) parses them without running the sample; every analysis calls it and folds the
+result in.
+
+```bash
+npm install --global rea-agents@6.7.0          # by hand, pinned — the skill never installs/updates it
+export REA_BIN="$(npm prefix -g)/bin/rea"      # when `rea` is not on PATH (nvm installs)
+python3 "$BP/tools/analyze_artifact.py" ./Terminal.exe --keep "$CASE/bin" --leads   # REA included
+python3 "$BP/tools/analyze_artifact.py" ./Terminal.exe --no-rea --leads              # without it
+python3 "$BP/tools/bp_rea.py" ./app.asar --kind asar           # the layer alone, JSON out
+```
+
+**Default everywhere.** The automatic case pipeline (`binary_auto`), `/cti <binary>` (a local file
+or a URL ending in a `binary_indicators.json → binary_extensions` extension — analysed by
+`binary_auto.analyze_target`, then the run continues on the sample's sha256), the CLI and the MCP
+`analyze_artifact` tool all run REA; `--no-rea` / `rea=false` opts out. The analyzer subprocess
+runs under the shared `CTI_CALL_TIMEOUT` ceiling so a long REA parse does not kill the base
+analysis. REA resolves from `REA_BIN` (env, then `.env`) and falls back to `rea` on PATH; it is
+run with its own bin dir first on PATH, so the Node it was installed with (≥ 22) executes it even
+when the system `node` is older. Only when neither is executable does a run record
+`not_installed`.
+
+**Auto-pivot: collected, never clustered.** After a case ingest, `binary_auto.register_rea_nodes`
+hands each sample's `artifacts.binary.rea.nodes` to the cross-type loop's node registry
+(`case_state.add_nodes`, route `binary.rea`): hosts from real `http(s)://` URL literals (`domain`),
+C2 IPs, wallets, Telegram handles and e-mails (`references/rea.json → pivot_nodes`). Their rung
+class `binary.rea` is **kit** (`rungs.json`), so `propose()` offers each domain as a free collect
+and the other types on their routes, and `case_state.tier_hosts` keeps every host reached only
+this way **out of the same-operator partition** — collected, rendered as kit, never attributed.
+Metered routes on these nodes still go through the proposal approval gate. Not registered: bare
+dotted tokens (.NET/JS identifiers), Firebase/S3/API-key/onion values, build identities, and any
+host under an apex the case already collected (it stays a frontier `binary_host_lead`, so an
+estate host is never re-tiered as kit). The deterministic `intel.py loop` does not use the node
+registry; there these hosts remain frontier `related_leads`.
+
+| File kind | REA commands (`references/rea.json → commands`) | What lands in the result |
+|---|---|---|
+| `apk` | `identify-flutter-build`, then `inspect-dart-aot` if Flutter | `rea_flutter_libapp` (libapp.so sha256), `rea_dart_package` (first-party `package:` names minus `dart_package_noise`), Dart snapshot hash in `detail` |
+| `pe` | `inspect-managed-members`, `inspect-go-binary` | .NET `ldstr` literals → IOC sweep, cited `ldstr <token>`; `rea_managed_mvid`; Go module |
+| `elf`, `macho` | `inspect-go-binary` | `rea_go_module`, Go version and `vcs.*` build settings in `detail` |
+| `asar` (by file name) | `analyze-javascript-application --artifact-format asar` | string literals → IOC sweep, cited `<module>:<line>` |
+
+Rails:
+
+- **Static only.** `bp_rea._STATIC_CEILING` is the full set of REA commands that can ever run — none
+  launches the sample, attaches to it or fetches anything. `rea.json` selects from it; a command
+  outside it is refused. REA's runtime capture, browser, ADB, Frida and debugger commands are never
+  reachable from here.
+- **Leads, not links — for every REA indicator.** REA indicators are never merged into the base
+  sweep's `iocs`, whose wallet / Firebase / S3 / messenger labels are KB edges. Each kind reaches
+  `artifacts.trackers` only through `references/rea.json → ioc_labels`: hosts → `app_backend_host`,
+  `ip:port` → `app_c2_endpoint`, wallets → `rea_{btc,eth,tron}_wallet`, Firebase → `rea_firebase_host`,
+  S3 → `rea_s3_bucket`, plus `rea_google_api_key` / `rea_telegram` / `rea_whatsapp` / `rea_email` /
+  `rea_onion`. Every target label — and the `rea_*` build identities (Go module, libapp.so, MVID,
+  Dart package) — is in `tools/kb/references/rungs.json → binary_fact_only_trackers`, and
+  `tests/test_references.py` fails if one is not, so a shared SDK wallet or kit Firebase config can
+  never cluster two apps. An unmapped kind stays a cited lead in `artifacts.binary.rea` only. REA
+  indicators also never become `pivots[]`; read them from the REA section of `--leads`. Auto-pivot
+  (above) collects some of them as kit nodes — collecting is not attributing.
+- **Cited.** Every REA evidence id is in `artifacts.binary.rea.runs[]`; each indicator found in a
+  literal carries its source location in `citations[]`; with `--keep DIR` the raw REA evidence JSON
+  is saved under `DIR/rea/<sha256>.<command>.json`.
+- **Degrades loudly.** Without REA the block is `status: not_installed` with a COLLECTION
+  LIMITATION sentence — absent .NET strings / Dart packages are then a fact about the run, not the
+  sample. A version other than `install.pinned_version` still runs and says so (`version_note`).
 
 ## ANY.RUN — the sandbox layer, and the confirmation gate on submitting
 
@@ -193,7 +273,8 @@ Never put case IDs or analyst/client names in tags or submitted filenames.
    `tools/kb/ingest_webpivot.py --kb knowledge "$CASE/bin/analysis/<file>.json"`. The KB records
    signing certs and other identifiers on the file hash; it joins the web domain only when
    that same self-hosted origin was collected as a site. Shared file hosts are provenance, not
-   ownership. Corroborate app-to-app links with a cert and backend host before attribution.
+   ownership. App-to-app links cluster on the signing cert; an embedded backend host stays a lead
+   until an owner link reaches it.
 
 5. **Report at the cluster level.** Roll the app + its web siblings into one assessment with WebPivot's
    `evidence_report.py` (see WebPivot `Workflows/Reporting.md`) — trigger: *"output full report for
@@ -236,4 +317,4 @@ Never put case IDs or analyst/client names in tags or submitted filenames.
   A **packed sample legitimately yields few IOCs** — that is the signal to detonate it in an
   isolated sandbox (MobSF/Triage), not to conclude the app is clean. A shared *named* protector is
   a **weak, kit-level** link (same builder/protection service), **not** proof of a common operator
-  on its own — corroborate with a signing cert / backend host before clustering on it.
+  on its own — corroborate with a signing cert before clustering on it.

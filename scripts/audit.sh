@@ -129,6 +129,7 @@ if [ "$has_root_tests" = 0 ]; then
 else
 for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_references.py tests/test_no_sample_submission.py tests/test_binary_auto.py \
+         tests/test_binary_backend_hosts.py tests/test_binary_rea.py \
          tests/test_email_permute.py tests/test_hooks.py \
          tests/test_phish_domain_survival.py tests/test_clickfix_detect.py \
          tests/test_html_visibility_analysis.py tests/test_apk_permission_scope.py \

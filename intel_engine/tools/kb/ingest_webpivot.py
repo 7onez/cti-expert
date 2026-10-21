@@ -163,6 +163,14 @@ _RN_FALLBACK = {
                             "withheldforprivacy.com", "privacyprotect.org"),
 }
 _RN = kb_refs.load_ref(kb_refs.ref_path(__file__, "registrant_noise.json"), _RN_FALLBACK)
+# BinaryPivot labels that stay facts on the sample, never clustering edges (rungs.json).
+_BIN_FACT_ONLY_FALLBACK = {"binary_fact_only_trackers": [
+    "app_backend_host", "app_c2_endpoint",
+    "rea_go_module", "rea_dart_package", "rea_flutter_libapp", "rea_managed_mvid",
+    "rea_btc_wallet", "rea_eth_wallet", "rea_tron_wallet", "rea_firebase_host", "rea_s3_bucket",
+    "rea_google_api_key", "rea_telegram", "rea_whatsapp", "rea_email", "rea_onion"]}
+BINARY_FACT_ONLY_TRACKERS = frozenset(kb_refs.load_ref(
+    kb_refs.ref_path(__file__, "rungs.json"), _BIN_FACT_ONLY_FALLBACK)["binary_fact_only_trackers"])
 
 # corporate suffixes → the registrant is an ORG, not a natural person (route to type 'org')
 _ORG_SUFFIX = tuple(_RN["org_suffixes"])
@@ -802,7 +810,19 @@ def _ingest_binary(kb, d, path, meta, observed, day, sha):
             pass
     for label, vals in (art.get("trackers") or {}).items():
         rel, conf = REL.get(label, ("uses_tracker", "medium"))
+        fact_only = label in BINARY_FACT_ONLY_TRACKERS
         for v in vals:
+            if fact_only:
+                # an embedded host can be a shared backend/SaaS/kit default: a cited lead on the
+                # sample and its own download domain, never an edge two unrelated apps cluster on
+                kb.add_fact("file_hash", sha, label, str(v), "binarypivot",
+                            "binarypivot/analyze_artifact", observed, conf, ev)
+                n += 1
+                if owner:
+                    kb.add_fact("domain", host, label, str(v), "binarypivot",
+                                "binarypivot/analyze_artifact", observed, conf, ev)
+                    n += 1
+                continue
             if is_noise_tracker(v):
                 kb.add_fact("file_hash", sha, "platform_tracker", str(v), "binarypivot",
                             "binarypivot/analyze_artifact", observed, "low", ev)

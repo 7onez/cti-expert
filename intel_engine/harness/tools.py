@@ -802,67 +802,14 @@ async def kb_ingest(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def collect_binary(target: str, case: str | None = None, keep: str | None = None,
-                   timeout: int = 240) -> dict[str, Any]:
-    """Statically analyze a binary. Case JSON lives in bin/analysis/<sha256>.json and is
-    ingested separately from raw web-host evidence. Returns a summary dict, never raises."""
-    import re
-    import tempfile
-    if POLICY["hostile"] and re.match(r"^https?://", target, re.I):
-        return {"ok": False, "leads": "", "saved": None, "host": None,
-                "error": (f"BLOCKED by egress policy: refusing a direct download of {target} on "
-                          "hostile infra (it would touch attacker infra from your IP). Pull it from "
-                          "non-attributable egress (research VPS/VPN) and re-call with the LOCAL path.")}
-    script = os.path.join("BinaryPivot", "tools", "analyze_artifact.py")
+                   timeout: int = 240, rea: bool = True) -> dict[str, Any]:
+    """Statically analyze a binary (REA on unless rea=False) — binary_auto.analyze_target, the same
+    path `/cti <binary>` takes. Case JSON lives in bin/analysis/<sha256>.json and is ingested
+    separately from raw web-host evidence. Returns a summary dict, never raises."""
     case_dir = os.path.join(ROOT, "cases", case) if case else None
-    analysis_dir = os.path.join(case_dir, "bin", "analysis") if case_dir else None
-    if analysis_dir:
-        os.makedirs(analysis_dir, exist_ok=True)
-
-    def _unlink(p):
-        try:
-            os.unlink(p)
-        except OSError:
-            pass
-
-    # The case's temporary output is outside raw/ from the start.
-    fd, tmp_out = tempfile.mkstemp(suffix=".json", prefix="binpivot_", dir=analysis_dir)
-    os.close(fd)
-    cmd = [PY, script, target, "--leads", "-o", tmp_out]
-    if case:
-        cmd += ["--case", case]
-    # When a case is set, its bin/ is the canonical store the completeness gate and the sandbox
-    # uploader both key off (save_analysis requires saved_to to live under <case>/bin). A custom
-    # keep dir alongside a case would land the file where those checks can't find it, so the case
-    # store wins; keep only applies to a case-less manual analysis.
-    keep_dir = (os.path.join(ROOT, "cases", case, "bin") if case else keep)
-    if keep_dir:
-        cmd += ["--keep", keep_dir]
-    r = _run(cmd, timeout=timeout)
-    data = _load_json(tmp_out)
-    if data is None:
-        _unlink(tmp_out)
-        return {"ok": False, "leads": "", "saved": None, "host": None,
-                "error": f"analyze_artifact failed for {target}: {(r.stderr or '')[-500:]}"}
-    host = (data.get("meta") or {}).get("host") or "artifact"
-    saved = None
-    error = data.get("error")
-    if case and not error:
-        try:
-            saved = binary_auto.save_analysis(case_dir, data)
-            if saved is None:
-                error = ("not a complete binary: truncated, non-2xx, non-binary, or the saved "
-                         "file does not match its hash — nothing was stored or ingested")
-            else:
-                ingested, note = binary_auto.ingest(case_dir, os.path.join(ROOT, KB_DIR))
-                if not ingested:
-                    error = f"binary KB ingest failed: {note[-500:]}"
-        except (OSError, ValueError) as exc:
-            error = f"binary case save failed: {exc}"
-    _unlink(tmp_out)
-    prot = ((data.get("artifacts") or {}).get("binary") or {}).get("protection") or {}
-    return {"ok": not error, "error": error, "leads": r.stdout or "",
-            "saved": saved, "host": host, "n_pivots": len(data.get("pivots", [])),
-            "packed": bool(prot.get("packed") or prot.get("obfuscated"))}
+    return binary_auto.analyze_target(target, case_dir=case_dir, kb=os.path.join(ROOT, KB_DIR),
+                                      keep=keep, hostile=POLICY["hostile"], rea=rea, root=ROOT,
+                                      timeout=timeout)
 
 
 @tool(
@@ -878,11 +825,17 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
     "string sweep and routes a protected sample to a dynamic sandbox. When case=<ID> is given the "
     "JSON is saved under cases/<ID>/bin/analysis/<sha256>.json and explicitly ingested into the KB, "
     "without creating a web host row. For HOSTILE targets a direct URL download is refused — "
-    "pull it from non-attributable egress and pass the local path.",
-    {"target": str},   # case:str, keep:str optional via args.get()
+    "pull it from non-attributable egress and pass the local path. The REA deep-static layer "
+    "(.NET user strings, Flutter/Dart package identity, Go module, Electron .asar literals with "
+    "source locations; static commands only, never executes the sample) runs BY DEFAULT; pass "
+    "rea=false to skip it. With case=<ID>, REA's URL hosts, IPs, wallets, Telegram handles and "
+    "e-mails are registered as KIT-rung nodes, so the cross-type loop collects/pivots them while "
+    "they stay out of the same-operator partition (KB facts only, never a cluster edge).",
+    {"target": str},   # case:str, keep:str, rea:bool optional via args.get()
 )
 async def analyze_artifact(args: dict[str, Any]) -> dict[str, Any]:
-    res = collect_binary(str(args["target"]), case=args.get("case"), keep=args.get("keep"))
+    rea = _flag(args, "rea") if "rea" in args else True
+    res = collect_binary(str(args["target"]), case=args.get("case"), keep=args.get("keep"), rea=rea)
     if res.get("error") and not res.get("leads"):
         return _err(res["error"])
     head = f"Analyzed {res['host']} — {res.get('n_pivots', 0)} pivots" \
