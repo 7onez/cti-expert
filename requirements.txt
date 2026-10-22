@@ -9,7 +9,8 @@
 #
 # Install:  uv venv && uv pip install -r requirements.txt
 # System tools (not pip): pandoc + xelatex (IntelReport PDF), graphviz `dot` (IntelGraph),
-#   mermaid-cli `mmdc` (IntelGraph flows) — see the per-skill requirements.txt for each.
+#   Node.js 20+ or Bun for Pele (IntelGraph Mermaid figures) and librsvg `rsvg-convert` to rasterise them
+#   — see the per-skill requirements.txt for each.
 
 # --- pipeline brain (harness) ---
 claude-agent-sdk>=0.1.0     # LLM-driven Collect→Correlate→Assess orchestrator + MCP server
@@ -18,7 +19,7 @@ rich>=13.0                # harness console output
 
 # --- deliver / visualize (IntelGraph) ---
 matplotlib>=3.7           # charts, timelines, gantt (theme.py house style)
-cairosvg>=2.7             # rasterizes the Diagram Design entity map into the house PDF/DOCX (best-effort)
+cairosvg>=2.7             # rasterizes the Diagram Design entity map into the house PDF/DOCX; last-resort Mermaid (Pele) rasteriser
 numpy>=1.24               # heatmap / confidence-scatter grids (cti_report_figures.py)
 graphviz>=0.20            # entity/infrastructure link graphs (also needs the `dot` binary)
 

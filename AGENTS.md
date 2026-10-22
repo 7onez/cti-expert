@@ -186,8 +186,11 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   except vendored `scripts/vendor/archify`.
 - Optional, feature-scoped tooling — never make baseline: pandoc + xelatex (IntelReport PDF/DOCX),
   Graphviz `dot` (graphs/cloud figure), Node ≥ 18 (Archify blueprint; `CTI_ARCHIFY=0` skips),
-  Playwright/Chromium (screenshots, engage, Cloudflare escalation — `--headless`), Moli (DOM
-  renders, default install; `CTI_BROWSER=auto|moli|chromium`), mermaid-cli. All degrade loudly.
+  Node ≥ 20 or Bun (Pele, the pinned Mermaid renderer behind IntelGraph figures — `references/pele.json`,
+  fetched into the gitignored `IntelGraph/vendor/pele/`; PNG/PDF via `rsvg-convert` → headless
+  Chrome/Edge → cairosvg, last because it drops label emoji), Playwright/Chromium (screenshots,
+  engage, Cloudflare escalation — `--headless`), Moli (DOM renders, default install;
+  `CTI_BROWSER=auto|moli|chromium`). All degrade loudly.
 - `INTEL_HOME` defaults to the vendored `intel_engine/`; to override, **export** it in the process
   (an `.env`-only value loses to the resolver). Cases live only under `$INTEL_HOME/cases/<id>/`.
 - Secrets: process env first, then gitignored root `.env` (`CTI_API_KEYS_ENV` overrides the path).

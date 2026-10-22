@@ -1,8 +1,10 @@
-# Mermaid recipes (works locally via `mmdc`)
+# Mermaid recipes (rendered locally by Pele via `render_mermaid.py`)
 
-House theme init (muted): put this as line 1 of any `.mmd`:
+No theme line is needed: `render_mermaid.py` applies the house font and colours
+(`theme.DIAGRAM` / `theme.PELE_VARS`) to every figure. Per-node colour comes from `classDef`,
+as below; layout spacing, when you want it, is an init line Pele reads:
 ```
-%%{init: {'theme':'base','themeVariables':{'primaryColor':'#3b5566','primaryTextColor':'#fff','lineColor':'#6f6a61','fontFamily':'Helvetica'}}}%%
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 48, "rankSpacing": 88}}}%%
 ```
 Render: `python scripts/render_mermaid.py diagram.mmd outputs/stem`
 

@@ -167,7 +167,7 @@ def esc(text, maxlen=42):
 
 def yaml_title(text, maxlen=120):
     """Frontmatter `title:` is YAML — an unquoted scalar breaks on ': ' or ' #' (the reduced-subset
-    note contains both), which mmdc reports as a bare YAMLException. Always emit a quoted scalar."""
+    note contains both), and the renderer rejects the whole diagram. Always emit a quoted scalar."""
     s = esc(text, maxlen).replace("\\", "\\\\").replace('"', "'")
     return '"' + s + '"'
 

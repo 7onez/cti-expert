@@ -11,8 +11,9 @@ Never hand the user a diagram you haven't validated. A Mermaid block with one sy
 renders as a red error box in their report — worse than no diagram.
 
 - **Validate before embedding.** Round-trip the Mermaid through a renderer first —
-  `mmdc -i x.mmd -o x.svg` (mermaid-cli), a Kroki request, or mermaid.live. If it errors, fix
-  and re-check. When the output is an HTML artifact/preview, confirm it actually renders.
+  `python3 intel_engine/IntelGraph/scripts/render_mermaid.py x.mmd /tmp/x` (Pele; it quotes the
+  offending line on a parse error), a Kroki request, or mermaid.live. If it errors, fix and
+  re-check. When the output is an HTML artifact/preview, confirm it actually renders.
 - **Keep node labels safe.** Wrap any label containing spaces, punctuation, or `()[]{}<>":;` in
   quotes: `A["admin(1) panel"]`. Don't start an edge label with a reserved word
   (`end`, `graph`, `subgraph`). One statement per line.

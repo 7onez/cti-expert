@@ -269,6 +269,9 @@ pkg_name() {
     poppler-utils:pacman)                      echo poppler ;;
     poppler-utils:zypper)                      echo poppler-tools ;;
     libcairo2:dnf|libcairo2:yum|libcairo2:pacman|libcairo2:apk) echo cairo ;;
+    librsvg2-bin:dnf|librsvg2-bin:yum)         echo librsvg2-tools ;;
+    librsvg2-bin:pacman)                       echo librsvg ;;
+    librsvg2-bin:zypper|librsvg2-bin:apk)      echo rsvg-convert ;;
     imagemagick:dnf|imagemagick:yum|imagemagick:zypper) echo ImageMagick ;;
     tesseract-ocr:dnf|tesseract-ocr:yum|tesseract-ocr:pacman|tesseract-ocr:apk) echo tesseract ;;
     *)                                         echo "$apt" ;;
@@ -531,7 +534,7 @@ echo "Venv:      $HOME/.claude/skills/.venv"
 echo "Installer: uv-first (pip/pipx/venv fallback)"
 [[ "$OPT_HEADLESS" == true ]] && echo "Mode:     +headless"
 [[ "$OPT_GO" == true ]]       && echo "Mode:     +go"
-[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (mermaid-cli diagrams)"
+[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (headless + go)"
 
 # ── uv bootstrap ────────────────────────────────────────────
 section "uv (Astral package manager)"
@@ -615,6 +618,10 @@ if [[ "$OS" == "linux" ]] && [[ "$(pkg_mgr)" != none ]]; then
   case "$(pkg_mgr)" in apt) _dj=fonts-dejavu-core ;; dnf|yum) _dj=dejavu-sans-fonts ;; pacman) _dj=ttf-dejavu ;; zypper) _dj=dejavu-fonts ;; apk) _dj=font-dejavu ;; *) _dj="" ;; esac
   { [[ -n "$_dj" ]] && pkg_install_raw "$_dj" &>/dev/null 2>&1 && log_ok "dejavu fonts (editorial raster text)"; } || log_skip "dejavu fonts"
 fi
+# rsvg-convert (librsvg, Pango text) rasterises the IntelGraph Mermaid figures. Unlike cairosvg it
+# falls back per glyph, so the type icons in node labels (🌐 💬 📧) render from the DejaVu
+# fonts above instead of being dropped.
+apt_install librsvg2-bin rsvg-convert librsvg
 # ── Media / vision toolchain ──────────────────────────────────
 # ffmpeg + imagemagick preprocess A/V and image evidence; Node/npx runs the multix
 # vision CLI (npx @mrgoonie/multix) and agent-browser. See techniques/media-vision-analysis.md.
@@ -1034,18 +1041,20 @@ else
   echo -e "  ${YELLOW}–${NC} Skipped (add --go to install Go tools, requires Go 1.21+)"
 fi
 
-# ── Report diagram engine: mermaid-cli (--all) ────────────────
-# mmdc (IntelGraph flow/kill-chain diagrams) pulls a headless Chrome, so it rides with --all.
-# The xelatex PDF engine is installed UNCONDITIONALLY above; only mmdc is gated here.
-section "Report diagram engine (mermaid-cli)"
-if [[ "$OPT_ALL" == true ]]; then
-  if has npm; then
-    npm install -g @mermaid-js/mermaid-cli &>/dev/null 2>&1 && log_ok "mermaid-cli (mmdc)" || log_fail "mermaid-cli" "npm install -g @mermaid-js/mermaid-cli failed"
+# ── Report diagram engine: Pele ──────────────────────────────
+# IntelGraph renders every Mermaid figure with Pele: one ~700 KB module run by the Node.js
+# installed above, no browser. The pinned npm tarball named in intel_engine/IntelGraph/references/
+# pele.json is sha512-verified before extraction into IntelGraph/vendor/pele/. PNG/PDF come from
+# rsvg-convert (installed above), so this is installed UNCONDITIONALLY.
+section "Report diagram engine (Pele)"
+if "$VENV_PYTHON" "$SKILL_DIR/intel_engine/IntelGraph/scripts/pele_fetch.py" &>/dev/null; then
+  if has node || has bun; then
+    log_ok "pele (Mermaid → SVG, no browser)"
   else
-    log_skip "mermaid-cli (needs npm — install Node.js, then: npm i -g @mermaid-js/mermaid-cli)"
+    log_skip "pele fetched, but it needs Node.js 20+ or Bun to run"
   fi
 else
-  echo -e "  ${YELLOW}–${NC} mermaid-cli not requested (add --all; pulls a headless Chrome. PDF/DOCX/HTML need neither)"
+  log_fail "pele" "pele_fetch.py failed (network?) — render_mermaid.py retries on first use"
 fi
 
 # ── ASN lookup tool (nitefood/asn) ────────────────────────────

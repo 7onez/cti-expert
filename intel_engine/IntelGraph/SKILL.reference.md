@@ -21,7 +21,7 @@ Pick **one** anchor and use it consistently:
 ```bash
 GRAPH=~/.claude/skills/IntelGraph          # absolute — works from any CWD (preferred)
 # or, when working inside the repo:  GRAPH="$ROOT/IntelGraph"
-python3 "$GRAPH/scripts/render_mermaid.py"  diagram.mmd  outputs/stem   # via mmdc
+python3 "$GRAPH/scripts/render_mermaid.py"  diagram.mmd  outputs/stem   # via Pele (Node/Bun)
 python3 "$GRAPH/scripts/render_graphviz.py" graph.dot    outputs/stem   # needs graphviz/dot
 python3 "$GRAPH/scripts/render_network.py"  case_graph.json network.html --title "..."
 python3 "$GRAPH/scripts/case_timeline.py"   CASE/out/*.json --stem CASE/timeline --markdown
@@ -31,9 +31,11 @@ python3 "$GRAPH/scripts/case_timeline.py"   CASE/out/*.json --stem CASE/timeline
 Every `IntelGraph/scripts/…` or bare `scripts/…` path shown later in this file means
 `$GRAPH/scripts/…`; any `<WebPivot>/tools/…` means `~/.claude/skills/WebPivot/tools/…`.
 
-Dependencies: see `requirements.txt` (`matplotlib`, `graphviz`; Mermaid uses the `mmdc` binary).
-`render_mermaid.py` works out of the box wherever `mmdc` is installed; matplotlib/Graphviz paths
-need their deps present.
+Dependencies: see `requirements.txt` (`matplotlib`, `graphviz`). Mermaid renders with **Pele** — a
+pinned, dependency-free module (`references/pele.json`, fetched into `vendor/pele/` by the installers
+or on first render) run by Node.js 20+ or Bun — and rasterises with `rsvg-convert` (librsvg), else a
+headless Chrome/Edge, else cairosvg. No mermaid-cli, no Puppeteer. cairosvg is last because it draws
+each label in one font and silently drops the type icons (🌐 💬 📧) and CJK; it warns when it does.
 
 ## Core workflow
 
@@ -86,15 +88,15 @@ faithful to the HTML: **node shape = entity type**, **node fill = Louvain cluste
 = red anchor, **edge color = evidence class** (operator/kit/infra/link), **dashed = inferred**.
 Use this figure with the **IntelReport** skill to build the PDF/DOCX. Both outputs coexist —
 `render_network.py` (interactive HTML) is unchanged and still the right tool for live triage.
-Rendering needs `mmdc` + headless Chrome (same as any Mermaid figure).
+Rendering needs Node.js 20+ (or Bun) for Pele plus one SVG rasteriser (same as any Mermaid figure).
 
 ### The legend is a SEPARATE figure on a multi-cluster graph — embed both
 
 `--legend` on a graph with two or more clusters writes a companion **`<stem>_legend.*`** and says
 so on stdout. Embed it beside the graph. An inline legend box loses the space war with the graph:
-mermaid centres a subgraph title over a box sized by its *content*, so a key with a sentence for a
-title overflows onto its own sample nodes, and dagre then treats the box as another cluster and
-gives it a full band of the figure. The companion card also explains what the **shapes** and the
+the layout engine centres a subgraph title over a box sized by its *content*, so a key with a
+sentence for a title overflows onto its own sample nodes, and the box then counts as another cluster
+and takes a full band of the figure. The companion card also explains what the **shapes** and the
 **cluster fills** mean, which the inline box never did. `--inline-legend` restores the old
 single-figure behaviour; `--split-clusters` additionally emits one figure per cluster, for an
 estate too dense to read at printed width.
@@ -113,20 +115,20 @@ estate too dense to read at printed width.
 
 ### Definition — `--scale`, not `--width`
 
-`--width` is the *layout* width: raising it spreads the same drawing over more pixels and makes
-the type smaller relative to the figure. `--scale` (default 2) is the renderer's device pixel
-ratio — it rasterises the same layout at N× density, which is what keeps a figure crisp when a
-reader zooms into the PDF. `--pdf` additionally writes a **vector** `<stem>.pdf`; IntelReport
-embeds that automatically in the PDF build when it exists (the DOCX cannot take one).
+`--width` is the room Pele may *reflow* the layout into — wrapped labels, tighter spacing — not a
+resolution knob; leave it at 0 (natural layout) unless the figure must fit a page. `--scale`
+(default 2) is the device pixel ratio — it rasterises the same layout at N× density, which is what
+keeps a figure crisp when a reader zooms into the PDF. `--pdf` additionally writes a **vector**
+`<stem>.pdf`; IntelReport embeds that automatically in the PDF build when it exists (the DOCX cannot
+take one).
 
-House styling lives in `references/diagram.css`, injected into **every** mermaid figure at render
-time — so a generated case graph and a hand-authored reasoning diagram come out of the same press.
-Two rules there are load-bearing and easy to break: mmdc appends that stylesheet *after* mermaid
-has sized every label box, so **it must never set a property that changes text metrics** (a
-font-size rule clips the label into a blank white pill); and in the `%%{init}%%` directive
-`fontFamily` works only at the config top level, while **a single quote anywhere voids the entire
-directive** and silently drops the figure to mermaid's defaults. `tests/test_diagram.py` holds
-both.
+House styling is applied to **every** Mermaid figure at render time — so a generated case graph and
+a hand-authored reasoning diagram come out of the same press. Font and colours live in
+`scripts/theme.py` (`DIAGRAM`, `PELE_VARS`); layout spacing is the `%%{init}%%` flowchart block
+`theme.mermaid_init()` writes into the `.mmd` (Pele honours `curve`, `nodeSpacing`, `rankSpacing`,
+and ignores an init directive's `fontFamily`/`themeVariables`). Pele paints through CSS variables;
+`render_mermaid.py` resolves them into the SVG so it renders the same in cairo, librsvg, pandoc and
+Word — an unresolved `var()` paints black. `tests/test_diagram.py` holds that.
 
 ## The timeline figure — `case_timeline.py`  (run this on every case)
 
@@ -264,17 +266,15 @@ gantt(tasks, title="Campaign timeline — fake banking APK",
 ```
 `crit=True` highlights a task (brick); `done=True` greys it. `timeline([(date,label),...], ...)` renders an alternating event timeline. Both emit the hi-res + SVG + thumb triple.
 
-## Rendering Mermaid (flow, kill-chain — needs headless Chrome)
+## Rendering Mermaid (flow, kill-chain — no browser needed)
 
-Mermaid is best for attack flows / kill-chains. It requires `mmdc` **and headless Chrome**. If Chrome isn't installed, run once:
-```bash
-npx puppeteer browsers install chrome-headless-shell
-```
-(this needs network access to the puppeteer CDN; if the environment blocks it, use Graphviz for flows instead). Then:
+Mermaid is best for attack flows / kill-chains. `render_mermaid.py` lays it out with Pele (Node.js
+20+ or Bun) and rasterises the SVG with `rsvg-convert` (installed by default), falling back to a
+headless Chrome/Edge and finally cairosvg (which loses label emoji, with a warning):
 ```bash
 python IntelGraph/scripts/render_mermaid.py diagram.mmd outputs/killchain
 ```
-See `references/mermaid_recipes.md` for Gantt, timeline, kill-chain, and flow templates (English + Vietnamese). For flows without Chrome, use the Graphviz `flowchart` equivalent in `references/graphviz_recipes.md`.
+See `references/mermaid_recipes.md` for Gantt, timeline, kill-chain, and flow templates (English + Vietnamese). With no JavaScript runtime at all, use the Graphviz `flowchart` equivalent in `references/graphviz_recipes.md`.
 
 ## Rendering Graphviz (entity / infrastructure graphs)
 

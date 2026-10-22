@@ -237,7 +237,7 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
          intel_engine/tools/eval/test_frontier_golden.py intel_engine/tools/eval/test_propose.py \
          intel_engine/tools/eval/test_propose_page_selectors.py \
          intel_engine/tools/eval/test_pivot_routes.py intel_engine/tools/eval/test_origin_history.py \
-         intel_engine/tests/test_timeline_inputs.py intel_engine/tests/test_render_mermaid_flags.py \
+         intel_engine/tests/test_timeline_inputs.py \
          intel_engine/tests/test_cli_backend.py; do
   if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
   if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi

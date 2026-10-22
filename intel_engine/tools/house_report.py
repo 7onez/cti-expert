@@ -730,9 +730,9 @@ def fig_sector_graph(c: dict, rep_dir: str, title: str) -> str | None:
     try:
         sys.path.insert(0, os.path.join(ROOT, "IntelGraph", "scripts"))
         from theme import mermaid_init  # noqa: WPS433
-        init = mermaid_init({"nodeSpacing": 22, "rankSpacing": 70, "useMaxWidth": False})
+        init = mermaid_init({"nodeSpacing": 22, "rankSpacing": 70})
     except Exception:  # noqa: BLE001
-        init = "%%{init: {\"theme\": \"neutral\", \"flowchart\": {\"nodeSpacing\": 22, \"rankSpacing\": 70}}}%%"
+        init = "%%{init: {\"flowchart\": {\"curve\": \"basis\", \"nodeSpacing\": 22, \"rankSpacing\": 70}}}%%"
     by = {}
     for d in domains:
         by.setdefault(_sector(d), []).append(d)

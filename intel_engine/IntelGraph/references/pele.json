@@ -1,0 +1,16 @@
+{
+  "_comment": "Pele (github.com/obsidianmd/pele, MIT) — the Mermaid renderer behind render_mermaid.py. One dependency-free ES module (~700 KB) that parses Mermaid and lays it out to plain SVG text (no <foreignObject>, no browser), run under Node >= 20 or Bun. It replaced mermaid-cli, which needed npm + Puppeteer + a headless Chrome (hundreds of MB) for the same figures. The module lives in the gitignored IntelGraph/vendor/pele/ and is fetched by scripts/pele_fetch.py — from the installers, or on first render when missing.",
+  "release": {
+    "_comment": "The pinned npm release. pele_fetch.py downloads exactly this tarball, verifies the npm `dist.integrity` (sha512, base64) before extracting anything, and records the version in vendor/pele/VERSION. Move the pin only after re-rendering a real case's case_diagram.mmd / estate_sectors.mmd / legend and checking the figures by eye: Pele owns its layout, so a release can move nodes. Integrity is the value https://registry.npmjs.org/pele/<version> publishes.",
+    "version": "1.8.0",
+    "tarball": "https://registry.npmjs.org/pele/-/pele-1.8.0.tgz",
+    "integrity": "sha512-AYmHttE70cwNJVXdfPMCANGivFlmc3bGGpMG0GqH5S5vE3RgtEuLlkqbhRfe94Csv/ZEd1TUbv2dMUHpw4p1Bg=="
+  },
+  "files": {
+    "_comment": "Tarball member -> file name under vendor/pele/. dist/pele.js is the all-diagram-types bundle; it is written as pele.mjs because only the extracted file is kept, not npm's package.json (`\"type\": \"module\"`) — without that, Node 20 would load a bare .js as CommonJS and reject Pele's ESM exports. The licence travels with it.",
+    "entries": {
+      "package/dist/pele.js": "pele.mjs",
+      "package/LICENSE": "LICENSE"
+    }
+  }
+}

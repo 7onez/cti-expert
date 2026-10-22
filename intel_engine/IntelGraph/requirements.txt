@@ -3,10 +3,12 @@
 matplotlib        # data charts + gantt.py/timeline (theme.py house style)
 graphviz          # entity/infra link graphs (also needs the `dot` binary: brew install graphviz)
 
-# Mermaid (flows, kill-chains, quick relationship graphs) uses the mermaid-cli
-# binary `mmdc`, NOT a pip package:
-#   npm i -g @mermaid-js/mermaid-cli
-#   npx puppeteer browsers install chrome-headless-shell   # one-time, if Chrome missing
+# Mermaid (flows, kill-chains, quick relationship graphs) renders with Pele — NOT a pip package
+# and no browser: one pinned module (references/pele.json) fetched into vendor/pele/ by
+# scripts/pele_fetch.py, run by Node.js 20+ or Bun. PNG/PDF come from librsvg `rsvg-convert` (a system
+# package, installed by scripts/install.sh), else a headless Chrome/Edge, else cairosvg — last because
+# it drops the emoji type icons in node labels:
+cairosvg
 
 # Interactive clustered link-analysis graphs (scripts/render_network.py) need
 # NOTHING to install — the JS libraries (Cytoscape.js + fcose, MIT) are vendored

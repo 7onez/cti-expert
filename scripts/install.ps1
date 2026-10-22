@@ -456,7 +456,7 @@ Write-Host "Venv:      $VenvDir"
 Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
 if ($Headless) { Write-Host "Mode:      +headless" }
 if ($Go) { Write-Host "Mode:      +go" }
-if ($All) { Write-Host "Mode:      +all (mermaid-cli diagrams)" }
+if ($All) { Write-Host "Mode:      +all (headless + go)" }
 
 Write-Section "uv (Astral package manager)"
 Install-Uv
@@ -849,20 +849,18 @@ else {
     Write-Host "  --  Skipped (add -Go to install Go tools, requires Go 1.21+)" -ForegroundColor Yellow
 }
 
-Write-Section "Report diagram engine (mermaid-cli)"
-# mmdc (IntelGraph flow diagrams) pulls a headless Chrome, so it rides with -All. The xelatex
-# PDF engine (MiKTeX) is installed UNCONDITIONALLY above; only mmdc is gated here.
-if ($All) {
-    if (Test-Command "npm") {
-        Invoke-Step "mermaid-cli" { npm install -g '@mermaid-js/mermaid-cli' | Out-Host; if ($LASTEXITCODE -ne 0) { throw "npm install -g @mermaid-js/mermaid-cli failed" }; Log-Ok "mermaid-cli (mmdc)" } | Out-Null
-    }
-    else {
-        Log-Skip "mermaid-cli (needs npm — install Node.js)"
-    }
-}
-else {
-    Write-Host "  --  mermaid-cli not requested (add -All; pulls a headless Chrome. PDF/DOCX/HTML need neither)" -ForegroundColor Yellow
-}
+Write-Section "Report diagram engine (Pele)"
+# IntelGraph renders every Mermaid figure with Pele: one ~700 KB module run by the Node.js
+# installed above, no browser. The pinned npm tarball named in intel_engine\IntelGraph\references\
+# pele.json is sha512-verified before extraction into IntelGraph\vendor\pele\. PNG/PDF come from
+# headless Edge (always present on Windows; no rsvg-convert package there), with full emoji/CJK
+# glyph fallback — cairosvg is only the last resort. Installed UNCONDITIONALLY.
+Invoke-Step "pele" {
+    & $VenvPython (Join-Path $SkillDir "intel_engine\IntelGraph\scripts\pele_fetch.py")
+    if ($LASTEXITCODE -ne 0) { throw "pele_fetch.py failed (render_mermaid.py retries on first use)" }
+    if (!(Test-Command "node") -and !(Test-Command "bun")) { Log-Skip "pele needs Node.js 20+ or Bun to run" }
+    else { Log-Ok "pele (Mermaid -> SVG; PNG/PDF via headless Edge)" }
+} | Out-Null
 
 Write-Section "ASN lookup (native asn command)"
 $asnSrc = Join-Path $SkillDir "scripts\asn.ps1"

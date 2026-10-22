@@ -2219,7 +2219,7 @@ def _ensure_case_diagram(case: str, title: str) -> str | None:
     cases/<case>/report/case_graph.json from the case's raw pivot JSON, then renders an
     editable Mermaid PNG/SVG via IntelGraph. Staleness-guarded so the parallel path doesn't
     rebuild it once per cluster. Returns the hi-res PNG path, or None if there's nothing to
-    graph or the render is unavailable (missing mmdc/headless Chrome). Never raises."""
+    graph or the render is unavailable (no Node/Bun for Pele, or no SVG rasteriser). Never raises."""
     case_dir = os.path.join(ROOT, "cases", case)
     rep_dir = os.path.join(case_dir, "report")
     os.makedirs(rep_dir, exist_ok=True)
@@ -2250,7 +2250,7 @@ def _ensure_case_diagram(case: str, title: str) -> str | None:
 def _render_deliverables(case: str, snap_md: str, assessment: Assessment) -> dict:
     """After an assessment snapshot is written, auto-emit the case deliverables: an editable
     relationship diagram (PNG/SVG) and a polished PDF+DOCX (IntelReport). Best-effort — a
-    missing browser (mmdc) or pandoc only logs a warning; the case never fails on it. Set
+    missing diagram renderer (Pele) or pandoc only logs a warning; the case never fails on it. Set
     HARNESS_DELIVERABLES=0 to skip, HARNESS_TLP to set the classification (default TLP:AMBER)."""
     if os.environ.get("HARNESS_DELIVERABLES") == "0":
         return {}

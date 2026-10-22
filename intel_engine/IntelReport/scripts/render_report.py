@@ -277,8 +277,7 @@ def regenerate_figures(md_dir):
     2) REASONING — a hand-authored Mermaid source, for the argument a case graph
        cannot express (entity structure, ownership timeline, the inference chain
        from artifact to attribution, links tested and rejected):
-       {"mmd": "fig_attribution.mmd", "stem": "fig_attribution",
-        "theme": "neutral", "width": 2400}
+       {"mmd": "fig_attribution.mmd", "stem": "fig_attribution", "width": 2400}
 
     Paths are relative to the md dir. Best-effort: a figure that fails to build
     leaves the previous PNG in place."""
@@ -301,8 +300,7 @@ def regenerate_figures(md_dir):
                                  % fig["stem"])
                 continue
             cmd = [sys.executable, RENDER_MERMAID,
-                   os.path.join(md_dir, fig["mmd"]), stem,
-                   "--theme", str(fig.get("theme", "neutral"))]
+                   os.path.join(md_dir, fig["mmd"]), stem]
             if fig.get("width"):
                 cmd += ["--width", str(fig["width"])]
             print("figure %s: %s" % ("refreshed" if run(cmd) else "FAILED",

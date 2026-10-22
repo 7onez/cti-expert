@@ -215,7 +215,7 @@ current head. Show the BLUF + attribution/confidence + the evidence trail (full,
 
 Right after the snapshot, produce the shareable deliverables so a finished case ships with a
 relationship figure and a polished report. Both are best-effort — skip on a missing
-`mmdc`/headless Chrome or `pandoc`, don't fail the case.
+diagram renderer (Node/Bun for Pele, or an SVG rasteriser) or `pandoc`, don't fail the case.
 
 > **LOAD THE `IntelGraph` AND `IntelReport` SKILLS FIRST — the `render_diagram` / `render_report`
 > MCP tools are renderers, not the deliverable.** They apply the figure encoding and the LaTeX
