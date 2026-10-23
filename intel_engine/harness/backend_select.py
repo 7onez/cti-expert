@@ -7,7 +7,7 @@ WHY
   $0.00, no assessment produced". This module decides ONCE, before sdk_compat is imported, and
   says why.
 
-  HARNESS_BACKEND=claude|codex|omp|openai|deepseek|kimi|local   explicit — honoured as-is
+  HARNESS_BACKEND=claude|codex|omp|openai|deepseek|kimi|local|orcarouter   explicit — honoured as-is
   HARNESS_BACKEND unset / auto                                  resolve() below
 
   auto order: the host agent this process runs inside (CODEX_THREAD_ID → codex, OMPCODE → omp,
@@ -34,8 +34,12 @@ import tempfile
 import time
 
 CLI_BACKENDS = ("codex", "omp")
-OPENAI_BACKENDS = ("openai", "deepseek", "kimi", "moonshot", "local", "ollama", "vllm", "lmstudio")
+OPENAI_BACKENDS = ("openai", "deepseek", "kimi", "moonshot", "local", "ollama", "vllm", "lmstudio",
+                   "orcarouter")
 KNOWN = ("claude",) + CLI_BACKENDS + OPENAI_BACKENDS
+#: Named providers that carry their own origins/key variable instead of the shared
+#: OPENAI_BASE_URL/OPENAI_API_KEY pair (see references/model_providers.json).
+NAMED_PROVIDERS = ("orcarouter",)
 PROBE_TIMEOUT = int(os.environ.get("HARNESS_PROBE_TIMEOUT", "90"))
 
 
@@ -69,7 +73,20 @@ def host_agent(env=None) -> str | None:
 
 def _openai_key(env=None) -> str:
     env = os.environ if env is None else env
-    return env.get("OPENAI_API_KEY") or env.get("DEEPSEEK_API_KEY") or env.get("MOONSHOT_API_KEY") or ""
+    return (env.get("OPENAI_API_KEY") or env.get("DEEPSEEK_API_KEY")
+            or env.get("MOONSHOT_API_KEY") or "")
+
+
+def _provider_key(name: str) -> str:
+    """The key for a named provider — its own variable, never OPENAI_API_KEY. A generic OpenAI
+    key must not silently authenticate a named provider it does not belong to."""
+    if name == "orcarouter":
+        try:
+            import orcarouter as orc
+            return orc.api_key()
+        except Exception:  # noqa: BLE001 — degrade to the environment variable
+            return os.environ.get("ORCAROUTER_API_KEY") or ""
+    return _openai_key()
 
 
 def available(name: str) -> tuple[bool, str]:
@@ -85,6 +102,17 @@ def available(name: str) -> tuple[bool, str]:
     if name in CLI_BACKENDS:
         exe = shutil.which(name)
         return (True, f"{name} CLI at {exe}") if exe else (False, f"{name} CLI not on PATH")
+    if name in NAMED_PROVIDERS:
+        key = _provider_key(name)
+        if not key:
+            return False, "no OrcaRouter credential (ORCAROUTER_API_KEY or the skill-root .env)"
+        try:
+            import orcarouter as orc
+            if orc.needs_reauth():
+                return False, "the stored OrcaRouter key was rejected (401) — reauthenticate"
+        except Exception:  # noqa: BLE001
+            pass
+        return True, "OrcaRouter credential set"
     if name in OPENAI_BACKENDS:
         if name in ("local", "ollama", "vllm", "lmstudio"):
             return (bool(os.environ.get("OPENAI_BASE_URL")),
@@ -261,14 +289,36 @@ def probe(name: str) -> tuple[bool, str]:
         if rc == 0 and _said_ok(out):
             return True, "omp answered"
         return False, f"omp unusable: {out.strip()[-300:] or f'exit {rc}'}"
+    if name in NAMED_PROVIDERS:
+        return _probe_named(name)
     if name in OPENAI_BACKENDS:
         return available(name)
     return False, f"unknown backend {name!r}"
 
 
+def _probe_named(name: str) -> tuple[bool, str]:
+    """A named provider is probed with a free, non-billing request: its model catalog. That
+    proves the key, the origin and the account in one GET without spending inference tokens."""
+    if name != "orcarouter":
+        return available(name)
+    try:
+        import orcarouter as orc
+    except Exception as e:  # noqa: BLE001
+        return False, f"orcarouter module unavailable ({type(e).__name__})"
+    cred = orc.credential()
+    if cred is None:
+        return False, "no OrcaRouter credential (ORCAROUTER_API_KEY or the skill-root .env)"
+    if orc.needs_reauth(cred):
+        return False, "the stored OrcaRouter key was rejected (401) — reauthenticate"
+    cat = orc.fetch_catalog(cred, capability="chat", use_cache=False)
+    if cat.degraded:
+        return False, f"OrcaRouter catalog unreachable: {cat.error}"
+    return True, f"OrcaRouter answered ({len(cat.models)} chat models)"
+
+
 def candidates(env=None) -> list:
     host = host_agent(env)
-    order = ([host] if host else []) + ["claude", "codex", "omp", "openai"]
+    order = ([host] if host else []) + ["claude", "codex", "omp", "orcarouter", "openai"]
     seen, out = set(), []
     for n in order:
         if n not in seen:
@@ -396,7 +446,8 @@ def resolve(*, do_probe: bool = True, exclude=(), deep: bool = False) -> tuple[s
         "no usable LLM backend for the harness:\n" + lines + "\n"
         "Fix one of: `claude /login` (or export ANTHROPIC_API_KEY) · `codex login` · configure omp "
         "(`omp` → /login) · export OPENAI_API_KEY/DEEPSEEK_API_KEY (+ OPENAI_BASE_URL). "
-        "Or pin one with HARNESS_BACKEND=<name>.")
+        "Or pin one with HARNESS_BACKEND=<name>, or configure OrcaRouter Cyber Inference with "
+        "`intel provider login`.")
 
 
 def ensure_env() -> str:

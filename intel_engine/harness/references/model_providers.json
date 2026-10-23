@@ -1,0 +1,160 @@
+{
+  "_comment": "LLM MODEL PROVIDERS \u2014 one named entry per backend the harness can run on, so a provider's identity (label, origins, key variable, default/tier models, catalog filters, verified outage seed) is DATA rather than a literal spread across backend_select.py and openai_backend.py. Same rule the rest of the harness follows: a value that a vendor changes on its own schedule lives in references/, not in code. `openai_compatible` providers share openai_backend.py over /chat/completions; the adapter is chosen by backend_select.OPENAI_BACKENDS. Every entry here is a NAME the user can select (`HARNESS_BACKEND=<id>`); nothing in this file is a generic 'custom endpoint' escape hatch.",
+  "providers": {
+    "orcarouter": {
+      "_comment": "OrcaRouter Cyber Inference \u2014 the named provider for security teams doing authorised, scoped work. One OpenAI-compatible relay; authentication lives on a DIFFERENT origin from inference, and the two are configured independently (spec: never derive one origin from the other by swapping a hostname or appending /v1). `verified_seed` is an outage fallback only: live GET /v1/models is authoritative whenever it answers.",
+      "kind": "openai_compatible",
+      "label": "OrcaRouter Cyber Inference",
+      "api_base_url": "https://api.orcarouter.ai/v1",
+      "auth_base_url": "https://www.orcarouter.ai",
+      "authorize_path": "/auth",
+      "exchange_path": "/api/v1/auth/keys",
+      "env_key": "ORCAROUTER_API_KEY",
+      "env_api_base": "ORCA_API_BASE_URL",
+      "env_auth_base": "ORCA_AUTH_BASE_URL",
+      "env_shared_base": "ORCA_BASE_URL",
+      "key_prefix": "sk-orca-",
+      "app_name": "cti-expert",
+      "console_url": "https://www.orcarouter.ai/console",
+      "authorized_apps_url": "https://www.orcarouter.ai/console/authorized-apps",
+      "provider_page": "https://www.orcarouter.ai/cyber",
+      "cyber_catalog_url": "https://www.orcarouter.ai/models?tier=cyber",
+      "default_model": "orcarouter/auto",
+      "fallback_model": "orcarouter/fusion",
+      "cyber_models": [
+        "orca/orcacyber-ultra-1.0",
+        "orca/orcacyber-zero-1.5"
+      ],
+      "tier_model_map": {
+        "_comment": "The harness tiers keep the provider's own routing default: `orcarouter/auto` is open to any key and needs no per-model choice. A security team that has unlocked the cyber tier pins one with HARNESS_MODEL_MAP={\"opus\":\"orcacyber-ultra-1.0\"} rather than changing the default for everyone.",
+        "haiku": "orcarouter/auto",
+        "sonnet": "orcarouter/auto",
+        "opus": "orcarouter/auto"
+      },
+      "catalog": {
+        "_comment": "Bounds so a catalog response cannot consume unbounded memory or advertise a route this client cannot speak. Every one of these is a ceiling, not a suggestion.",
+        "timeout_s": 8,
+        "max_bytes": 2097152,
+        "max_items": 2000,
+        "chat_endpoint_types": [
+          "openai",
+          "anthropic",
+          "gemini",
+          "openai-response"
+        ],
+        "non_chat_endpoint_types": [
+          "image-generation",
+          "openai-video",
+          "jina-rerank",
+          "embeddings"
+        ]
+      },
+      "verified_seed": {
+        "_comment": "OUTAGE FALLBACK ONLY \u2014 used when live discovery fails, and labelled 'degraded' in every surface that shows it. Live GET /v1/models replaces this wholesale on success; the seed is never merged into a live result. Ids keep their vendor/model namespace exactly. `input_modalities` lists ONLY what is verified: an unlisted modality fails closed (the model simply does not appear in that multimodal selector). Missing metadata is left null rather than guessed.",
+        "models": [
+          {
+            "id": "orcarouter/auto",
+            "name": "OrcaRouter Auto",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "orcarouter/fusion",
+            "name": "OrcaRouter Fusion",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "orca/orcacyber-ultra-1.0",
+            "name": "OrcaCyber Ultra",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "orca/orcacyber-zero-1.5",
+            "name": "OrcaCyber Zero",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "openai/gpt-5.5",
+            "name": "GPT-5.5",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ]
+          },
+          {
+            "id": "anthropic/claude-opus-4.8",
+            "name": "Claude Opus 4.8",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "google/gemini-3.5-flash",
+            "name": "Gemini 3.5 Flash",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          },
+          {
+            "id": "deepseek/deepseek-v4-pro",
+            "name": "DeepSeek V4 Pro",
+            "context_window": null,
+            "input_modalities": [
+              "text"
+            ],
+            "supported_endpoint_types": [
+              "openai"
+            ],
+            "reasoning_efforts": null
+          }
+        ]
+      }
+    }
+  }
+}

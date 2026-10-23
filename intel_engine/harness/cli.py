@@ -329,6 +329,105 @@ def _cmd_doctor(pin: str | None) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- provider
+def _cmd_provider(a) -> int:
+    """OrcaRouter Cyber Inference — two explicit ways in, one credential type out.
+
+    `api-key` reads a pasted key (stdin or a hidden prompt, never an argv value, because argv
+    lands in shell history and process lists). `oauth` runs OAuth 2.0 + PKCE and stores the
+    durable key the exchange returns. Both write to the skill-root `.env` — the store this
+    project already uses — and both yield the same `Credential`, so the harness cannot tell
+    which was used.
+    """
+    import orcarouter as orc
+
+    action = a.action
+    if action == "status":
+        summary = orc.provider_summary()
+        cat = None
+        if summary.get("credential"):
+            cat = orc.fetch_catalog(capability="chat")
+        if a.json:
+            print(json.dumps({**summary, "catalog": cat.to_dict() if cat else None}, indent=2))
+            return 0
+        print(f"{summary['label']}  ({summary['id']})")
+        print(f"  inference : {summary['api_base_url']}")
+        print(f"  auth      : {summary['auth_base_url']}")
+        print(f"  default   : {summary['default_model']}   fallback: {summary['fallback_model']}")
+        cred = summary.get("credential")
+        if not cred:
+            print("  credential: none — `intel provider login --method api-key|oauth`")
+            return 0
+        state = " — NEEDS REAUTHENTICATION (401)" if cred["needs_reauth"] else ""
+        print(f"  credential: {cred['masked']}  via {cred['source']}  scope={cred['scope']}{state}")
+        if cat is not None:
+            flag = " (degraded: verified seed)" if cat.degraded else ""
+            print(f"  catalog   : {len(cat.models)} chat models from {cat.source}{flag}")
+            if cat.degraded and cat.error:
+                print(f"              {cat.error}")
+        return 0
+
+    if action == "models":
+        cat = orc.fetch_catalog(capability=a.capability, modality=a.modality)
+        if a.json:
+            print(json.dumps(cat.to_dict(), indent=2))
+            return 0
+        head = f"{len(cat.models)} {a.capability} models"
+        if a.modality:
+            head += f" with {a.modality} input"
+        print(f"{head} — source: {cat.source}")
+        if cat.degraded:
+            print(f"  DEGRADED: live catalog unavailable ({cat.error}). Showing the verified "
+                  f"fallback; it is not the live account catalog.")
+        for m in cat.models:
+            mods = ",".join(m.get("input_modalities") or []) or "?"
+            print(f"  {m['id']:<40} {mods}")
+        return 0
+
+    if action == "logout":
+        adapter = orc.ApiKeyAdapter()
+        was = adapter.read()
+        adapter.clear()
+        orc.clear_unauthorized()
+        print("removed the stored OrcaRouter credential" if was else "no stored credential")
+        return 0
+
+    if action == "login":
+        if a.method == "api-key":
+            adapter = orc.ApiKeyAdapter()
+            if a.key_stdin:
+                key = sys.stdin.readline().strip()
+            else:
+                import getpass
+                key = getpass.getpass("Paste your OrcaRouter API key (sk-orca-…): ").strip()
+            if not key:
+                print("no key supplied", file=sys.stderr)
+                return 2
+            if not orc.looks_like_key(key):
+                print("warning: that does not look like an sk-orca-… key; saving anyway — the "
+                      "first real request decides validity", file=sys.stderr)
+            cred = adapter.save(key)
+            orc.clear_unauthorized()
+            print(f"stored {cred.masked} in {orc.env_path()} (chmod 600, gitignored)")
+            return 0
+
+        def read_code(url: str) -> str:
+            print("Authorize in your browser, then paste the code back here:\n" + url)
+            return sys.stdin.readline().strip()
+
+        try:
+            cred = orc.connect_with_pkce(flow=a.flow, open_browser=not a.no_browser,
+                                         code_reader=read_code if a.flow == "oob" else None)
+        except orc.ConnectError as e:
+            print(f"login failed ({e.kind}): {e}", file=sys.stderr)
+            return 1
+        print(f"connected via OAuth 2.0 + PKCE (scope {cred.scope}); stored {cred.masked} in "
+              f"{orc.env_path()}")
+        return 0
+
+    return 2
+
+
 # ---------------------------------------------------------------- entry
 def main() -> int:
     ap = argparse.ArgumentParser(prog="intel", description="OSINT harness console")
@@ -340,13 +439,28 @@ def main() -> int:
     st = sub.add_parser("status", help="case state (no LLM, no API key)")
     st.add_argument("case", nargs="?", help="a CASE id; omit to list every case")
     dr = sub.add_parser("doctor", help="which LLM backend a run would use (probes auth; no phases)")
-    dr.add_argument("--backend", default=None, help="pin claude|codex|omp|openai|deepseek|kimi|local")
+    dr.add_argument("--backend", default=None, help="pin claude|codex|omp|openai|deepseek|kimi|local|orcarouter")
     ap_ = sub.add_parser("approve", help="approve/reject the cross-type loop's pending proposal")
     ap_.add_argument("case")
     ap_.add_argument("--only", default="", help="comma-separated proposal ids to approve")
     ap_.add_argument("--reject", default="", help="comma-separated proposal ids to reject")
     ap_.add_argument("--all", action="store_true", dest="approve_all", help="approve every item")
     ap_.add_argument("--show", action="store_true", help="print the proposal and exit")
+    pv = sub.add_parser("provider", help="OrcaRouter Cyber Inference: credential, catalog, model choice")
+    pv.add_argument("action", choices=("status", "login", "logout", "models"),
+                    help="status | login | logout | models")
+    pv.add_argument("--method", choices=("api-key", "oauth"), default="oauth",
+                    help="login method: paste an existing key, or OAuth 2.0 + PKCE (default)")
+    pv.add_argument("--flow", choices=("loopback", "oob"), default="loopback",
+                    help="oauth flow: loopback redirect (default) or out-of-band code")
+    pv.add_argument("--key-stdin", action="store_true",
+                    help="api-key login: read the key from stdin instead of a prompt")
+    pv.add_argument("--no-browser", action="store_true", help="print the URL instead of opening it")
+    pv.add_argument("--capability", default="chat",
+                    choices=("chat", "embedding", "image", "video", "rerank"),
+                    help="models: which capability to list (default chat)")
+    pv.add_argument("--modality", default=None, help="models: require this input modality (e.g. image)")
+    pv.add_argument("--json", action="store_true", help="machine-readable output")
     a = ap.parse_args()
 
     if a.cmd == "open":
@@ -360,6 +474,8 @@ def main() -> int:
     if a.cmd == "approve":
         split = lambda s: [x.strip() for x in (s or "").split(",") if x.strip()]  # noqa: E731
         return _cmd_approve(a.case, split(a.only), split(a.reject), a.approve_all, a.show)
+    if a.cmd == "provider":
+        return _cmd_provider(a)
     return 2
 
 

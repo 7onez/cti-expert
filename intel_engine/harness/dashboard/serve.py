@@ -16,9 +16,10 @@ WHAT IT SERVES
 the raw result that came back, the reply out — and `step` re-reads one call's full payload
 behind a truncation marker.
 
-Everything is read-only. The process never writes to `cases/`, `MEMORY/`, or the transcript
-store, and never makes an outbound request — a debug tool that mutates the evidence it is
-inspecting is worse than no tool.
+Everything is read-only for case data: the process never writes to `cases/`, `MEMORY/`, or the
+transcript store. The ONE exception is `/api/provider/*`, the OrcaRouter Cyber Inference settings
+surface (a credential write to the skill-root `.env` plus a model-catalog GET); it lives in its own
+module (`provider_api.py`), returns masked metadata only, and never exposes a key to the page.
 
 OPSEC — WHY IT BINDS TO LOOPBACK AND STAYS THERE
 ------------------------------------------------
@@ -39,6 +40,7 @@ import socketserver
 import sys
 import threading
 import traceback
+import urllib.parse
 import webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +48,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import collect as C  # noqa: E402
+import provider_api  # noqa: E402  — the provider settings surface (writes + catalog)
 
 STATIC = os.path.join(HERE, "static")
 
@@ -105,6 +108,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not path.startswith("/api/"):
             return super().do_GET()
 
+        if path.startswith("/api/provider/"):
+            # Provider settings + catalog: the ONE surface that may write and reach out.
+            # It returns metadata only — never a credential value.
+            params = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+            try:
+                status, payload = provider_api.handle_get(path, params)
+            except Exception as e:          # noqa: BLE001 — a fault must not kill the server
+                traceback.print_exc()
+                status, payload = 500, {"error": f"{type(e).__name__}: {e}"}
+            return self._json(payload, status=status)
+
         view = path[len("/api/"):].strip("/")
         entry = VIEWS.get(view)
         if not entry:
@@ -135,11 +149,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                "note": "the reader raised; the server is still up. See stderr "
                                        "for the traceback."}, status=500)
 
+    def do_POST(self):                      # noqa: N802 — BaseHTTPRequestHandler's name
+        """Provider actions only. The server stays read-only for case data: every POST route
+        lives under /api/provider/, and an unknown one is a 404 rather than a generic sink."""
+        path, _, _query = self.path.partition("?")
+        if not path.startswith("/api/provider/"):
+            return self._json({"error": "read-only server"}, status=405)
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 65536)
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+            if not isinstance(body, dict):
+                raise ValueError("body must be a JSON object")
+        except (ValueError, UnicodeDecodeError):
+            return self._json({"error": "malformed JSON body"}, status=400)
+        try:
+            status, payload = provider_api.handle_post(path, body)
+        except Exception as e:              # noqa: BLE001
+            traceback.print_exc()
+            status, payload = 500, {"error": f"{type(e).__name__}: {e}"}
+        return self._json(payload, status=status)
+
 
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
-
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])

@@ -94,6 +94,10 @@ DISPATCH = {
     # ── whole-case pipelines (IntelHarness) ─────────────────────────────
     "pipeline":      ("tools/intel.py",               []),   # deterministic open/status
     "harness":       ("harness/cli.py",               []),   # LLM Collect→Correlate→Assess
+    "provider":      ("harness/cli.py",               ["provider"]),  # OrcaRouter model provider:
+                                                                      # credential (API key or
+                                                                      # OAuth 2.0 + PKCE), live
+                                                                      # catalog, model choice
     "clusters":      ("tools/intel.py",               ["clusters"]),  # partition a case first —
                                                                       # the unit of judgment is the
                                                                       # CLUSTER, not the case
@@ -290,7 +294,7 @@ DISPATCH = {
 BLURB = {
     "pipeline": "deterministic case pipeline: open <case> domains.txt | status",
     "harness": "LLM whole-case orchestration: open/continue/status/doctor "
-               "(HARNESS_BACKEND=claude|codex|omp|openai|deepseek|kimi|local pins the backend doctor probes)",
+               "(HARNESS_BACKEND=claude|codex|omp|openai|deepseek|kimi|local|orcarouter pins the backend doctor probes)",
     "clusters": "partition a case into same-operator clusters BEFORE judging",
     "loop": "collect → assess repeatedly until the case converges",
     "frontier": "unresolved gaps: free next seeds + deferred metered leads",
@@ -603,7 +607,7 @@ def _cmd_mcp(rest):
             rc = _mcp_host_codex(server, exe, rest) or rc
         else:
             rc = _mcp_host_omp(server, exe, rest) or rc
-    print("\n  tip: `intel.py harness doctor [--backend claude|codex|omp|openai|deepseek|kimi|local]` "
+    print("\n  tip: `intel.py harness doctor [--backend claude|codex|omp|openai|deepseek|kimi|local|orcarouter]` "
           "confirms which LLM backend a `harness` run on this host would actually use (probes auth) "
           "before you rely on the registration above — HARNESS_BACKEND pins it if auto-detection "
           "picks the wrong one.")

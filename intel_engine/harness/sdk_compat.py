@@ -4,6 +4,8 @@
   HARNESS_BACKEND codex | omp                -> cli_backend.py (the Codex / OMP CLI on its own login,
                                                 driving harness/mcp_server.py over stdio)
   HARNESS_BACKEND openai|deepseek|kimi|local -> openai_backend.py (any /chat/completions endpoint)
+  HARNESS_BACKEND orcarouter              -> openai_backend.py + orcarouter.py (named provider:
+                                                own origins, API-key or PKCE credential, live catalog)
   HARNESS_BACKEND unset / auto               -> claude_agent_sdk when importable, else the
                                                 openai_backend shim (enough for tools.py's @tool
                                                 registry, i.e. the interactive MCP server). The
