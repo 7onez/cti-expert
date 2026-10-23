@@ -128,7 +128,8 @@
       "tokens": "Tokens & cache — per session and per turn, where the window went",
       "prompts": "Prompt surface — what is loaded before you type anything",
       "tools": "Tool calls — every gated call, allowed and denied",
-      "cost": "Cost & credits — Anthropic estimate next to third-party credits"
+      "cost": "Cost & credits — Anthropic estimate next to third-party credits",
+      "provider": "Provider — OrcaRouter Cyber Inference: credential, live model catalog"
     }
   }
 }

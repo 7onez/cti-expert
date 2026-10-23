@@ -4,6 +4,8 @@
     "api.anthropic.com", ".anthropic.com", "claude.ai", ".claude.ai",
     "api.openai.com", ".openai.com", "chatgpt.com", ".chatgpt.com",
     "api.deepseek.com", ".deepseek.com", "api.moonshot.cn", ".moonshot.cn", ".moonshot.ai",
-    "generativelanguage.googleapis.com", "openrouter.ai", ".openrouter.ai"
+    "generativelanguage.googleapis.com", "openrouter.ai", ".openrouter.ai",
+    "api.orcarouter.ai", ".orcarouter.ai", "orcarouter.ai",
+    "127.0.0.1", "localhost", "::1"
   ]
 }

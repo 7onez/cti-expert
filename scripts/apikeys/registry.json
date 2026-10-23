@@ -494,6 +494,23 @@
       "unlocks": "media-vision-analysis: multix Gemini image OCR + sign/landmark/logo/face read, structured selector extraction, and A/V transcription (npx @mrgoonie/multix). Keyless collection still works; vision/transcription need this key"
     },
     {
+      "id": "orcarouter",
+      "name": "OrcaRouter Cyber Inference",
+      "env": "ORCAROUTER_API_KEY",
+      "aliases": [
+        "ORCA_API_KEY"
+      ],
+      "category": "ai",
+      "tier": "freemium",
+      "url": "https://www.orcarouter.ai",
+      "unlocks": "harness reasoning backend (HARNESS_BACKEND=orcarouter): OrcaCyber Ultra / Zero cyber-tuned models plus the full OrcaRouter catalog, over the OpenAI-compatible endpoint at api.orcarouter.ai/v1. Also accepts an OAuth 2.0 + PKCE credential from `intel.py provider login --method oauth`; this key is independent of OPENAI_API_KEY and is never sent to another provider",
+      "test": {
+        "url": "https://api.orcarouter.ai/v1/models",
+        "bearer": true,
+        "expect_json": "data"
+      }
+    },
+    {
       "id": "netlas",
       "name": "Netlas",
       "env": "NETLAS_API_KEY",

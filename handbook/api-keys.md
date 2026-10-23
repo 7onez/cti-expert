@@ -70,6 +70,7 @@ the key unlocks the higher-tier or reverse-lookup capability noted.
 | Bright Data SERP | `BRIGHTDATA_SERP_KEY` | paid | `/dork-sweep`: SerpAPI alternative + residential SERP | brightdata.com |
 | **AI / vision** ||||
 | Google Gemini | `GEMINI_API_KEY` | freemium | `media-vision-analysis` (multix, `npx @mrgoonie/multix`): image OCR + sign/landmark/logo/face read, structured selector extraction, A/V transcription | aistudio.google.com/apikey |
+| OrcaRouter | `ORCAROUTER_API_KEY` | freemium | `harness` reasoning backend (`HARNESS_BACKEND=orcarouter`): OrcaCyber Ultra / Zero + the full catalog. Also accepts an OAuth 2.0 + PKCE credential (`intel.py provider login --method oauth`) — both land in this one key slot, and neither is ever reused for another provider | orcarouter.ai |
 
 > **⭐ ChongLuaDao is the first-party key.** cti-expert is built by chongluadao.vn, so a CLD
 > premium key is the single highest-leverage upgrade: it adds first-party VN scam/phishing

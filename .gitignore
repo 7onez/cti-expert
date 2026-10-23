@@ -71,6 +71,11 @@ scripts/proxy/.proxy-health
 # Runtime report drops (real case PDFs/DOCX) — private, never tracked (RULE 2 / synthetic-only).
 .orca/
 
+# UI evidence is GENERATED, never committed: intel_engine/harness/dashboard/evidence_capture.py
+# drives the real dashboard and writes the screenshots + manifest here. A committed picture of a
+# UI goes stale and cannot prove anything; the generator runs in the release check instead.
+/orca-evidence/
+
 # Tests are LOCAL-ONLY — never committed or pushed (owner rule, 2026-10-18). Every test suite,
 # the eval harness, its fixtures and the installer smoke test stay on disk; scripts/audit.sh
 # skips them where absent.
