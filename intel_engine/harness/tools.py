@@ -3234,12 +3234,12 @@ async def github_osint(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "traffic_rank",
-    "Tranco popularity rank for one or more `domains`, keyless. The ANALYTIC POINT IS USUALLY THE "
-    "ABSENCE: a funnel claiming years of operation that is unranked in a 1M-entry list is "
-    "contradicting its own copy. Deliberately does NOT report traffic estimates or audience "
-    "demographics — those come only from paid panels whose low-traffic figures are modelled "
-    "guesses, and reporting a model as a measurement about a scam site would be inventing "
-    "evidence. Passive; Tranco is queried, never the target.",
+    "Tranco and NetAPI Top 1M popularity ranks for one or more `domains`, keyless. The ANALYTIC "
+    "POINT IS USUALLY THE ABSENCE: a funnel claiming years of operation that is unranked in "
+    "1M-entry lists is contradicting its own copy. Deliberately does NOT report traffic estimates "
+    "or audience demographics — those come only from paid panels whose low-traffic figures are "
+    "modelled guesses, and reporting a model as a measurement about a scam site would be inventing "
+    "evidence. Passive; Tranco and NetAPI are queried, never the target.",
     {"domains": str},
     annotations=READONLY,
 )

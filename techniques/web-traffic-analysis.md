@@ -22,6 +22,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 | Primary | Cisco Umbrella Top 1M | DNS rank | Unlimited | daily CSV from S3 |
 | Secondary | CrUX API | Real user metrics | Unlimited | requires free Google API key |
 | Secondary | Majestic Million | Link-based rank | Unlimited | daily CSV download |
+| Secondary | NetAPI Top 1M | Rank list | 1,000 lookups/day keyless | daily, JSON per domain or full CSV |
 | Tertiary | Wayback Machine CDX | Crawl frequency | Unlimited | no key required |
 | Tertiary | crt.sh | CT log frequency | Unlimited | no key required |
 
@@ -31,7 +32,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 
 1. Normalize domain — strip `www.`, scheme, trailing slash
 2. Query primary sources (Tranco, Cloudflare, Umbrella) in parallel
-3. Query secondary sources (CrUX, Majestic) for corroboration
+3. Query secondary sources (CrUX, Majestic, NetAPI) for corroboration
 4. Query tertiary signals (Wayback, crt.sh) for activity confirmation
 5. Apply scoring formula — compute weighted composite score (0–100)
 6. Assign tier from composite score
@@ -74,6 +75,14 @@ curl -s -X POST "https://chromeuxreport.googleapis.com/v1/records:queryRecord?ke
 curl -s "https://downloads.majestic.com/majestic_million.csv" -o /tmp/majestic.csv
 grep -i ",<domain>," /tmp/majestic.csv | cut -d',' -f1,3
 # Returns: GlobalRank,Domain or empty
+```
+
+**NetAPI Top 1M:**
+```bash
+curl -s "https://netapi.com/api-json/?method=domain-rank&domain=<domain>" | jq '{in_top_1m, rank, snapshot_date}'
+# Returns: {"in_top_1m":true,"rank":1523,"snapshot_date":"2024-01-15"}
+# rank is null when the domain is not in the list
+# Full list: curl -s "https://netapi.com/netapi_top1mln.csv" -o /tmp/netapi.csv
 ```
 
 **Wayback Machine crawl frequency:**
