@@ -75,8 +75,8 @@ seeds ──► collect_core.collect_many() ─► WebPivot/tools/pivot_extract.
 | `scripts/webpivot/*.py` | **re-export shims** onto the canonical engine collectors — never edit or fork |
 | `intel_engine/WebPivot/tools/` | canonical collector: `pivot_extract.py`, `wp_*.py` vendor clients, `wp_analyze.py` (enrich_live), `whois_enrich.py`, `evidence_report.py` |
 | `intel_engine/WebPivot/references/*.json` | reference DATA (thresholds, denylists, endpoint maps, key registry `api_keys.json`) |
-| `intel_engine/tools/` | pipeline `intel.py`, `case_state.py` (frontier + `propose`), `selector_types.py`, `pivot_routes.py` (`corpus-search`), `collect_core.py`, `domain_table.py`, `house_report*.py` |
-| `intel_engine/tools/kb/` | `knowledge_base.py`, `ingest_*.py` (+ `ingest_typed.py`), `noise_filters.py`, `convergence.py`, `reference.py`, `references/rungs.json` (owner/kit/neighbour) |
+| `intel_engine/tools/` | pipeline `intel.py`, `case_state.py` (frontier + `propose`), `selector_types.py`, `pivot_routes.py` (`corpus-search`), `collect_core.py`, `domain_table.py`, `house_report*.py`, `case_index.py` + `case_abstract.py` (recall: prior cases → `cases/<id>/abstract.json`) |
+| `intel_engine/tools/kb/` | `knowledge_base.py` (sighting history, `cases` provenance + `forget_case`, validity windows + `as_of`), `kb_reconcile.py` (single-valued slots: supersede/dispute by authority + date), `ingest_*.py` (+ `ingest_typed.py`), `noise_filters.py`, `convergence.py`, `reference.py`, `references/rungs.json` (owner/kit/neighbour), `references/kb_memory.json` (memory-model tunables) |
 | `intel_engine/harness/` | SDK harness, `@tool` registry, MCP server, `case_scope.py` posture, `proposal.py` (digest-bound approval), Plan phase |
 | `intel_engine/IntelGraph/`, `intel_engine/IntelReport/` | figure/timeline scripts; pandoc+xelatex renderer; each has `SKILL.reference.md` (not README) |
 | `intel_engine/cases/`, `intel_engine/knowledge/`, `intel_engine/MEMORY/`, `.orca/`, `plans/` | runtime / private data — gitignored, never fixtures, never quoted in tracked files |

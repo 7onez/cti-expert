@@ -450,13 +450,16 @@ python3 tools/kb/reference.py --kb knowledge check <hash-or-keyword>
 ```
 
 ## Cross-case provenance (which case is an artifact in?)
-The KB stores facts sourced to a collector but not to a case, so the Correlate phase has a
+KB facts/edges now carry the `cases` that wrote them, but records older than that field — and raw
+collections never ingested — do not, so the Correlate phase has a
 **`which_cases`** tool (`tools/case_index.py`) that answers "which case(s) has this domain / indicator
 appeared in?" by indexing `cases/*/raw/*.json`. A domain or an indicator string (`favicon:<h>`,
 `ga:<id>`, `wallet:<coin>:<addr>`, `email:<addr>`) resolves to the case(s) + host(s) it was seen in —
 so a pivot on a known artifact shows its prior case context instead of starting cold, and an indicator
-seen across multiple cases is flagged as a cross-case link. `domain_verdict` now includes this line
-automatically.
+seen across multiple cases is flagged as a cross-case link. Each case is listed with its **abstract**
+(`cases/<id>/abstract.json`, `tools/case_abstract.py`): BLUF excerpt, attribution level, confidence,
+cluster domains and recorded operator — rebuilt whenever `assessment.json` changes — so a prior case
+is judged relevant before its detail is opened. `domain_verdict` includes this line automatically.
 
 ## Evidence, provenance & assessment versioning
 Every run is now an **append-only, archived** record — nothing is overwritten, so a case's

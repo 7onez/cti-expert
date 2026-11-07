@@ -28,7 +28,13 @@ SOURCE = "case_state"
 
 
 def ingest(kb, blk, evidence_ref=None):
-    """Write the facts for one classification block. Returns the number of facts written."""
+    """Write the facts for one classification block under its case's provenance. Returns the
+    number of facts written."""
+    with kb.for_case(blk.get("case")):
+        return _ingest(kb, blk, evidence_ref)
+
+
+def _ingest(kb, blk, evidence_ref=None):
     case = str(blk.get("case") or "")
     observed = str(blk.get("generated") or "")
     n = 0

@@ -1,0 +1,51 @@
+{
+  "_comment": "Reference data for the knowledge base's memory model: how a re-observed fact or edge keeps its sighting history (tools/kb/knowledge_base.py), and how a new value in a single-valued slot is reconciled against the standing one by authority tier and effective date (tools/kb/kb_reconcile.py). Tunables only, never case data (RULE 1). Read through kb_refs.load_ref; a missing or broken file falls back to the pre-upgrade behaviour (newest evidence_ref only, nothing reconciled) with a stderr WARNING.",
+
+  "observations": {
+    "_comment": "Sighting history on facts and edges. `evidence_refs_cap` = how many distinct evidence_refs (newest first) a record keeps as backing for its sightings; the single `evidence_ref` field always names the newest. Raising it costs only entity-file / fold-line size.",
+    "evidence_refs_cap": 5
+  },
+
+  "single_valued": {
+    "_comment": "Attributes that hold ONE current value at a time, so a new, different value is reconciled (kb_reconcile.py: create / supersede / dispute / skip) instead of silently sitting beside the old one. Everything not listed stays multi-valued (nameservers, tech, trackers, previous_registrant_* eras …). Registrant LINKS are edges and are never reconciled — whois_eras.py already models a change of owner. Deliberately absent: `kind` (an indicator's type label), first_shown/last_shown (window bounds, kept as validity) and `display_name` (an org node keeps every registrar spelling; display_value picks one).",
+    "values": ["whois_registrar", "whois_created", "whois_updated", "whois_expires",
+               "whois_registrant_country", "asn", "org", "ptr", "title", "cld_verdict",
+               "cld_reputation_score", "webamon_risk_score", "webamon_title",
+               "operator_company_name", "icp_licence_claim", "spa_router", "spa_route_count",
+               "cloaking", "github_id", "github_name", "github_company", "github_location",
+               "github_blog", "github_created_at", "funded_by"]
+  },
+
+  "authority_order": {
+    "_comment": "Authority tiers, LOWEST first. A new value supersedes a standing one only if its tier is >= the standing value's AND its effective date (valid_from, else first observation) is >= too; otherwise it is stored as disputed. Newer is never assumed truer. Exception: the SAME source+collector reporting a new value on the same or a later observation day updates its own claim (supersedes it). `analyst` is reserved — evidence_import does not yet write single-valued attributes.",
+    "values": ["derived", "extractor", "vendor", "registry", "analyst"]
+  },
+
+  "authority_sources": {
+    "_comment": "Tier by a record's `source`, checked FIRST — for sources whose collector is generic (ChongLuaDao and Webamon verdicts arrive through webpivot/pivot_extract). Unlisted sources fall through to authority_collectors.",
+    "entries": {"analyst_import": "analyst", "chongluadao": "vendor", "webamon": "vendor",
+                "noise_filters": "derived", "case_state": "derived", "clean_kb": "derived"}
+  },
+
+  "authority_collectors": {
+    "_comment": "Tier by a record's `collector` (exact match, then glob patterns). Registry = the WHOIS/RDAP parse and live DNS; vendor = indexed third-party corpora; extractor = what was read off a page, an archive capture or a binary; derived = the engine's own inferences.",
+    "entries": {"evidence_import": "analyst",
+                "webpivot/whois_enrich": "registry", "webpivot/dns": "registry",
+                "reverse_whois": "vendor", "webpivot/fofa": "vendor", "webpivot/urlscan": "vendor",
+                "webpivot/ip": "vendor", "pivot_routes*": "vendor", "enrichment_run/*": "vendor",
+                "webpivot/pivot_extract": "extractor", "binarypivot/*": "extractor",
+                "wayback/archive_api": "extractor",
+                "mo_neighbours": "derived", "kb/clean_kb": "derived"}
+  },
+
+  "authority_default": {
+    "_comment": "Tier for a writer listed nowhere above. Extractor on purpose: an unknown collector can never silently override registry or analyst data.",
+    "tier": "extractor"
+  },
+
+  "abstract": {
+    "_comment": "cases/<id>/abstract.json (tools/case_abstract.py) — the short per-case summary recall shows BEFORE any fact detail. `bluf_chars` caps the BLUF excerpt (its first sentence, ~50 tokens at 300); `max_domains` caps the cluster domains listed. Detail stays one step away in assessment.md / pipeline status.",
+    "bluf_chars": 300,
+    "max_domains": 5
+  }
+}

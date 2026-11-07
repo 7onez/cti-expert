@@ -16,6 +16,8 @@ Usage:
   python3 ingest_reverse_whois.py --kb knowledge --email registrant@example.com
   python3 ingest_reverse_whois.py --kb knowledge --name "Registrant Name" --max-domains 150
   python3 ingest_reverse_whois.py --kb knowledge --phone "+15551234567"
+  python3 ingest_reverse_whois.py --kb knowledge --email registrant@example.com --case CASE-0001
+    (--case records the case as provenance, so clean_kb --forget-case can remove what it linked)
 """
 import os
 import sys
@@ -42,6 +44,8 @@ def main():
     ap.add_argument("--search-type", choices=["current", "historic"], default="historic")
     ap.add_argument("--max-domains", type=int, default=BULK_REGISTRANT_MAX_DOMAINS,
                     help="above this, treat the term as a shared registrar/reseller (noise) and DO NOT link")
+    ap.add_argument("--case", help="case id recorded as the provenance of what this ingests "
+                                   "(clean_kb --forget-case can then remove it)")
     args = ap.parse_args()
     if not (args.email or args.name or args.phone):
         ap.error("give --email, --name, or --phone")
@@ -66,7 +70,7 @@ def main():
         print(f"  ⚠ DENYLIST: {kind} '{term}' is a registrar/privacy-proxy or malformed contact.")
         print("  It is shared by every domain at that provider = NOISE, not a registrant.")
         print("  NOT previewing, purchasing or linking.")
-        kb = KB(args.kb)
+        kb = KB(args.kb, case=args.case)
         observed = datetime.now(timezone.utc).isoformat()
         kb.add_fact(etype, term_key, "denylisted_contact",
                     {"verdict": "registrar/privacy-proxy or malformed", "kind": kind},
@@ -87,7 +91,7 @@ def main():
         print("  Treating as a shared registration service (reseller/agency/registrar) = NOISE.")
         print("  NOT purchasing or linking. Re-run with a higher --max-domains to override.")
         # record the decision as an attributed fact on the term itself, for audit
-        kb = KB(args.kb)
+        kb = KB(args.kb, case=args.case)
         observed = datetime.now(timezone.utc).isoformat()
         kb.add_fact(etype, term_key, "bulk_registrant",
                     {"domain_count": count, "verdict": "shared-service/noise",
@@ -103,7 +107,7 @@ def main():
     if r is None or r.get("error"):
         print(f"reverse-whois purchase error: {(r or {}).get('error')}", file=sys.stderr); sys.exit(1)
     domains = r.get("domains", [])
-    kb = KB(args.kb)
+    kb = KB(args.kb, case=args.case)
     observed = datetime.now(timezone.utc).isoformat()
     ev = kb.save_evidence("whoisxml_reverse", term, r, observed[:10])
     n = 0

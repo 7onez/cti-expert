@@ -54,6 +54,8 @@ scripts/proxy/.proxy-health
 /intel_engine/knowledge/evidence/
 /intel_engine/knowledge/relationships/
 /intel_engine/knowledge/*.jsonl
+# Hand-made KB backups (entity / edges.jsonl copies taken before a repair) — real case data.
+/intel_engine/knowledge/_backup/
 # The IntelAnalysis output contract writes assessments to knowledge/reports/<case>/ — that path
 # holds finished case data (domains, IPs, registrants, wallets) and was NOT ignored, so a run
 # following the skill's own instructions left a committable RULE 1 leak. Ignore it too. Note the

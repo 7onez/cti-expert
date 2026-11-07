@@ -63,6 +63,14 @@ def _rel_for(rung_class: str, route: str) -> str:
 
 
 def ingest_rows(kb, case, origin_type, origin_value, rows, *, route) -> int:
+    """Write typed corpus rows into `kb` under `case` provenance (see KB.for_case)."""
+    if kb is None:
+        return 0
+    with kb.for_case(case):
+        return _ingest_rows(kb, case, origin_type, origin_value, rows, route=route)
+
+
+def _ingest_rows(kb, case, origin_type, origin_value, rows, *, route) -> int:
     """Write typed corpus rows into `kb`. Returns the number of rows accepted.
 
     Owner rows become edges from the origin selector; kit/neighbour/mention become

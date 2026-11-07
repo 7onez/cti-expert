@@ -25,6 +25,8 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+import case_abstract  # noqa: E402 — same dir (tools/): abstract.json follows every head write
+
 
 def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -85,6 +87,7 @@ def snapshot(case: str, assessment_path: str, table_md: str = "") -> dict:
                 f"{a.get('confidence','?')} · snapshot assessments/{base}.md -->\n\n" + md_body)
     with open(os.path.join(case_dir, "assessment.json"), "w", encoding="utf-8") as f:
         f.write(js)
+    case_abstract.try_refresh(case_dir)
     bluf = (a.get("bluf") or "").replace("\n", " ")[:140]
     with open(os.path.join(case_dir, "CHANGELOG.md"), "a", encoding="utf-8") as f:
         f.write(f"- {stamp} · r{rnd} · {a.get('attribution_level','?')}/{a.get('confidence','?')} · "

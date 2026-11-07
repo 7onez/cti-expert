@@ -7,6 +7,7 @@ IntelAnalysis skill and the reporter read from instead of re-querying the world.
   python3 query.py --kb knowledge --shared --min 2      # cluster seeds (whole KB)
   python3 query.py --kb knowledge --shared --domains a.example,b.example   # scoped to ONE case
   python3 query.py --kb knowledge --entity example.com
+  python3 query.py --kb knowledge --prior-cases --entity example.com   # recall: case abstracts first
   python3 query.py --kb knowledge --cluster example.com
   python3 query.py --kb knowledge --type person
 """
@@ -17,7 +18,7 @@ import argparse
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from knowledge_base import KB  # noqa: E402
+from knowledge_base import KB, fact_id  # noqa: E402
 
 # --- registrant carve-out ------------------------------------------------------------------------
 # A shared WHOIS registrant (email / name / org) is an OPERATOR-GRADE link: one operator's estate
@@ -154,8 +155,21 @@ def main():
                          "--shared it scopes the cluster seeds to that set, so a case's shared.txt "
                          "reports what is shared INSIDE the case instead of across every past case")
     ap.add_argument("--type", help="list entities of a type")
+    ap.add_argument("--as-of", metavar="YYYY-MM-DD",
+                    help="answer every query as the KB held on this day: a fact/edge counts when "
+                         "its source-stated validity window covers the day, else when it had been "
+                         "observed by then")
+    ap.add_argument("--prior-cases", action="store_true",
+                    help="with --entity (recall): lead with the prior cases the entity appears in "
+                         "— its KB `cases` provenance plus cases/*/raw collections — each as its "
+                         "short abstract, before any fact detail")
     args = ap.parse_args()
-    kb = KB(args.kb)
+    try:
+        kb = KB(args.kb, as_of=args.as_of)
+    except ValueError as e:
+        ap.error(str(e))
+    if kb.as_of:
+        print(f"# as of {kb.as_of}")
     restrict = {d.strip().lower() for d in args.domains.split(",") if d.strip()} or None
 
     if args.stats:
@@ -214,12 +228,19 @@ def main():
                     break
         if not found:
             print(f"not in KB: {args.entity} (KB has {len(all_ents)} entities)")
+            if args.prior_cases:
+                _print_prior_cases(kb, args.kb, None, _normalize_entity_value(args.entity))
         for e in found:
             shown = kb.display_value(e["type"], e["value"])
             key_note = f"   [key: {e['value']}]" if shown != e["value"] else ""
             print(f"\n# {e['type']}: {shown}{key_note}   (first {e.get('first_seen')} … last {e.get('last_seen')})")
+            if args.prior_cases:
+                _print_prior_cases(kb, args.kb, e, e["value"])
+            stored = {fact_id(x): x for x in kb.entity(e["type"], e["value"],
+                                                       include_retracted=True)["facts"]}
             for f in e["facts"]:
-                print(f"  · {f['attribute']} = {f['value']}   [{f['source']}/{f['collector']} conf {f['confidence']}]")
+                print(f"  · {f['attribute']} = {f['value']}   [{f['source']}/{f['collector']} "
+                      f"conf {f['confidence']}]{_when(f)}{_status(f, stored)}")
             nb = kb.neighbors(e["type"], e["value"])
             if nb:
                 print("  edges:")
@@ -274,6 +295,60 @@ def main():
         print(f"# Connected components (strong) — {len(comps)} component(s)\n")
         for i, doms in enumerate(comps, 1):
             print(f"COMPONENT {i}\t{', '.join(sorted(doms))}")
+
+
+def _when(f):
+    """A fact's time basis for --entity: source-stated validity, then the observation window."""
+    out = ""
+    if f.get("valid_from") or f.get("valid_until"):
+        out += f"  valid {f.get('valid_from') or '…'}..{f.get('valid_until') or '…'}"
+    first = str(f.get("first_observed") or f.get("observed_at") or "")[:10]
+    last = str(f.get("observed_at") or "")[:10]
+    if first:
+        n = int(f.get("observations") or 1)
+        out += f"  seen {first}" + (f"..{last}" if last and last != first else "") \
+            + (f" ×{n}" if n > 1 else "")
+    return out
+
+
+def _status(f, stored):
+    """A reconciled fact's flag for --entity: DISPUTED (with the standing values it conflicts
+    with) or superseded (history, only visible in an --as-of view)."""
+    if f.get("status") == "disputed":
+        vs = [str(stored[i]["value"]) for i in f.get("disputes") or [] if i in stored]
+        return f"  [DISPUTED vs {', '.join(vs) or '?'}]"
+    if f.get("status") == "superseded":
+        by = stored.get(f.get("superseded_by") or "")
+        return f"  [superseded{' by ' + str(by['value']) if by else ''}]"
+    return ""
+
+
+def _print_prior_cases(kb, kb_dir, ent, value):
+    """Recall header: every case the entity appears in — KB `cases` provenance on its facts and
+    edges, plus the case raw collections (case_index) — each as its abstract line."""
+    tools = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import case_abstract  # noqa: E402
+    import case_index  # noqa: E402
+    from knowledge_base import UNATTRIBUTED  # noqa: E402
+    cases_root = os.path.join(os.path.dirname(os.path.abspath(kb_dir)), "cases")
+    found = set()
+    if ent is not None:
+        for f in ent.get("facts") or []:
+            found.update(f.get("cases") or [])
+        for e in kb.edges():
+            if (e["src_type"], e["src"]) == (ent["type"], ent["value"]) or \
+                    (e["dst_type"], e["dst"]) == (ent["type"], ent["value"]):
+                found.update(e.get("cases") or [])
+    found.discard(UNATTRIBUTED)
+    found.update(case_index.lookup(str(value), cases_root=cases_root)["cases"])
+    if not found:
+        print("  prior cases: none — treat as new")
+        return
+    print(f"  prior cases ({len(found)}):")
+    for c in sorted(found):
+        print(f"    · {case_abstract.line(case_abstract.load(os.path.join(cases_root, c)), c)}")
 
 
 def _components(kb, kb_dir, max_prevalence, restrict, noise_ips=frozenset(), allow_edge=None):

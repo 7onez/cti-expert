@@ -221,7 +221,7 @@ DISPATCH = {
     "sweep":         ("tools/intel.py",                      []),  # "run the pipeline"
     # ── enrich / correlate (KB + cert) ──────────────────────────────────
     "kb":            ("tools/kb/query.py",            ["--kb", "knowledge"]),
-    "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--entity"]),
+    "recall":        ("tools/kb/query.py",            ["--kb", "knowledge", "--prior-cases", "--entity"]),
     "kb-stats":      ("tools/kb/knowledge_base.py",   ["knowledge"]),
     "risk":          ("tools/kb/risk_signals.py",     []),
     "reference":     ("tools/kb/reference.py",        ["--kb", "knowledge"]),

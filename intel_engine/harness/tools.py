@@ -849,17 +849,23 @@ async def analyze_artifact(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- ANALYZE tools
+def _as_of(args: dict[str, Any]) -> list[str]:
+    """query.py's point-in-time view (`--as-of`) when the caller asked for one."""
+    v = str(args.get("as_of") or "").strip()
+    return ["--as-of", v] if v else []
+
+
 @tool(
     "kb_cluster",
     "Peers of ONE domain — the domains sharing an indicator with it (its cluster neighborhood). "
     "PREFER this over kb_query_shared: it returns only the seed's subgraph, not the whole KB, so "
     "it is far cheaper.",
-    {"domain": str},
+    {"domain": str},   # as_of:str optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def kb_cluster(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--cluster", _host(args["domain"])])
+              "--kb", KB_DIR, "--cluster", _host(args["domain"]), *_as_of(args)])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no peers"}],
             "is_error": r.returncode != 0}
 
@@ -868,12 +874,12 @@ async def kb_cluster(args: dict[str, Any]) -> dict[str, Any]:
     "kb_entity",
     "One entity's facts + edges + provenance (a domain, email, indicator, or operator). "
     "A focused lookup — cheaper than dumping the whole KB.",
-    {"value": str},
+    {"value": str},   # as_of:str optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def kb_entity(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--entity", args["value"]])
+              "--kb", KB_DIR, "--entity", args["value"], *_as_of(args)])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no record"}],
             "is_error": r.returncode != 0}
 

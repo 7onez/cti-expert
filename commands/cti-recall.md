@@ -19,7 +19,13 @@ already in the store carries prior case context and possibly an operator attribu
 Accepts a domain or a raw indicator (`favicon:<h>`, `ga:<id>`, `wallet:<coin>:<addr>`,
 `email:<addr>`, `social:<net>:<handle>`).
 
-Report: which case(s) it appears in, any operator attribution, and known KB facts/edges. An
-indicator seen across MULTIPLE cases is a cross-case link — surface it prominently.
+Report: which case(s) it appears in — each as its **abstract** (BLUF excerpt · attribution level ·
+confidence · premise · cluster domains · recorded operator) — any operator attribution, and known
+KB facts/edges with their time basis (`valid …`, `seen first..last ×N`) and any `[DISPUTED vs …]`
+flag. An indicator seen across MULTIPLE cases is a cross-case link — surface it prominently.
+
+Before reusing anything recalled, run the five-question gate (SKILL.md §2.5 *Reusing recalled
+knowledge*): Knowledge, Evidence, Validity (`intel.py kb --entity <seed> --as-of <day>` for the
+state on the incident day), Authority (resolve disputes first), Utility to this case's premise.
 
 If the seed is already resolved, **say so and stop**. Do not re-investigate unless asked.

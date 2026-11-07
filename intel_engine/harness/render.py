@@ -12,8 +12,8 @@ from schemas import Assessment
 # Resolve `tools/` from THIS FILE, never from a caller-supplied root: `save_markdown(root=…)` is
 # the case-store root, which is not always the repo (tests and ad-hoc runs pass a temp dir).
 import sys as _sys
-_sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                 "tools"))
+_ENGINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_sys.path.insert(0, os.path.join(_ENGINE, "tools"))
 from case_state import may_overwrite_assessment, HARNESS_RENDER_MD  # noqa: E402
 
 try:
@@ -158,6 +158,25 @@ def render_terminal(a: Assessment, table_md: str = "") -> None:
                       border_style=style, box=box.ROUNDED, padding=(1, 2)))
 
 
+def _dispute_lines(a: Assessment) -> list[str]:
+    """`Conflicting Evidence (disputed facts)` for the assessment's cluster domains — single-valued
+    KB facts whose sources disagree and the newer claim did not outrank the standing one
+    (knowledge_base.disputes_markdown), read from the engine KB (HARNESS_KB, default knowledge/).
+    [] when there are none or the KB is unreadable: an enhancement that never breaks a render."""
+    domains = [m.domain for m in (a.cluster or [])]
+    if not domains:
+        return []
+    try:
+        kb_tools = os.path.join(_ENGINE, "tools", "kb")
+        if kb_tools not in _sys.path:
+            _sys.path.insert(0, kb_tools)
+        from knowledge_base import disputes_markdown  # noqa: E402
+        kb = os.environ.get("HARNESS_KB", "knowledge")
+        return disputes_markdown(kb if os.path.isabs(kb) else os.path.join(_ENGINE, kb), domains)
+    except Exception:  # noqa: BLE001 — never break the render
+        return []
+
+
 def render_markdown(a: Assessment, table_md: str = "") -> str:
     """Return a clean Markdown assessment (renders in editors / GitHub)."""
     out: list[str] = ["# Assessment", ""]
@@ -200,6 +219,7 @@ def render_markdown(a: Assessment, table_md: str = "") -> str:
             why = alt.why.replace("|", "\\|")
             out.append(f"| {what} | {status} | {why} |")
         out.append("")
+    out += _dispute_lines(a)
     for title, items in (("Evidence", a.evidence),
                          ("Gaps & limitations", a.gaps),
                          ("Next pivots", a.next_pivots)):

@@ -669,6 +669,24 @@ def _kb_registrant_edges(case_hosts: set, kb_dir: Optional[str]) -> dict:
     return out
 
 
+def _kb_dispute_lines(case_hosts: set, kb_dir: Optional[str]) -> list:
+    """The `Conflicting Evidence (disputed facts)` section for this case's hosts
+    (knowledge_base.disputes_markdown — single-valued facts whose sources disagree and the newer
+    claim did not outrank the standing one). [] when none, no kb_dir, or the KB layer is
+    unavailable — an ENHANCEMENT that must never break the render."""
+    if not kb_dir or not case_hosts:
+        return []
+    try:
+        _kbtools = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "tools", "kb")
+        if _kbtools not in sys.path:
+            sys.path.insert(0, _kbtools)
+        from knowledge_base import disputes_markdown  # noqa: E402
+        return disputes_markdown(kb_dir, case_hosts)
+    except Exception:  # noqa: BLE001 — never break the render
+        return []
+
+
 def _cluster_confidence(n_types: int, live_corroborated: bool, decisive: bool = False) -> str:
     """Analytic confidence for a same-operator sub-cluster (ICD 203).
 
@@ -1293,6 +1311,9 @@ def render_cluster_report(results: list,
         ph = per_host.get(host, {})
         L.append(f"| {host} | yes | {ph.get('ipclass') or '—'} | {ph.get('top') or '—'} |")
     L.append("")
+
+    # Conflicting evidence — sources disagree on a single-valued fact (KB reconcile); never silent
+    L += _kb_dispute_lines(case_hosts, kb_dir)
 
     # Suppressed-noise transparency
     if suppressed_emails or suppressed_ips:

@@ -251,7 +251,7 @@ def import_findings(case, findings_path, kb_root=None):
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=2, ensure_ascii=False)
     record_ref = "/".join(("cases", case_id, "evidence", "imported", os.path.basename(out_path)))
-    kb = KB(kb_root or os.path.join(ROOT, "knowledge"))
+    kb = KB(kb_root or os.path.join(ROOT, "knowledge"), case=case_id)
     edges, facts = _ingest(kb, case_id, accepted, record_ref, when)
     return {"case": case_id, "stored": out_path, "source": SOURCE,
             "accepted": len(accepted), "rejected": len(rejected),

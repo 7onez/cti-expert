@@ -164,10 +164,11 @@ op → script map; `intel.py --dry-run <op> …` prints the exact command withou
 ```bash
 # Every op maps 1:1 to a Tier-1 MCP tool — same engine underneath.
 uv run scripts/backend/intel.py kb --stats                    # KB overview
-uv run scripts/backend/intel.py kb --entity example.com       # facts + edges (kb_entity)
+uv run scripts/backend/intel.py kb --entity example.com       # facts + edges (kb_entity): valid/seen windows, [DISPUTED]
+uv run scripts/backend/intel.py kb --entity example.com --as-of 2025-06-01   # the KB as it held that day
 uv run scripts/backend/intel.py kb --cluster example.com      # shared-indicator peers (kb_cluster)
 uv run scripts/backend/intel.py kb --shared --min 2           # whole-KB view (kb_query_shared)
-uv run scripts/backend/intel.py recall scam-site.top          # "seen before?" (query.py --entity)
+uv run scripts/backend/intel.py recall scam-site.top          # "seen before?" — prior cases as abstracts, then facts
 uv run scripts/backend/intel.py risk --case CASE-0001         # NRD/BPH/money-trail (risk_signals)
 uv run scripts/backend/intel.py reverse-whois --reverse-email owner@x.com --search-type historic --json
 uv run scripts/backend/intel.py cert-overlap a.example b.example    # TLS/SAN verdict (cert_overlap)
@@ -175,6 +176,7 @@ uv run scripts/backend/intel.py reference check favicon:123    # BENIGN/SIGNAL/U
 uv run scripts/backend/intel.py operators list -v             # confirmed-operator ledger (add|list|find)
 uv run scripts/backend/intel.py convergence status CASE-0001  # stop-condition (snapshot|status)
 uv run scripts/backend/intel.py clean                         # dry-run hygiene sweep (--apply to write)
+uv run scripts/backend/intel.py clean --forget-case CASE-0001 # retract what ONLY that case recorded (dry-run; --apply, --purge)
 uv run scripts/backend/intel.py ingest <cti_pivot.json> […]   # round-trip a pivot_extract into the KB
 
 # Whole-case orchestration (IntelHarness) — no LLM key needed for status
@@ -209,7 +211,7 @@ The backend attaches at the four `SKILL.md` phases. Each hook is a no-op at Tier
 
 | Phase | Engine hook (Tier 1/2) | Payoff |
 |-------|------------------------|--------|
-| **Acquire** | After `pivot_extract`, check each seed against prior cases — Tier 1: `which_cases` / `domain_verdict` (MCP); Tier 2: `query.py --entity <seed>` (those two tools are MCP-only) — then `kb_ingest` the evidence | *"Have I seen this operator before?"* + persistent evidence archive |
+| **Acquire** | After `pivot_extract`, check each seed against prior cases — Tier 1: `which_cases` / `domain_verdict` (MCP); Tier 2: `intel.py recall <seed>` (`query.py --prior-cases --entity`: prior cases as abstracts, then facts) — then `kb_ingest` the evidence. Every fact/edge it writes records the case (`cases`), its sighting history and, where the source gives one, a validity window | *"Have I seen this operator before?"* + persistent evidence archive |
 | **Enrich** | `kb_cluster` / `kb_entity` / `cert_overlap` / `kb_query_shared` correlate against the **whole KB**, not just this session (T2: `intel.py kb --cluster/--entity/--shared`, `intel.py cert-overlap`). Screen every candidate link with `reference check` (kill BENIGN false positives), and `reverse-whois` a leaked registrant to widen the cluster | The recursive pivot loop gains historical seeds + false-positive control |
 | **Assess** | Before writing `/threat-model` (ACH) or `/report`, pull the analyst's own priors to calibrate confidence — `intel.py operators list` (who's already attributed, at what confidence), `intel.py risk --case <id>` (NRD/BPH/money-trail), and read `$INTEL_HOME/knowledge/{calibration.jsonl,analyst_profile.md}`. Weigh evidence against these, not from scratch | Judgment layer (IntelAnalysis) calibrated on your own past cases |
 | **Deliver** | Write the versioned `Assessment` via `case_store.py` into `cases/`; register in `report_registry.jsonl`. Reports still render via CTI Expert generators **or** hand off to `intel.py graph` (figures) + `intel.py report` (PDF/DOCX house style) | Continuous, versioned case history + publication-quality deliverables |

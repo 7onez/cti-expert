@@ -131,7 +131,7 @@ def ingest_api_data(domain: str, case: str, manifest: list[dict[str, Any]],
         return 0
     clean_domain = domain.strip().lower()
     kb_path = kb_dir or os.path.join(ROOT, "knowledge")
-    kb = KB(kb_path)
+    kb = KB(kb_path, case=case)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     collector = "wayback/archive_api"
     count = 0
@@ -141,43 +141,44 @@ def ingest_api_data(domain: str, case: str, manifest: list[dict[str, Any]],
         slug = item.get("slug", "")
         ev_ref = os.path.relpath(item["file"], ROOT) if os.path.exists(item["file"]) else item["file"]
         ts = item.get("timestamp") or now
+        at = {"valid_from": ts, "valid_until": ts}   # an archived payload held on its capture day
 
         if "policies_payment" in slug and isinstance(data, dict):
             # Payment rails and monetization policy
             title = data.get("title_zh") or data.get("title_en") or "Payment"
             content = data.get("content_zh") or data.get("content_en") or ""
-            kb.add_fact("domain", clean_domain, "payment_policy_title", title, "wayback", collector, ts, "high", ev_ref)
+            kb.add_fact("domain", clean_domain, "payment_policy_title", title, "wayback", collector, ts, "high", ev_ref, **at)
             count += 1
             if "Zalopay" in content or "momo" in content or "viettel" in content:
                 kb.add_fact("domain", clean_domain, "payment_rails_observed",
                             "Zalopay, Momo, Shopeepay, VNPT Money, Viettel Money, VN bank transfer",
-                            "wayback", collector, ts, "high", ev_ref)
+                            "wayback", collector, ts, "high", ev_ref, **at)
                 count += 1
             if "充值" in content or "提现" in content or "佣金" in content:
                 kb.add_fact("domain", clean_domain, "monetization_model_observed",
                             "balance top-up required for features; distribution commission & rewards withdrawable; non-refundable",
-                            "wayback", collector, ts, "high", ev_ref)
+                            "wayback", collector, ts, "high", ev_ref, **at)
                 count += 1
 
         elif ("settings_company" in slug or "company_i18n" in slug) and isinstance(data, dict):
             # Company names, descriptions, ICP licence claims
             name = data.get("name")
             if name:
-                kb.add_fact("domain", clean_domain, "operator_company_name", str(name), "wayback", collector, ts, "high", ev_ref)
+                kb.add_fact("domain", clean_domain, "operator_company_name", str(name), "wayback", collector, ts, "high", ev_ref, **at)
                 count += 1
             icp = data.get("icp")
             if icp:
-                kb.add_fact("domain", clean_domain, "icp_licence_claim", str(icp), "wayback", collector, ts, "high", ev_ref)
+                kb.add_fact("domain", clean_domain, "icp_licence_claim", str(icp), "wayback", collector, ts, "high", ev_ref, **at)
                 count += 1
             # i18n variant check
             for lang in ("vi", "en", "zh", "ru"):
                 sub = data.get(lang)
                 if isinstance(sub, dict):
                     if sub.get("name"):
-                        kb.add_fact("domain", clean_domain, f"company_alias_{lang}", str(sub["name"]), "wayback", collector, ts, "high", ev_ref)
+                        kb.add_fact("domain", clean_domain, f"company_alias_{lang}", str(sub["name"]), "wayback", collector, ts, "high", ev_ref, **at)
                         count += 1
                     if sub.get("icp"):
-                        kb.add_fact("domain", clean_domain, f"icp_licence_{lang}", str(sub["icp"]), "wayback", collector, ts, "high", ev_ref)
+                        kb.add_fact("domain", clean_domain, f"icp_licence_{lang}", str(sub["icp"]), "wayback", collector, ts, "high", ev_ref, **at)
                         count += 1
 
         elif "settings_footer" in slug and isinstance(data, dict):
@@ -185,11 +186,11 @@ def ingest_api_data(domain: str, case: str, manifest: list[dict[str, Any]],
             social = data.get("social") or {}
             for net, link in social.items():
                 if link and str(link).startswith("http"):
-                    kb.add_fact("domain", clean_domain, f"social_profile_{net}", str(link), "wayback", collector, ts, "high", ev_ref)
+                    kb.add_fact("domain", clean_domain, f"social_profile_{net}", str(link), "wayback", collector, ts, "high", ev_ref, **at)
                     count += 1
             comp = data.get("company") or {}
             if comp.get("mapLocation"):
-                kb.add_fact("domain", clean_domain, "geo_coordinates", str(comp["mapLocation"]), "wayback", collector, ts, "high", ev_ref)
+                kb.add_fact("domain", clean_domain, "geo_coordinates", str(comp["mapLocation"]), "wayback", collector, ts, "high", ev_ref, **at)
                 count += 1
 
         elif "downloads" in slug and isinstance(data, dict):
@@ -202,15 +203,15 @@ def ingest_api_data(domain: str, case: str, manifest: list[dict[str, Any]],
                         dl_url = a.get("download_url")
                         version = a.get("version")
                         if app_name:
-                            kb.add_fact("domain", clean_domain, f"{platform}_app_name", f"{app_name} v{version}", "wayback", collector, ts, "high", ev_ref)
+                            kb.add_fact("domain", clean_domain, f"{platform}_app_name", f"{app_name} v{version}", "wayback", collector, ts, "high", ev_ref, **at)
                             count += 1
                         if dl_url:
-                            kb.add_fact("domain", clean_domain, f"{platform}_download_url", str(dl_url), "wayback", collector, ts, "high", ev_ref)
+                            kb.add_fact("domain", clean_domain, f"{platform}_download_url", str(dl_url), "wayback", collector, ts, "high", ev_ref, **at)
                             count += 1
                             # Add sideload host reference
                             u = urllib.parse.urlparse(dl_url)
                             if u.hostname:
-                                kb.add_fact("domain", clean_domain, "sideload_host", u.hostname, "wayback", collector, ts, "medium", ev_ref)
+                                kb.add_fact("domain", clean_domain, "sideload_host", u.hostname, "wayback", collector, ts, "medium", ev_ref, **at)
                                 count += 1
 
     return count

@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
-from knowledge_base import KB  # noqa: E402
+from knowledge_base import KB, case_of_path  # noqa: E402
 from noise_filters import (is_managed_dns, is_parking_favicon, is_noise_email,  # noqa: E402
                            is_noise_indicator, is_noise_tracker, is_saturated_reverse,
                            is_noise_social_handle, is_bulk_registrant, is_noise_phone,
@@ -389,7 +389,8 @@ def _resolved_ip_edges(kb, host, lr, observed, ev, approved=None):
         attrs = {"first_seen": m["first"] or today, "last_seen": m["last"] or today,
                  "via": ",".join(sorted(m["via"]))}
         kb.add_edge("domain", host, "hosted_on", "indicator", f"ip:{ip}",
-                    "webpivot", "webpivot/dns", observed, "medium", ev, attrs=attrs)
+                    "webpivot", "webpivot/dns", observed, "medium", ev, attrs=attrs,
+                    valid_from=attrs["first_seen"], valid_until=attrs["last_seen"])
         n += 1
     return n
 
@@ -516,7 +517,9 @@ def _ingest_ip(kb, d, meta, ip, observed, day):
                     f"{', '.join(ctx.get('hosts') or [])} ({ctx.get('era')}, "
                     f"{ctx.get('first_seen') or '?'}..{'now' if ctx.get('live') else ctx.get('last_seen') or '?'}"
                     f"; via {', '.join(ctx.get('sources') or [])})",
-                    "webpivot", COLLECTOR, observed, "medium", ev)
+                    "webpivot", COLLECTOR, observed, "medium", ev,
+                    valid_from=ctx.get("first_seen"),
+                    valid_until=None if ctx.get("live") else ctx.get("last_seen"))
         n += 1
     for nd in cohosts:
         if _unit(nd) in ok_domains or not (noise or stale or landlord):
@@ -629,7 +632,8 @@ def _ingest_ads(kb, d, meta, host, observed, ev):
                 kb.add_fact("indicator", ind, k, adv[k], "webpivot", COLLECTOR, observed,
                             "medium", ev)
         kb.add_edge("domain", host, "advertised_by", "indicator", ind, "webpivot", COLLECTOR,
-                    observed, "medium" if agency else "high", ev)
+                    observed, "medium" if agency else "high", ev,
+                    valid_from=adv.get("first_shown"), valid_until=adv.get("last_shown"))
         n += 1
         if agency:
             kb.add_fact("indicator", ind, "agency_shaped",
@@ -855,6 +859,13 @@ def _case_approvals(path):
 
 
 def ingest_file(kb, path):
+    """Ingest one collection file. Every fact/edge it writes carries the case the file belongs to
+    (cases/<id>/raw/<x>.json → <id>; a file outside a case dir keeps the KB's default)."""
+    with kb.for_case(case_of_path(path)):
+        return _ingest_file(kb, path)
+
+
+def _ingest_file(kb, path):
     d = json.load(open(path, encoding="utf-8"))
     meta = d.get("meta") or {}
     host = meta.get("host")
@@ -1038,7 +1049,8 @@ def ingest_file(kb, path):
             if s.get("ip"):
                 kb.add_fact("domain", host, "webamon_hosting_ip",
                             f"{s['ip']} AS{s.get('asn') or '?'} {s.get('first_seen') or '?'}..{s.get('last_seen') or '?'}",
-                            "webamon", COLLECTOR, observed, "medium", ev)
+                            "webamon", COLLECTOR, observed, "medium", ev,
+                            valid_from=s.get("first_seen"), valid_until=s.get("last_seen"))
                 n += 1
         break
 
@@ -1375,9 +1387,15 @@ def ingest_file(kb, path):
     # --- WHOIS ---
     wh = art.get("whois") or {}
     if wh:
+        # Validity (knowledge_base valid_from/valid_until): the CURRENT registration's values hold
+        # from its creation date; a previous-owner value held from its era's creation and can no
+        # longer hold once the current registration began.
+        era_start = wh.get("created")
         for k in ("registrar", "created", "updated", "expires", "registrant_country"):
             if wh.get(k) and not _is_privacy(wh[k]):
-                kb.add_fact("domain", host, f"whois_{k}", wh[k], "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                vf = era_start if k in ("registrar", "registrant_country") else None
+                kb.add_fact("domain", host, f"whois_{k}", wh[k], "whoisxml", "webpivot/whois_enrich",
+                            observed, "high", ev, valid_from=vf)
                 n += 1
         # Ownership eras (whois_eras.py): only the CURRENT registration's contacts are owner
         # links (registered_by edges, frontier seeds, cluster indicators). A domain that dropped
@@ -1391,7 +1409,8 @@ def ingest_file(kb, path):
                 continue
             if em and not _is_privacy(em) and not is_noise_email(em):
                 kb.add_edge("domain", host, "registered_by", "email", em.lower(),
-                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
+                            valid_from=era_start)
                 n += 1
             elif em and is_noise_email(em):   # registrar/abuse role email — keep as fact only
                 kb.add_fact("domain", host, "whois_role_email", em.lower(),
@@ -1402,7 +1421,8 @@ def ingest_file(kb, path):
             if pv and not is_noise_email(pv):
                 kb.add_fact("domain", host, "previous_registrant_email",
                             f"{pv.lower()} (era {prior.get('era_created')})",
-                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev,
+                            valid_from=prior.get("era_created"), valid_until=era_start)
                 n += 1
         names = list(dict.fromkeys(_whois_eras.owner_values(wh, "name") +
                                     _whois_eras.owner_values(wh, "org")))
@@ -1422,13 +1442,14 @@ def ingest_file(kb, path):
                         continue
                     kb.add_edge("domain", host, "registered_by", "org", key,
                                 "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
-                                attrs={"display": nm.strip()})
+                                attrs={"display": nm.strip()}, valid_from=era_start)
                     kb.add_fact("org", key, "display_name", nm.strip(),
                                 "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
                     n += 1
                     continue
                 kb.add_edge("domain", host, "registered_by", kind, canonical_person(nm),
-                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
+                            valid_from=era_start)
                 n += 1
             elif nm and _is_role_placeholder(nm):   # generic role boilerplate — fact, never an edge
                 kb.add_fact("domain", host, "whois_role_name", nm.strip(),
@@ -1439,7 +1460,8 @@ def ingest_file(kb, path):
             if pv and not _is_privacy(pv) and not _is_role_placeholder(pv) and not is_whois_notice(pv):
                 kb.add_fact("domain", host, "previous_registrant_name",
                             f"{pv} (era {prior.get('era_created')})",
-                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev,
+                            valid_from=prior.get("era_created"), valid_until=era_start)
                 n += 1
         # Registrant PHONE — a strong correlatable selector (like email), so it must be a
         # queryable KB entity, not just a per-domain fact. Digits-only normalisation matches the
@@ -1460,7 +1482,8 @@ def ingest_file(kb, path):
                             "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
             else:
                 kb.add_edge("domain", host, "registered_by", "phone", digits,
-                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
+                            valid_from=era_start)
             n += 1
         for prior in _whois_eras.prior_values(wh, "phone"):
             pv = str(prior.get("value") or "").strip()
@@ -1468,7 +1491,8 @@ def ingest_file(kb, path):
             if digits and not is_noise_phone(pv, wh.get("registrant_email"), wh.get("registrant_org")):
                 kb.add_fact("domain", host, "previous_registrant_phone",
                             f"{digits} (era {prior.get('era_created')})",
-                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                            "whoisxml", "webpivot/whois_enrich", observed, "low", ev,
+                            valid_from=prior.get("era_created"), valid_until=era_start)
                 n += 1
         # Privacy-service CUSTOMER id ("Contact Privacy Inc. Customer <digits>", whois_eras kind
         # privacy_customer; rung whois.privacy_customer → owner). The proxy NAME is noise and is
@@ -1478,7 +1502,8 @@ def ingest_file(kb, path):
         for cid in _whois_eras.owner_values(wh, "privacy_customer"):
             ind = f"whois_privacy_customer:{cid}"
             kb.add_edge("domain", host, "registered_via_privacy_customer", "indicator", ind,
-                        "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
+                        "whoisxml", "webpivot/whois_enrich", observed, "high", ev,
+                        valid_from=era_start)
             kb.add_fact("indicator", ind, "kind", "whois_privacy_customer",
                         "whoisxml", "webpivot/whois_enrich", observed, "high", ev)
             kb.add_fact("indicator", ind, "population_caveat",
@@ -1488,7 +1513,8 @@ def ingest_file(kb, path):
         for prior in _whois_eras.prior_values(wh, "privacy_customer"):
             kb.add_fact("domain", host, "previous_privacy_customer",
                         f"{prior.get('value')} (era {prior.get('era_created')})",
-                        "whoisxml", "webpivot/whois_enrich", observed, "low", ev)
+                        "whoisxml", "webpivot/whois_enrich", observed, "low", ev,
+                        valid_from=prior.get("era_created"), valid_until=era_start)
             n += 1
         for ns in wh.get("name_servers") or []:
             if is_managed_dns(ns):

@@ -59,6 +59,7 @@ try:
     import convergence as _conv  # tools/kb/convergence.py — the single source of truth for CONVERGED
 except Exception:  # noqa: BLE001 — degrade to the old bare rule if the KB toolkit isn't importable
     _conv = None
+import case_abstract  # noqa: E402 — tools/case_abstract.py: abstract.json follows every head write
 
 
 @dataclass(frozen=True)
@@ -1621,6 +1622,7 @@ def _write_head(entries: list[tuple], saved: dict, case: str, table_md: str, see
                 _snapshot=f"assessments/{base0}.json", clusters=index)
     with open(jpath, "w", encoding="utf-8") as f:
         json.dump(head, f, indent=2, ensure_ascii=False)
+    case_abstract.try_refresh(case_dir)
     import case_state as cs
     if cs.may_overwrite_assessment(mpath, cs.EVIDENCE_REPORT_MD + cs.HARNESS_RENDER_MD):
         md = render.render_markdown(a0, table_md)
@@ -2176,6 +2178,7 @@ def _persist_assessment(assessment: Assessment, case: str, table_md: str) -> dic
                 f"{assessment.confidence} · snapshot assessments/{base}.md -->\n\n" + md_body)
     with open(os.path.join(case_dir, "assessment.json"), "w", encoding="utf-8") as f:
         f.write(js)  # back-compat pointer to the latest
+    case_abstract.try_refresh(case_dir)
 
     # changelog — one append-only line per round
     n_dom = len(assessment.cluster or [])

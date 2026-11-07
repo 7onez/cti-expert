@@ -44,6 +44,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)                              # for the sibling collect_core module
 import collect_core                                   # noqa: E402  shared host-collection routine
 import binary_auto                                     # noqa: E402  discovered binaries
+import case_abstract                                   # noqa: E402  abstract.json follows the head
 ROOT = os.path.dirname(HERE)                          # intel_engine project root
 WP = os.path.join(ROOT, "WebPivot", "tools")
 KB_TOOLS = os.path.join(ROOT, "tools", "kb")
@@ -1375,6 +1376,7 @@ def _render_assessment(case_dir, case, raw_files, fr, verdict, a, clusters=None,
     if not existing or existing.get("_generator") == _LOOP_GENERATOR:
         with open(apath, "w", encoding="utf-8") as fh:
             _json.dump(doc, fh, indent=2, ensure_ascii=False)
+        case_abstract.try_refresh(case_dir)
     else:
         # analyst assessment present — keep it; drop the loop view in a sidecar so nothing is lost
         with open(os.path.join(case_dir, "loop_assessment.json"), "w", encoding="utf-8") as fh:

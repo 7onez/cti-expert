@@ -21,12 +21,22 @@ money trail stop resting on noise:
     (and `--value`) to one case's domains; the four classes above stay KB-wide always.
   * `--value <selector>` — targeted purge of every edge touching one exact selector, regardless
     of classification (e.g. a specific registrar-abuse mailbox that slipped through).
+  * compaction — `--apply` writes every kept edge with its `seen` fold lines merged in
+    (knowledge_base sighting history), so the rewritten edges.jsonl holds one line per edge.
+  * `--forget-case <id>` — a separate mode (the sweep above does not run): remove one case's
+    contribution, provenance-aware (knowledge_base.KB.forget_case). A fact/edge ONLY that case
+    recorded is retracted (hidden from every reader, kept for audit) or, with `--purge`, deleted;
+    one other cases also recorded keeps living with the case removed. Records written before case
+    provenance existed are never guessed at — they are counted and left untouched.
 
 Usage:
   python3 tools/kb/clean_kb.py --kb knowledge                        # dry-run: report only
   python3 tools/kb/clean_kb.py --kb knowledge --apply                 # rewrite edges + entity files
   python3 tools/kb/clean_kb.py --kb knowledge --case CASE-0001         # scope era/--value to a case
   python3 tools/kb/clean_kb.py --kb knowledge --value abuse@x.example --apply
+  python3 tools/kb/clean_kb.py --kb knowledge --forget-case CASE-0001          # dry-run report
+  python3 tools/kb/clean_kb.py --kb knowledge --forget-case CASE-0001 --apply  # soft retract
+  python3 tools/kb/clean_kb.py --kb knowledge --forget-case CASE-0001 --purge --apply
 """
 import argparse
 import glob
@@ -154,6 +164,25 @@ def _case_hosts(case_id, kb_root):
     return hosts
 
 
+def _forget_case(kb, case, purge, apply, hosts):
+    rep = kb.forget_case(case, purge=purge, apply=apply, hosts=hosts)
+    verb, done = ("purge", "purged") if purge else ("retract", "retracted")
+    print(f"# forget case {rep['case']} on {kb.root}  ({verb}, {'APPLY' if apply else 'dry-run'})")
+    for kind in ("facts", "edges"):
+        c = rep[kind]
+        print(f"  {kind}: {c['purge'] if purge else c['retracted']} {done} (only this case "
+              f"recorded them), {c['shared']} kept with the case removed (other cases recorded "
+              f"them too), {c['already']} already retracted")
+    print(f"  untouched — no case provenance (written before it existed): "
+          f"{rep['unattributed_facts']} fact(s), {rep['unattributed_edges']} edge(s); "
+          f"{rep['unattributed_touching_case_hosts']} of them touch this case's collected hosts "
+          f"(clean_kb --case {rep['case']} --value <selector> removes those by hand)")
+    for s in rep["samples"]:
+        print(f"      {s}")
+    if not apply:
+        print("\n  dry-run — nothing written. Re-run with --apply to execute.")
+
+
 def main():
     ap = argparse.ArgumentParser(description="KB hygiene sweep (dry-run by default).")
     ap.add_argument("--kb", required=True)
@@ -164,11 +193,25 @@ def main():
     ap.add_argument("--value", help="targeted purge: drop every edge touching this exact selector "
                                     "(email/name/phone/domain), regardless of classification — "
                                     "scoped by --case if both are given")
+    ap.add_argument("--forget-case", metavar="ID",
+                    help="remove this case's contribution instead of sweeping: records only it "
+                         "recorded are retracted (or --purge'd); shared records lose the case; "
+                         "pre-provenance records are counted, never touched")
+    ap.add_argument("--purge", action="store_true",
+                    help="with --forget-case: delete instead of retract")
     a = ap.parse_args()
+    if a.purge and not a.forget_case:
+        ap.error("--purge only applies with --forget-case")
     kb_root = os.path.abspath(a.kb)
+    from knowledge_base import KB  # noqa: E402
+    if a.forget_case:
+        return _forget_case(KB(kb_root), a.forget_case, a.purge, a.apply,
+                            _case_hosts(a.forget_case, kb_root))
     edges_path = os.path.join(kb_root, "relationships", "edges.jsonl")
     ent_dir = os.path.join(kb_root, "entities")
-    edges = [json.loads(l) for l in open(edges_path, encoding="utf-8") if l.strip()]
+    # Folded view: `seen`/`forget` lines merged into their edge, so --apply writes compacted records
+    # that keep each edge's sighting history and case provenance; retracted edges are kept for audit.
+    edges = KB(kb_root).edges(include_retracted=True)
     case_hosts = _case_hosts(a.case, kb_root) if a.case else None
     value_l = a.value.strip().lower() if a.value else None
 
@@ -269,14 +312,12 @@ def main():
     # re-keyed orgs: move each old spelling's facts onto the canonical node and keep the spelling
     # itself as a display_name fact, then drop the orphaned per-spelling entity file.
     if rekeyed:
-        from knowledge_base import KB  # noqa: E402
         kb = KB(kb_root)
         for key, olds in rekeyed.items():
             for old in sorted(olds):
-                ent = kb.entity("org", old)
+                ent = kb.entity("org", old, include_retracted=True)
                 for f in ent.get("facts") or []:
-                    kb.add_fact("org", key, f["attribute"], f["value"], f["source"], f["collector"],
-                                f.get("observed_at"), f.get("confidence", 0.5), f.get("evidence_ref"))
+                    kb.merge_fact("org", key, f)
                 kb.add_fact("org", key, "display_name", old, "clean_kb", "kb/clean_kb",
                             ent.get("last_seen"), "high")
                 old_f = kb._ent_file("org", old)

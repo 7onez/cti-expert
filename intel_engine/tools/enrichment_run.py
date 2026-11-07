@@ -705,7 +705,8 @@ def _leak_facts(case, case_dir, rows, kb_root=None):
     try:
         from knowledge_base import KB
         from selector_types import kb_key
-        kb = KB(kb_root or os.path.join(ROOT, os.environ.get("HARNESS_KB", "knowledge")))
+        kb = KB(kb_root or os.path.join(ROOT, os.environ.get("HARNESS_KB", "knowledge")),
+                case=case_dir)
     except Exception as exc:  # noqa: BLE001 — coverage JSON is the record; the KB is best-effort
         print(f"   leak coverage: KB facts not written ({type(exc).__name__}: {exc})")
         return 0

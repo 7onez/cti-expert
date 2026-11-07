@@ -1045,6 +1045,18 @@
           "description": "With run=true: cap how many queries are executed."
         }
       },
+      "kb_cluster": {
+        "as_of": {
+          "type": "string",
+          "description": "Answer as the KB held on this day (YYYY-MM-DD): only links whose source-stated validity covers it, else that had been observed by then. Use it to check a same-operator link was true at the time of the incident."
+        }
+      },
+      "kb_entity": {
+        "as_of": {
+          "type": "string",
+          "description": "Show only the facts/edges that held on this day (YYYY-MM-DD) — e.g. who was the registrant then, not now."
+        }
+      },
       "kb_query_shared": {
         "min": {
           "type": "integer",
