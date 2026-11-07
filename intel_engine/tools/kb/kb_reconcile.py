@@ -12,7 +12,9 @@ the slot's ACTIVE values by AUTHORITY and EFFECTIVE DATE, with the same answer f
   create     — the slot holds no other active value (same value from another source = corroboration)
   supersede  — the new value outranks EVERY competing value: authority tier ≥ theirs AND effective
                date ≥ theirs (exact tie on both → higher confidence, else dispute). The losers are
-               kept as history: status=superseded, superseded_by=<id>, valid_until closed.
+               kept as history: status=superseded, superseded_by=<id>, superseded_at; a CHANGE
+               closes their valid_until at the new value's effective day, a CORRECTION (new value
+               effective on or before the loser's own start) is flagged `corrected` instead.
   dispute    — anything else: the new value is stored status=disputed, disputes=[<ids>], and the
                standing value is untouched. Disputes surface in the assessment, never silently.
 

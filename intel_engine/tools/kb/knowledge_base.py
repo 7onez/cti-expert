@@ -24,8 +24,9 @@ Implements the entity / relationship / evidence model from the architecture doc 
   * reconcile: a new, different value in a SINGLE-VALUED slot (registrar, ASN, verdict …) is
     judged deterministically by kb_reconcile.py — authority tier (analyst > registry > vendor >
     extractor) AND effective date — and either supersedes the standing value (kept as history,
-    status=superseded, hidden unless an as_of view falls in its window) or is stored DISPUTED
-    beside it (always visible; `disputes` / disputes_markdown surface it in the assessment).
+    status=superseded: a CHANGE closes its window and it stays visible to an as_of view inside it;
+    a CORRECTION — never held per the new source — is flagged `corrected` and never shown) or is
+    stored DISPUTED beside it (always visible; `disputes` / disputes_markdown surface it).
 
 Storage (files now; drop into SQLite/graph DB later with no schema change):
   knowledge/
@@ -248,13 +249,21 @@ def _slot(ent, attribute):
 
 
 def _supersede(facts, losers, winner, clear=True):
-    """Mark `losers` superseded by `winner` (history kept: superseded_by, valid_until closed at the
-    winner's effective day). With `clear`, a fact DISPUTING with the winner's value is corroboration
-    now and loses its dispute."""
+    """Mark `losers` superseded by `winner`, history kept: superseded_by, and superseded_at — when
+    the KB replaced it (transaction time, never a source date). The source-validity window is
+    closed at the winner's effective day only for a CHANGE (that day falls after the loser's own
+    start). A CORRECTION — the winner takes effect on or before the loser's start, i.e. its source
+    says the loser never held — is flagged `corrected` and its validity is left untouched: closing
+    it would end the window before it begins. With `clear`, a fact DISPUTING with the winner's
+    value is corroboration now and loses its dispute."""
     wid, eff, wv = fact_id(winner), effective_day(winner), _norm_value(winner["value"])
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for f in losers:
-        f["status"], f["superseded_by"] = "superseded", wid
-        if eff and not f.get("valid_until"):
+        f["status"], f["superseded_by"], f["superseded_at"] = "superseded", wid, now
+        start = effective_day(f)
+        if eff and start and eff <= start:
+            f["corrected"] = True
+        elif eff and not f.get("valid_until"):
             f["valid_until"], f["closed_by_supersede"] = eff, True
     if clear:
         for f in facts:
@@ -265,8 +274,8 @@ def _supersede(facts, losers, winner, clear=True):
 
 def _revive(f):
     """Undo _supersede on one fact (its writer re-asserted it and it wins again)."""
-    f.pop("status", None)
-    f.pop("superseded_by", None)
+    for k in ("status", "superseded_by", "superseded_at", "corrected"):
+        f.pop(k, None)
     if f.pop("closed_by_supersede", False):
         f.pop("valid_until", None)
 
@@ -330,11 +339,13 @@ class KB:
 
     def _visible(self, rec):
         """What readers see: live records holding at `as_of` (when set). A SUPERSEDED fact is
-        history — shown only in an as_of view whose day falls inside its validity window."""
+        history — shown only in an as_of view whose day falls inside its validity window; a
+        CORRECTED one never held (its replacement's source says so) and is never shown."""
         if not is_live(rec):
             return False
         if rec.get("status") == "superseded":
-            return self.as_of is not None and holds_at(rec, self.as_of)
+            return (self.as_of is not None and not rec.get("corrected")
+                    and holds_at(rec, self.as_of))
         return self.as_of is None or holds_at(rec, self.as_of)
 
     @contextlib.contextmanager
