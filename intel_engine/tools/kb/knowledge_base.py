@@ -255,12 +255,17 @@ def _supersede(facts, losers, winner, clear=True):
     closed at the winner's effective day only for a CHANGE (that day falls after the loser's own
     start). A CORRECTION — the winner takes effect on or before the loser's start, i.e. its source
     says the loser never held — is flagged `corrected` and its validity is left untouched: closing
-    it would end the window before it begins. With `clear`, a fact DISPUTING with the winner's
-    value is corroboration now and loses its dispute."""
+    it would end the window before it begins. `superseded_evidence` accumulates the evidence_refs
+    the loser lists at each supersession (its kb_memory.json-capped evidence_refs), so only evidence
+    it never had can revive it. With `clear`, a fact DISPUTING with the winner's value is
+    corroboration now and loses its dispute."""
     wid, eff, wv = fact_id(winner), effective_day(winner), _norm_value(winner["value"])
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for f in losers:
         f["status"], f["superseded_by"], f["superseded_at"] = "superseded", wid, now
+        f["superseded_evidence"] = sorted(
+            {r for r in [f.get("evidence_ref"), *(f.get("evidence_refs") or []),
+                         *(f.get("superseded_evidence") or [])] if r})
         start = effective_day(f)
         if eff and start and eff <= start:
             f["corrected"] = True
@@ -447,13 +452,19 @@ class KB:
             rec = idx[key]
             outcome = "extend"
             was = rec.get("status")
+            known = set(rec.get("evidence_refs") or []) | set(rec.get("superseded_evidence") or [])
+            known.add(rec.get("evidence_ref"))
+            new_evidence = bool(evidence_ref) and evidence_ref not in known
             _apply_sighting(rec, "first_observed", "observed_at", observed_at, evidence_ref, case=c)
             _merge_validity(rec, valid_from, valid_until)
-            if single and was in (None, "active", "superseded"):
+            if single and (was in (None, "active") or (was == "superseded" and new_evidence)):
                 # Re-judge on re-observation. An ACTIVE value only ever wins here (settling a legacy
                 # multi-value slot, or its writer's older claims) — it never demotes itself. A
-                # SUPERSEDED value its writer re-asserts is judged like a new entry: it returns if it
-                # wins, or as disputed when it displaces its writer's own newer claim but not a rival.
+                # SUPERSEDED value is judged like a new entry ONLY on evidence it never had: it
+                # returns if it wins, or as disputed when it displaces its writer's own newer claim
+                # but not a rival. Re-reading the same evidence (re-importing the same findings
+                # file, re-ingesting the same snapshot) is a sighting, never a revival — otherwise
+                # replaying an old file would undo the correction that superseded it.
                 judged = {k: v for k, v in rec.items() if k != "status"}
                 action, sup, rivals = reconcile(_slot(ent, attribute), judged)
                 if was != "superseded":
