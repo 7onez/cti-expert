@@ -158,6 +158,7 @@ Collect→Correlate→Assess driver runs on whatever this machine can actually r
 | `codex` | `codex exec --json` (`harness/cli_backend.py`) | the machine's `codex login` |
 | `omp` | `omp -p --mode json` (`harness/cli_backend.py`) | the machine's omp login |
 | `openai\|deepseek\|kimi\|local` | `harness/openai_backend.py` over `/chat/completions` | `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `MOONSHOT_API_KEY` (+ `OPENAI_BASE_URL`) |
+| `orcarouter` | `harness/openai_backend.py` over OrcaRouter's `/v1/chat/completions` | `ORCAROUTER_API_KEY`, or an OAuth 2.0 + PKCE credential (`intel.py provider login --method oauth`) |
 | unset / `auto` | **resolved once per run** by `harness/backend_select.py` | — |
 
 `auto` tries the host agent this process runs inside first (Codex → OMP → Claude Code; the
@@ -199,6 +200,46 @@ python3 scripts/backend/intel.py harness doctor   # which backend, and why the o
 HARNESS_BACKEND=codex python3 scripts/backend/intel.py harness open CASE-0001 https://site-a.example
 HARNESS_BACKEND=deepseek python3 harness/orchestrator.py CASE-0001 https://site-a.example
 ```
+
+**OrcaRouter Cyber Inference (`HARNESS_BACKEND=orcarouter`).** A named backend, not a generic
+"any base URL" knob: `harness/orcarouter.py` owns its origin, its credential and its catalog, and
+`backend_select.py` probes it with a free `GET /v1/models` (never a billed completion) and skips it
+while its credential is marked rejected. It exists for security teams doing authorised, scoped
+work: the cyber tier is where a red team's authorised requests and a blue team's gateway controls
+share one endpoint — see the provider page at <https://www.orcarouter.ai/cyber> and the cyber-tier
+catalog at <https://www.orcarouter.ai/models?tier=cyber>. Two ways in, one credential seam behind
+them:
+
+- **API key** — `ORCAROUTER_API_KEY` (env first, then the skill-root `.env`, like every other key).
+- **OAuth 2.0 + PKCE** — `intel.py provider login --method oauth`: a fresh CSPRNG verifier/state per
+  attempt, `S256` challenge, loopback callback by default (`--flow oob` prints the code for a
+  headless VPS), state compared in constant time, and a single-use 10-minute code exchanged at the
+  auth origin (`https://www.orcarouter.ai/api/v1/auth/keys` — never the inference origin). The
+  resulting key is stored exactly like a pasted one, so no downstream code can tell which method
+  was used. There is no refresh grant: a terminal `401` marks that credential generation
+  `needs_reauth` and the harness asks for a new login instead of retrying in a loop.
+
+Both `www` (auth) and `api` (inference) origins are separate and override-able
+(`ORCA_AUTH_BASE_URL` / `ORCA_API_BASE_URL` / `ORCA_BASE_URL`) for a test double, but HTTPS is
+required except on loopback. The catalog is read live, bounded, and treated as authoritative;
+when it is unreachable the harness falls back to a verified seed or last-known-good snapshot and
+labels the result `degraded` in the UI rather than silently inventing model ids. Tiers follow the
+provider's own offering: **`orcarouter/auto`** is the default (auto-routing, any key), **OrcaCyber
+Ultra `orca/orcacyber-ultra-1.0`** and **OrcaCyber Zero `orca/orcacyber-zero-1.5`** are the
+recommended cyber models for teams that have completed business verification, and
+**`orcarouter/fusion`** is the general fallback. Both origins are in `references/model_hosts.json`,
+so model traffic stays direct while target traffic keeps the research proxy pool.
+
+```bash
+python3 scripts/backend/intel.py provider status          # masked credential + live catalog
+python3 scripts/backend/intel.py provider models --capability chat --modality text
+python3 scripts/backend/intel.py provider login --method oauth     # PKCE, opens the browser
+HARNESS_BACKEND=orcarouter python3 harness/orchestrator.py CASE-0001 https://site-a.example
+```
+
+The same surface is in the debug dashboard (**Provider** tab): both methods side by side, the
+catalog as a filtered dropdown, and cancel-on-navigate so a half-finished login never leaves a
+listener bound to loopback.
 
 **CLI backends are isolated by construction.** Each phase is one `codex exec` / `omp -p` process
 in a throwaway home under `cases/<case>/harness_home/` (own `CODEX_HOME` config / `.omp/mcp.json`;

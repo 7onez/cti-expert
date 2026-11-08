@@ -28,6 +28,7 @@ const TABS = [
   ['prompts', 'prompt surface'],
   ['tools', 'tool calls'],
   ['cost', 'cost & credits'],
+  ['provider', 'provider'],
 ];
 
 // ---------------------------------------------------------------- helpers
@@ -716,8 +717,308 @@ async function renderTrace() {
 
 const RENDER = {
   overview: renderOverview, trace: renderTrace, tokens: renderTokens, prompts: renderPrompts,
-  tools: renderTools, cost: renderCost,
+  tools: renderTools, cost: renderCost, provider: renderProvider,
 };
+
+// ---------------------------------------------------------------- provider
+// OrcaRouter Cyber Inference — the one panel that is not read-only. Two explicit ways in (a
+// pasted key, or OAuth 2.0 + PKCE) both end in the same server-side credential. The page NEVER
+// receives the key: it is POSTed once and every response carries only the masked form. Model
+// options come from the live catalog the SERVER fetched; a degraded catalog says so and is
+// never presented as the account's own list.
+const providerUI = { capability: 'chat', modality: '', open: false, selected: null,
+                     poll: null, busy: null };
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  };
+  const r = await fetch(path, opt);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+  return data;
+}
+
+/** Stop polling and clear the local busy flag. Called on tab change, cancel and pagehide. */
+function stopProviderWork() {
+  if (providerUI.poll) { clearInterval(providerUI.poll); providerUI.poll = null; }
+  providerUI.busy = null;
+}
+
+function link(href, label) {
+  const a = el('a', null, label);
+  a.href = href; a.target = '_blank'; a.rel = 'noreferrer noopener';
+  return a;
+}
+
+function authCard(title, testid) {
+  const c = el('div', 'card auth-card');
+  c.dataset.testid = testid;
+  c.appendChild(el('div', 'k', title));
+  return c;
+}
+
+function renderProviderModels(cat) {
+  const wrap = el('div');
+  wrap.appendChild(el('h2', null, 'Model'));
+  const controls = el('div', 'row');
+  const cap = el('select');
+  cap.id = 'orca-capability';
+  [['chat', 'chat / agent'], ['embedding', 'embedding'], ['image', 'image generation'],
+   ['video', 'video generation'], ['rerank', 'rerank']].forEach(([v, t]) => {
+    const o = el('option', null, t); o.value = v;
+    if (v === providerUI.capability) o.selected = true;
+    cap.appendChild(o);
+  });
+  cap.onchange = () => {
+    providerUI.capability = cap.value;
+    providerUI.open = false;
+    providerUI.selected = null;      // a different entry point proves a different capability set
+    render();
+  };
+  controls.appendChild(cap);
+
+  const mod = el('select');
+  mod.id = 'orca-modality';
+  [['', 'no modality filter'], ['image', 'requires image input'],
+   ['audio', 'requires audio input'], ['video', 'requires video input']].forEach(([v, t]) => {
+    const o = el('option', null, t); o.value = v;
+    if (v === providerUI.modality) o.selected = true;
+    mod.appendChild(o);
+  });
+  mod.onchange = () => {
+    providerUI.modality = mod.value;
+    providerUI.open = false;
+    providerUI.selected = null;
+    render();
+  };
+  controls.appendChild(mod);
+  wrap.appendChild(controls);
+
+  if (cat.degraded) {
+    wrap.appendChild(note('Catalog DEGRADED — the live ' + cat.catalog_url + ' request failed ('
+      + (cat.error || 'unknown error') + '). The list below is the small verified outage seed '
+      + '(source: ' + cat.source + '), not this account\'s catalog. Refresh when the network is back.'));
+  } else {
+    wrap.appendChild(note(cat.count + ' ' + cat.capability + ' models, live from ' + cat.catalog_url
+      + '. Options are filtered by capability' + (providerUI.modality ? ' and input modality' : '')
+      + '; a model whose metadata does not prove compatibility is not offered.'));
+  }
+
+  // A custom listbox, not a free-text field: the model must be picked from what the catalog says
+  // this account can call. It is also keyboard reachable (Enter/Space toggles, Escape closes).
+  const dd = el('div', 'dropdown');
+  const trigger = el('button', 'dd-trigger');
+  trigger.id = 'orca-model-trigger';
+  trigger.dataset.testid = 'model-select-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', providerUI.open ? 'true' : 'false');
+  const shown = providerUI.selected || ('select a model · ' + cat.models.length + ' available');
+  trigger.appendChild(text(shown + ' '));
+  trigger.appendChild(el('span', 'dim', '▾'));
+  trigger.onclick = () => { providerUI.open = !providerUI.open; render(); };
+  dd.appendChild(trigger);
+
+  const panel = el('div', 'dd-panel');
+  panel.id = 'orca-model-panel';
+  panel.dataset.testid = 'model-dropdown';
+  panel.setAttribute('role', 'listbox');
+  if (!providerUI.open) panel.hidden = true;
+  cat.models.forEach((m) => {
+    const item = el('div', 'dd-item' + (m.id === providerUI.selected ? ' on' : ''));
+    item.dataset.testid = 'model-option';
+    item.dataset.model = m.id;
+    item.setAttribute('role', 'option');
+    item.appendChild(el('span', 'dd-id', m.id));
+    item.appendChild(el('span', 'dd-meta', (m.input_modalities || []).join(',') || 'modality ?'));
+    item.onclick = () => { providerUI.selected = m.id; providerUI.open = false; render(); };
+    panel.appendChild(item);
+  });
+  if (!cat.models.length) {
+    panel.appendChild(el('div', 'dd-item dim', 'no model in this catalog proves the required capability'));
+  }
+  dd.appendChild(panel);
+  wrap.appendChild(dd);
+
+  const picked = el('p', 'note');
+  if (providerUI.selected) {
+    picked.appendChild(text('Selected: ' + providerUI.selected
+      + ' — pin it for the run with HARNESS_MODEL_MAP={"opus":"' + providerUI.selected + '"}.'));
+  } else {
+    picked.appendChild(text('The harness default for this provider is ' + 'orcarouter/auto (auto-routing); '
+      + 'a security team that has unlocked the cyber tier can pin orca/orcacyber-ultra-1.0 or '
+      + 'orca/orcacyber-zero-1.5.'));
+  }
+  wrap.appendChild(picked);
+  return wrap;
+}
+
+async function renderProvider() {
+  const f = document.createDocumentFragment();
+  let state;
+  let cat;
+  try {
+    state = await api('/api/provider/state');
+    cat = await api('/api/provider/models?capability=' + encodeURIComponent(providerUI.capability)
+      + (providerUI.modality ? '&modality=' + encodeURIComponent(providerUI.modality) : ''));
+  } catch (e) {
+    f.appendChild(el('p', 'err', 'provider state unavailable: ' + e.message));
+    return f;
+  }
+  const cred = state.credential;
+  const connect = state.connect || {};
+
+  f.appendChild(el('h2', null, state.label));
+  const intro = el('p', 'note');
+  intro.appendChild(text('Named model provider for security teams doing authorised, scoped work. '
+    + 'It is one OpenAI-compatible relay with two ways in: a pasted key, or an OrcaRouter account '
+    + 'login (OAuth 2.0 + PKCE, S256). The key belongs to you — billed to your account and '
+    + 'revocable at any time.'));
+  f.appendChild(intro);
+  const introLinks = el('p', 'note');
+  introLinks.appendChild(link(state.provider_page, 'Cyber models and gateway controls'));
+  introLinks.appendChild(text(' · '));
+  introLinks.appendChild(link(state.cyber_catalog_url, 'cyber-tier model catalog'));
+  f.appendChild(introLinks);
+
+  const cards = el('div', 'cards');
+  cards.dataset.testid = 'auth-methods';
+
+  // --- choice 1: API key -------------------------------------------------
+  const keyCard = authCard('API key', 'auth-api-key');
+  const keyInput = el('input', 'text-input');
+  keyInput.id = 'orca-key';
+  keyInput.dataset.testid = 'api-key-input';
+  keyInput.type = 'password';
+  keyInput.placeholder = 'sk-orca-…';
+  keyInput.autocomplete = 'off';
+  keyInput.spellcheck = false;
+  keyCard.appendChild(keyInput);
+  const keyRow = el('div', 'row');
+  const saveBtn = el('button', null, 'Save key');
+  saveBtn.id = 'orca-key-save';
+  saveBtn.dataset.testid = 'api-key-save';
+  saveBtn.onclick = async () => {
+    try {
+      await api('/api/provider/key', { api_key: keyInput.value });
+      keyInput.value = '';
+      render();
+    } catch (e) { keyCard.appendChild(el('div', 'sub bad', e.message)); }
+  };
+  const clearBtn = el('button', null, 'Clear');
+  clearBtn.id = 'orca-key-clear';
+  clearBtn.onclick = async () => { await api('/api/provider/key/clear', {}); render(); };
+  keyRow.appendChild(saveBtn);
+  keyRow.appendChild(clearBtn);
+  keyCard.appendChild(keyRow);
+  keyCard.appendChild(el('div', 'sub', cred
+    ? `stored ${cred.masked} (${cred.source})${cred.needs_reauth ? ' — rejected, reconnect' : ''}`
+    : 'no key stored'));
+  keyCard.appendChild(el('div', 'sub dim', 'stored server-side in the skill-root .env (chmod 600); never shown again'));
+  cards.appendChild(keyCard);
+
+  // --- choice 2: OAuth 2.0 + PKCE ---------------------------------------
+  const pkCard = authCard('Connect with OrcaRouter', 'auth-pkce');
+  const flowSel = el('select');
+  flowSel.id = 'orca-flow';
+  [['loopback', 'loopback redirect (this machine)'], ['oob', 'out-of-band code (headless / VPS)']]
+    .forEach(([v, t]) => {
+      const o = el('option', null, t); o.value = v;
+      if (v === (connect.flow || 'loopback')) o.selected = true;
+      flowSel.appendChild(o);
+    });
+  pkCard.appendChild(flowSel);
+  const pkRow = el('div', 'row');
+  const connectBtn = el('button', 'primary', 'Connect with OrcaRouter');
+  connectBtn.id = 'orca-connect';
+  connectBtn.dataset.testid = 'pkce-connect';
+  connectBtn.onclick = async () => {
+    try {
+      const st = await api('/api/provider/connect', { flow: flowSel.value });
+      providerUI.busy = st.state;
+      render();
+      if (providerUI.poll) clearInterval(providerUI.poll);
+      providerUI.poll = setInterval(async () => {
+        try {
+          const s = await api('/api/provider/connect/status');
+          providerUI.busy = s.state;
+          if (s.state === 'connected' || s.state === 'error' || s.state === 'idle') {
+            stopProviderWork();
+          }
+          render();
+        } catch (e) { stopProviderWork(); render(); }
+      }, 1000);
+    } catch (e) { pkCard.appendChild(el('div', 'sub bad', e.message)); }
+  };
+  const cancelBtn = el('button', null, 'Cancel');
+  cancelBtn.id = 'orca-cancel';
+  cancelBtn.dataset.testid = 'pkce-cancel';
+  cancelBtn.onclick = async () => {
+    stopProviderWork();
+    await api('/api/provider/connect/cancel', {});
+    render();
+  };
+  pkRow.appendChild(connectBtn);
+  pkRow.appendChild(cancelBtn);
+  pkCard.appendChild(pkRow);
+  const st = connect.state || 'idle';
+  const connLine = el('div', 'sub');
+  connLine.dataset.testid = 'pkce-status';
+  connLine.textContent = st === 'connected' ? 'authorized — the key is stored, no re-login needed'
+    : st === 'pending' ? 'waiting for approval in your browser…'
+      : st === 'awaiting_code' ? 'authorize in the browser, then paste the code below'
+        : st === 'error' ? ('failed: ' + (connect.error || 'unknown'))
+          : 'not connected';
+  pkCard.appendChild(connLine);
+  if (connect.authorize_url && (st === 'pending' || st === 'awaiting_code')) {
+    const urlBox = el('input', 'text-input');
+    urlBox.id = 'orca-auth-url';
+    urlBox.readOnly = true;
+    urlBox.value = connect.authorize_url;
+    pkCard.appendChild(urlBox);
+  }
+  if (st === 'awaiting_code') {
+    const codeRow = el('div', 'row');
+    const codeIn = el('input', 'text-input');
+    codeIn.id = 'orca-code';
+    codeIn.placeholder = 'code from the consent screen';
+    const codeBtn = el('button', null, 'Submit code');
+    codeBtn.onclick = async () => {
+      await api('/api/provider/connect/code', { code: codeIn.value });
+      codeIn.value = '';
+      render();
+    };
+    codeRow.appendChild(codeIn);
+    codeRow.appendChild(codeBtn);
+    pkCard.appendChild(codeRow);
+  }
+  pkCard.appendChild(el('div', 'sub dim',
+    'S256 challenge · fresh verifier + state per attempt · no client secret · key reused until revoked'));
+  cards.appendChild(pkCard);
+
+  f.appendChild(cards);
+  f.appendChild(renderProviderModels(cat));
+
+  const meta = el('p', 'note dim');
+  meta.appendChild(text('inference ' + state.api_base_url + ' · auth ' + state.auth_base_url
+    + ' · credential file ' + (state.env_file || '.env')));
+  f.appendChild(meta);
+  return f;
+}
+
+// A page that goes into the back-forward cache must not come back stuck in "authorizing":
+// invalidate the generation, clear busy/hint SYNCHRONOUSLY, then ask the server to cancel with
+// keepalive (the guarded poll callback will refuse to write state, which is correct — but it
+// would leave the restored page busy forever).
+window.addEventListener('pagehide', () => {
+  const busy = providerUI.busy;
+  if (!busy) return;
+  stopProviderWork();
+  try {
+    fetch('/api/provider/connect/cancel', { method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+  } catch (e) { /* keepalive unsupported: the server-side attempt still times out */ }
+});
 
 // ---------------------------------------------------------------- shell
 async function render() {
@@ -736,7 +1037,19 @@ async function render() {
 TABS.forEach(([id, label]) => {
   const b = el('button', null, label);
   b.dataset.tab = id;
-  b.onclick = () => { state.tab = id; state.session = null; render(); };
+  b.onclick = () => {
+    // Leaving the provider tab is a cancel: release the UI flag and the server-side attempt so
+    // the loopback listener does not sit open behind a panel nobody is looking at.
+    if (state.tab === 'provider' && id !== 'provider') {
+      const wasBusy = providerUI.busy;
+      stopProviderWork();
+      if (wasBusy) {
+        fetch('/api/provider/connect/cancel', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+      }
+    }
+    state.tab = id; state.session = null; render();
+  };
   $('#tabs').appendChild(b);
 });
 $('#limit').onchange = (e) => { state.limit = Number(e.target.value); render(); };

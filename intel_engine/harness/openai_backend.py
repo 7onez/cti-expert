@@ -55,11 +55,23 @@ import audit  # noqa: E402  — the shared tool-call gate + ledger (front-end ne
 
 
 # --------------------------------------------------------------------- config
+def _backend_name() -> str:
+    return (os.environ.get("HARNESS_BACKEND") or "").strip().lower()
+
+
 def _base_url() -> str:
+    # A NAMED provider owns its origins (references/model_providers.json); it is never reached
+    # by pointing OPENAI_BASE_URL at it, and it never borrows another provider's base.
+    if _backend_name() == "orcarouter":
+        import orcarouter
+        return orcarouter.api_base_url()
     return os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com").rstrip("/")
 
 
 def _api_key() -> str:
+    if _backend_name() == "orcarouter":
+        import orcarouter
+        return orcarouter.api_key()
     return (os.environ.get("OPENAI_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
             or os.environ.get("MOONSHOT_API_KEY") or "")
 
@@ -120,6 +132,9 @@ def _env_json(name: str) -> dict:
 
 
 def _model_for(tier: Optional[str]) -> str:
+    if _backend_name() == "orcarouter":
+        import orcarouter
+        return orcarouter.model_for_tier(tier)
     table = {**_DEFAULT_MODEL_MAP, **_env_json("HARNESS_MODEL_MAP")}
     return table.get(tier or "", tier or "deepseek-chat")
 
@@ -318,6 +333,16 @@ def _http_post(payload: dict, timeout: int) -> tuple[Optional[dict], Optional[st
             return json.loads(r.read().decode("utf-8")), None
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:600]
+        if e.code == 401 and _backend_name() == "orcarouter":
+            # A durable OrcaRouter key is reused until revoked; a 401 means it WAS revoked.
+            # There is no refresh grant, so the only correct move is to mark this exact
+            # credential generation for reauthentication. A newer key (a different generation)
+            # is untouched, so a late failure from an old request cannot break a fresh login.
+            try:
+                import orcarouter
+                orcarouter.mark_unauthorized(orcarouter.key_fingerprint(key))
+            except Exception:  # noqa: BLE001 — bookkeeping must never mask the HTTP error
+                pass
         return None, f"HTTP {e.code}: {body}"
     except Exception as e:  # noqa: BLE001 — urllib.error.URLError, socket timeout, JSON errors
         return None, repr(e)
