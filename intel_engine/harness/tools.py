@@ -1019,7 +1019,11 @@ async def search_pivot(args: dict[str, Any]) -> dict[str, Any]:
     "`route` is a pivot_map key (urlscan.title, urlscan.identifier, wayback.telegram, "
     "wayback.pdf, wayback.news, fofa.body, publicwww.source, webamon.corpus, email.deep, "
     "phone.osint, rwhois.purchase, crypto.counterparties, anyrun.lookup, binary.analyze, "
-    "ghw.git_code, ghw.git_committers, ghw.short_handle, …). "
+    "ghw.git_code, ghw.git_committers, ghw.short_handle, and the lead-only identity/estate "
+    "routes pgp.lookup, corp.registry, corp.opencorporates, telegram.resolve, telegram.phone, "
+    "google.account, revimg.links, takedown.watch, container.registry, masked.hint, …). "
+    "telegram.phone / google.account run only as an APPROVED proposal item (case_approve); "
+    "called directly they return the briefing as `skipped`. "
     "`query` is the corpus query string (from pivot_routes.query_for or a hand-built Lucene/"
     "collection query). `case` scopes the ingest provenance. Owner-rung hits become KB edges; "
     "kit/neighbour/mention hits are stored as facts only (collecting ≠ attributing). Tri-state: "
@@ -1552,8 +1556,13 @@ async def doc_metadata(args: dict[str, Any]) -> dict[str, Any]:
     "phase renders it into its prompt, so this is how context reaches the automated path that "
     "otherwise has nobody to ask. Call with only `case` to READ (also prints the questions to "
     "ask when nothing is set yet); pass any of target_class / purpose / claim / basis / brand / "
-    "how / window / falsifier to SET it (persisted to cases/<case>/scope.json, so later rounds, "
-    "a --continue resume and the other front-end inherit it). `target_class` is one of "
+    "how / window / falsifier / subject_type / jurisdiction to SET it (persisted to "
+    "cases/<case>/scope.json, so later rounds, a --continue resume and the other front-end "
+    "inherit it). subject_type person|org|infrastructure (unset = infrastructure): `person` turns "
+    "on PERSON-PROFILE mode (case_enrich adds VN registry by +84 phone / confirmed name, "
+    "spoofability of the subject's domains and offline handle hints; the assess prompt reminds "
+    "you to import subject_profile / client_seeds / engagement and run exposure_score "
+    "model=executive). jurisdiction (ISO alpha-2) steers corp-registry pivots. `target_class` is one of "
     "confirmed_scam · suspected_scam · threat_actor_infra · victim_host · benign_check · unknown "
     "and it decides three things: the FETCH POSTURE (threat_actor_infra means the tool gate "
     "DENIES outbound collection from this address — passive sources only), the OWNERSHIP rule "
@@ -1565,7 +1574,7 @@ async def doc_metadata(args: dict[str, Any]) -> dict[str, Any]:
     "say so. Use `no_direct_contact=true` when the analyst forbids touching the target at all, "
     "`no_spend=true` when metered credits are not authorised.",
     {"case": str},   # optional: target_class, purpose, claim, basis, brand, how, window,
-                     # falsifier, no_direct_contact (bool), no_spend (bool)
+                     # falsifier, subject_type, jurisdiction, no_direct_contact (bool), no_spend (bool)
     annotations=ToolAnnotations(readOnlyHint=False),   # writes cases/<case>/scope.json
 )
 async def case_scope(args: dict[str, Any]) -> dict[str, Any]:
@@ -1574,7 +1583,8 @@ async def case_scope(args: dict[str, Any]) -> dict[str, Any]:
         return _err("case_scope needs `case`: the case id whose scope you want to read or set.")
     setters = {"target_class": "--target-class", "purpose": "--purpose", "claim": "--claim",
                "basis": "--basis", "brand": "--brand", "how": "--how",
-               "window": "--window", "falsifier": "--falsifier"}
+               "window": "--window", "falsifier": "--falsifier",
+               "subject_type": "--subject-type", "jurisdiction": "--jurisdiction"}
     cmd = [PY, os.path.join("harness", "case_scope.py"),
            "set" if any(args.get(k) for k in setters) or args.get("no_direct_contact")
            or args.get("no_spend") else "show", case]

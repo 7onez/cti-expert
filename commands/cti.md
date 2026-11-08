@@ -72,6 +72,30 @@ string), run the `cti` driver. It recalls, then runs the **cross-type harness lo
 Your typed seeds collect with the keyed layers. Every host the loop finds collects free-only,
 and its keyed enrichment is an `enrich.host` proposal item.
 
+**Identity and estate routes** (`pivot_map.json`; every row is a LEAD — kit/neighbour facts,
+never an owner edge):
+
+| Route | Selector | Runs | Offered only when |
+|---|---|---|---|
+| `pgp.lookup` | email | automatically | always (keyless keyservers) |
+| `corp.registry` | registrant org | automatically (keyless registries; jurisdiction = scope `jurisdiction`, else the case's one ccTLD) | always |
+| `telegram.resolve` | t.me handle | automatically, ≤ 10 per round | Telethon + a research-account session exist |
+| `revimg.links` | public avatar / profile-photo URL | automatically, ≤ 5 per round (never a local file) | always |
+| `takedown.watch` | collected domain whose capture reads NXDOMAIN / parked / suspended, or WHOIS hold | automatically, once per domain per 7 days | always |
+| `container.registry` | org slug, GitHub owner → `ghcr.io/<owner>`, OCI `image.source` | automatically, ≤ 10 per round, never `--layers` | always |
+| `masked.hint` | masked e-mail/phone hint from an account lookup | automatically (offline) | always |
+| `telegram.phone` | registrant or seed phone (E.164) | **approval** — the approved item is the import's confirm | Telethon + session; research account only (Telegram ToS, daily import limit) |
+| `google.account` | registrant or seed gmail.com / googlemail.com | **approval** | GHunt installed + session file |
+| `corp.opencorporates` | registrant org | **approval** (metered) | `OPENCORPORATES_API_TOKEN` set |
+
+**Person-profile mode.** When the subject is a person, set it before the run
+(`case_scope set <CASE-ID> --subject-type person [--jurisdiction VN]`, or `case_scope`
+`subject_type=person`). `case_enrich` then adds the subject legs: `vn_corp --by-phone` for +84
+phones, `vn_corp --by-person` for names the analyst CONFIRMED (homonym gate stays), spoofability of
+the subject's domains, and offline numeric hints for the subject's handles. The assess prompt
+reminds you to import `subject_profile` / `client_seeds` / `engagement` and to run
+`exposure_score model=executive` yourself — the loop never scores. Unset = infrastructure (off).
+
 ```bash
 python3 scripts/backend/intel.py cti <target> [--case <CASE-ID>] [--depth N] [--deep] [--free-only]
 python3 scripts/backend/intel.py harness approve <CASE-ID> --only <ids> [--reject <ids>]   # unlisted = deferred

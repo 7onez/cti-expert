@@ -1574,6 +1574,92 @@ def _leak_leads(case, leads):
                         f"({s['origin']}) — exposure, not attribution")}
 
 
+# PERSON-PROFILE mode (scope.json `subject_type: person`; default `infrastructure` keeps every
+# infrastructure case byte-identical). The subject's confirmed selectors (leak_selectors — owner
+# side only) get the free person-side legs as ordinary machine-executable enrichment leads:
+# Vietnamese company registry by phone (+84) and by CONFIRMED name (subject_profile rows with
+# status confirmed; the vn_corp homonym gate keeps every row a candidate unless a second datum
+# matches), SPF/DMARC spoofability of the subject's domains, and offline numeric-suffix hints for
+# the subject's handles. Exposure scoring is NOT run here: ratings are analyst judgement.
+SUBJECT_TYPES = ("person", "org", "infrastructure")
+
+
+def subject_type(case):
+    """scope.json `subject_type` (person | org | infrastructure); infrastructure when unset/unknown."""
+    try:
+        with open(os.path.join(_case_dir(case), "scope.json"), encoding="utf-8") as fh:
+            v = str((json.load(fh) or {}).get("subject_type") or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        v = ""
+    return v if v in SUBJECT_TYPES else "infrastructure"
+
+
+def _confirmed_subject_names(cdir):
+    """Names the analyst CONFIRMED for the subject (evidence/imported/*.json report.subject_profile
+    rows: entity subject, field name, status confirmed). Never a probable/possible row."""
+    names = []
+    for path in sorted(glob.glob(os.path.join(cdir, "evidence", "imported", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                rows = ((json.load(fh) or {}).get("report") or {}).get("subject_profile") or []
+        except Exception:  # noqa: BLE001
+            continue
+        for r in rows if isinstance(rows, list) else ():
+            if (isinstance(r, dict) and str(r.get("entity") or "subject") == "subject"
+                    and r.get("field") == "name" and r.get("status") == "confirmed"
+                    and str(r.get("value") or "").strip()):
+                v = " ".join(str(r["value"]).split())
+                if v not in names:
+                    names.append(v)
+    return names
+
+
+def _person_profile_leads(case, leads):
+    if subject_type(case) != "person":
+        return
+    try:
+        sels = leak_selectors(case)
+    except Exception:  # noqa: BLE001
+        return
+    cdir = _case_dir(case)
+    phones = [s["value"] for s in sels if s["type"] == "phone"]
+    vn_phones = [p for p in phones if re.sub(r"[^\d+]", "", p).startswith(("+84", "84"))]
+    for ph in vn_phones:
+        digits = re.sub(r"\D", "", ph)
+        leads[("vncorp-phone", digits)] = {
+            "tool": "vn_corp --by-phone", "value": ph, "key": f"vncorp-phone:{digits}",
+            "cost": "free", "run": [{"op": "vncorp", "argv": ["--by-phone", ph]}],
+            "why": (f"companies registered with the subject's phone {ph} (VN registry mirrors) — "
+                    "leads; a director/contact match is not identity")}
+    domains = sorted({s["value"] for s in sels if s["type"] == "domain"})
+    try:
+        with open(os.path.join(cdir, "scope.json"), encoding="utf-8") as fh:
+            vn = str((json.load(fh) or {}).get("jurisdiction") or "").upper() == "VN"
+    except Exception:  # noqa: BLE001
+        vn = False
+    vn = vn or bool(vn_phones) or any(d.endswith(".vn") for d in domains)
+    if vn:
+        corr = ["--corroborate", "phone=" + vn_phones[0]] if vn_phones else []
+        for name in _confirmed_subject_names(cdir):
+            leads[("vncorp-person", name.lower())] = {
+                "tool": "vn_corp --by-person", "value": name, "key": f"vncorp-person:{name.lower()}",
+                "cost": "free", "run": [{"op": "vncorp", "argv": ["--by-person", name, *corr]}],
+                "why": (f"companies whose legal representative is the confirmed subject name {name}"
+                        " — homonym CANDIDATES unless a second datum matches the record")}
+    if domains:
+        leads[("email-hygiene", ",".join(domains))] = {
+            "tool": "email_hygiene --domains", "value": ", ".join(domains),
+            "key": "email-hygiene:" + ",".join(domains), "cost": "free",
+            "run": [{"op": "email-hygiene", "argv": ["--domains", ",".join(domains)]}],
+            "why": "SPF/DMARC spoofability of the subject's domains — a posture fact, not attribution"}
+    for u in sorted({s["value"] for s in sels if s["type"] == "username"}):
+        leads[("username-hints", u)] = {
+            "tool": "username_enum --offline", "value": u, "key": f"username-hints:{u}",
+            "cost": "free", "run": [{"op": "username-hints", "argv": [u, "--offline"]}],
+            "why": (f"numeric-suffix hints in the subject's handle {u} (possible birth year/date) — "
+                    "hypotheses only, offline")}
+
+
 
 def _censys_search_candidates(cdir, cands, seed_apexes, deferred=None):
     """Frontier seeds from cases/<id>/censys_search.json — hostnames Censys saw serving one of the
@@ -1960,6 +2046,7 @@ def frontier(case, max_new=8):
         if host not in tiers:
             _enrichment_leads_from_raw(obj, enr)
     _leak_leads(case, enr)
+    _person_profile_leads(case, enr)          # no-op unless scope.json subject_type == person
     # MO-neighbour: seed ONLY from the CLASSIFIED case-wide file (Phase B), never from the raw
     # per-host discovery block — a same_mo / unrelated co-tenant must not grow the estate.
     _mo_same_registrant_candidates(cdir, cands, seed_apexes, deferred)
@@ -2233,7 +2320,7 @@ def _excluded_ids(st):
 def _node_key(type_, selector):
     t = (type_ or "").strip().lower()
     s = str(selector or "").strip()
-    return f"{t}|{s.lower() if t in ('domain', 'email', 'telegram') else s}"
+    return f"{t}|{s.lower() if t in ('domain', 'email', 'telegram', 'org', 'namespace') else s}"
 
 
 def _node_hop(st, type_, selector):
@@ -2355,15 +2442,24 @@ def tier_hosts(case_dir):
 # Reverse-WHOIS on a phone/email is a REGISTRANT pivot (SKILL.md): it runs only for a contact the
 # WHOIS record names as registrant (or one the analyst seeded by hand), never for one scraped from
 # page text (a phone directory lists thousands of strangers) or reached through a kit/neighbour
-# row. The one choke point for both typed candidate builders below.
+# row. The one choke point for both typed candidate builders below. pivot_map routes marked
+# `admit: registrant_or_seed` (the outbound / session-bound identity lookups — telegram.phone,
+# google.account) follow the same rule.
 _REGISTRANT_ONLY_ROUTES = frozenset({"rwhois.purchase"})
 _REGISTRANT_RELS = frozenset({"registered_by", "registrant_of"})
+
+
+def _registrant_only(route):
+    if route in _REGISTRANT_ONLY_ROUTES:
+        return True
+    from selector_types import route_spec
+    return route_spec(route).get("admit") == "registrant_or_seed"
 
 
 def _route_admits(route, rung_classes, *, analyst_seed=False):
     """False when `route` is registrant-only, the selector is not an analyst's hop-0 seed, and no
     class in `rung_classes` is whois.registrant_*."""
-    if route not in _REGISTRANT_ONLY_ROUTES or analyst_seed:
+    if analyst_seed or not _registrant_only(route):
         return True
     return any(str(c).startswith("whois.registrant_") for c in (rung_classes or ()))
 
@@ -2699,7 +2795,7 @@ def _typed_cands_from_kb(collected, pr, routes_meta, host_tier=None):
             ntype, sel = node["type"], node["selector"]
             # Filename/string stay typed — NEVER reclassify as domain / run through PSL reducer.
             if ntype not in ("domain", "email", "phone", "wallet", "ip", "hash",
-                             "string", "filename", "telegram"):
+                             "string", "filename", "telegram", "org", "image_url", "namespace"):
                 continue
             key = (ntype, sel)
             slot = nodes.setdefault(key, {
@@ -3005,6 +3101,198 @@ def _previous_owner_era_cands(cdir, pr, routes_meta):
 
 
 
+# ------------------------------------------------------------------------- identity / estate routes
+# Selectors no collector writes into the KB as entities, read from the case's own artifacts:
+# avatar / profile-photo URLs (→ revimg.links), masked e-mail/phone hints an account lookup
+# returned (→ masked.hint), GitHub owners a case page links to (→ container.registry on ghcr.io),
+# and collected domains whose capture reads as held / NXDOMAIN / parked (→ takedown.watch, once per
+# recheck window). Every route is a lead route (rungs.json) — collecting is not attributing.
+_ARTIFACT_SKIP_DIRS = frozenset({"raw", "dom", "evidence", "report", "screenshots", "captures",
+                                 "revimg", "engage"})
+_ARTIFACT_SKIP_FILES = frozenset({"state.json", "proposal.json", "scope.json", "rounds.jsonl"})
+_GITHUB_LOGIN_RE = re.compile(r"github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?:/|$)")
+_GITHUB_RESERVED = frozenset({"features", "topics", "sponsors", "login", "marketplace", "about",
+                              "site", "orgs"})
+
+
+def _case_artifact_values(cdir, keys, max_bytes):
+    """[(key, value, parent_dict, relpath)] for every JSON key in `keys` in the case's analysis
+    artifacts (enrichment/, osint_industries/, container/, … — never raw/ dom/ evidence/ report/).
+    A `{"url": …}` value (GHunt's profile_photo) yields its url. Bounded by `max_bytes` per file."""
+    keys = set(keys or ())
+    out = []
+
+    def walk(o, rel, depth):
+        if depth > 12:
+            return
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in keys:
+                    val = v.get("url") if isinstance(v, dict) else v
+                    if isinstance(val, str) and val.strip():
+                        out.append((k, val.strip(), o, rel))
+                if isinstance(v, (dict, list)):
+                    walk(v, rel, depth + 1)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v, rel, depth + 1)
+
+    if not keys or not os.path.isdir(cdir):
+        return out
+    for root, dirs, files in os.walk(cdir):
+        rel_root = os.path.relpath(root, cdir)
+        top = rel_root.split(os.sep)[0]
+        if top in _ARTIFACT_SKIP_DIRS:
+            dirs[:] = []
+            continue
+        dirs.sort()
+        for fn in sorted(files):
+            if not fn.endswith(".json") or fn in _ARTIFACT_SKIP_FILES:
+                continue
+            p = os.path.join(root, fn)
+            try:
+                if os.path.getsize(p) > int(max_bytes):
+                    continue
+                with open(p, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+            except Exception:  # noqa: BLE001
+                continue
+            walk(doc, os.path.relpath(p, cdir), 0)
+    return out
+
+
+def _takedown_trigger(obj, states):
+    """(True, why) when a collected domain's capture reads as one of `states` (wp_liveness,
+    offline — the captured page + DNS, never a new request) or its WHOIS status carries a hold."""
+    who = ((obj.get("artifacts") or {}).get("whois") or {}) if isinstance(obj, dict) else {}
+    status = who.get("status") or who.get("statuses") or who.get("domain_status") or ""
+    if "hold" in json.dumps(status).lower():
+        return True, "WHOIS status carries a hold"
+    try:
+        import wp_liveness as _lv
+        st = str((_lv.from_pivot_result(obj) or {}).get("state") or "")
+    except Exception:  # noqa: BLE001 — no verdict → no trigger
+        return False, ""
+    return (st in states), f"capture reads as {st}"
+
+
+def _artifact_cands(cdir, pr, routes_meta, host_tier, today=None):
+    """Candidates for the identity/estate routes whose selectors live in case artifacts, not in
+    the KB. Unprobed (propose() bounds and sizes them like every typed candidate)."""
+    from selector_types import candidate_id, selector_sources
+    src = selector_sources()
+    max_bytes = src.get("max_file_bytes") or 4000000
+    out = []
+
+    def q(route, t, sel):
+        if route not in routes_meta:
+            return None
+        if pr is None:
+            return sel if t in (routes_meta[route].get("types") or []) else None
+        try:
+            return pr.query_for(route, t, sel)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # avatar / profile-photo URLs → reverse-image (URL mode only; never a local file)
+    for key, val, _parent, rel in _case_artifact_values(cdir, src.get("image_url_keys"), max_bytes):
+        if not re.match(r"^https?://", val, re.I):
+            continue
+        query = q("revimg.links", "image_url", val)
+        if query:
+            out.append(_cand("image_url", val, "revimg.links", query, metered=False, rung="kit",
+                             origins=(rel,), sources=(f"artifact:{key}",),
+                             why=f"profile photo URL in {rel} ({key})", by="artifact"))
+    # masked hints from account-existence lookups → test against the case's known selectors
+    try:
+        import masked_hint as _mh
+        providers = {str(p) for p in (_mh._PROVIDERS or {}) if not str(p).startswith("_")}
+        mask_chars = set(_mh._ALWAYS)
+    except Exception:  # noqa: BLE001
+        providers, mask_chars = {"unknown"}, {"*", "•"}
+    for key, val, parent, rel in _case_artifact_values(cdir, src.get("masked_hint_keys"), max_bytes):
+        if not any(ch in mask_chars for ch in val):
+            continue
+        mod = str(parent.get("module") or parent.get("provider") or "").strip().lower()
+        provider = mod if mod in providers else "unknown"
+        query = q("masked.hint", "masked_hint", f"{provider}:{val}")
+        if query:
+            out.append(_cand("masked_hint", val, "masked.hint", query, metered=False, rung="kit",
+                             origins=(rel,), sources=(f"artifact:{key}",),
+                             why=f"masked {key.split('_')[0]} hint from {mod or 'an account lookup'} "
+                                 f"({rel}) — corroborating only", by="artifact"))
+    # GitHub owners a case page links to → their ghcr.io registry namespace; collected domains
+    # that read as held / NXDOMAIN / parked → takedown watch (one candidate per recheck window)
+    td = routes_meta.get("takedown.watch") or {}
+    states = {str(s) for s in (td.get("trigger_states") or ("unresolved", "parked", "suspended"))}
+    try:
+        recheck = max(1, int(td.get("recheck_days") or 7))
+    except (TypeError, ValueError):
+        recheck = 7
+    window = (today or datetime.now(timezone.utc).date()).toordinal() // recheck
+    seen_td = set()
+    for path in sorted(glob.glob(os.path.join(cdir, "raw", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        meta = obj.get("meta") or {}
+        host = str(meta.get("host") or os.path.basename(path)[:-5]).lower()
+        if meta.get("kind") == "ip" or _IP_RE.match(host) or ":" in host:
+            continue
+        tier = host_tier(host) if host_tier is not None else "kit"
+        for u in (((obj.get("artifacts") or {}).get("socials") or {}).get("github") or []):
+            m = _GITHUB_LOGIN_RE.search(str(u))
+            if not m or m.group(1).lower() in _GITHUB_RESERVED:
+                continue
+            ns = f"ghcr.io/{m.group(1).lower()}"
+            query = q("container.registry", "namespace", ns)
+            if query:
+                out.append(_cand("namespace", ns, "container.registry", query, metered=False,
+                                 rung=_weakest_rung(("kit", tier)), origins=(host,),
+                                 sources=("artifact:socials.github",),
+                                 why=f"GitHub owner linked from {host} → its container namespace",
+                                 by="artifact"))
+        apex = _frontier_apex(host)
+        if "takedown.watch" not in routes_meta or not apex or apex in seen_td:
+            continue
+        hit, why = _takedown_trigger(obj, states)
+        if not hit:
+            continue
+        seen_td.add(apex)
+        query = q("takedown.watch", "domain", apex)
+        if query:
+            out.append(_cand("domain", apex, "takedown.watch", query, metered=False,
+                             rung=_weakest_rung(("kit", tier)), origins=(host,),
+                             sources=("artifact:liveness",),
+                             why=f"{why} — RDAP hold / sinkhole status + successor hunt "
+                                 f"(once per {recheck} days)", by="artifact",
+                             id_=candidate_id("domain", apex, "takedown.watch",
+                                              f"{query}#w{window}")))
+    return out
+
+
+def _apply_route_rules(cands, routes_meta):
+    """pivot_map per-route rules applied AFTER ranking: `approval: always` items are never sized
+    (est_hits None → proposal.split routes them to approval) and `round_cap` keeps the best N
+    candidates of a route per round (third-party query volume, research-account flood limits)."""
+    out, per_route = [], {}
+    for c in cands:
+        spec = routes_meta.get(c.tool) or {}
+        cap = spec.get("round_cap")
+        if isinstance(cap, int) and cap >= 0:
+            if per_route.get(c.tool, 0) >= cap:
+                continue
+            per_route[c.tool] = per_route.get(c.tool, 0) + 1
+        if spec.get("approval") == "always" and c.est_hits is not None:
+            c = _cand(c.type, c.selector, c.tool, c.query, metered=c.metered, est_hits=None,
+                      rung=c.rung, origins=c.origins, sources=c.sources, why=c.why, by=c.by,
+                      id_=c.id)
+        out.append(c)
+    return out
+
+
 def propose(case, *, extra=(), max_per_type=None, probe=True):
     """Deterministic next-round candidates for every selector type.
 
@@ -3023,7 +3311,12 @@ def propose(case, *, extra=(), max_per_type=None, probe=True):
     - est_hits: pivot_routes.count when probe=True; None when unknown or probe=False.
     - Rank: pivot_suggest boost desc, len(sources) desc, rung owner>kit>neighbour, id.
     - Dedup by Candidate.id; state.json `pivoted` and Plan-`dropped` ids are never offered.
-    - Never offered: a route whose credential is absent or excluded for the type (_offerable).
+    - Never offered: a route whose credential / session is absent or excluded for the type
+      (_offerable); an `admit: registrant_or_seed` route only for a registrant contact or seed.
+    - Identity/estate selectors from case artifacts (_artifact_cands): avatar URLs, masked hints,
+      GitHub owners → ghcr.io namespaces, held/NXDOMAIN/parked collected domains (takedown.watch,
+      one id per recheck window). After ranking, `approval: always` routes are never sized and
+      `round_cap` keeps the best N per route (_apply_route_rules).
     - Filename/string NEVER go through host normalisation / PSL reducer.
     """
     from selector_types import auto_max_hits, classify, load_pivot_map, page_selector_cap
@@ -3084,6 +3377,9 @@ def propose(case, *, extra=(), max_per_type=None, probe=True):
     typed = _typed_cands_from_kb(collected, pr, routes_meta, _host_tier)
     # 2b) typed node registry: non-domain seeds + corpus pivot results, multi-hop
     typed += _cands_from_state_nodes(st, collected, pr, routes_meta, seed_apexes)
+    # 2a) identity/estate selectors read from case artifacts (avatar URLs, masked hints, GitHub
+    #     owners → registry namespaces, held/NXDOMAIN/parked domains → takedown watch)
+    typed += _artifact_cands(cdir, pr, routes_meta, _host_tier)
     # 2-bound) rank and cap BEFORE sizing: a page listing thousands of contacts (a phone
     #     directory) must never cost one vendor count probe per scraped selector. Kit/neighbour
     #     pivots keep the best `page_selector_cap` per type; owner-rung pivots and free
@@ -3149,6 +3445,8 @@ def propose(case, *, extra=(), max_per_type=None, probe=True):
 
     # 5) rank: boost desc, corroboration desc, rung owner>kit>neighbour, id
     cands.sort(key=_key)
+    # 5b) per-route rules: approval:always never sized; round_cap per route (pivot_map.json)
+    cands = _apply_route_rules(cands, routes_meta)
 
     # 6) optional per-type cap (after rank, so highest-ranked survive)
     if max_per_type is not None:

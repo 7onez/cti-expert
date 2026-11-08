@@ -287,7 +287,19 @@ cluster, never attribute, and render as **kit siblings** / **neighbours** with a
 (WHOIS registrant email/phone, exact cert, analytics GA/GTM/gtag/FB/TikTok/Metrica, telegram
 bot-token, discord webhook, non-exchange wallet) may enter `cluster`. Rung table:
 `intel_engine/tools/kb/references/rungs.json`. Dispatcher ops `propose` and `corpus-search`
-(`corpus_search` MCP tool) feed the loop without elevating kit/neighbour hits.
+(`corpus_search` MCP tool) feed the loop without elevating kit/neighbour hits. The identity /
+estate routes (`pgp.lookup`, `corp.registry`, `telegram.resolve`, `revimg.links`,
+`takedown.watch`, `container.registry`, `masked.hint` — free, auto; `telegram.phone`,
+`google.account`, `corp.opencorporates` — always a proposal item, offered only when the session /
+GHunt / token exists) return LEADS only: PGP UIDs, registry officers (homonym candidates),
+Telegram ids, reverse-image hits, registry labels and takedown successors are kit/neighbour facts;
+officer names, ids and hint verdicts never become pivot nodes. `commands/cti.md` has the table.
+
+**Person-profile mode** (scope `subject_type: person`; default `infrastructure` = off): case
+enrichment adds `vn_corp --by-phone` (+84) / `--by-person` (confirmed names only, homonym gate
+kept), spoofability of the subject's domains and offline handle hints; the analyst fills
+`subject_profile` / `client_seeds` / `engagement` via `evidence_import` and runs
+`exposure_score model=executive` — ratings are analyst judgement, never auto-scored.
 
 ### Claim discipline — what a hit can say (RULE 5)
 

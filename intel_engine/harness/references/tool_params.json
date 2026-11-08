@@ -968,7 +968,7 @@
         },
         "origin_type": {
           "type": "string",
-          "description": "Selector type the pivot started from (domain/email/phone/wallet/ip/hash/string/filename/telegram). Defaults to string. Owner edges are drawn FROM this origin."
+          "description": "Selector type the pivot started from (domain/email/phone/wallet/ip/hash/string/filename/telegram/org/image_url/namespace/masked_hint). Defaults to string. Owner edges are drawn FROM this origin."
         },
         "origin_value": {
           "type": "string",
@@ -1128,6 +1128,15 @@
         "falsifier": {
           "type": "string",
           "description": "The result that would show the target is NOT what is believed — what would make the analyst drop it."
+        },
+        "subject_type": {
+          "type": "string",
+          "description": "What the case is about. `person` turns on person-profile mode (subject-side enrichment legs + the analyst reminder to import subject_profile/client_seeds/engagement and run exposure_score model=executive). Unset = infrastructure.",
+          "enum": ["person", "org", "infrastructure"]
+        },
+        "jurisdiction": {
+          "type": "string",
+          "description": "ISO 3166 alpha-2 country the subject/operator is registered in (e.g. GB, VN) — steers corp-registry pivots; unset = the case's single shared ccTLD, else global registries."
         },
         "no_direct_contact": {
           "type": "boolean",

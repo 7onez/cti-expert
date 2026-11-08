@@ -61,6 +61,9 @@ def _is_domain(v: str) -> bool:
 
 _KINDS = frozenset({
     "domain", "email", "phone", "wallet", "ip", "hash", "string", "filename", "telegram", "onion",
+    # identity/estate kinds no regex can tell apart from a string: set by a collector hint, a KB
+    # entity type (org) or propose()'s case-artifact readers (image_url, masked_hint, namespace)
+    "org", "image_url", "namespace", "masked_hint",
 })
 #: an onion has no routes of its own yet; it inherits the STRING routes — corpus searches of the
 #: literal (urlscan text, Wayback/news, FOFA body, …), none of which resolve or fetch the name.
@@ -252,6 +255,45 @@ def _is_filename(v: str, exts: set) -> bool:
     return False
 
 
+_SELECTOR_SOURCES_FALLBACK = {
+    "image_url_keys": ["avatar_url", "profile_photo"],
+    "masked_hint_keys": ["email_hint", "phone_hint"],
+    "image_exts": ["jpg", "jpeg", "png", "gif", "webp"],
+    "max_file_bytes": 4000000,
+}
+
+
+def selector_sources() -> dict:
+    """pivot_map.json `selector_sources`: the case-artifact keys propose() reads for image_url /
+    masked_hint selectors and the image extensions classify() treats as a picture, not a host."""
+    raw = _PIVOT_REF.get("selector_sources") if isinstance(_PIVOT_REF, dict) else None
+    out = dict(_SELECTOR_SOURCES_FALLBACK)
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not str(k).startswith("_") and v is not None:
+                out[k] = v
+    return out
+
+
+def route_spec(route: str) -> dict:
+    """One pivot_map route spec ({} for an unknown route)."""
+    spec = (load_pivot_map().get("routes") or {}).get((route or "").strip())
+    return spec if isinstance(spec, dict) else {}
+
+
+def _is_image_url(v: str) -> bool:
+    """http(s) URL whose PATH ends in an image extension (selector_sources.image_exts)."""
+    try:
+        p = urlparse(v)
+    except ValueError:
+        return False
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return False
+    exts = {str(x).lower().lstrip(".") for x in selector_sources().get("image_exts") or ()}
+    leaf = (p.path or "").lower().rsplit("/", 1)[-1]
+    return "." in leaf and leaf.rsplit(".", 1)[-1] in exts
+
+
 def _is_telegram(v: str) -> bool:
     """t.me / telegram.me path forms (bare @handle only via hint)."""
     low = v.lower().strip()
@@ -292,6 +334,9 @@ def classify(raw, hint=None) -> str:
         # URL whose host is telegram still counts as telegram for the harness path
         if _is_telegram(v):
             return "telegram"
+        # a direct image URL is a picture to reverse-search, never a host to collect
+        if _is_image_url(v):
+            return "image_url"
         return "domain"
 
     try:
@@ -428,7 +473,20 @@ def kb_key(type_: str, value: str, *, coin: str = "") -> tuple:
         label = tracker_label(v)
         if label:                      # the SAME entity ingest_webpivot writes for this tracker
             return "indicator", f"{label}:{v}"
+    if t == "org":                     # the SAME org node ingest_webpivot keys a registrant org on
+        return "org", _org_key(v)
     return "indicator", f"{t}:{v}"
+
+
+def _org_key(v: str) -> str:
+    try:
+        _kb = os.path.join(_HERE, "kb")
+        if _kb not in sys.path:
+            sys.path.append(_kb)
+        from noise_filters import canonical_org_key
+        return canonical_org_key(v) or v.lower()
+    except Exception:                                         # noqa: BLE001 — degrade to folded text
+        return " ".join(v.lower().split())
 
 
 def _telegram_handle(v: str) -> str:
@@ -493,9 +551,17 @@ def node_from_kb(etype: str, value: str):
         return {"type": "domain", "selector": v, "rung_class": ""}
     if et == "email":
         return {"type": "email", "selector": v, "rung_class": "page.email"}
+    if et == "org" and v:
+        # a WHOIS registrant organisation (ingest_webpivot `registered_by` → org) — corp-registry
+        # and registry-namespace pivots; never a decisive join key (kit)
+        return {"type": "org", "selector": v, "rung_class": "whois.registrant_org"}
     if et != "indicator" or ":" not in v:
         return None
     prefix, rest = v.split(":", 1)
+    if prefix == "image_url" and rest:
+        return {"type": "image_url", "selector": rest, "rung_class": "image.avatar"}
+    if prefix == "namespace" and rest:
+        return {"type": "namespace", "selector": rest, "rung_class": "code.namespace"}
     if prefix == "wallet" and ":" in rest:
         return {"type": "wallet", "selector": rest.split(":", 1)[1], "rung_class": "wallet.operator"}
     if prefix == "social" and rest.startswith("telegram:"):
@@ -526,6 +592,8 @@ __all__ = [
     "max_typed_hops",
     "node_from_kb",
     "page_selector_cap",
+    "route_spec",
     "routes_for",
     "rung_for",
+    "selector_sources",
 ]

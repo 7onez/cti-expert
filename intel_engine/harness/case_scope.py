@@ -40,6 +40,7 @@ CLI:
     python3 harness/case_scope.py show <case>
     python3 harness/case_scope.py set  <case> --target-class victim_host --purpose attribution \
                                               --claim "..." --basis "vendor report" --brand "..."
+    python3 harness/case_scope.py set  <case> --subject-type person --jurisdiction VN
     python3 harness/case_scope.py questions          # what to ask when an analyst IS in the loop
 """
 from __future__ import annotations
@@ -165,7 +166,22 @@ DEFAULT_CLASS = str(POLICY.get("unanswered_target_class", "unknown"))
 NO_TOUCH = "never_direct_from_analyst_egress"
 
 _FIELDS = ("target_class", "basis", "purpose", "brand", "how_encountered",
-           "time_window", "falsifier", "claim")
+           "time_window", "falsifier", "claim", "subject_type", "jurisdiction")
+
+#: what the case is ABOUT (person-profile mode switches on `person`). Unset = infrastructure: the
+#: cross-type loop and enrichment behave exactly as before; only an ANSWER turns person mode on.
+SUBJECT_TYPES = ("person", "org", "infrastructure")
+
+
+def normalise_subject_type(value: object) -> str | None:
+    v = str(value or "").strip().lower()
+    if not v:
+        return None
+    if v in SUBJECT_TYPES:
+        return v
+    print(f"[scope] WARNING: unknown subject_type {value!r} — ignored (known: "
+          f"{', '.join(SUBJECT_TYPES)}).", file=sys.stderr)
+    return None
 
 
 def _now() -> str:
@@ -270,6 +286,9 @@ def resolve(case: str, root: str = ROOT, *, persist: bool = True, **given: objec
                             "no_spend": bool(cons.get("no_spend"))}
 
     scope["target_class"] = normalise_class(scope.get("target_class"))
+    scope["subject_type"] = normalise_subject_type(scope.get("subject_type"))
+    if scope.get("jurisdiction"):
+        scope["jurisdiction"] = str(scope["jurisdiction"]).strip().upper()
     scope["case"] = str(case)
     scope["stated_fields"] = sorted(set(stated) | set(supplied))
     scope["stated"] = bool(scope["stated_fields"])
@@ -479,6 +498,11 @@ def collect_directives(scope: dict) -> str:
     note = _unstated_note(scope)
     if note:
         out.append("- " + note.rstrip("\n"))
+    if scope.get("subject_type") == "person":
+        out.append("- Subject type: `person` — PERSON-PROFILE mode. case_enrich adds the "
+                   "subject-side legs (VN registry by +84 phone / confirmed name, spoofability of "
+                   "the subject's domains, offline handle hints); every result is a LEAD about a "
+                   "named individual — never publish a homonym as the subject.")
     out.append("- RECLASSIFY OUT LOUD: " + str(POLICY.get("reclassify_mid_run", "")))
     return "\n".join(out) + "\n"
 
@@ -518,6 +542,12 @@ def judgment_directives(scope: dict) -> str:
     if never:
         out.append("- NEVER:")
         out += [f"    · {n}" for n in never]
+    if scope.get("subject_type") == "person":
+        out.append("- PERSON-PROFILE case: the analyst records the identity card through "
+                   "`evidence_import` (report.subject_profile rows with basis + status, "
+                   "client_seeds, ONE engagement object) and then runs `exposure_score` with "
+                   "model=executive. Do NOT score it yourself — the ratings are analyst judgement; "
+                   "say in the assessment which of the three are still missing.")
     note = _unstated_note(scope)
     if note:
         out.append("- " + note.rstrip("\n"))
@@ -530,6 +560,8 @@ def banner(scope: dict) -> str:
     if said(scope, "purpose") and scope.get("purpose"):
         bits.append(f"purpose={scope['purpose']}")
     bits.append(f"posture={posture(scope).get('fetch_posture', '?')}")
+    if scope.get("subject_type"):
+        bits.append(f"subject={scope['subject_type']}")
     if is_hostile(scope):
         bits.append("egress=DENIED")
     bits.append("stated" if scope.get("stated") else "DEFAULTED (no context supplied)")
@@ -576,7 +608,8 @@ def _main(argv: list[str]) -> int:
     i = 0
     flagmap = {"--target-class": "target_class", "--purpose": "purpose", "--claim": "claim",
                "--basis": "basis", "--brand": "brand", "--how": "how_encountered",
-               "--window": "time_window", "--falsifier": "falsifier"}
+               "--window": "time_window", "--falsifier": "falsifier",
+               "--subject-type": "subject_type", "--jurisdiction": "jurisdiction"}
     while i < len(rest):
         a = rest[i]
         if a in flagmap and i + 1 < len(rest):

@@ -33,7 +33,7 @@
   },
 
   "routes": {
-    "_comment": "Collector route key → {types, metered, count_probe, field?, mention_only?}. `types` is the selector kinds this route accepts. `metered` true means the call spends third-party credits and ALWAYS needs approval (even under auto_max_hits). `count_probe` names how hit-count is obtained before dispatch: size1 (urlscan size=1 probe), total (wayback collection total), preview (rwhois free preview count), none (unknown → forces approval). `field` is the corpus field the query targets. `mention_only` true means hits are stored as facts only, never edges/clusters/operator_leads.",
+    "_comment": "Collector route key → {types, metered, count_probe, field?, mention_only?, approval?, admit?, round_cap?, collected_only?, recheck_days?}. `types` is the selector kinds this route accepts. `metered` true means the call spends third-party credits and ALWAYS needs approval (even under auto_max_hits). `count_probe` names how hit-count is obtained before dispatch: size1 (urlscan size=1 probe), total (wayback collection total), preview (rwhois free preview count), single (one bounded lookup → 1, runs automatically), none (unknown → forces approval). `approval: always` = never probed, always a proposal item (outbound/session-bound routes). `admit: registrant_or_seed` = offered only for a WHOIS-registrant contact or an analyst seed. `round_cap` = at most N candidates of the route per propose() round. `recheck_days` = a collected_only route re-offered once per domain per N days. `field` is the corpus field the query targets. `mention_only` true means hits are stored as facts only, never edges/clusters/operator_leads.",
 
     "urlscan.title": {
       "types": ["string"],
@@ -163,6 +163,86 @@
       "metered": true,
       "count_probe": "none",
       "collected_only": true
+    },
+
+    "pgp.lookup": {
+      "_comment": "IDENTITY (free, keyless): the public keyservers (wp_pgp / pgp_lookup) for an e-mail. Rows: other UID e-mails (pgp.uid_email, kit — self-asserted leads that may pivot again); UID names, key fingerprints and certifier key ids are fact-only (rungs.json fact_only_node_classes). count_probe single = one bounded lookup, so it runs automatically.",
+      "types": ["email"],
+      "metered": false,
+      "count_probe": "single"
+    },
+    "corp.registry": {
+      "_comment": "IDENTITY (free): company-mode corporate-registry search (wp_corp / corp_registry) over the KEYLESS providers only (GLEIF, Companies House, recherche-entreprises, Brønnøysund, PRH, SEC EDGAR; VN routes to vn_corp). Jurisdiction = scope.json `jurisdiction`, else the case's single shared ccTLD, else none (global GLEIF). Every row is fact-only: officers are homonym candidates (corp.officer, neighbour), company numbers / LEIs are registry facts (corp.company_id, kit). Never an owner edge.",
+      "types": ["org"],
+      "metered": false,
+      "count_probe": "single"
+    },
+    "corp.opencorporates": {
+      "_comment": "IDENTITY (metered): the same company search on OpenCorporates. Offered only when OPENCORPORATES_API_TOKEN is set (route_runnable); metered, so it is always a proposal item. Same fact-only rows as corp.registry.",
+      "types": ["org"],
+      "metered": true,
+      "count_probe": "none"
+    },
+    "telegram.resolve": {
+      "_comment": "IDENTITY (free, read-only): resolve a @handle / t.me link with the analyst's Telethon research session (wp_telegram mode resolve). Offered only when Telethon + a session exist (offline check, no network). Rows: the account's other usernames (telegram.account, kit) and its numeric id (telegram.account_id, fact-only). round_cap bounds flood-limit exposure per round.",
+      "types": ["telegram"],
+      "metered": false,
+      "count_probe": "single",
+      "round_cap": 10
+    },
+    "telegram.phone": {
+      "_comment": "GATED (outbound on the research account): contact-import lookup of a phone (wp_telegram mode phone). ALWAYS a proposal item (approval: always) and admitted only for a registrant phone or an analyst seed (admit: registrant_or_seed). The analyst's approval of the item IS the confirm: pivot_routes runs the import only when cases/<case>/proposal.json holds an approved, unused item for this exact query, and marks it used. Research account only — Telegram ToS / per-day import limits apply; hooks/references/outbound_actions.json still prompts on a direct corpus_search call.",
+      "types": ["phone"],
+      "metered": false,
+      "count_probe": "none",
+      "approval": "always",
+      "admit": "registrant_or_seed"
+    },
+    "google.account": {
+      "_comment": "GATED: GHunt profile lookup of a gmail.com / googlemail.com address with the analyst's own GHunt session (wp_google). Offered only when GHunt is installed and a session file is present (wp_google dry-run logic, no network); only for a registrant e-mail or an analyst seed. Always a proposal item. Rows: Gaia id / profile name fact-only; the public profile photo URL is an image_url lead (google.profile_photo, kit).",
+      "types": ["email"],
+      "metered": false,
+      "count_probe": "none",
+      "approval": "always",
+      "admit": "registrant_or_seed",
+      "email_domains": ["gmail.com", "googlemail.com"]
+    },
+    "revimg.links": {
+      "_comment": "IDENTITY (free, third-party query): reverse-image search of a PUBLIC image URL (wp_revimg, URL mode — never a local file, never an upload). The query goes to a third-party engine, so it is capped per round (round_cap). Hits are fact-only neighbours (revimg.hit): pages showing the same picture, never the same person.",
+      "types": ["image_url"],
+      "metered": false,
+      "count_probe": "single",
+      "round_cap": 5
+    },
+    "takedown.watch": {
+      "_comment": "ESTATE (free): RDAP hold / DNS NXDOMAIN / sinkhole status + successor hunt on the last known IPs (wp_takedown) for a COLLECTED case domain whose capture classifies (wp_liveness, offline) into one of trigger_states, or whose WHOIS status carries a hold. Re-offered at most once per domain per recheck_days. Successors are content-matched kit siblings (takedown.kit_sibling, kit) or co-tenant leads (takedown.cotenant, neighbour, fact-only).",
+      "types": ["domain"],
+      "metered": false,
+      "count_probe": "single",
+      "collected_only": true,
+      "recheck_days": 7,
+      "trigger_states": ["unresolved", "parked", "suspended"]
+    },
+    "container.registry": {
+      "_comment": "ESTATE (free, anonymous): container-registry namespace listing (wp_container, namespace mode, never --layers) for an org whose name is a registry slug, or a code-hosting namespace (a GitHub owner linked from a case page → ghcr.io/<owner>; an OCI image.source label). Rows: identity labels / config authors (container.identity_email kit; names fact-only), the registry namespace (container.namespace, fact-only) and source repositories (namespace → ghcr.io owner, container.source_repo, kit). Capped per round.",
+      "types": ["org", "namespace"],
+      "metered": false,
+      "count_probe": "single",
+      "round_cap": 10
+    },
+    "masked.hint": {
+      "_comment": "ESTATE (pure, offline): test a masked e-mail/phone hint an account-existence lookup returned (osint_industries / deep_profile `email_hint` / `phone_hint`) against the case's KNOWN e-mails/phones (masked_hint). Verdicts are corroborating facts on the matched existing selector only (masked_hint.match, fact-only) — never a new node, never an edge. Query = `<provider>:<hint>`.",
+      "types": ["masked_hint"],
+      "metered": false,
+      "count_probe": "single"
     }
+  },
+
+  "selector_sources": {
+    "_comment": "Case-artifact keys propose() reads for selector types no collector writes into the KB. image_url_keys: JSON keys under cases/<id>/ (raw/ dom/ evidence/ report/ excluded) whose http(s) value is a public profile-photo / avatar URL → image_url candidates. masked_hint_keys: the account-lookup keys carrying a masked e-mail/phone. image_exts: a URL whose path ends in one of these is classified image_url, never a domain to collect. max_file_bytes bounds the scan.",
+    "image_url_keys": ["avatar_url", "profile_photo", "profile_image", "photo_url", "avatar"],
+    "masked_hint_keys": ["email_hint", "phone_hint"],
+    "image_exts": ["jpg", "jpeg", "png", "gif", "webp", "bmp"],
+    "max_file_bytes": 4000000
   }
 }

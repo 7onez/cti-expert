@@ -30,6 +30,10 @@ SCRIPTS = {
     "intelx": os.path.join(ROOT, "WebPivot", "tools", "wp_intelx.py"),
     "github": os.path.join(ROOT, "WebPivot", "tools", "wp_github.py"),
     "hudsonrock": os.path.join(ROOT, "..", "scripts", "osint", "keyed_feeds.py"),
+    # person-profile mode (case_state._person_profile_leads) — free, keyless legs
+    "vncorp": os.path.join(ROOT, "WebPivot", "tools", "wp_vncorp.py"),
+    "email-hygiene": os.path.join(ROOT, "..", "scripts", "webpivot", "email_hygiene.py"),
+    "username-hints": os.path.join(ROOT, "..", "scripts", "osint", "username_enum.py"),
 }
 METERED = {"email-deep", "intelx", "hudsonrock"}   # spend-gated legs held under free-only/no_spend/defer.
 # ChongLuaDao is NOT here: it charges no per-call credit (keys are rate-limited only), so CLD legs run
@@ -466,6 +470,16 @@ def _judge(op, result, memo=None, argv=None):
         counts = {k: len(data.get(k) or []) for k in ("emails", "domains", "urls", "records")}
         summary = "intelx " + " ".join(f"{k}={v}" for k, v in counts.items())
         return ("ran" if any(counts.values()) else "empty"), summary, memo
+    if op == "vncorp":
+        n = len(data.get("results") or [])
+        return ("ran" if n else "empty"), f"vn_corp {argv[0] if argv else ''}: rows={n}", memo
+    if op == "email-hygiene":
+        rows = [r for r in data.get("spoofability") or [] if isinstance(r, dict)]
+        spoofable = sum(1 for r in rows if r.get("grade") == "spoofable")
+        return ("ran" if rows else "empty"), f"spoofability domains={len(rows)} spoofable={spoofable}", memo
+    if op == "username-hints":
+        n = len(data.get("numeric_suffix_hints") or [])
+        return ("ran" if n else "empty"), f"numeric-suffix hints={n} (hypotheses)", memo
     return "ran", f"{op} completed", memo
 
 

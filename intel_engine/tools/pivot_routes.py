@@ -13,6 +13,7 @@ ledgered by the underlying wp_* / script helpers via api_usage.record.
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -221,24 +222,47 @@ def _ghw_configured():
     return GB.ghw_configured()
 
 
+def _telegram_ready():
+    """Telethon (or opentele2) importable, API credentials set and a session file present — the
+    wp_telegram backend check, which is offline (no connection, no authorisation probe)."""
+    import wp_telegram as WT
+    return "skipped" not in WT._backend()
+
+
+def _ghunt_ready():
+    """GHunt installed and a non-empty session file present — wp_google's own dry-run check
+    (no network, no session bytes read)."""
+    import wp_google as WG
+    return bool(WG.lookup("probe@example.com", dry_run=True).get("dry_run"))
+
+
+def _opencorporates_configured():
+    import wp_corp as WC
+    return bool(WC._oc_token())
+
+
 # GrayHatWarfare corpus route → wp_buckets lookup mode.
 _GHW_ROUTE_MODE = {"ghw.git_code": "git_code", "ghw.git_committers": "git_committers",
                    "ghw.short_handle": "short_handle"}
 
-# Single-credential corpus routes → the collector's own configured() gate. Without the key the
-# runner only answers `skipped`, so propose() must not offer the route at all.
+# Single-credential / session-bound corpus routes → the collector's own configured() gate. Without
+# the key or session the runner only answers `skipped`, so propose() must not offer the route at all.
 _ROUTE_GATES = {
     "fofa.body": _fofa_configured,
     "publicwww.source": _publicwww_configured,
     "webamon.corpus": _webamon_configured,
     "anyrun.lookup": _anyrun_configured,
     **{r: _ghw_configured for r in _GHW_ROUTE_MODE},
+    "telegram.resolve": _telegram_ready,
+    "telegram.phone": _telegram_ready,
+    "google.account": _ghunt_ready,
+    "corp.opencorporates": _opencorporates_configured,
 }
 
 
 def route_runnable(route: str) -> bool:
-    """False when `route` needs a credential that is not configured (or its client won't load).
-    Routes without a single-key gate are runnable."""
+    """False when `route` needs a credential / session that is not configured (or its client
+    won't load). Routes without a gate are runnable. Every gate is offline."""
     gate = _ROUTE_GATES.get((route or "").strip())
     if gate is None:
         return True
@@ -354,7 +378,66 @@ def query_for(route: str, type_: str, selector: str):
                 return None
         return sel
 
+    if r in _IDENTITY_ROUTES:
+        return _identity_query(r, t, sel, spec)
+
     return None
+
+
+# ---------------------------------------------------------------- identity / estate routes
+# pivot_map routes served by the identity/estate collectors (pgp_lookup, corp_registry,
+# telegram_lookup, google_account, reverse_image, takedown_watch, container_registry,
+# masked_hint). Every row they return is a LEAD (RULE 5): rungs.json maps each class to kit or
+# neighbour, and fact_only_node_classes keeps names / ids / homonyms off the node registry.
+_IDENTITY_ROUTES = ("pgp.lookup", "corp.registry", "corp.opencorporates", "telegram.resolve",
+                    "telegram.phone", "google.account", "revimg.links", "takedown.watch",
+                    "container.registry", "masked.hint")
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+_REGISTRY_SLUG = re.compile(r"^[a-z0-9][a-z0-9._-]{1,38}$")
+_ORG_NOISE = re.compile(r"privacy|redacted|whois|proxy|guard|protected|domains by|not disclosed",
+                        re.I)
+
+
+def _identity_query(r, t, sel, spec):
+    if r == "pgp.lookup":
+        return sel.lower() if _EMAIL_SHAPE.match(sel) else None
+    if r == "google.account":
+        doms = {str(d).lower() for d in (spec.get("email_domains") or ("gmail.com", "googlemail.com"))}
+        return sel.lower() if _EMAIL_SHAPE.match(sel) and sel.rsplit("@", 1)[-1].lower() in doms \
+            else None
+    if r in ("corp.registry", "corp.opencorporates"):
+        name = " ".join(sel.split())
+        return name if len(name) >= 3 and not _ORG_NOISE.search(name) else None
+    if r == "telegram.resolve":
+        if _is_tme(sel):
+            return sel
+        h = sel.lstrip("@")
+        return f"@{h}" if re.fullmatch(r"[A-Za-z0-9_]{4,32}", h) else None
+    if r == "telegram.phone":
+        s = sel.strip()
+        digits = re.sub(r"\D", "", s)
+        if s.startswith("00"):
+            digits = digits[2:]
+        elif not s.startswith("+"):
+            return None                   # contact import needs E.164 — never guess a country
+        return f"+{digits}" if 7 <= len(digits) <= 15 else None
+    if r == "revimg.links":
+        return sel if re.match(r"^https?://", sel, re.I) else None
+    if r == "takedown.watch":
+        return sel.lower().strip(".") if t == "domain" else None
+    if r == "container.registry":
+        if t == "namespace":
+            return sel
+        slug = sel.strip().lower()
+        return slug if _REGISTRY_SLUG.match(slug) else None   # an org name with spaces is no namespace
+    if r == "masked.hint":
+        return sel if ":" in sel else f"unknown:{sel}"
+    return None
+
+
+def _is_tme(v):
+    low = v.lower()
+    return low.startswith(("t.me/", "telegram.me/")) or "://t.me/" in low or "://telegram.me/" in low
 
 
 # ---------------------------------------------------------------- count
@@ -402,6 +485,11 @@ def count(route: str, query: str, *, free_only: bool = False):
         if r == "rwhois.purchase":
             # Free preview count via whois_enrich --reverse-mode preview
             return _rwhois_preview_count(q)
+
+        if probe == "single":
+            # one bounded lookup of one selector (keyserver, registry, resolve, status check):
+            # no vendor count call exists or is needed — the pivot itself is the unit
+            return 1
 
         # none / unknown
         return None
@@ -823,6 +911,334 @@ def _run_ghw(route, query, *, case="", free_only=False):
     return {"rows": rows, "total": res.get("results", len(rows))}
 
 
+def _cdir(case):
+    c = str(case or "")
+    if not c:
+        return ""
+    if os.path.isabs(c) or os.sep in c:
+        return c
+    return os.path.join(_ENGINE, "cases", c)
+
+
+def _norm_q(s):
+    return " ".join(str(s or "").split()).lower()
+
+
+def _consume_approval(case, route, query):
+    """The analyst's approval of a proposal item IS the confirm for an approval:always route. True
+    (and the item is marked used — single-use, the same rule audit.gate applies to metered items)
+    only when cases/<case>/proposal.json is approved/running and lists an approved, unused item for
+    exactly this route + query. Anything else — no case, no proposal, another query — is False."""
+    cdir = _cdir(case)
+    if not cdir:
+        return False
+    path = os.path.join(cdir, "proposal.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict) or data.get("status") not in ("approved", "running"):
+        return False
+    used = set(data.get("used") or [])
+    approved = set(data.get("approved") or []) - used
+    for item in data.get("items") or []:
+        if (isinstance(item, dict) and item.get("id") in approved and item.get("tool") == route
+                and _norm_q(item.get("query")) == _norm_q(query)):
+            data.setdefault("used", []).append(item["id"])
+            tmp = path + ".tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, indent=2, ensure_ascii=False)
+                os.replace(tmp, path)
+            except OSError:
+                return False
+            return True
+    return False
+
+
+def _case_jurisdiction(case):
+    """ISO country for a corp search: scope.json `jurisdiction` when the analyst stated one, else
+    the ONE ccTLD every collected case apex shares (uk → GB), else None (global registries)."""
+    cdir = _cdir(case)
+    if not cdir:
+        return None
+    try:
+        with open(os.path.join(cdir, "scope.json"), encoding="utf-8") as fh:
+            j = (json.load(fh) or {}).get("jurisdiction")
+        if j:
+            return str(j).strip().upper()
+    except (OSError, ValueError, AttributeError):
+        pass
+    tlds = set()
+    for p in glob.glob(os.path.join(cdir, "raw", "*.json")):
+        host = os.path.basename(p)[:-5].lower()
+        if "." not in host or re.fullmatch(r"[\d.]+", host):
+            continue
+        tlds.add(host.rsplit(".", 1)[-1])
+    if len(tlds) != 1:
+        return None
+    tld = tlds.pop()
+    if len(tld) != 2 or not tld.isalpha():
+        return None
+    return "GB" if tld == "uk" else tld.upper()
+
+
+def _run_pgp(query):
+    import wp_pgp as WP
+    res = WP.lookup(query)
+    if not isinstance(res, dict) or res.get("error"):
+        return {"error": str((res or {}).get("error") or "empty result")}
+    cls = {"email": ("email", "pgp.uid_email"), "person_name": ("string", "pgp.uid_name"),
+           "pgp_fingerprint": ("string", "pgp.fingerprint"),
+           "pgp_certifier_keyid": ("string", "pgp.certifier")}
+    rows = []
+    for p in res.get("pivots") or []:
+        kind = cls.get(p.get("type"))
+        val = str(p.get("value") or "").strip()
+        if not kind or not val:
+            continue
+        t, rc = kind
+        if rc in ("pgp.fingerprint", "pgp.certifier"):
+            val = f"pgp:{val}"
+        rows.append(_row(t, val, rc, "pgp.lookup",
+                         evidence={"selector": query, "fingerprint": p.get("fingerprint"),
+                                   "sources": p.get("sources"), "caveat": p.get("caveat")}))
+    return {"rows": rows, "total": len(res.get("keys") or [])}
+
+
+def _run_corp(route, query, *, case="", free_only=False):
+    import wp_corp as WC
+    if route == "corp.opencorporates":
+        if free_only:
+            return {"skipped": "corp.opencorporates is metered; free_only"}
+        if not WC._oc_token():
+            return {"skipped": "no OPENCORPORATES_API_TOKEN set"}
+        providers = ["opencorporates"]
+    else:
+        providers = [n for n, cfg in WC.PROVIDERS.items()
+                     if not str(n).startswith("_") and isinstance(cfg, dict) and cfg.get("keyless")
+                     and not cfg.get("metered")]
+    jur = _case_jurisdiction(case)
+    res = WC.run("company", query, jurisdiction=jur, providers=providers)
+    if not isinstance(res, dict) or res.get("error"):
+        return {"error": str((res or {}).get("error") or "empty result")}
+    rows = []
+    for c in res.get("companies") or []:
+        ev = {"name": c.get("name"), "jurisdiction": c.get("jurisdiction"), "status": c.get("status"),
+              "provider": c.get("provider"), "source_url": c.get("source_url"), "query": query}
+        if c.get("number"):
+            rows.append(_row("string", f"{c.get('provider') or 'registry'}:{c['number']}",
+                             "corp.company_id", route, evidence=ev))
+        if c.get("lei"):
+            rows.append(_row("string", f"lei:{c['lei']}", "corp.company_id", route, evidence=ev))
+    for o in res.get("officers") or []:
+        if o.get("name"):
+            rows.append(_row("string", str(o["name"]).strip(), "corp.officer", route,
+                             evidence={"company_name": o.get("company_name"), "role": o.get("role"),
+                                       "provider": o.get("provider"),
+                                       "source_url": o.get("source_url"),
+                                       "caveat": o.get("caveat")}))
+    return {"rows": rows, "total": len(res.get("companies") or []), "jurisdiction": jur}
+
+
+def _telegram_rows(entity, route, source_q, cls):
+    rows = []
+    if not isinstance(entity, dict):
+        return rows
+    for u in entity.get("usernames") or []:
+        name = u.get("username") if isinstance(u, dict) else u
+        if name:
+            rows.append(_row("telegram", str(name).lower(), cls, route,
+                             evidence={"query": source_q, "type": entity.get("type"),
+                                       "active": u.get("active") if isinstance(u, dict) else None}))
+    if entity.get("id") is not None:
+        rows.append(_row("string", f"tg:{entity['id']}", "telegram.account_id", route,
+                         evidence={"query": source_q, "type": entity.get("type"),
+                                   "title": entity.get("title")}))
+    return rows
+
+
+def _run_telegram_resolve(query):
+    import wp_telegram as WT
+    res = WT.resolve(query)
+    if not isinstance(res, dict):
+        return {"error": "empty result"}
+    if res.get("skipped") or res.get("error"):
+        return {"skipped": str(res["skipped"])} if res.get("skipped") else {"error": str(res["error"])}
+    row = (res.get("results") or [{}])[0]
+    if row.get("error"):
+        return {"error": str(row["error"])}
+    rows = _telegram_rows(row.get("entity"), "telegram.resolve", query, "telegram.account")
+    return {"rows": rows, "total": 1 if row.get("entity") else 0}
+
+
+def _run_telegram_phone(query, *, case=""):
+    import wp_telegram as WT
+    if not _consume_approval(case, "telegram.phone", query):
+        # no approved proposal item for this number → the briefing only; nothing is imported
+        return {"skipped": "telegram.phone imports a contact on the research account and runs only "
+                           "as an APPROVED proposal item (case_approve) — briefing returned",
+                "briefing": WT.briefing([query])}
+    res = WT.phone_lookup([query], confirm=True)
+    if not isinstance(res, dict):
+        return {"error": "empty result"}
+    if res.get("skipped") or res.get("error"):
+        return {"skipped": str(res["skipped"])} if res.get("skipped") else {"error": str(res["error"])}
+    rows = []
+    for r in res.get("results") or []:
+        if r.get("found"):
+            rows += _telegram_rows(r.get("account"), "telegram.phone", query, "telegram.phone_account")
+    return {"rows": rows, "total": sum(1 for r in res.get("results") or [] if r.get("found"))}
+
+
+def _run_google(query, *, case=""):
+    import wp_google as WG
+    if not _consume_approval(case, "google.account", query):
+        return {"skipped": "google.account uses the analyst's GHunt session and runs only as an "
+                           "APPROVED proposal item (case_approve)"}
+    res = WG.lookup(query)
+    if not isinstance(res, dict):
+        return {"error": "empty result"}
+    if res.get("skipped") or res.get("error"):
+        return {"skipped": str(res["skipped"])} if res.get("skipped") else {"error": str(res["error"])}
+    ev = {"query": query, "account_type": res.get("account_type")}
+    rows = []
+    if res.get("gaia_id"):
+        rows.append(_row("string", f"gaia:{res['gaia_id']}", "google.gaia_id", "google.account", ev))
+    if res.get("profile_name"):
+        rows.append(_row("string", str(res["profile_name"]), "google.profile_name",
+                         "google.account", ev))
+    photo = res.get("profile_photo") or {}
+    if isinstance(photo, dict) and photo.get("url") and not photo.get("is_default"):
+        rows.append(_row("image_url", str(photo["url"]), "google.profile_photo", "google.account", ev))
+    return {"rows": rows, "total": 1 if rows else 0}
+
+
+def _run_revimg(query, *, case="", hostile=False):
+    import wp_revimg as WRI
+    if not re.match(r"^https?://", query, re.I):
+        return {"skipped": "revimg.links takes a public image URL only — a local file is never uploaded"}
+    if hostile and case:
+        host = (urllib.parse.urlsplit(query).hostname or "").lower()
+        raws = {os.path.basename(p)[:-5].lower()
+                for p in glob.glob(os.path.join(_cdir(case), "raw", "*.json"))}
+        if host in raws or any(host.endswith("." + h) for h in raws):
+            return {"skipped": "hostile posture: the image is served by a case host — no direct fetch"}
+    res = WRI.search(query, case=case or None, confirm=False, links_only=False)
+    if not isinstance(res, dict) or res.get("error"):
+        return {"error": str((res or {}).get("error") or "empty result")}
+    rows, seen = [], set()
+    for h in res.get("hits") or []:
+        d = str(h.get("domain") or "").lower().strip(".")
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        rows.append(_row("domain", d, "revimg.hit", "revimg.links",
+                         evidence={"image": query, "url": h.get("url"), "title": h.get("title"),
+                                   "engine": h.get("engine"), "caveat": h.get("caveat")}))
+    return {"rows": rows, "total": len(res.get("hits") or [])}
+
+
+def _run_takedown(query, *, case="", hostile=False):
+    import wp_takedown as WTD
+    slots = {}
+    cdir = _cdir(case)
+    if cdir and os.path.isdir(cdir):
+        try:
+            slots = WTD.case_apexes(cdir) or {}
+        except Exception:  # noqa: BLE001 — no case history → live RDAP/DNS + hostsearch only
+            slots = {}
+    # hostile posture: list co-tenants without fetching their pages from this egress
+    res = WTD.watch(query, case_slot=slots.get(query), fetch_pages=not hostile)
+    if not isinstance(res, dict):
+        return {"error": "empty result"}
+    status = {"status": res.get("status"), "held_since": res.get("held_since"),
+              "signals": (res.get("signals") or [])[:6]}
+    rows = []
+    for s in res.get("successors") or []:
+        d = str(s.get("domain") or "").lower()
+        if not d:
+            continue
+        kit = s.get("rung") == "kit"
+        rows.append(_row("domain", d, "takedown.kit_sibling" if kit else "takedown.cotenant",
+                         "takedown.watch",
+                         evidence=dict(status, held=query, shared_ip=s.get("shared_ip"),
+                                       content_match=s.get("content_match"),
+                                       caveat=s.get("caveat"))))
+    return {"rows": rows, "total": len(rows), "takedown_status": status}
+
+
+_GITHUB_OWNER = re.compile(r"github\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)(?:/|$)", re.I)
+
+
+def _run_container(query, *, case=""):
+    import wp_container as WCT
+    res = WCT.registry_osint(query, layers=False)
+    if res is None:
+        return {"rows": [], "total": 0}
+    if not isinstance(res, dict) or res.get("error"):
+        return {"error": str((res or {}).get("error") or "empty result")}
+    if case:
+        try:
+            WCT.save_to_case(case, res)
+        except Exception:  # noqa: BLE001 — persistence is best-effort; the rows still ingest
+            pass
+    rows, seen = [], set()
+
+    def add(t, v, rc, ev):
+        if (t, v.lower()) not in seen:
+            seen.add((t, v.lower()))
+            rows.append(_row(t, v, rc, "container.registry", evidence=ev))
+
+    for i in res.get("identities") or []:
+        it, val = i.get("type"), str(i.get("value") or "").strip()
+        if not val:
+            continue
+        ev = {"namespace": query, "source": i.get("source"), "image": i.get("image")}
+        if it == "email":
+            add("email", val.lower(), "container.identity_email", ev)
+        elif it == "name":
+            add("string", val, "container.identity_name", ev)
+        elif it == "org":
+            add("org", val, "container.org", ev)
+        elif it == "registry_namespace":
+            add("string", val, "container.namespace", ev)
+        elif it == "source_repo":
+            m = _GITHUB_OWNER.search(val)
+            ns = f"ghcr.io/{m.group(1).lower()}" if m else ""
+            if ns and ns != query.lower():
+                add("namespace", ns, "container.source_repo", dict(ev, repo=val))
+    return {"rows": rows, "total": len(res.get("repositories") or res.get("images") or [])}
+
+
+def _run_masked_hint(query, *, case=""):
+    import masked_hint as MH
+    provider, _, hint = query.partition(":")
+    if not hint:
+        provider, hint = "unknown", query
+    if not case:
+        return {"skipped": "masked.hint tests a hint against a case's known selectors — needs case="}
+    res = MH.run([hint], case=case, provider=provider or "unknown")
+    if not isinstance(res, dict) or res.get("error"):
+        # "no known candidates" is an honest empty, not a failure
+        err = str((res or {}).get("error") or "empty result")
+        return {"rows": [], "total": 0} if "no known" in err else {"error": err}
+    rows = []
+    for h in res.get("hints") or []:
+        if h.get("verdict") not in ("corroborates", "consistent"):
+            continue
+        for m in h.get("matches") or []:
+            cand = str(m.get("candidate") or "").strip()
+            if cand:
+                rows.append(_row("email" if "@" in cand else "phone", cand, "masked_hint.match",
+                                 "masked.hint",
+                                 evidence={"hint": hint, "provider": provider,
+                                           "verdict": h.get("verdict"), "reason": h.get("reason"),
+                                           "strength": m.get("strength")}))
+    return {"rows": rows, "total": len(rows)}
+
+
 # ---------------------------------------------------------------- run
 def run(route: str, query: str, *, case="", free_only: bool = False, hostile: bool = False):
     """Execute one corpus route. Returns {rows,total} | {error} | {skipped}. Never raises."""
@@ -858,6 +1274,24 @@ def run(route: str, query: str, *, case="", free_only: bool = False, hostile: bo
             return _run_binary(q, free_only=free_only)
         if r in _GHW_ROUTE_MODE:
             return _run_ghw(r, q, case=case, free_only=free_only)
+        if r == "pgp.lookup":
+            return _run_pgp(q)
+        if r in ("corp.registry", "corp.opencorporates"):
+            return _run_corp(r, q, case=case, free_only=free_only)
+        if r == "telegram.resolve":
+            return _run_telegram_resolve(q)
+        if r == "telegram.phone":
+            return _run_telegram_phone(q, case=case)
+        if r == "google.account":
+            return _run_google(q, case=case)
+        if r == "revimg.links":
+            return _run_revimg(q, case=case, hostile=hostile)
+        if r == "takedown.watch":
+            return _run_takedown(q, case=case, hostile=hostile)
+        if r == "container.registry":
+            return _run_container(q, case=case)
+        if r == "masked.hint":
+            return _run_masked_hint(q, case=case)
         if r == "enrich.host":
             # Full keyed collection of a host is run by the harness loop's executor (it owns the
             # collector config and the approval), never as a bare corpus query.

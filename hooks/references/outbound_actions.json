@@ -48,6 +48,11 @@
         "why": "With confirm=true this UPLOADS a local image to Yandex. Yandex keeps the image, and the upload is tied to this machine's egress; a private photo (a victim's, a document scan, a subject's own picture) is then held by a third party and cannot be recalled.",
         "before": "Confirm the image is the analyst's to share and that authorisation covers sending it to a third-party engine. Image-URL queries and the confirm=false briefing are not gated.",
         "flag_required": ["\"confirm\": true", "\"confirm\": \"true\""]
+      },
+      "corpus_search": {
+        "why": "route=telegram.phone is the cross-type loop's Telegram contact-import route: it imports the number as a contact on the analyst's Telegram research account (contacts.ImportContacts, then DeleteContacts). The import is logged against the research account, counts toward its per-day import limit, and a burst gets the account flood-limited or banned. Every other corpus_search route is a passive corpus query and is not gated here.",
+        "before": "Confirm the analyst approved THIS number as a proposal item (case_approve) — the in-code gate refuses an unapproved import and returns the briefing — and that the session is the research account, never a personal one.",
+        "flag_required": ["\"telegram.phone\""]
       }
     }
   },
@@ -68,7 +73,9 @@
       {"match": "intel.py misp publish", "why": "IntelShare via the T2 dispatcher — PUBLISHES to the community; irreversible."},
       {"match": "--quarry-scan", "why": "Quarry: this flag is what starts a new scan (crawls the target, spends the shared vendor accounts). Reuse without it is not gated."},
       {"match": "--confirm-import", "why": "Telegram: this flag is what actually imports the number as a contact on the research account (attributable, rate-limited). The briefing run without it, resolve and status are not gated."},
-      {"match": "--confirm-upload", "why": "Reverse image: uploads a LOCAL image to Yandex (outbound, the third party keeps it, attributable to the egress)."}
+      {"match": "--confirm-upload", "why": "Reverse image: uploads a LOCAL image to Yandex (outbound, the third party keeps it, attributable to the egress)."},
+      {"match": "corpus-search telegram.phone", "why": "Telegram contact import via the T2 dispatcher's cross-type route (research account, rate-limited). Runs only for an approved proposal item; other corpus-search routes are not gated."},
+      {"match": "pivot_routes.py telegram.phone", "why": "Telegram contact import via the corpus route runner (research account, rate-limited). Runs only for an approved proposal item; other routes are not gated."}
     ]
   }
 }

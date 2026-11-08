@@ -2,7 +2,7 @@
   "_comment": "Rung table for cross-type auto-pivot attribution (tools/selector_types.py rung_for). A shared artifact only becomes an owner-link, a kit fact, or a neighbour observation according to this table — collecting is not attributing. owner = may seed same-operator edges and operator_leads; kit = stored as add_fact only, never an edge/cluster member/operator_lead; neighbour = co-tenancy / exchange flow, collected but never attributed. Unknown classes resolve to kit (conservative). Edit a class here when evidence shows a token is owner-tied or merely template-shared. RULE 1: identifier CLASSES only, never case data.",
 
   "rungs": {
-    "_comment": "identifier class → owner|kit|neighbour. analytics.* (GA/GTM/gtag/FB/TikTok/Metrica) and exact cert / registrant WHOIS / bot-token / discord-webhook / non-exchange wallet are owner. Ad/affiliate IDs, other tokens, html-id, telegram.username, page-scraped contacts, bank account, username/string/filename/hash/title/favicon/tx_id are kit. Exchange wallets and IP co-tenants are neighbour. ads.* with no more-specific entry is treated as kit by rung_for. ads.payee (the legal payee name/domain Google's sellers.json names for an AdSense pub id — wp_sellers / sellers_lookup) is owner: the pub id is kit, the entity paid for its impressions is not. app.developer_url (a store listing's developer website whose registrable domain equals a case domain — wp_appdev / app_developer) and app.apple_team (the 10-char Apple Developer team ID in a Mach-O signing identity — BinaryPivot) are owner. git.committer_email (a GrayHatWarfare git committer whose author e-mail sits on the case's self-hosted mail domain — wp_buckets git_committers) and git.code (a public repository file verified to carry the case token — git_code) are kit: git author e-mails are unauthenticated and shared code is shared kit.",
+    "_comment": "identifier class → owner|kit|neighbour. analytics.* (GA/GTM/gtag/FB/TikTok/Metrica) and exact cert / registrant WHOIS / bot-token / discord-webhook / non-exchange wallet are owner. Ad/affiliate IDs, other tokens, html-id, telegram.username, page-scraped contacts, bank account, username/string/filename/hash/title/favicon/tx_id are kit. Exchange wallets and IP co-tenants are neighbour. ads.* with no more-specific entry is treated as kit by rung_for. ads.payee (the legal payee name/domain Google's sellers.json names for an AdSense pub id — wp_sellers / sellers_lookup) is owner: the pub id is kit, the entity paid for its impressions is not. app.developer_url (a store listing's developer website whose registrable domain equals a case domain — wp_appdev / app_developer) and app.apple_team (the 10-char Apple Developer team ID in a Mach-O signing identity — BinaryPivot) are owner. git.committer_email (a GrayHatWarfare git committer whose author e-mail sits on the case's self-hosted mail domain — wp_buckets git_committers) and git.code (a public repository file verified to carry the case token — git_code) are kit: git author e-mails are unauthenticated and shared code is shared kit. IDENTITY/ESTATE routes (RULE 5 — every row is a LEAD; a lead is stored with the kit or neighbour rung, i.e. add_fact only, never an owner edge): whois.registrant_org (a WHOIS registrant ORGANISATION name — not a decisive join key) is kit; pgp.* (self-asserted keyserver UIDs, key fingerprints) kit, pgp.certifier (a third party who signed a UID) neighbour; corp.company_id (registry number / LEI — a registry fact) kit, corp.officer (a name-matched officer — homonym candidate) neighbour; telegram.account / telegram.account_id / telegram.phone_account (what the research session resolved) kit; google.* (GHunt profile fields) kit; image.avatar (a profile-photo URL from a case artifact) kit; revimg.hit (a page showing the same picture) neighbour; container.* (registry labels, config authors, namespace, image.source repos) kit; code.namespace (a GitHub owner linked from a case page) kit; takedown.kit_sibling (a successor whose content matches the held domain) kit, takedown.cotenant (an unmatched co-tenant on the last IP) neighbour; masked_hint.match (a masked hint that fits a known selector — corroborating only) kit.",
     "entries": {
       "owner_link": "owner",
       "kit_link": "kit",
@@ -52,7 +52,32 @@
 
       "ip.cotenant": "neighbour",
 
-      "binary.rea": "kit"
+      "binary.rea": "kit",
+
+      "whois.registrant_org": "kit",
+      "pgp.uid_email": "kit",
+      "pgp.uid_name": "kit",
+      "pgp.fingerprint": "kit",
+      "pgp.certifier": "neighbour",
+      "corp.company_id": "kit",
+      "corp.officer": "neighbour",
+      "telegram.account": "kit",
+      "telegram.account_id": "kit",
+      "telegram.phone_account": "kit",
+      "google.gaia_id": "kit",
+      "google.profile_name": "kit",
+      "google.profile_photo": "kit",
+      "image.avatar": "kit",
+      "revimg.hit": "neighbour",
+      "container.identity_email": "kit",
+      "container.identity_name": "kit",
+      "container.org": "kit",
+      "container.namespace": "kit",
+      "container.source_repo": "kit",
+      "code.namespace": "kit",
+      "takedown.kit_sibling": "kit",
+      "takedown.cotenant": "neighbour",
+      "masked_hint.match": "kit"
     }
   },
 
@@ -61,6 +86,16 @@
     "entries": {
       "quarry.page": ["page.email", "page.phone"],
       "ghw.git_code": ["git.code"],
+      "pgp.lookup": ["pgp.uid_name", "pgp.fingerprint", "pgp.certifier"],
+      "corp.registry": ["corp.company_id", "corp.officer"],
+      "corp.opencorporates": ["corp.company_id", "corp.officer"],
+      "telegram.resolve": ["telegram.account_id"],
+      "telegram.phone": ["telegram.account_id"],
+      "google.account": ["google.gaia_id", "google.profile_name"],
+      "revimg.links": ["revimg.hit"],
+      "container.registry": ["container.identity_name", "container.namespace"],
+      "takedown.watch": ["takedown.cotenant"],
+      "masked.hint": ["masked_hint.match"],
       "*": ["wallet.token_contract"]
     }
   },
