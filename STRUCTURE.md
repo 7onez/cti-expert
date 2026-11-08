@@ -10,6 +10,9 @@ the map, and the rules that keep the two from drifting.
 - `SKILL.md` — the single skill entrypoint (there is exactly one SKILL.md in the repo)
 - `scripts/` — collectors (`scripts/webpivot/`), the backend dispatcher (`scripts/backend/`), report generators,
   `register.sh` (Claude Code) + `register_agents.py` (`/cti` for every other coding agent)
+- `scripts/cti_report_sections.py` (shared report-section spec + anti-inflation check), `scripts/references/report_metrics.json`, `email_spoofability.json`, `stealer_triage.json`
+- `scripts/osint/references/phone_osint.json`, `exposure_executive.json`, `agentic_signatures.json`
+- `scripts/osint/references/dork_builder.json`, `username_enum.json`
 - `techniques/`, `handbook/`, `connectors/`, `analysis/`, `validation/`, `experience/`, `guides/`,
   `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
   `assets/`, `output/`
@@ -53,7 +56,11 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
   (GrayHatWarfare per-apex exposure → `cases/<id>/grayhatwarfare/`, facts only),
   `kb/*` (KB + correlation + `ingest_typed.py` + `references/rungs.json`), `cert_overlap`,
   `case_store`, …
+- `intel_engine/tools/masked_hint.py` (masked recovery-hint correlation), `report_sections.py` (analyst report block + sources-checked), `house_report_sections.py` (house-report renderers for the report block), `tools/kb/references/masked_hint.json`, `report_sections.json`
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
+- `intel_engine/WebPivot/tools/wp_pgp.py` (keyless PGP keyserver pivot), `wp_container.py` (public container-registry OSINT), `wp_takedown.py` (RDAP hold / DNS sinkhole + successor leads), `WebPivot/references/pgp.json`, `container_registry.json`, `takedown.json`
+- `intel_engine/WebPivot/tools/wp_corp.py` (global company/officer registry pivot), `wp_google.py` (GHunt wrapper: Google-account leads), `wp_telegram.py` (Telegram phone/username lookup, confirm-gated), `wp_revimg.py` (reverse-image search); `WebPivot/references/corp_registry.json`, `google_account.json`, `telegram.json`, `reverse_image.json`
+- `intel_engine/BinaryPivot/tools/bp_git.py` (embedded .git + module identifiers in leaked archives/dirs), `bp_archive_time.py` (archive timestamp forensics, packer UTC offset), `bp_keys.py` (keys/certs deduped by SPKI SHA-256), `intel_engine/BinaryPivot/references/leak_forensics.json`
 - `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness|IntelShare/` —
   render, analysis, engagement and dissemination skills (their `SKILL.reference.md` are docs, not skill entrypoints —
   the repo has exactly one `SKILL.md`, at the root)

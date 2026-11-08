@@ -554,6 +554,37 @@
       "tier": "self-hosted",
       "url": "https://quarry.chongluadao.vn",
       "unlocks": "/cti --quarry + quarry tool: reuse or run a Quarry scan over its MCP endpoint and import the stored vendor answers (same accounts this skill spends) instead of paying twice. QUARRY_ENABLED=on|off|ask (default ask)"
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram MTProto (research account)",
+      "env": "TELEGRAM_API_ID",
+      "aliases": [],
+      "extra": ["TELEGRAM_API_HASH", "TELEGRAM_SESSION"],
+      "category": "social",
+      "tier": "free",
+      "url": "https://my.telegram.org/apps",
+      "unlocks": "telegram_lookup / intel.py telegram: phone → Telegram account (confirm-gated contact import on the research account) and @user / t.me links → entity metadata. Also needs `pip install telethon` and `intel.py telegram login` run by the analyst"
+    },
+    {
+      "id": "companies_house",
+      "name": "UK Companies House API",
+      "env": "COMPANIES_HOUSE_API_KEY",
+      "aliases": ["CH_API_KEY"],
+      "category": "corporate",
+      "tier": "free",
+      "url": "https://developer.company-information.service.gov.uk/",
+      "unlocks": "corp_registry / intel.py corp: Companies House JSON API (profile, officers, filings, officer appointments) instead of the public HTML pages"
+    },
+    {
+      "id": "opencorporates",
+      "name": "OpenCorporates",
+      "env": "OPENCORPORATES_API_TOKEN",
+      "aliases": ["OPENCORPORATES_API_KEY"],
+      "category": "corporate",
+      "tier": "paid",
+      "url": "https://opencorporates.com/api_accounts/new",
+      "unlocks": "corp_registry / intel.py corp: company + officer search across ~140 jurisdictions (keyless API use is refused)"
     }
   ]
 }

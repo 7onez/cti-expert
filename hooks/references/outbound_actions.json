@@ -38,6 +38,16 @@
         "why": "Starts a scan on the Quarry platform. Quarry crawls the target from its own egress and spends the same vendor accounts this skill uses. A scan cannot be un-run, and it can fan out for hours.",
         "before": "Confirm the case allows contact and spend. A no-spend or no-contact case is refused in code as well, but the decision to scan is the analyst's.",
         "flag_required": ["\"start\": true"]
+      },
+      "telegram_lookup": {
+        "why": "mode=phone imports the number as a contact on the analyst's Telegram research account (contacts.ImportContacts, then DeleteContacts). The owner is not notified, but the import is logged against the research account, counts toward its per-day import limit, and a burst gets the account flood-limited or banned. If the owner ever saves the research account's number the two see each other as contacts.",
+        "before": "Confirm the analyst approved THIS lookup, that the session is the research account (never a personal one), and that the batch is small. resolve/status are not gated.",
+        "flag_required": ["\"confirm\": true", "\"confirm\": \"true\""]
+      },
+      "reverse_image": {
+        "why": "With confirm=true this UPLOADS a local image to Yandex. Yandex keeps the image, and the upload is tied to this machine's egress; a private photo (a victim's, a document scan, a subject's own picture) is then held by a third party and cannot be recalled.",
+        "before": "Confirm the image is the analyst's to share and that authorisation covers sending it to a third-party engine. Image-URL queries and the confirm=false briefing are not gated.",
+        "flag_required": ["\"confirm\": true", "\"confirm\": \"true\""]
       }
     }
   },
@@ -56,7 +66,9 @@
       {"match": "sh_misp.py publish", "why": "IntelShare: PUBLISHES to the community — irreversible; the event cannot be recalled and its indicators become other people's blocking rules."},
       {"match": "intel.py misp push", "why": "IntelShare via the T2 dispatcher — writes the event to your MISP instance."},
       {"match": "intel.py misp publish", "why": "IntelShare via the T2 dispatcher — PUBLISHES to the community; irreversible."},
-      {"match": "--quarry-scan", "why": "Quarry: this flag is what starts a new scan (crawls the target, spends the shared vendor accounts). Reuse without it is not gated."}
+      {"match": "--quarry-scan", "why": "Quarry: this flag is what starts a new scan (crawls the target, spends the shared vendor accounts). Reuse without it is not gated."},
+      {"match": "--confirm-import", "why": "Telegram: this flag is what actually imports the number as a contact on the research account (attributable, rate-limited). The briefing run without it, resolve and status are not gated."},
+      {"match": "--confirm-upload", "why": "Reverse image: uploads a LOCAL image to Yandex (outbound, the third party keeps it, attributable to the egress)."}
     ]
   }
 }

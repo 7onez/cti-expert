@@ -198,6 +198,18 @@ DISPATCH = {
     "cld":           ("../scripts/cld/cld_api.py",           []),  # Feeds + Shield, route by selector
     "wifi":          ("../scripts/osint/wifi_ssid.py",       []),  # WiGLE (keyed; discloses gap)
     "gdoc":          ("WebPivot/tools/wp_docmeta.py",        []),  # /gdoc == doc_metadata
+    # ── Methodology ported from analyst reports (leak-site attribution, DFIR, key-personnel) ──
+    "masked-hint":   ("tools/masked_hint.py",            ["--kb", "knowledge"]),  # recovery hints vs
+                                                               # known selectors (corroborating only)
+    "takedown-watch":("WebPivot/tools/wp_takedown.py",   []),  # RDAP hold / DNS sinkhole + successor leads
+    "pgp-lookup":    ("WebPivot/tools/wp_pgp.py",        []),  # keyserver UIDs + key creation date
+    "container-registry": ("WebPivot/tools/wp_container.py", []),  # Docker Hub/GHCR/Quay images + secrets
+    "report-sections": ("tools/report_sections.py",     []),  # load|sources <case>: analyst report
+                                                               # block + sources checked (zero hits kept)
+    "corp":          ("WebPivot/tools/wp_corp.py",       []),  # global company/officer registries (leads)
+    "google-account":("WebPivot/tools/wp_google.py",     []),  # GHunt wrapper: Gmail/Gaia → Google-account leads
+    "telegram":      ("WebPivot/tools/wp_telegram.py",   []),  # phone (confirm-gated) / @user → Telegram account
+    "reverse-image": ("WebPivot/tools/wp_revimg.py",     []),  # fingerprint + engine links + Yandex sites (leads)
     # Aliases surfaced by a recount: these commands only ever appear WITH arguments in
     # SKILL.md, so the old bare-backtick regex never saw them and they were never triaged.
     "archive-harvest":("../scripts/webpivot/wayback_harvest.py", []),  # = wayback-harvest
@@ -343,7 +355,7 @@ BLURB = {
     "scam-check": "the fraud reading of the same feeds, plus ransomware victim records",
     "vuln-check": "CVE lookup via CIRCL + NVD, both keyless; flags scorer disagreement",
     "msftrecon": "M365/Entra tenant id, federation and namespace — keyless and passive",
-    "username": "handle presence across curated platforms (HYPOTHESES, never findings)",
+    "username": "handle presence across curated platforms (HYPOTHESES, never findings) + numeric-suffix birth-year hints; --offline avoids network",
     "phone": "E.164 decomposition, territory, messaging links, source-search queries",
     "exposure": "composite 0-100 subject exposure score (analysis/weight-engine)",
     "subdomain": "passive subdomain enum (certspotter+hackertarget+crt.sh); flags admin hosts",
@@ -352,7 +364,7 @@ BLURB = {
     "traffic": "Tranco popularity rank; an UNRANKED 'established' site contradicts itself",
     "sharelink": "expand a share/short link (login walls unwrapped) → sharer-identity params + FB/IG/TikTok platform ids",
     "meta-transparency": "keyless FB Page / IG account transparency (Ad Library About tab, IG profile) + Wayback name/bio history; login-only panels → capture checklist",
-    "docleak": "build document/leak-hunt queries across 18 hosts (emitted, never run)",
+    "docleak": "build document/leak-hunt + organisation staff-email, jobs, freelancer and company-social queries (emitted, never run)",
     "icp": "ICP filing via keyless mirrors + licence-serial sibling pivot",
     "cn-corp": "PRC corporate registry chain; names every CAPTCHA/geo gate it did not pass",
     "vn-corp": "keyless VN business-registry lookup (MST tax code or company name) — corroborates a WHOIS registrant org/phone",
@@ -366,6 +378,15 @@ BLURB = {
     "wifi": "WiGLE SSID geolocation (needs a WiGLE account; discloses the gap without one)",
     "gdoc": "document/image metadata for a Google Doc/Sheet/Drive URL (= docmeta)",
     "archive-harvest": "full-IOC harvest across a domain's Wayback history (= wayback-harvest)",
+    "masked-hint": "correlate masked recovery hints (de*****@…, *******08) with the case's known e-mails/phones — corroborating only",
+    "takedown-watch": "RDAP EPP hold / DNS sinkhole status + successor domains on the last known IPs (leads; content match = kit sibling)",
+    "pgp-lookup": "keyless PGP keyserver pivot (keys.openpgp.org, Ubuntu HKP, Proton) → UIDs, fingerprints, key creation dates",
+    "container-registry": "public container-registry OSINT (Docker Hub / GHCR / Quay): images, config labels, env names, layer secrets (redacted)",
+    "report-sections": "a case's merged analyst report block (KQ/OQ, roles, timeline, ATT&CK, scenarios, P1-P3, counting rules) or its sources-checked rows, zero hits kept",
+    "corp": "global company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, FR/NO/FI registries, SEC; VN → vn-corp) — officers are homonym candidates unless corroborated",
+    "google-account": "e-mail / Gaia ID → Google-account leads via an existing GHunt login (profile, Maps contributions, services); --dry-run checks setup",
+    "telegram": "Telegram: `phone <E164> [--confirm-import]` (contact import on the research account, briefing first) · `resolve <@user|t.me link>` · `status` · `login` (interactive)",
+    "reverse-image": "image URL / local file → sha256 + aHash/dHash + EXIF, Yandex/Bing/Lens/TinEye links, Yandex 'sites containing this image'; local upload needs --confirm-upload; hits are leads",
     "ransomware-check": "reputation check incl. ransomware victim records (= scam-check)",
     "techstack": "CMS/framework/version fingerprint (pivot_extract's tech layer)",
     "visitors": "analytics/tracker IDs — the visitor-intelligence layer of pivot_extract",

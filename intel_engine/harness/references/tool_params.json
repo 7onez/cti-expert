@@ -1449,7 +1449,37 @@
         "platforms": {
           "type": "string",
           "description": "Comma-separated subset of the verified platforms to check."
-        }
+        },
+        "offline": {"type": "boolean", "description": "Derive numeric-suffix hints only; make no provider requests."},
+        "timeout": {"type": "integer", "description": "Per-provider timeout in seconds."},
+        "proxy": {"type": "string", "description": "HTTP(S) proxy URL (port 80)."}
+      },
+      "google_account": {
+        "mode": {"type": "string", "enum": ["auto", "email", "gaia"], "description": "Input mode; auto detects e-mail versus Gaia ID."},
+        "dry_run": {"type": "boolean", "description": "Check GHunt installation/session presence without querying Google."},
+        "timeout": {"type": "number", "description": "GHunt subprocess timeout in seconds (default 180)."},
+        "input_json": {"type": "string", "description": "Map a saved GHunt JSON export offline instead of collecting."}
+      },
+      "reverse_image": {
+        "case": {"type": "string", "description": "Case ID; saves the result under cases/<case>/revimg/ when that case directory exists."},
+        "confirm": {"type": "boolean", "description": "LOCAL file only: actually upload the bytes to Yandex. Leave false first to get the briefing, show it to the analyst, set true only on their explicit go-ahead."},
+        "links_only": {"type": "boolean", "description": "Image URL: build engine links + fingerprint but do NOT send the URL to Yandex (sensitive case URLs)."},
+        "timeout": {"type": "integer", "description": "Per-request timeout in seconds (default 30)."}
+      },
+      "telegram_lookup": {
+        "target": {"type": "string", "description": "mode=phone: E.164 number(s), comma/space-separated; mode=resolve: @username, t.me link, invite link or -100id. Omit for status."},
+        "mode": {"type": "string", "enum": ["phone", "resolve", "status"], "description": "phone = E.164 → account via contact import (confirm-gated); resolve (default) = public entity metadata; status = session readiness."},
+        "confirm": {"type": "boolean", "description": "mode=phone only: send the contact import. Omit/false first to get the briefing; true only after the analyst approves THIS lookup."},
+        "save_photo": {"type": "string", "description": "Directory outside the repo to write the profile photo; default reports only sha256 + dimensions."},
+        "case": {"type": "string", "description": "Case ID; saves the JSON under cases/<case>/telegram/."},
+        "sessions": {"type": "boolean", "description": "mode=status only: also list the research account's active sessions (device, app, ip, country, last active) and run opentele2's consistency checks. Read-only; never terminates a session."}
+      },
+      "corp_registry": {
+        "jurisdiction": {"type": "string", "description": "ISO-2 (GB, FR, NO, FI, US, VN, CN) or OpenCorporates code (us_de). Omit = all registries."},
+        "providers": {"type": "string", "description": "Comma list restricting providers: gleif,companies_house,opencorporates,recherche_entreprises,brreg,prh,sec_edgar."},
+        "corroborate": {"type": "string", "description": "Homonym gate: birth=YYYY-MM,address=..,postcode=..,company=<name|number> (commas inside an address are fine)."},
+        "detail": {"type": "integer", "description": "Companies per provider enriched with officers/address history (default 2)."},
+        "verify": {"type": "integer", "description": "Officer candidates whose Companies House appointments are fetched to test company/address corroboration (default 5)."}
       },
       "exposure_score": {
         "indicators": {
@@ -1459,7 +1489,17 @@
         "infile": {
           "type": "string",
           "description": "Path to a JSON file of indicator values."
+        },
+        "model": {
+          "type": "string",
+          "description": "Scoring model: composite (default, unchanged) or executive (start at 100, deduct eight c1..c8 key-personnel ratings).",
+          "enum": ["composite", "executive"]
         }
+      },
+      "email_hygiene": {
+        "domains": {"type": "string", "description": "Comma/space-separated extra domains (the subject's estate) for the SPF/DMARC spoofability table."},
+        "no_spoof": {"type": "boolean", "description": "Skip SPF/DMARC collection; keep only the existing hygiene grade."},
+        "table": {"type": "boolean", "description": "Return the spoofability markdown table instead of JSON."}
       },
       "github_osint": {
         "secrets": {
@@ -1539,7 +1579,23 @@
         "timeout": {
           "type": "integer",
           "description": "Per-mirror request timeout in seconds."
-        }
+        },
+        "query": {"type": "string", "description": "10/13-digit MST tax code or company name (forward lookup)."},
+        "by_phone": {"type": "string", "description": "VN phone (0xxx/+84xxx/84xxx): reverse to companies registering it as contact phone."},
+        "by_person": {"type": "string", "description": "Full name (>=2 words, accented best): reverse to companies where this person is legal representative."},
+        "corroborate": {"type": "string", "description": "Second datum for the homonym gate: address=..,province=..,dob=..,phone=.. (commas inside an address are fine)."},
+        "verify": {"type": "integer", "description": "Max record pages fetched to verify reverse rows (default 10)."},
+        "solve_cf": {"type": "boolean", "description": "Retry Cloudflare-walled mirrors via FlareSolverr or a Chromium render (slow; opt-in)."},
+        "flaresolverr": {"type": "string", "description": "FlareSolverr endpoint for solve_cf (default $FLARESOLVERR_URL)."},
+        "proxy": {"type": "string", "description": "Egress proxy URL for the mirrors (a residential proxy helps past Cloudflare)."}
+      },
+      "container_registry": {
+        "image": {"type": "boolean", "description": "Treat a bare Docker Hub name as an image (alpine -> library/alpine), not a namespace."},
+        "tag": {"type": "string", "description": "Tag to inspect (default: the ref's tag, else latest, else newest)."},
+        "layers": {"type": "boolean", "description": "Also stream layer blobs (byte-capped) and secret-scan config-like files; off by default."},
+        "max_images": {"type": "integer", "description": "Namespace mode: how many recently updated repositories to inspect (default 3; 0 = list only)."},
+        "max_tags": {"type": "integer", "description": "Tags returned per image (default 25)."},
+        "case": {"type": "string", "description": "Case ID: save the result under cases/<id>/container/."}
       },
       "app_developer": {
         "store": {
@@ -1588,7 +1644,42 @@
         "list": {
           "type": "boolean",
           "description": "Show the signature catalogue and the observation keys it accepts."
+        },
+        "infile": {
+          "type": "string",
+          "description": "Path to an observations JSON (requests/payloads/log_lines/credential_events) — needed for the AGENTIC (AGT) family."
         }
+      },
+      "masked_hint_match": {
+        "candidates": {
+          "type": "string",
+          "description": "Comma-separated known e-mails/phones to test the hints against."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case ID: load the case's known e-mails/phones (read-only) as candidates."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Provider whose page displayed the hint (sets mask-length semantics); default unknown.",
+          "enum": ["unknown", "microsoft", "google", "apple", "facebook", "instagram", "paypal", "generic_exact"]
+        },
+        "min_visible": {
+          "type": "integer",
+          "description": "Override the discriminating-character threshold a hint needs to 'corroborate'."
+        }
+      },
+      "takedown_watch": {
+        "domains": {"type": "string", "description": "Space/comma-separated domain(s) to check."},
+        "case": {"type": "string", "description": "Case ID: check every collected apex of the case (read-only)."},
+        "ips": {"type": "string", "description": "Space/comma-separated extra last-known IPs to reverse-look-up for successors."},
+        "hunt": {"type": "boolean", "description": "Hunt successors even when the domain is still active."},
+        "no_wayback": {"type": "boolean", "description": "Do not fetch a Wayback baseline when the case holds none."},
+        "no_fetch": {"type": "boolean", "description": "List co-tenants without fetching/comparing their pages."}
+      },
+      "pgp_lookup": {
+        "sources": {"type": "string", "description": "Comma-separated subset of keyservers to query: keys_openpgp_org, keyserver_ubuntu, proton (default: all applicable)."},
+        "timeout": {"type": "integer", "description": "Per-request timeout in seconds (default 20)."}
       },
       "sellers_lookup": {
         "refresh": {

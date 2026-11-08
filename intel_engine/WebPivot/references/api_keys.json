@@ -362,6 +362,42 @@
         "without_it": "no Quarry reuse — every vendor is queried by this skill directly",
         "free_fallback": "this skill's own collectors",
         "signup": "https://quarry.chongluadao.vn"
+      },
+      "TELEGRAM_API_ID": {
+        "service": "Telegram (MTProto API, research account)",
+        "aliases": [],
+        "companion": ["TELEGRAM_SESSION"],
+        "requires": ["TELEGRAM_API_HASH"],
+        "metered": false,
+        "impact": "medium",
+        "unlocks": "telegram_lookup: phone (E.164) → the Telegram account registered to it via a confirm-gated contact import on the analyst's research account, and @username / t.me / invite links → public entity metadata (id, usernames, participants, restriction reasons). Needs the optional Telethon package and a session made by `intel.py telegram login`. OPTIONAL when opentele2 is installed: the session then presents an official app api_id with a device fixed at login (`login --qr --profile …`)",
+        "without_it": "with opentele2 installed: none (official-profile session). Without opentele2: no phone → Telegram account resolution and no MTProto entity metadata; only the t.me web preview other collectors read",
+        "free_fallback": "t.me/<username> web previews (username_enum, search_pivot handle mode) and the telemetr.io/tgstat mirrors",
+        "signup": "https://my.telegram.org/apps"
+      },
+      "COMPANIES_HOUSE_API_KEY": {
+        "service": "UK Companies House REST API",
+        "aliases": ["CH_API_KEY"],
+        "companion": [],
+        "requires": [],
+        "metered": false,
+        "impact": "low",
+        "unlocks": "corp_registry: the Companies House JSON API (company profile, officers, filing history, officer search/appointments) instead of parsing the public HTML pages",
+        "without_it": "corp_registry reads the same public find-and-update pages as HTML — slower and layout-dependent, same data",
+        "free_fallback": "keyless find-and-update.company-information.service.gov.uk HTML",
+        "signup": "https://developer.company-information.service.gov.uk/"
+      },
+      "OPENCORPORATES_API_TOKEN": {
+        "service": "OpenCorporates",
+        "aliases": ["OPENCORPORATES_API_KEY"],
+        "companion": [],
+        "requires": [],
+        "metered": true,
+        "impact": "medium",
+        "unlocks": "corp_registry: company + officer search across ~140 jurisdictions OpenCorporates aggregates (beyond the keyless GLEIF, UK, FR, NO, FI, SEC registries)",
+        "without_it": "no cross-jurisdiction officer search; OpenCorporates refuses keyless API use, so jurisdictions outside the keyless registries return only GLEIF LEI data",
+        "free_fallback": "GLEIF (global LEI), Companies House, recherche-entreprises, Brreg, PRH, SEC EDGAR, vn_corp, cn_recon",
+        "signup": "https://opencorporates.com/api_accounts/new"
       }
     }
   },

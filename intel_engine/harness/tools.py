@@ -18,6 +18,7 @@ import datetime
 import glob          # case_timeline expands a glob pattern when `inputs` arrives as one string
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -695,6 +696,278 @@ async def domain_liveness(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "takedown_watch",
+    "Takedown / RELOCATION watch for `domains` or every collected apex of a `case` (read-only). "
+    "Reads the RDAP EPP status set (clientHold/serverHold = held; redemptionPeriod/pendingDelete = "
+    "deleted; server*Prohibited locks count only on top of a hold) plus DNS (NXDOMAIN, no NS, "
+    "sinkhole nameservers = suspended) → status active|held|suspended|deleted|unknown, signals[] "
+    "and held_since with its basis. For held/suspended/deleted names (or hunt=true) it looks for "
+    "the SUCCESSOR: last known origin IPs (CDN/parking skipped) → keyless reverse-IP → each "
+    "co-tenant's live page compared with the held domain's last capture (case raw or Wayback) by "
+    "favicon, DOM skeleton and distinctive title. RULE 5: every successor is a LEAD — a shared IP "
+    "alone is co-tenancy (rung lead); a content match raises it only to a kit sibling (rung kit), "
+    "never an owner, never a KB edge. In a HOSTILE run co-tenant pages are not fetched. Keyless.",
+    {},  # domains:str, case:str, ips:str, hunt:bool, no_wayback:bool, no_fetch:bool optional
+    annotations=READONLY,
+)
+async def takedown_watch(args: dict[str, Any]) -> dict[str, Any]:
+    doms = [d for d in re.split(r"[\s,]+", str(args.get("domains") or "")) if d]
+    case = str(args.get("case") or "").strip()
+    if not doms and not case:
+        return _err("takedown_watch needs domains=<d1,d2> or case=<ID>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_takedown.py"), *[_host(d) for d in doms], "--json"]
+    if case:
+        cmd += ["--case", case]
+    for ip in re.split(r"[\s,]+", str(args.get("ips") or "")):
+        if ip:
+            cmd += ["--ip", ip]
+    if _flag(args, "hunt"):
+        cmd.append("--hunt")
+    if _flag(args, "no_wayback"):
+        cmd.append("--no-wayback")
+    if _flag(args, "no_fetch") or POLICY.get("hostile"):
+        cmd.append("--no-fetch")
+    r = _run(cmd, timeout=900)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"takedown_watch failed: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "pgp_lookup",
+    "Keyless PGP KEYSERVER pivot for a `selector` — an e-mail, a key fingerprint (40/64 hex, "
+    "spaces ok) or a 16-hex long key id. Queries keys.openpgp.org (VKS), keyserver.ubuntu.com "
+    "(HKP get + machine-readable index) and, for proton.me/protonmail.com/protonmail.ch/pm.me "
+    "addresses only, Proton's HKP. Returns each key's fingerprint, algorithm, creation/expiry, "
+    "UIDs, subkeys and third-party certifiers, merged by fingerprint, tri-state per source. Proton "
+    "answers EVERY address with a well-formed decoy key, so its key date counts as a Proton "
+    "account-age lead only when the UID is certified by Proton's CA; otherwise it is "
+    "rung=unverified. RULE 5: UIDs are self-asserted and signatures are parsed, not verified — "
+    "every e-mail, name or certifier key id in `pivots` is a LEAD, never a KB edge or an operator "
+    "on its own.",
+    {"selector": str},  # sources:str, timeout:int optional
+    annotations=READONLY,
+)
+async def pgp_lookup(args: dict[str, Any]) -> dict[str, Any]:
+    sel = str(args.get("selector") or "").strip()
+    if not sel:
+        return _err("pgp_lookup needs selector=<e-mail | fingerprint | long key id>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_pgp.py"), sel, "--json"]
+    if str(args.get("sources") or "").strip():
+        cmd += ["--sources", str(args["sources"]).strip()]
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd, timeout=180)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"pgp_lookup failed for {sel}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "container_registry",
+    "Passive PUBLIC container-registry OSINT (Docker Hub, GHCR, Quay; any OCI v2 registry for one "
+    "image). A namespace (`example`, `ghcr.io/<owner>`, `quay.io/<ns>`) lists its repositories "
+    "(pull counts, last_updated, registration date, Hub user/org profile) and inspects the config "
+    "of the most recently updated images; an image ref (`ns/img:tag`, `registry/ns/img@sha256:…`) "
+    "reads its manifest + config blob: Env (names + redacted preview), Cmd/Entrypoint, Labels "
+    "(`org.opencontainers.image.source` → a source repo for github_osint; authors/vendor) and "
+    "history build steps, all secret-scanned. layers=true also streams layer tarballs (byte-capped) "
+    "and scans .env/yml/properties/id_rsa/pem/appsettings/.npmrc/docker-config files. Secrets come "
+    "back as kind + path + first/last-3 preview + sha256, never the value, and are not validated. "
+    "RULE 5: every identity (profile name, label author/vendor, namespace) is a LEAD — namespaces "
+    "are often personal developer, contractor or CI accounts and labels are copied from base images "
+    "— never an operator, never an edge. HTTP 429 stops the run with a partial result.",
+    {"target": str},  # image:bool, tag:str, layers:bool, max_images:int, max_tags:int, case:str
+    annotations=ToolAnnotations(readOnlyHint=False),   # writes cases/<case>/container/ when case given
+)
+async def container_registry(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args.get("target") or "").strip()
+    if not target:
+        return _err("container_registry needs target=<namespace | image ref>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_container.py"), target, "--json"]
+    if _flag(args, "image"):
+        cmd.append("--image")
+    if str(args.get("tag") or "").strip():
+        cmd += ["--tag", str(args["tag"]).strip()]
+    if _flag(args, "layers"):
+        cmd.append("--layers")
+    for key, flag in (("max_images", "--max-images"), ("max_tags", "--max-tags")):
+        if args.get(key) not in (None, ""):
+            cmd += [flag, str(int(args[key]))]
+    if str(args.get("case") or "").strip():
+        cmd += ["--case", str(args["case"]).strip()]
+    r = _run(cmd, timeout=900)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"container_registry failed for {target}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "google_account",
+    "Google-account leads from an e-mail address or a Gaia ID (`query`) through an installed "
+    "GHunt and the analyst's EXISTING `ghunt login` research-account session — no cookie, password "
+    "or token is ever accepted here. Returns Gaia ID, public profile name/photo/cover, last profile "
+    "edit, Google Maps contributions URL + review/photo/answer counts, public Calendar, Play Games, "
+    "reachable services and account type (personal/workspace) where available. Missing "
+    "installation/session returns setup steps; a Gaia ID still yields the keyless Maps URL. "
+    "dry_run=true checks the setup without querying Google. RULE 5: every row is a LEAD — Maps "
+    "reviews show places visited, not residence; the YouTube channel is an unverified name-search "
+    "guess; never an owner edge or operator attribution.",
+    {"query": str},  # mode:str, dry_run:bool, timeout:number, input_json:str
+    annotations=READONLY,
+)
+async def google_account(args: dict[str, Any]) -> dict[str, Any]:
+    q = str(args.get("query") or "").strip()
+    if not q:
+        return _err("google_account needs query=<e-mail | Gaia ID>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_google.py"), q, "--json"]
+    if str(args.get("mode") or "").strip():
+        cmd += ["--mode", str(args["mode"]).strip()]
+    if _flag(args, "dry_run"):
+        cmd.append("--dry-run")
+    if args.get("timeout"):
+        cmd += ["--timeout", str(args["timeout"])]
+    if str(args.get("input_json") or "").strip():
+        cmd += ["--input-json", os.path.abspath(str(args["input_json"]).strip())]
+    r = _run(cmd, timeout=300)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"google_account failed for {q}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "reverse_image",
+    "Reverse-image search for ONE image (`target` = image URL or local file). Returns sha256, "
+    "perceptual aHash/dHash, dimensions and embedded EXIF, search links for Yandex, Bing Visual "
+    "Search, Google Lens and TinEye, and Yandex's keyless 'sites containing this image' list (page "
+    "URL, title, snippet, wayback_hint). A URL query sends that URL to Yandex (links_only=true "
+    "avoids it). A LOCAL file is never uploaded unless confirm=true — without it you get a briefing "
+    "(which engine would receive the bytes) + manual steps; show it to the analyst first. With "
+    "confirm it uploads to Yandex only. PimEyes / FaceCheck.ID are manual links only (paid; terms "
+    "forbid automation). RULE 5: every hit is a LEAD — the same image on another page shows reuse "
+    "of the image, not who a person or operator is; faces need independent corroboration. Status "
+    "'blocked' / 'unparsed' is NOT a negative.",
+    {"target": str},  # case:str, confirm:bool, links_only:bool, timeout:int
+    annotations=ToolAnnotations(readOnlyHint=False),   # sends URL/bytes to a third party; saves under case
+)
+async def reverse_image(args: dict[str, Any]) -> dict[str, Any]:
+    target = str(args.get("target") or "").strip()
+    if not target:
+        return _err("reverse_image needs target=<image URL | local file path>")
+    if not target.lower().startswith(("http://", "https://")):
+        target = os.path.abspath(target)
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_revimg.py"), target, "--json"]
+    if str(args.get("case") or "").strip():
+        cmd += ["--case", str(args["case"]).strip()]
+    if _flag(args, "confirm"):
+        cmd.append("--confirm-upload")
+    if _flag(args, "links_only"):
+        cmd.append("--links-only")
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    r = _run(cmd, timeout=300)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"reverse_image failed for {target}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "telegram_lookup",
+    "Telegram account lookup from the analyst's RESEARCH account (Telethon session created only by "
+    "the tool's own interactive `login` in a terminal; never pass a code, password, cookie or "
+    "session string). mode='phone': E.164 number(s) in `target` → the Telegram account registered "
+    "to it, via contact import then always delete. **YOU MUST ASK THE USER FIRST, EVERY TIME**: "
+    "call with confirm=false to get the BRIEFING (what is sent, from which account; the owner is "
+    "not notified but the import is logged on the research account; per-account rate limits), show "
+    "it, and only call with confirm=true after explicit approval. FloodWait stops the run with a "
+    "partial result — do not retry in a loop. mode='resolve': @username / t.me link / invite link "
+    "/ -100id → public metadata (id, title, usernames incl. collectible, participants, flags, "
+    "restriction reasons, about); no import, no confirm; invites are previewed, never joined. "
+    "mode='status' reports session readiness. RULE 5: every row is a LEAD — a phone→account match "
+    "proves the number is registered to that account, not who the person is; names, bios, "
+    "usernames and photos are self-set; never a KB edge or operator link. 'not found' may be a "
+    "privacy setting, not absence. Skips with setup steps when Telethon, TELEGRAM_API_ID / "
+    "TELEGRAM_API_HASH or a session is missing. When opentele2 is installed the session can present "
+    "an official Telegram app api_id with a realistic device chosen at login (`login --qr --profile "
+    "desktop|android|ios`, run by the analyst in a terminal) and TELEGRAM_API_ID/HASH become "
+    "optional; the api and device are fixed for the session's life. mode='status' with "
+    "sessions=true lists the account's active sessions and consistency checks, read-only.",
+    {},  # target:str (phone numbers / resolve target), mode:str, confirm:bool, save_photo:str, case:str, sessions:bool
+    annotations=ToolAnnotations(readOnlyHint=False),   # mode=phone imports a contact on the research account
+)
+async def telegram_lookup(args: dict[str, Any]) -> dict[str, Any]:
+    mode = str(args.get("mode") or "resolve").strip().lower()
+    if mode not in ("phone", "resolve", "status"):
+        return _err("telegram_lookup mode must be phone, resolve or status")
+    target = str(args.get("target") or "").strip()
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_telegram.py"), mode]
+    if mode == "phone":
+        nums = target.replace(",", " ").split()
+        if not nums:
+            return _err("telegram_lookup mode=phone needs target=<E.164 number(s)>")
+        cmd += nums
+        if _flag(args, "confirm"):
+            cmd.append("--confirm-import")
+    elif mode == "resolve":
+        if not target:
+            return _err("telegram_lookup mode=resolve needs target=<@user | t.me link | -100id>")
+        cmd.append(target)
+    if mode == "status" and _flag(args, "sessions"):
+        cmd.append("--sessions")
+    if str(args.get("save_photo") or "").strip():
+        cmd += ["--save-photo", os.path.abspath(str(args["save_photo"]).strip())]
+    if str(args.get("case") or "").strip():
+        cmd += ["--case", str(args["case"]).strip()]
+    r = _run(cmd, timeout=600)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"telegram_lookup failed: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
+    "corp_registry",
+    "GLOBAL company + officer registry pivot. mode=company (name/number → GLEIF LEI + parents/"
+    "children, UK Companies House profile / officers (birth month-year, nationality, residence, "
+    "correspondence address) / registered-office history, France recherche-entreprises dirigeants, "
+    "Norway Brreg roller, Finland PRH, SEC EDGAR CIK + former names; OpenCorporates with a token; "
+    "VN → vn_corp, CN → cn_recon), mode=officer (full name → HOMONYM CANDIDATES), "
+    "mode=company-officers (`<jur>:<number>`), mode=officer-appointments (Companies House / "
+    "OpenCorporates officer id or URL → their other appointments). RULE 5: every officer, "
+    "appointment and candidate is a LEAD — nominee directors, formation agents and same-name "
+    "strangers are routine — never add_edge or name an operator from it; linked:true only when a "
+    "`corroborate` datum (birth=YYYY-MM, address, postcode, company) matches on the same record and "
+    "none contradicts. Formation-agent / registered-office-provider addresses are flagged and must "
+    "never be clustered on.",
+    {"mode": str, "query": str},  # jurisdiction:str, providers:str, corroborate:str, detail:int, verify:int
+    annotations=READONLY,
+)
+async def corp_registry(args: dict[str, Any]) -> dict[str, Any]:
+    mode = str(args.get("mode") or "company").strip()
+    query = str(args.get("query") or "").strip()
+    if mode not in ("company", "officer", "company-officers", "officer-appointments") or not query:
+        return _err("corp_registry needs mode=company|officer|company-officers|officer-appointments and query")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_corp.py"), mode, query, "--json"]
+    for key, flag in (("jurisdiction", "-j"), ("providers", "--provider"), ("corroborate", "--corroborate")):
+        val = str(args.get(key) or "").strip()
+        if val:
+            cmd += [flag, val]
+    for key, flag in (("detail", "--detail"), ("verify", "--verify")):
+        if args.get(key) not in (None, ""):
+            cmd += [flag, str(int(args[key]))]
+    r = _run(cmd, timeout=600)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"corp_registry failed for {query}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
     "search_pivot",
     "Multi-engine SEARCH-ENGINE pivot for an indicator — the general-web complement to FOFA/"
     "PublicWWW (which only see served HTML). Takes ANY indicator and auto-detects one of four "
@@ -830,7 +1103,15 @@ def collect_binary(target: str, case: str | None = None, keep: str | None = None
     "source locations; static commands only, never executes the sample) runs BY DEFAULT; pass "
     "rea=false to skip it. With case=<ID>, REA's URL hosts, IPs, wallets, Telegram handles and "
     "e-mails are registered as KIT-rung nodes, so the cross-type loop collects/pivots them while "
-    "they stay out of the same-operator partition (KB facts only, never a cluster edge).",
+    "they stay out of the same-operator partition (KB facts only, never a cluster edge). Also "
+    "takes a LOCAL DIRECTORY (an extracted leak or source tree). For archives (.zip/.jar/.apk/.tar/"
+    ".tgz) and directories it adds leaked-source blocks: `git` (embedded .git identities, remotes, "
+    "reflog + commits incl. packfiles, plus go.mod/package.json/composer/pyproject/Cargo module "
+    "identifiers), `archive_time` (bulk-copy clusters, packaging time, sequential runs, stripped / "
+    "implausible times, the packer's UTC offset from zip DOS-vs-UT/NTFS times, author-metadata "
+    "presence) and `keys` (keys/certs deduplicated by SPKI SHA-256; private material never output). "
+    "All are LEADS: committer strings are self-asserted, clocks are set by the packer, sample keys "
+    "are copied between projects — never KB edges, never an operator on one signal.",
     {"target": str},   # case:str, keep:str, rea:bool optional via args.get()
 )
 async def analyze_artifact(args: dict[str, Any]) -> dict[str, Any]:
@@ -2946,13 +3227,23 @@ async def crypto_balance(args: dict[str, Any]) -> dict[str, Any]:
     "valid), free webmail, and role mailboxes. Use it to decide how much weight a registrant or "
     "contact address deserves BEFORE pivoting on it: a burner scores low and a corporate domain "
     "scores high, and that ordering is the whole point. MX is checked keyless over DNS-over-HTTPS; "
-    "disposable detection works fully offline.",
-    {"emails": str},
+    "disposable detection works fully offline. Also grades SPF/DMARC SPOOFABILITY per domain "
+    "(effective SPF `all` qualifier, include depth / >10-lookup permerror, DMARC p/sp/pct, rua) "
+    "for the e-mails' domains plus an optional `domains` estate — spoofable / partial / protected. "
+    "Mail-posture facts only, never attribution or ownership evidence.",
+    {"emails": str},  # domains:str, no_spoof:bool, table:bool optional
     annotations=READONLY,
 )
 async def email_hygiene(args: dict[str, Any]) -> dict[str, Any]:
     emails = str(args.get("emails") or "").replace(",", " ").split()
-    r = _run([PY, _rr("email_hygiene.py"), *emails])
+    cmd = [PY, _rr("email_hygiene.py"), *emails]
+    if str(args.get("domains") or "").strip():
+        cmd += ["--domains", str(args["domains"]).strip()]
+    if _flag(args, "no_spoof"):
+        cmd.append("--no-spoof")
+    if _flag(args, "table"):
+        cmd.append("--table")
+    r = _run(cmd)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
@@ -3160,14 +3451,23 @@ async def msft_recon(args: dict[str, Any]) -> dict[str, Any]:
     "answers 'present' manufactures links that do not exist. The output is explicitly HYPOTHESES, "
     "never findings — a handle existing in two places does not make it one person, since handles "
     "are squatted, recycled and coincidental. Corroborate with profile content or a shared "
-    "artifact before linking identities, and never write a hypothesis into a case as fact.",
-    {"username": str},  # platforms:str
+    "artifact before linking identities, and never write a hypothesis into a case as fact. Also "
+    "emits `numeric_suffix_hints` (a trailing YY/YYYY/DDMM/MMDD/YYYYMMDD read as a POSSIBLE birth "
+    "year or date fragment, rung hint — could be a jersey number, graduation or account year); "
+    "never record one as a DOB. offline=true derives the hints only, with no provider request.",
+    {"username": str},  # platforms:str, offline:bool, timeout:int, proxy:str
     annotations=READONLY,
 )
 async def username_enum(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("username_enum.py"), str(args.get("username") or "")]
     if args.get("platforms"):
         cmd += ["--platforms", str(args["platforms"])]
+    if _flag(args, "offline"):
+        cmd.append("--offline")
+    if args.get("timeout"):
+        cmd += ["--timeout", str(int(args["timeout"]))]
+    if str(args.get("proxy") or "").strip():
+        cmd += ["--proxy", str(args["proxy"]).strip()]
     r = _run(cmd)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
@@ -3180,7 +3480,10 @@ async def username_enum(args: dict[str, Any]) -> dict[str, Any]:
     "an operator reuses one contact number across a whole estate, so finding it quoted in page "
     "source links the sites. It does NOT report carrier or line type: those need a metered "
     "HLR/portability lookup and a prefix guess is unreliable because numbers are ported. The "
-    "result names those as not_determined instead of inventing them. Offline and deterministic.",
+    "result names those as not_determined instead of inventing them. Offline and deterministic. "
+    "For +84 numbers it adds Zalo deep links (`zalo`, `zalo_intl`) and `prefix_allocation`: the "
+    "network the prefix was ORIGINALLY allocated to, with a `ported_caveat` — never the carrier, "
+    "which stays not_determined.",
     {"numbers": str},
     annotations=READONLY,
 )
@@ -3194,6 +3497,38 @@ async def phone_osint(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "masked_hint_match",
+    "Test MASKED account-recovery hints shown by a password-reset/login flow (`de*****@mail.example`, "
+    "`j***@e*****.com`, `*******08`, `+84 *** *** *12`, `•••• 4321`) "
+    "against e-mails/phones the case ALREADY holds — from `candidates` or from the case's raw "
+    "JSON + KB (`case`). Each hint compiles to a regex over normalised candidates (lower-case "
+    "e-mail; phone digits in E.164 + national forms); mask runs default to UNKNOWN length "
+    "(`provider` picks the display's semantics). Per-hint verdict: corroborates (exactly one known "
+    "candidate fits AND enough discriminating characters are visible) / consistent (several fit, "
+    "or one fits on too few characters) / no_match. RULE 5: a match is CORROBORATING only — it can "
+    "raise confidence in a selector already linked by real evidence; never a join key, never a KB "
+    "edge, never names an operator. Offline, writes nothing.",
+    {"hints": str},  # candidates:str, case:str, provider:str, min_visible:int optional
+    annotations=READONLY,
+)
+async def masked_hint_match(args: dict[str, Any]) -> dict[str, Any]:
+    hints = str(args.get("hints") or "").strip()
+    if not hints:
+        return _err("masked_hint_match needs hints=<comma-separated masked hints>")
+    cmd = [PY, os.path.join("tools", "masked_hint.py"), "--hints", hints]
+    for key, flag in (("candidates", "--candidates"), ("case", "--case"), ("provider", "--provider")):
+        val = str(args.get(key) or "").strip()
+        if val:
+            cmd += [flag, val]
+    if args.get("case"):
+        cmd += ["--kb", KB_DIR if os.path.isabs(KB_DIR) else os.path.join(ROOT, KB_DIR)]
+    if args.get("min_visible") not in (None, ""):
+        cmd += ["--min-visible", str(int(args["min_visible"]))]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
     "exposure_score",
     "Composite 0-100 SUBJECT exposure score from analysis/weight-engine.md — security, privacy, "
     "reputation, legal, infrastructure and surface, weighted. This is the person/organisation "
@@ -3201,12 +3536,20 @@ async def phone_osint(args: dict[str, Any]) -> dict[str, Any]:
     "report. Pure: it consumes indicator values you have already collected (pass `indicators` as "
     "'key=value,key=value' or a JSON file path) and looks nothing up. Indicators you omit are "
     "listed as missing and excluded from the denominator, and the result states the coverage — a "
-    "subject scored on 3 of 11 indicators is not comparable to one scored on 11.",
-    {},  # indicators:str, infile:str
+    "subject scored on 3 of 11 indicators is not comparable to one scored on 11. model=executive "
+    "is a DEDUCTIVE key-personnel safety score instead: start at 100, subtract eight analyst "
+    "ratings c1..c8 (0-3 each: account footprint 15, PII 20, family/close relations 15, address & "
+    "habits 15, corporate assets 10, reputation 10, breaches & stealer logs 10, account security "
+    "5); higher is safer. Pass `indicators` as 'c1=2,c2=3,c2_rationale=…' or a JSON file; missing "
+    "criteria stay explicit coverage gaps with a worst-case floor. Ratings are analyst "
+    "assessments, not attribution evidence.",
+    {},  # indicators:str, infile:str, model:str
     annotations=READONLY,
 )
 async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("exposure_score.py")]
+    if args.get("model"):
+        cmd += ["--model", str(args["model"])]
     if args.get("infile"):
         cmd.append(str(args["infile"]))
     for kv in str(args.get("indicators") or "").split(","):
@@ -3321,7 +3664,10 @@ async def meta_transparency(args: dict[str, Any]) -> dict[str, Any]:
     "requests, breaks on every layout change, and on several hosts breaches the terms the analyst "
     "is bound by — so running one is a human decision made in a browser they control. The "
     "severity grades the QUERY, not a result: nothing here is evidence until a human opens it. "
-    "Filter with `severity`. Pure and offline.",
+    "Filter with `severity`. Pure and offline. For an ORGANISATION target (domain or company "
+    "name) it adds staff_emails (\"@domain\" mentions), jobs (global + regional job boards: hiring "
+    "geography, staff names, internal tools), freelancer_profiles and company_socials families — "
+    "staff/employment/account matches are leads, never identity or operator evidence.",
     {"target": str},  # severity:str
     annotations=READONLY,
 )
@@ -3359,20 +3705,51 @@ async def cn_recon(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "vn_corp",
     "Keyless Vietnamese business-registry lookup: a 10/13-digit MST tax code or a company name "
-    "against public mirrors (masothue.com, hsctvn.com, doanhnghiep.biz) → company name (VN + "
-    "international), tax code, legal representative, address, phone, status, registration date — "
-    "each field tri-state with its own source URL. No key, no account. Use it to CORROBORATE a "
-    "WHOIS registrant org/phone (a matching director phone is rung-1 corroboration of who "
-    "REGISTERED, not who runs the scheme — a registered LLC can be a nominee front), or to "
-    "resolve an MST printed on a page. Run it before naming any Vietnamese company.",
-    {"query": str},  # timeout:int
+    "(`query`) against public mirrors (doanhnghiep.biz; masothue.com / hsctvn.com when they answer "
+    "— a Cloudflare challenge or off-mirror redirect is reported as that mirror's error) → company "
+    "name (VN + international), tax code, legal representative, address, phone, status, "
+    "registration date — each field tri-state with its own source URL. No key, no account. Use it "
+    "to CORROBORATE a WHOIS registrant org/phone (a matching director phone is rung-1 "
+    "corroboration of who REGISTERED, not who runs the scheme — a registered LLC can be a nominee "
+    "front), or to resolve an MST printed on a page. Run it before naming any Vietnamese company. "
+    "REVERSE modes instead of `query`: `by_phone` → companies whose REGISTERED contact phone is the "
+    "number (infocom.vn listing, verified on the doanhnghiep.biz record page); `by_person` → "
+    "companies whose legal representative has that full name (doanhnghiep.biz, tratencongty.com). "
+    "RULE 5: every reverse row is a registry fact and a LEAD, never a KB edge or operator "
+    "attribution; by_person rows are homonym `candidate`s unless a `corroborate` datum "
+    "(address/province/dob/phone) matches on the same record — only those get linked:true. A "
+    "number on many companies is flagged summary.shared_number (agent / accountant). "
+    "solve_cf=true retries a Cloudflare-walled mirror (slow, opt-in): masothue first via an "
+    "optional CloakBrowser search-box step (never a direct search URL — masothue serves a decoy "
+    "company there; the tax-code guard marks any mismatch `unmatched`), then FlareSolverr "
+    "($FLARESOLVERR_URL), then a Chromium render. Each walled source reports cf_retry "
+    "{attempted, ok, via, reason}.",
+    {},  # query|by_phone|by_person:str, corroborate:str, verify:int, timeout:int, solve_cf:bool, flaresolverr:str, proxy:str
     annotations=READONLY,
 )
 async def vn_corp(args: dict[str, Any]) -> dict[str, Any]:
-    cmd = [PY, os.path.join("WebPivot", "tools", "wp_vncorp.py"), str(args["query"]), "--json"]
+    script = os.path.join("WebPivot", "tools", "wp_vncorp.py")
+    if str(args.get("by_phone") or "").strip():
+        cmd = [PY, script, "--by-phone", str(args["by_phone"]).strip(), "--json"]
+    elif str(args.get("by_person") or "").strip():
+        cmd = [PY, script, "--by-person", str(args["by_person"]).strip(), "--json"]
+    elif str(args.get("query") or "").strip():
+        cmd = [PY, script, str(args["query"]).strip(), "--json"]
+    else:
+        return _err("vn_corp needs query=<MST | company name>, by_phone=<number> or by_person=<full name>")
+    if str(args.get("corroborate") or "").strip():
+        cmd += ["--corroborate", str(args["corroborate"]).strip()]
+    if args.get("verify") not in (None, ""):
+        cmd += ["--verify", str(int(args["verify"]))]
     if args.get("timeout"):
         cmd += ["--timeout", str(int(args["timeout"]))]
-    r = _run(cmd)
+    if _flag(args, "solve_cf"):
+        cmd.append("--solve-cf")
+    if str(args.get("flaresolverr") or "").strip():
+        cmd += ["--flaresolverr", str(args["flaresolverr"]).strip()]
+    if str(args.get("proxy") or "").strip():
+        cmd += ["--proxy", str(args["proxy"]).strip()]
+    r = _run(cmd, timeout=300)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
@@ -3487,7 +3864,21 @@ async def case_drift(args: dict[str, Any]) -> dict[str, Any]:
     "with a message. `attributes` rows set a KB attribute at the analyst authority tier (any "
     "grade): on a single-valued attribute it replaces the standing value only when dated on or "
     "after it, else it is stored disputed; each row's outcome is in the summary. Never writes "
-    "assessment.md/.json.",
+    "assessment.md/.json. The file may also be {\"findings\": [...], \"report\": {...}}: a `report` "
+    "block of key_questions (KQ-nn), open_questions (OQ-nn), roles, scenarios (SC-nn), roadmap "
+    "(P1-P3), incident_timeline (Tnnn, ISO-8601 `when`), attack_mapping (MAP-nn, technique_id "
+    "T1234[.567]) and counting_rules rows, rendered into the house report; each malformed row is "
+    "rejected with a message, the rest kept. Report rows — roles included — are analyst judgement "
+    "for the report only, never written to the KB (RULE 5). Findings may carry `confirmation` "
+    "(confirmed|strong_indirect|attempted_unproven|unverified) and `not_proven`. The `report` block "
+    "also takes subject_profile rows ({entity (default subject), field name|alias|dob|birthplace|"
+    "email|phone|address|company|account|relative|other, value, basis, source, admiralty?, status "
+    "confirmed|probable|possible}; basis + source required on alias and relative rows), "
+    "client_seeds rows ({type, value, note?, sensitive: bool}) and one `engagement` object "
+    "({author, version, created, modified, hours, client?}) — report-only, never in the KB (RULE "
+    "5). The import returns `report_lint`: QA warnings (one identifier on two entities or under "
+    "incompatible fields, unsourced identity rows, look-alike handles, client details contradicting "
+    "confirmed rows); warnings only, never blocking.",
     {"case": str, "findings": str},
     annotations=ToolAnnotations(readOnlyHint=False),   # writes evidence/imported/ + the KB
 )
@@ -3513,14 +3904,24 @@ async def evidence_import(args: dict[str, Any]) -> dict[str, Any]:
     "keys it accepts. IT DOES NOT COLLECT: it cannot observe posting cadence or a follower graph, "
     "and inventing one would be worse than useless — supply what you measured. A fired signature "
     "is a hypothesis about behaviour, not an identification: automation and a bought follower "
-    "graph are equally consistent with ordinary marketing.",
-    {},  # observations:str, list:bool
+    "graph are equally consistent with ordinary marketing. AGENTIC family (AGT-01..09): pass "
+    "`infile` = a JSON file of captured attacker telemetry / server-log events (`requests` "
+    "[{ts,host,path,method,status,ua,body}], `payloads`/`log_lines`, `credential_events` with "
+    "secret fingerprints only) to flag autonomous / multi-agent attack tooling — sub-second "
+    "cadence, planner/worker bursts, cross-host fan-out, sorted enumeration, library/headless UAs, "
+    "varied retries after a 4xx, LLM prose, tool-call JSON leaks, a leaked secret tried soon after "
+    "exposure. A fired AGT row identifies TOOLING (kit rung), never the human operator or sponsor "
+    "(RULE 5): a fact or lead, never a KB edge or operator_lead.",
+    {},  # observations:str, list:bool, infile:str
     annotations=READONLY,
 )
 async def signature_scan(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("signature_scan.py")]
     if args.get("list"):
         cmd.append("--list")
+    infile = str(args.get("infile") or "").strip()
+    if infile:
+        cmd.append(os.path.abspath(infile))
     for kv in str(args.get("observations") or "").split(","):
         if kv.strip():
             cmd += ["--set", kv.strip()]
@@ -3661,7 +4062,8 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       impersonation_hunt, search_pivot, censys, intelx_search, grayhatwarfare,
                       anyrun_lookup, anyrun_submit, webamon_scan, capability_check,
                       url_paths, capture_evidence, capture_screenshot, serp_ads, passive_ssl, ip_info,
-                      domain_liveness,
+                      domain_liveness, takedown_watch, pgp_lookup, container_registry,
+                      google_account, reverse_image, telegram_lookup, corp_registry,
                       detect_login, make_persona, engage_account, harvest_authenticated,
                       engage_report,
                       cert_pivot, crypto_balance, wayback_fetch, wayback_harvest, wayback_exhaust,
@@ -3679,7 +4081,7 @@ ANALYZE_SERVER = create_sdk_mcp_server(
                       render_diagram, case_timeline, render_report, victim_profile,
                       collection_gaps, origin_history,
                       rank_relations, pivot_suggest, sensitive_paths, email_hygiene,
-                      hash_id, vuln_check, phone_osint, exposure_score,
+                      hash_id, vuln_check, phone_osint, masked_hint_match, exposure_score,
                       dork_builder, kb_crossref, case_drift, signature_scan,
                       misp_export, misp_search, misp_push, misp_publish,
                       evidence_import])
@@ -3696,7 +4098,10 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__capture_screenshot",
                  "mcp__collect__serp_ads", "mcp__collect__passive_ssl",
                  "mcp__collect__ip_info",
-                 "mcp__collect__domain_liveness",
+                 "mcp__collect__domain_liveness", "mcp__collect__takedown_watch",
+                 "mcp__collect__pgp_lookup", "mcp__collect__container_registry",
+                 "mcp__collect__google_account", "mcp__collect__reverse_image",
+                 "mcp__collect__telegram_lookup", "mcp__collect__corp_registry",
                  "mcp__collect__detect_login", "mcp__collect__make_persona",
                  "mcp__collect__engage_account", "mcp__collect__harvest_authenticated",
                  "mcp__collect__engage_report",
@@ -3731,7 +4136,8 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__misp_export", "mcp__analyze__misp_search",
                  "mcp__analyze__rank_relations", "mcp__analyze__pivot_suggest",
                  "mcp__analyze__hash_id", "mcp__analyze__vuln_check",
-                 "mcp__analyze__phone_osint", "mcp__analyze__exposure_score",
+                 "mcp__analyze__phone_osint", "mcp__analyze__masked_hint_match",
+                 "mcp__analyze__exposure_score",
                  "mcp__analyze__dork_builder", "mcp__analyze__kb_crossref",
                  "mcp__analyze__case_drift", "mcp__analyze__signature_scan",
                  "mcp__analyze__sensitive_paths", "mcp__analyze__email_hygiene",
@@ -3749,4 +4155,5 @@ PLAN_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
               "mcp__analyze__which_cases", "mcp__analyze__domain_verdict",
               "mcp__analyze__api_usage", "mcp__analyze__collection_gaps",
               "mcp__analyze__case_drift", "mcp__analyze__case_timeline",
-              "mcp__analyze__reference_check", "mcp__analyze__origin_history"]
+              "mcp__analyze__reference_check", "mcp__analyze__origin_history",
+              "mcp__analyze__masked_hint_match"]

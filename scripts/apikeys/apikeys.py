@@ -227,11 +227,12 @@ def probe(svc, key, file_env=None):
 
 
 # ───────────────────────────────────────────────────────────────────── commands
-CAT_ORDER = ["infra", "dns", "analytics", "breach", "crypto", "code", "dork", "ai"]
+CAT_ORDER = ["infra", "dns", "analytics", "breach", "crypto", "code", "dork", "social", "corporate", "ai"]
 CAT_LABEL = {"infra": "Infrastructure / host search", "dns": "DNS / certs / WHOIS",
              "analytics": "Analytics-ID pivot", "breach": "Breach / leak / darknet",
              "crypto": "Crypto / blockchain", "code": "Code / repos",
-             "dork": "Search-engine dorking", "ai": "AI / vision"}
+             "dork": "Search-engine dorking", "social": "Social / messaging accounts",
+             "corporate": "Company / officer registries", "ai": "AI / vision"}
 
 
 def cmd_status(services, file_env, show_all):
