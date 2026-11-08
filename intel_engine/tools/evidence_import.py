@@ -9,7 +9,9 @@ Input: a JSON list (or {"findings": [...]}) of graded findings:
      "rung_class": "whois.registrant_email", "admiralty": "B2",
      "indicators": [{"type": "domain", "value": "site-a.example"}],
      "selector_links": [{"from": "site-a.example", "to": "registrant@example.com",
-                         "rel": "registrant_of"}]}
+                         "rel": "registrant_of"}],
+     "attributes": [{"entity": "site-a.example", "attribute": "whois_registrar",
+                     "value": "Registrar B", "valid_from": "2026-03-01"}]}
 
 What it does:
   * entries missing `claim` or a valid `admiralty` grade are REJECTED, each with a message;
@@ -20,7 +22,17 @@ What it does:
     never become edges, never cluster, never attribute). Owner needs the analyst's rung AND a
     rung_class that rungs.json grades owner; a weaker class demotes the finding, with a note;
   * every fact/edge carries source `analyst_import` (references/evidence_import.json) and an
-    evidence_ref to the stored record, so the assessment can cite it.
+    evidence_ref to the stored record, so the assessment can cite it;
+  * optional `attributes` rows set a KB attribute at the ANALYST authority tier (above registry,
+    vendor and extractor data) whatever the grade — the grade only sets confidence. A single-
+    valued attribute (kb_memory.json) is reconciled by the KB's rule: the analyst value replaces
+    the standing one only when its effective date is also on or after it; dated earlier, it is
+    stored DISPUTED beside it (rank alone never wins). An analyst re-importing a value for the
+    same slot updates its own earlier claim (a correction when dated earlier). Any other
+    attribute is a plain analyst fact. Without valid_from the effective date is the import day.
+    A row with an unreadable entity, an empty value, a malformed or reserved attribute name, or an
+    unparseable date is skipped with a note; the rest of the finding still imports. The summary
+    lists each row's outcome (create / extend / supersede / dispute / skip).
 
 Analyst ownership: this tool writes ONLY under evidence/imported/ and the KB — never
 assessment.md / assessment.json or any other case file.
@@ -42,7 +54,7 @@ for _p in (HERE, KB_TOOLS):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from knowledge_base import KB  # noqa: E402
+from knowledge_base import KB, valid_day  # noqa: E402
 from selector_types import classify, kb_key, rung_for  # noqa: E402
 
 try:
@@ -62,6 +74,9 @@ _REF_FALLBACK = {
     "reliability_confidence": {k: "low" for k in "ABCDEF"},
     "provenance": {"source": "analyst_import", "collector": "evidence_import",
                    "fact_attribute": "analyst_finding", "default_rel": "analyst_link"},
+    "attribute_rows": {"name_pattern": "^[a-z][a-z0-9_]{0,63}$",
+                       "reserved": ["analyst_finding", "kit_sibling", "neighbour", "mention",
+                                    "kind"]},
 }
 _REF = load_ref(os.path.join(KB_TOOLS, "references", "evidence_import.json"), _REF_FALLBACK)
 ADMIRALTY_RE = re.compile(str((_REF.get("admiralty") or {}).get("pattern")
@@ -73,6 +88,9 @@ SOURCE = _PROV["source"]
 COLLECTOR = _PROV["collector"]
 FACT_ATTRIBUTE = _PROV["fact_attribute"]
 DEFAULT_REL = _PROV["default_rel"]
+_ROWS = dict(_REF_FALLBACK["attribute_rows"], **(_REF.get("attribute_rows") or {}))
+ATTRIBUTE_NAME_RE = re.compile(str(_ROWS["name_pattern"]))
+RESERVED_ATTRIBUTES = frozenset(_ROWS["reserved"])
 
 _RUNG_ALIASES = {"owner": "owner", "kit": "kit", "neighbour": "neighbour", "neighbor": "neighbour"}
 IMPORT_SUBDIR = os.path.join("evidence", "imported")
@@ -165,9 +183,45 @@ def validate(entries):
         notes = [note] if note else []
         if rung == "owner" and not raw.get("selector_links"):
             notes.append("owner finding carries no selector_links — no edge written")
+        f["attributes"], row_notes = _attribute_rows(raw.get("attributes"))
+        notes += row_notes
         f["notes"] = notes
         accepted.append(f)
     return accepted, rejected
+
+
+def _attribute_rows(rows):
+    """Valid `attributes` rows (normalised) + a note per skipped row. Never rejects the finding."""
+    if rows is None:
+        return [], []
+    if not isinstance(rows, list):
+        return [], ["`attributes` is not a list — ignored"]
+    good, notes = [], []
+    for j, row in enumerate(rows):
+        if not isinstance(row, dict):
+            notes.append(f"attributes[{j}] is not an object — skipped")
+            continue
+        sel = _selector(row.get("entity"))
+        attr = str(row.get("attribute") or "").strip()
+        val = row.get("value")
+        if not sel or not sel[0]:
+            notes.append(f"attributes[{j}]: entity {row.get('entity')!r} unreadable — skipped")
+        elif not ATTRIBUTE_NAME_RE.match(attr):
+            notes.append(f"attributes[{j}]: attribute {attr!r} is not a valid name — skipped")
+        elif attr in RESERVED_ATTRIBUTES:
+            notes.append(f"attributes[{j}]: {attr!r} is reserved (importer / RULE 5 links) — "
+                         f"skipped")
+        elif val is None or (isinstance(val, (str, list, dict)) and not val):
+            notes.append(f"attributes[{j}]: empty value — skipped")
+        elif any(row.get(k) not in (None, "") and not valid_day(row.get(k))
+                 for k in ("valid_from", "valid_until")):
+            notes.append(f"attributes[{j}]: valid_from/valid_until is not a date — skipped")
+        else:
+            good.append({"entity": {"type": sel[0], "value": sel[1]}, "attribute": attr,
+                         "value": val.strip() if isinstance(val, str) else val,
+                         "valid_from": valid_day(row.get("valid_from")),
+                         "valid_until": valid_day(row.get("valid_until"))})
+    return good, notes
 
 
 def _load_findings(path):
@@ -181,8 +235,9 @@ def _load_findings(path):
 
 
 def _ingest(kb, case, findings, record_ref, when):
-    """Write accepted findings to `kb`. Returns (edges, facts)."""
+    """Write accepted findings to `kb`. Returns (edges, facts, attribute_results)."""
     edges = facts = 0
+    results = []
     for f in findings:
         conf = RELIABILITY_CONFIDENCE.get(f["admiralty"][0], "low")
         rung, rc = f["effective_rung"], str(f.get("rung_class") or "").strip()
@@ -223,7 +278,16 @@ def _ingest(kb, case, findings, record_ref, when):
                         confidence=conf, evidence_ref=record_ref)
             kb.touch(bt, bv, when)
             facts += 1
-    return edges, facts
+        for row in f.get("attributes") or []:
+            et, ev = kb_key(row["entity"]["type"], row["entity"]["value"])
+            outcome = kb.add_fact(et, ev, row["attribute"], row["value"], source=SOURCE,
+                                  collector=COLLECTOR, observed_at=when, confidence=conf,
+                                  evidence_ref=record_ref, valid_from=row["valid_from"],
+                                  valid_until=row["valid_until"])
+            results.append({"finding_id": f["id"], "entity": f"{et}:{ev}",
+                            "attribute": row["attribute"], "value": row["value"],
+                            "outcome": outcome})
+    return edges, facts, results
 
 
 def import_findings(case, findings_path, kb_root=None):
@@ -252,10 +316,10 @@ def import_findings(case, findings_path, kb_root=None):
         json.dump(record, fh, indent=2, ensure_ascii=False)
     record_ref = "/".join(("cases", case_id, "evidence", "imported", os.path.basename(out_path)))
     kb = KB(kb_root or os.path.join(ROOT, "knowledge"), case=case_id)
-    edges, facts = _ingest(kb, case_id, accepted, record_ref, when)
+    edges, facts, attr_results = _ingest(kb, case_id, accepted, record_ref, when)
     return {"case": case_id, "stored": out_path, "source": SOURCE,
             "accepted": len(accepted), "rejected": len(rejected),
-            "edges": edges, "facts": facts,
+            "edges": edges, "facts": facts, "attributes": attr_results,
             "rejections": [f"entry {r['index']}: {r['reason']}" for r in rejected],
             "notes": [f"{f['id']}: {n}" for f in accepted for n in f["notes"]]}
 

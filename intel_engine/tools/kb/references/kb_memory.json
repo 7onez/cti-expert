@@ -17,7 +17,7 @@
   },
 
   "authority_order": {
-    "_comment": "Authority tiers, LOWEST first. A new value supersedes a standing one only if its tier is >= the standing value's AND its effective date (valid_from, else first observation) is >= too; otherwise it is stored as disputed. Newer is never assumed truer. Exception: the SAME source+collector reporting a new value on the same or a later observation day updates its own claim (supersedes it). `analyst` is reserved — evidence_import does not yet write single-valued attributes.",
+    "_comment": "Authority tiers, LOWEST first. A new value supersedes a standing one only if its tier is >= the standing value's AND its effective date (valid_from, else first observation) is >= too; otherwise it is stored as disputed. Newer is never assumed truer, and a higher rank alone never wins. Exception: the SAME source+collector reporting a new value on the same or a later observation day updates its own claim (supersedes it). `analyst` = `attributes` rows on findings imported by tools/evidence_import.py, whatever the Admiralty grade.",
     "values": ["derived", "extractor", "vendor", "registry", "analyst"]
   },
 

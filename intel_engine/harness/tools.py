@@ -3478,12 +3478,16 @@ async def case_drift(args: dict[str, Any]) -> dict[str, Any]:
     "evidence_import",
     "Import an analyst's GRADED findings into a case: `findings` is a path to a JSON list of "
     "{claim, source_url, rung, rung_class, admiralty, indicators:[{type,value}], "
-    "selector_links:[{from,to,rel}]}. Stored under cases/<case>/evidence/imported/; an OWNER "
+    "selector_links:[{from,to,rel}], attributes:[{entity,attribute,value,valid_from?,"
+    "valid_until?}]}. Stored under cases/<case>/evidence/imported/; an OWNER "
     "finding (owner rung AND a rung_class rungs.json grades owner) writes its selector_links as KB "
     "edges, everything else — indicators, kit/neighbour links, demoted owner claims — is facts only "
     "(collecting ≠ attributing). Every row carries source `analyst_import` so the assessment can "
     "cite it. Entries missing a claim or a valid admiralty grade (A-F + 1-6, e.g. B2) are rejected "
-    "with a message. Never writes assessment.md/.json.",
+    "with a message. `attributes` rows set a KB attribute at the analyst authority tier (any "
+    "grade): on a single-valued attribute it replaces the standing value only when dated on or "
+    "after it, else it is stored disputed; each row's outcome is in the summary. Never writes "
+    "assessment.md/.json.",
     {"case": str, "findings": str},
     annotations=ToolAnnotations(readOnlyHint=False),   # writes evidence/imported/ + the KB
 )

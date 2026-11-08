@@ -432,6 +432,9 @@ class KB:
         `valid_from` / `valid_until` — when the SOURCE says the fact held (a WHOIS era, a passive-DNS
         window, an archive capture) — are kept apart from when it was observed, widened across
         sightings, and drive as_of reads.
+
+        Returns what happened: "extend" (already recorded — a sighting), "create", "supersede"
+        (replaced the standing value), "dispute" (stored disputed) or "skip" (not stored).
         """
         c = case_id(case) or self.case
         ent = self._read_entity(etype, value)
@@ -439,8 +442,10 @@ class KB:
         key = _fact_key({"attribute": attribute, "value": fvalue, "source": source,
                          "collector": collector})
         single = attribute in SINGLE_VALUED
+        outcome = "create"
         if key in idx:
             rec = idx[key]
+            outcome = "extend"
             was = rec.get("status")
             _apply_sighting(rec, "first_observed", "observed_at", observed_at, evidence_ref, case=c)
             _merge_validity(rec, valid_from, valid_until)
@@ -472,15 +477,17 @@ class KB:
             if single:
                 action, sup, rivals = reconcile(_slot(ent, attribute), fact)
                 if action == "skip":
-                    return
+                    return "skip"
                 if sup:
                     _supersede(ent["facts"], sup, fact, clear=action == "supersede")
                 if action == "dispute":
                     fact["status"] = "disputed"
                     fact["disputes"] = sorted({fact_id(o) for o in rivals})
+                outcome = action
             ent["facts"].append(fact)
         self._bump_seen(ent, observed_at)
         self._save_entity(ent)
+        return outcome
 
     def disputes(self, etype, value):
         """The entity's DISPUTED facts, each as {"fact", "vs": [standing facts it conflicts with]}."""

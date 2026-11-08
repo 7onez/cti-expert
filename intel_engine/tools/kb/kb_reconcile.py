@@ -28,10 +28,9 @@ else from its `collector` (glob patterns), else the default — the extractor ti
 writer can never override registry or analyst data. Effective date = valid_from, else the first
 observation. Multi-valued attributes are never reconciled: they keep plain create/extend.
 
-The analyst tier is reserved: tools/evidence_import.py writes `analyst_finding` facts and owner
-edges, never a value into a single-valued attribute, so no analyst value reaches this module today.
-Letting an analyst set one (e.g. a corrected registrar) needs an attribute/value field on imported
-findings first.
+The analyst tier is reached through `attributes` rows on imported findings (tools/evidence_import.py,
+source analyst_import / collector evidence_import), whatever the Admiralty grade. Like every tier it
+supersedes only with an effective date on or after the standing value's — rank alone never wins.
 
 Pure functions only (no I/O beyond loading the reference file); knowledge_base.KB applies them.
 """

@@ -17,5 +17,12 @@
     "collector": "evidence_import",
     "fact_attribute": "analyst_finding",
     "default_rel": "analyst_link"
+  },
+
+  "attribute_rows": {
+    "_comment": "Optional `attributes` rows on a finding ({entity, attribute, value, valid_from?, valid_until?}) set a KB attribute at the ANALYST authority tier (kb_memory.json), whatever the Admiralty grade (the grade only sets confidence). A single-valued attribute is reconciled — it supersedes, corrects or is disputed against the standing value; any other attribute is added as a plain analyst fact. `name_pattern` is the accepted attribute-name shape; `reserved` names belong to the importer and RULE 5 (link facts, rung labels) and are refused, so a row can never forge a kit/neighbour link or an analyst_finding.",
+    "name_pattern": "^[a-z][a-z0-9_:.-]{0,63}$",
+    "reserved": ["analyst_finding", "kit_sibling", "neighbour", "mention", "kind",
+                 "co_tenant", "co_tenant_observation", "mo_neighbour_of", "mo_neighbour_class"]
   }
 }
