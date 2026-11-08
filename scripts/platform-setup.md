@@ -135,7 +135,15 @@ than tool-by-tool:
 
 Flags (both installers): `-Headless`/`--headless` (the Chromium stack — Scrapling, agent-browser,
 Playwright + Chromium ~200 MB — for evidence screenshots, engage and the Cloudflare-escalation
-render), `-Go`/`--go` (Go tools), `-All`/`--all` (everything).
+render, plus the optional CloakBrowser; next step `cloakbrowser login`), `-Go`/`--go` (Go tools),
+`-Telegram`/`--telegram` (telethon, opentele2, qrcode[pil], python-socks[asyncio] into the skill
+venv; next step, run by the analyst in a terminal with a dedicated research account:
+`python3 scripts/backend/intel.py telegram login --qr --profile desktop` — TELEGRAM_API_ID/HASH
+optional with opentele2; this client login is against Telegram's API terms), `-GHunt`/`--ghunt`
+(GHunt as an isolated CLI via `uv tool`, pipx fallback; next step `ghunt login` with a research
+Google account), `-All`/`--all` (everything). None of the optional components install by default;
+opt out under `--all` with `NO_CLOAKBROWSER=1`, `NO_TELEGRAM=1`, `NO_GHUNT=1`. `--help`/`-Help`
+prints the flags and exits.
 
 DOM renders (`--render`, `--render-extract`, `render_confirm.py`) use **Moli**, installed by
 default: the pinned release archive named in `intel_engine/WebPivot/references/moli.json` is

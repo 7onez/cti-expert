@@ -4,7 +4,7 @@
 
 ### Cyber Threat Intelligence & OSINT Analysis Toolkit
 
-**Transform Claude into a trained intelligence analyst — 120+ commands, 57 techniques, zero API keys required for core functionality.**
+**Transform Claude into a trained intelligence analyst — 120+ commands, 58 techniques, zero API keys required for core functionality.**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.12-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.12"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#command-reference"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
-  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
+  <a href="#technique-catalog"><img src="https://img.shields.io/badge/techniques-58-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="58 Techniques"></a>&nbsp;
   <a href="#installation"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -93,7 +93,7 @@
 
 ## What is CTI Expert?
 
-A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **120+ commands** across **57 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
+A **Claude Code skill** that transforms Claude into a trained cyber threat intelligence and open-source intelligence analyst. It runs structured intelligence collection using **120+ commands** across **58 techniques** — no API keys required for core functionality. To take full advantage, add your own **free *or* paid** API keys to the skill's `.env` — each is **auto-detected** and unlocks higher-tier access (e.g., Wigle, VirusTotal, URLScan.io, Shodan, Censys, SecurityTrails, WhoisXML).
 
 > [!TIP]
 > **Keyless by default, more powerful with your keys.** Every core technique runs with zero API keys. Add any free or paid keys to `.env` (or run `/apikeys set <service> <KEY>`) and the skill auto-detects them, unlocking higher-tier pivots: reverse favicon→host, passive DNS, certificate search, sibling-domain discovery. A missing or bad key never breaks a run — it just degrades to a note. Setup guide: [handbook/api-keys.md](handbook/api-keys.md).
@@ -440,7 +440,7 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-ex
 </tr>
 </table>
 
-> **Windows users:** `install.ps1` is a **full native installer** (winget system tools + Python venv + OSINT tools) — no Git Bash or WSL required. It accepts the same `-Headless`, `-Go`, and `-All` flags (e.g. `install.ps1 -All`). Git Bash / WSL users can run `install.sh` instead. The DOCX generator self-heals UTF-8 output and auto-locates pandoc, so reports build on Windows with no extra environment setup. The skill itself detects the OS at runtime and installs any missing tool with the right manager (`winget` / `brew` / `apt`) — see `scripts/platform-setup.md`.
+> **Windows users:** `install.ps1` is a **full native installer** (winget system tools + Python venv + OSINT tools) — no Git Bash or WSL required. It accepts the same `-Headless`, `-Go`, `-Telegram`, `-GHunt`, and `-All` flags (e.g. `install.ps1 -All`). Git Bash / WSL users can run `install.sh` instead. The DOCX generator self-heals UTF-8 output and auto-locates pandoc, so reports build on Windows with no extra environment setup. The skill itself detects the OS at runtime and installs any missing tool with the right manager (`winget` / `brew` / `apt`) — see `scripts/platform-setup.md`.
 
 ---
 
@@ -452,6 +452,8 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-ex
 bash scripts/install.sh               # Core: Python deps + system tools + OSINT tools
 bash scripts/install.sh --headless    # + Scrapling headless browser (~200MB Chromium)
 bash scripts/install.sh --go          # + Go tools (subfinder, amass, gau, gitleaks, httpx)
+bash scripts/install.sh --telegram    # + Telegram stack (telethon, opentele2) — research account only
+bash scripts/install.sh --ghunt       # + GHunt CLI (uv tool / pipx)
 bash scripts/install.sh --all         # + Everything above
 ```
 
@@ -461,15 +463,19 @@ bash scripts/install.sh --all         # + Everything above
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1              # Core
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Headless    # + Scrapling headless browser
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Go          # + Go tools
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Telegram    # + Telegram stack
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -GHunt       # + GHunt CLI
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + Everything above
 ```
 
 | Flag | What it installs | Size |
 |------|-----------------|------|
 | *(none)* | Python packages, whois, dig, asn, jq, exiftool, maigret, sherlock, holehe, h8mail, theHarvester, waymore, xeuledoc, agentflow | ~50 MB |
-| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
+| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium, Playwright, agent-browser, CloakBrowser (then `cloakbrowser login`) | +200 MB |
 | `--go` | subfinder, amass, gau, gitleaks, httpx, trufflehog, phoneinfoga | +150 MB |
-| `--all` | Everything | ~400 MB |
+| `--telegram` | telethon, opentele2, qrcode[pil], python-socks[asyncio] into the venv (then, in your terminal with a dedicated research account: `python3 scripts/backend/intel.py telegram login --qr --profile desktop`; TELEGRAM_API_ID/HASH optional with opentele2; against Telegram's API terms) | +10 MB |
+| `--ghunt` | GHunt as an isolated CLI (then `ghunt login` with a research Google account) | +30 MB |
+| `--all` | Everything (opt out per component: `NO_CLOAKBROWSER=1`, `NO_TELEGRAM=1`, `NO_GHUNT=1`) | ~450 MB |
 
 ---
 
@@ -665,7 +671,7 @@ Before your first real case, run these once in Claude Code so you're not silentl
 /cti-expert      # load the skill first — the four below are convention commands
 /onboard         # interactive first-run guide
 /capabilities    # which evidence classes are unavailable now + the free path that substitutes
-/backend         # confirm Tier-1 typed MCP (95 tools) is live, not Tier-3 stateless
+/backend         # confirm Tier-1 typed MCP (103 tools) is live, not Tier-3 stateless
 /apikeys status  # keyless works; add free/paid keys to unlock reverse pivots
 ```
 
@@ -734,13 +740,13 @@ Before your first real case, run these once in Claude Code so you're not silentl
 
 ### 7 &mdash; Full pipeline & full harness (deepest mode)
 
-`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 95 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
+`/cti` is the everyday entry. For a **persisted, versioned case** that runs to convergence and correlates across every prior case, use the deep layer. Run `/backend` first — it reports the tier (Tier-1 typed MCP `intel-harness` = 103 tools → Tier-2 CLI → Tier-3 stateless); the bundled installer already provisions it (`SELF`, in-repo, no external setup).
 
 > **`/case` already persists a versioned case — with NO extra egress on the persist step.** When `/backend` is live (Tier 1/2), a `/case` run **reuses the pivots it just collected** (it does **not** re-fetch): it writes them under `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` and runs the deterministic pipeline in reuse mode — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — which skips the live fetch and runs the whole chain (ingest → recall → risk → clusters → `case_graph.json` → ICD-203 `assessment.md`) over that raw. The complete versioned case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**not your CWD**) and is correlated across every prior case. **If the case has not converged** (`intel.py convergence <ID>` reports status ≠ `converged`, or `/frontier` still lists open leads) **and** posture is active, `/case` then **auto-escalates to the `/harness` deepening loop** — keyless-first (it uses the CLI's own model), egress **hard-gated** on hostile infra (the harness `audit.py` denies outbound collection on `hostile=True`), `--no-harness` opts out. Plain `/pipeline open` (without `--no-collect`) and `/cti-case` still **collect** — they re-fetch every seed directly — so run those by hand only for a **fresh** case with no prior collection, after setting the egress posture (`/scope`, `/cti-proxy`, or `--passive` for hostile infra). Tier 3 / no host seeds → `/case` skips the handoff silently.
 
 ```bash
 /cti-expert                           # load the skill first (the commands below are convention commands)
-/backend                              # confirm the deep layer is live (Tier-1 = 95 MCP tools)
+/backend                              # confirm the deep layer is live (Tier-1 = 103 MCP tools)
 
 # A — full DETERMINISTIC pipeline (no LLM key, reproducible, persisted to cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -923,7 +929,7 @@ Every investigation follows four automated phases:
 
 ### Workflow diagrams
 
-**End-to-end tool &amp; skill flow** — one `/cti` call runs recall, intake, an optional Quarry reuse, collection, the cross-type enrich loop with per-round approval, assessment and delivery across both layers: 9 registered commands and 57 techniques in Layer 1, and 95 harness `@tool`s over the vendored `intel_engine` (claude, codex, omp or any OpenAI-compatible backend):
+**End-to-end tool &amp; skill flow** — one `/cti` call runs recall, intake, an optional Quarry reuse, collection, the cross-type enrich loop with per-round approval, assessment and delivery across both layers: 9 registered commands and 58 techniques in Layer 1, and 103 harness `@tool`s over the vendored `intel_engine` (claude, codex, omp or any OpenAI-compatible backend):
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert end-to-end tool and skill flow — sequence diagram across both layers" width="900">
@@ -1143,7 +1149,7 @@ Raw technique access, custom evidence weighting, CONTESTED finding resolution, d
 ## Technique Catalog
 
 <details>
-<summary><b>57 techniques</b> — click to expand full catalog</summary>
+<summary><b>58 techniques</b> — click to expand full catalog</summary>
 <br>
 
 | Technique | Coverage | API Key Required? |
@@ -1307,7 +1313,7 @@ cti-expert/
 │   ├── install.sh · install.ps1      All-in-one cross-platform installer
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   Drift · leak · pre-commit gates
 │
-├── techniques/                 57 collection techniques (the OSINT tradecraft)
+├── techniques/                 58 collection techniques (the OSINT tradecraft)
 ├── handbook/                   Pivot artifacts, API keys, operator queries, analytic standards
 ├── engine/                     Case data-model design docs (schema, findings, pivot logic)
 ├── analysis/ · validation/     Pattern & exposure engines · QA + coverage matrices
@@ -1317,7 +1323,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (95 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (103 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)
@@ -1444,21 +1450,21 @@ CTI Expert stands on the shoulders of the open-source community and free, public
 
 | Category | Projects & free services we're grateful to |
 |----------|---------------------------------------------|
-| **Agents & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Bun](https://bun.sh) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · agents `/cti` also registers into: [OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
-| **Browser & web collection** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) · [cloudscraper](https://github.com/venomous/cloudscraper) · [Brotli](https://github.com/google/brotli) |
-| **Username, people & social** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
+| **Agents & runtime** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Bun](https://bun.sh) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · [python-socks](https://github.com/romis2012/python-socks) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · agents `/cti` also registers into: [OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
+| **Browser & web collection** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) · [cloudscraper](https://github.com/venomous/cloudscraper) · [Brotli](https://github.com/google/brotli) · [CloakBrowser — CloakHQ](https://github.com/CloakHQ/CloakBrowser) |
+| **Username, people & social** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) · [Telethon](https://github.com/LonamiWebs/Telethon) · [opentele2 — DedInc](https://github.com/DedInc/opentele2) · [GHunt — mxrch](https://github.com/mxrch/GHunt) · [Telegram API](https://core.telegram.org/api) · [FamilySearch](https://www.familysearch.org) · [FreeBMD](https://www.freebmd.org.uk) |
+| **Email & breach data** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) · [keys.openpgp.org](https://keys.openpgp.org) · [Ubuntu keyserver](https://keyserver.ubuntu.com) · [Proton OpenPGP keyserver](https://proton.me) |
 | **Domains, DNS, certificates & infrastructure** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) · [CertKit](https://certkit.io) · [CertIndex](https://ctindex.io) · [IANA RDAP bootstrap](https://data.iana.org/rdap/) · [Hurricane Electric BGP Toolkit](https://bgp.he.net) · [ip-api](https://ip-api.com) · [JARM — Salesforce](https://github.com/salesforce/jarm) · [mmh3](https://github.com/hajimes/mmh3) · [BIND `dig` — ISC](https://www.isc.org/bind/) · [Sysinternals Whois](https://learn.microsoft.com/sysinternals/downloads/whois) · [psycopg](https://www.psycopg.org) (crt.sh PostgreSQL fallback) |
 | **Threat intelligence & sandboxing** | [ChongLuaDao](https://chongluadao.vn) (first-party feeds, Shield & WHOIS) · [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [Webamon](https://webamon.com) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) · [Spamhaus](https://www.spamhaus.org) |
 | **Search engines & ads** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) · [Google sellers.json](https://iabtechlab.com/sellers-json/) (IAB Tech Lab) |
-| **Secrets, code & exposure** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) · [GrayHatWarfare](https://grayhatwarfare.com) |
+| **Secrets, code & exposure** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) · [GrayHatWarfare](https://grayhatwarfare.com) · [Docker Hub](https://hub.docker.com) · [GitHub Container Registry](https://ghcr.io) · [Quay.io](https://quay.io) |
 | **Phone** | [PhoneInfoga](https://github.com/sundowndev/phoneinfoga) · FreeCNAM · WhoCalld |
 | **Geolocation & WiFi** | [OpenStreetMap](https://www.openstreetmap.org) · [what3words](https://what3words.com) · [Overpass Turbo](https://overpass-turbo.eu) · [WiGLE](https://wigle.net) |
-| **Image, media & vision** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [rmbg-cli — mrgoonie](https://github.com/mrgoonie/rmbg) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) · [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) |
+| **Image, media & vision** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [rmbg-cli — mrgoonie](https://github.com/mrgoonie/rmbg) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) · [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) · [Yandex Images](https://yandex.com/images) · [Bing Visual Search](https://www.bing.com/visualsearch) · [Google Lens](https://lens.google) · [PimEyes](https://pimeyes.com) · [python-qrcode](https://github.com/lincolnloop/python-qrcode) |
 | **Blockchain** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [Subscan](https://subscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) · [Blockstream Esplora](https://blockstream.info) · [Tronscan](https://tronscan.org) |
 | **China / Sinophone recon** | [ENScan_GO](https://github.com/wgpsec/ENScan_GO) · [Kunyu](https://github.com/knownsec/Kunyu) · [fofax](https://github.com/xiecat/fofax) · [PyDork](https://github.com/blacknon/pydork) · [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) · [pypinyin](https://github.com/mozillazg/python-pinyin) · [OpenCC](https://github.com/BYVoid/OpenCC) · [jieba](https://github.com/fxsjy/jieba) · [FOFA](https://fofa.info) · [Quake (360)](https://quake.360.net) · [ZoomEye](https://www.zoomeye.ai) · [Hunter.how](https://hunter.how) · [GSXT](https://www.gsxt.gov.cn) · [信用中国](https://www.creditchina.gov.cn) · [Cninfo](http://www.cninfo.com.cn) |
 | **Payment rails & hashes** | [ISO 13616 / ISO 7064](https://www.iso.org) (IBAN + mod-97 standards) · [NAPAS / VietQR](https://vietqr.vn) · [name-that-hash](https://github.com/HashPals/Name-That-Hash) |
-| **Business & app registries** | [masothue.com](https://masothue.com) · [hsctvn.com](https://hsctvn.com) · [doanhnghiep.biz](https://doanhnghiep.biz) (Vietnamese tax-code / company registries) · [Google Play](https://play.google.com) (app developer legal name) |
+| **Business & app registries** | [masothue.com](https://masothue.com) · [hsctvn.com](https://hsctvn.com) · [doanhnghiep.biz](https://doanhnghiep.biz) · [thuvienphapluat.vn](https://thuvienphapluat.vn) · [infocom.vn](https://infocom.vn) · [tratencongty.com](https://www.tratencongty.com) (Vietnamese tax-code / company registries) · [GLEIF](https://www.gleif.org) · [UK Companies House](https://find-and-update.company-information.service.gov.uk) · [OpenCorporates](https://opencorporates.com) · [recherche-entreprises (France)](https://recherche-entreprises.api.gouv.fr) · [Brønnøysund Register Centre (Norway)](https://data.brreg.no) · [PRH (Finland)](https://avoindata.prh.fi) · [SEC EDGAR](https://www.sec.gov/edgar) · [Google Play](https://play.google.com) (app developer legal name) |
 | **Tradecraft & methodology** | [Rexxfield](https://rexxfield.com) · [ParanoidLab](https://paranoidlab.com) · [Social Links](https://sociallinks.io) · [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong) (China-layer tool survey & access-reality matrix) · [Exploratores](https://github.com/SOsintOps/Exploratores) (reversible-redaction and IBAN-analysis *techniques* — independently reimplemented from its published documentation; that project is AGPL-3.0 and **no code was copied**) · [APWG eCrime research](https://ecrimeresearch.org) (the 2026 papers behind eight techniques) · [ISECOM](https://www.isecom.org) (Pete Herzog's adversary-modelling framework behind the AAM overlay) |
 | **Transport tracking** | [ADS-B Exchange](https://www.adsbexchange.com) · [Flightradar24](https://www.flightradar24.com) · [MarineTraffic](https://www.marinetraffic.com) · [VesselFinder](https://www.vesselfinder.com) |
 | **Darknet** | [Ahmia](https://ahmia.fi) · [OnionSearch](https://github.com/megadose/OnionSearch) · [ransomwatch](https://github.com/joshhighet/ransomwatch) |

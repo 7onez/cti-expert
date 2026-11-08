@@ -4,7 +4,7 @@
 
 ### 网络威胁情报与开源情报分析工具箱
 
-**把 Claude 变成一名训练有素的情报分析师 —— 120+ 条命令、57 种技术，核心功能零 API 密钥。**
+**把 Claude 变成一名训练有素的情报分析师 —— 120+ 条命令、58 种技术，核心功能零 API 密钥。**
 
 <br>
 
@@ -19,7 +19,7 @@
   <a href="https://github.com/7onez/cti-expert"><img src="https://img.shields.io/badge/version-2.12-0080ff?style=for-the-badge&logo=semver&logoColor=white" alt="Version 2.12"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-00c853?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License: MIT"></a>&nbsp;
   <a href="#命令参考"><img src="https://img.shields.io/badge/commands-120+-ff6d00?style=for-the-badge&logo=windowsterminal&logoColor=white" alt="120+ Commands"></a>&nbsp;
-  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-57-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="57 Techniques"></a>&nbsp;
+  <a href="#技术目录"><img src="https://img.shields.io/badge/techniques-58-aa00ff?style=for-the-badge&logo=hackthebox&logoColor=white" alt="58 Techniques"></a>&nbsp;
   <a href="#安装"><img src="https://img.shields.io/badge/API_keys-none_for_core-00bfa5?style=for-the-badge&logo=shield&logoColor=white" alt="No API Keys for Core"></a>
 </p>
 
@@ -93,7 +93,7 @@
 
 ## 什么是 CTI Expert？
 
-一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **120+ 条命令**、**57 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
+一个 **Claude Code 技能**，把 Claude 变成一名训练有素的网络威胁情报与开源情报分析师。它以 **120+ 条命令**、**58 种技术**执行结构化情报收集 —— 核心功能无需任何 API 密钥。若想充分发挥能力，把你自己的**免费*或*付费** API 密钥写入技能的 `.env` —— 每个密钥都会被**自动检测**并解锁更高层级的访问（例如 Wigle、VirusTotal、URLScan.io、Shodan、Censys、SecurityTrails、WhoisXML）。
 
 > [!TIP]
 > **默认无密钥，有你的密钥则更强。** 每一项核心技术都能零密钥运行。把任意免费或付费密钥放入 `.env`（或运行 `/apikeys set <service> <KEY>`），技能会自动检测并解锁更高层级的枢轴：反向 favicon→主机、被动 DNS、证书检索、兄弟域名发现。缺失或失效的密钥绝不会中断运行 —— 它只会降级为一条提示。配置指南：[handbook/api-keys.md](handbook/api-keys.md)。
@@ -440,7 +440,7 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-ex
 </tr>
 </table>
 
-> **Windows 用户：** `install.ps1` 是一个**完整的原生安装脚本**（winget 系统工具 + Python venv + OSINT 工具）—— 不需要 Git Bash 或 WSL。它接受同样的 `-Headless`、`-Go`、`-All` 参数（例如 `install.ps1 -All`）。Git Bash / WSL 用户可以改用 `install.sh`。DOCX 生成器会自愈 UTF-8 输出并自动定位 pandoc，因此报告在 Windows 上无需额外环境配置即可构建。技能本身会在运行时检测操作系统，并用正确的包管理器（`winget` / `brew` / `apt`）安装任何缺失的工具 —— 参见 `scripts/platform-setup.md`。
+> **Windows 用户：** `install.ps1` 是一个**完整的原生安装脚本**（winget 系统工具 + Python venv + OSINT 工具）—— 不需要 Git Bash 或 WSL。它接受同样的 `-Headless`、`-Go`、`-Telegram`、`-GHunt`、`-All` 参数（例如 `install.ps1 -All`）。Git Bash / WSL 用户可以改用 `install.sh`。DOCX 生成器会自愈 UTF-8 输出并自动定位 pandoc，因此报告在 Windows 上无需额外环境配置即可构建。技能本身会在运行时检测操作系统，并用正确的包管理器（`winget` / `brew` / `apt`）安装任何缺失的工具 —— 参见 `scripts/platform-setup.md`。
 
 ---
 
@@ -452,6 +452,8 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-ex
 bash scripts/install.sh               # 核心：Python 依赖 + 系统工具 + OSINT 工具
 bash scripts/install.sh --headless    # + Scrapling 无头浏览器（约 200MB Chromium）
 bash scripts/install.sh --go          # + Go 工具（subfinder、amass、gau、gitleaks、httpx）
+bash scripts/install.sh --telegram    # + Telegram 组件（telethon、opentele2）—— 仅限研究账号
+bash scripts/install.sh --ghunt       # + GHunt CLI（uv tool / pipx）
 bash scripts/install.sh --all         # + 以上全部
 ```
 
@@ -461,15 +463,19 @@ bash scripts/install.sh --all         # + 以上全部
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1              # 核心
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Headless    # + Scrapling 无头浏览器
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Go          # + Go 工具
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Telegram    # + Telegram 组件
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -GHunt       # + GHunt CLI
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -All         # + 以上全部
 ```
 
 | 参数 | 安装内容 | 体积 |
 |------|-----------------|------|
 | *(无)* | Python 包、whois、dig、asn、jq、exiftool、maigret、sherlock、holehe、h8mail、theHarvester、waymore、xeuledoc、agentflow | 约 50 MB |
-| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium | +200 MB |
+| `--headless` | Scrapling StealthyFetcher + DynamicFetcher + Chromium、Playwright、agent-browser、CloakBrowser（之后运行 `cloakbrowser login`） | +200 MB |
 | `--go` | subfinder、amass、gau、gitleaks、httpx、trufflehog、phoneinfoga | +150 MB |
-| `--all` | 全部 | 约 400 MB |
+| `--telegram` | telethon、opentele2、qrcode[pil]、python-socks[asyncio] 装入 venv（之后由分析员用专用研究账号在终端运行：`python3 scripts/backend/intel.py telegram login --qr --profile desktop`；使用 opentele2 时 TELEGRAM_API_ID/HASH 可选；违反 Telegram API 条款） | +10 MB |
+| `--ghunt` | GHunt 独立 CLI（之后用研究用 Google 账号运行 `ghunt login`） | +30 MB |
+| `--all` | 全部（可逐项关闭：`NO_CLOAKBROWSER=1`、`NO_TELEGRAM=1`、`NO_GHUNT=1`） | 约 450 MB |
 
 ---
 
@@ -665,7 +671,7 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 /cti-expert      # 先加载技能 —— 下面四条是约定命令
 /onboard         # 交互式首次运行引导
 /capabilities    # 当前缺失哪些证据类别 + 可替代的免费路径
-/backend         # 确认 Tier-1 类型化 MCP（95 个工具）在跑，而非 Tier-3 无状态
+/backend         # 确认 Tier-1 类型化 MCP（103 个工具）在跑，而非 Tier-3 无状态
 /apikeys status  # 无密钥也能跑；添加免费/付费密钥以解锁反向枢轴
 ```
 
@@ -734,13 +740,13 @@ Windows、`--all` 及其他代理（Codex · ChatGPT · Cursor · Gemini · omp 
 
 ### 7 &mdash; 完整流水线与完整 harness（最深模式）
 
-`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 95 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
+`/cti` 是日常入口。若要一个**带版本、持久化、跑到收敛并跨既往案件关联**的案件，请使用深度层。先运行 `/backend` —— 它报告层级（Tier-1 类型化 MCP `intel-harness` = 103 个工具 → Tier-2 CLI → Tier-3 无状态）；随附安装器已经预置好（`SELF`，仓库内，无需外部设置）。
 
 > **`/case` 本身就会持久化一个带版本的案件 —— 持久化这一步没有任何额外出网。** 当 `/backend` 在线（Tier 1/2）时，一次 `/case` 运行会**复用它刚刚采集到的枢轴**（**不会**重新抓取）：把它们写入 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/`，并以复用模式运行确定性流水线 —— `intel.py pipeline open <CASE-ID> <seeds> --no-collect` —— 跳过实时抓取，在这份原始数据上跑完整条链（入库 → recall → 风险 → 聚类 → `case_graph.json` → ICD-203 `assessment.md`）。完整的带版本案件落在 `$SKILL_DIR/intel_engine/cases/<CASE-ID>/`（**不是你的当前目录**），并与每一个既往案件做关联。**如果案件尚未收敛**（`intel.py convergence <ID>` 报告的状态 ≠ `converged`，或 `/frontier` 仍列出未结线索）**且**姿态为主动，`/case` 随后会**自动升级到 `/harness` 深化循环** —— 免密钥优先（使用 CLI 自身的模型），对敌对基础设施的出网**硬性设闸**（harness 的 `audit.py` 在 `hostile=True` 时拒绝出站采集），用 `--no-harness` 关闭。不带 `--no-collect` 的普通 `/pipeline open` 与 `/cti-case` 仍会**采集** —— 它们直接重新抓取每个种子 —— 因此只应在设置好出网姿态（`/scope`、`/cti-proxy`，或对敌对基础设施用 `--passive`）之后，为一个此前从未采集过的**全新**案件手动运行。Tier 3 / 没有主机种子 → `/case` 静默跳过这次交接。
 
 ```bash
 /cti-expert                           # 先加载技能（下面是约定命令）
-/backend                              # 确认深度层在线（Tier-1 = 95 个 MCP 工具）
+/backend                              # 确认深度层在线（Tier-1 = 103 个 MCP 工具）
 
 # A — 完整确定性流水线（无需 LLM 密钥，可复现，持久化到 cases/<ID>/）
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -923,7 +929,7 @@ printf "example.com\nsibling.com\n" > seeds.txt
 
 ### 工作流程图
 
-**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 57 项技术，以及运行在内置 `intel_engine` 之上的 95 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
+**端到端工具与技能流** —— 一次 `/cti` 调用即跨越两层依次完成回忆（recall）、接案、可选的 Quarry 复用、采集、带逐轮批准的跨类型富化循环、研判与交付：第 1 层的 9 条已注册命令与 58 项技术，以及运行在内置 `intel_engine` 之上的 103 个 harness `@tool`（后端可为 claude、codex、omp 或任何兼容 OpenAI 的后端）：
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="cti-expert 端到端工具与技能流 —— 跨双层时序图" width="900">
@@ -1143,7 +1149,7 @@ plantuml -tsvg -o assets workflow-case.puml workflow-apikeys.puml workflow-skill
 ## 技术目录
 
 <details>
-<summary><b>57 种技术</b> —— 点击展开完整目录</summary>
+<summary><b>58 种技术</b> —— 点击展开完整目录</summary>
 <br>
 
 | 技术 | 覆盖范围 | 是否需要 API 密钥？ |
@@ -1307,7 +1313,7 @@ cti-expert/
 │   ├── install.sh · install.ps1      一体化跨平台安装脚本
 │   └── audit.sh · leakcheck.sh · install-hooks.sh   漂移 · 泄露 · 预提交门禁
 │
-├── techniques/                 57 种采集技术（OSINT 技艺本体）
+├── techniques/                 58 种采集技术（OSINT 技艺本体）
 ├── handbook/                   枢轴要素、API 密钥、运营者查询、分析规范
 ├── engine/                     案件数据模型设计文档（schema、发现、枢轴逻辑）
 ├── analysis/ · validation/     模式与暴露面引擎 · QA + 覆盖度矩阵
@@ -1317,7 +1323,7 @@ cti-expert/
 │
 │  ── LAYER 2 · 深度流水线 —— 内置、自包含 ─────────────────────────
 └── intel_engine/               Collect → Correlate → Assess 流水线 + 知识库
-    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（95 个 @tool）
+    ├── harness/                流水线大脑 —— orchestrator.py · mcp_server.py · tools.py（103 个 @tool）
     ├── tools/                  intel.py（确定性流水线）· house_report*.py · case_state · kb/（KB + 关联）
     ├── WebPivot/               规范采集器 —— pivot_extract · wp_* 厂商客户端 · enrich_live
     ├── IntelGraph/             出版级案件图渲染（PNG/SVG）
@@ -1444,21 +1450,21 @@ CTI Expert 站在开源社区与免费公益数据提供方的肩膀上。在此
 
 | 类别 | 我们致谢的项目与免费服务 |
 |----------|---------------------------------------------|
-| **代理与运行时** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Bun](https://bun.sh) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · `/cti` 同时注册进的代理：[OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
-| **浏览器与网页采集** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) · [cloudscraper](https://github.com/venomous/cloudscraper) · [Brotli](https://github.com/google/brotli) |
-| **用户名、人物与社交** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) |
-| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) |
+| **代理与运行时** | [Anthropic — Claude Code](https://claude.com/claude-code) · [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) · [OpenAI — Codex](https://developers.openai.com/codex) · [Astral — uv](https://docs.astral.sh/uv/) · [Python](https://www.python.org) · [Node.js](https://nodejs.org) · [Bun](https://bun.sh) · [Rust](https://www.rust-lang.org) · [Pydantic](https://docs.pydantic.dev) · [Rich](https://github.com/Textualize/rich) · [python-socks](https://github.com/romis2012/python-socks) · local model backends [Ollama](https://ollama.com) · [vLLM](https://github.com/vllm-project/vllm) · [LM Studio](https://lmstudio.ai) · `/cti` 同时注册进的代理：[OpenCode](https://opencode.ai) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [Qwen Code](https://github.com/QwenLM/qwen-code) · [Cursor](https://cursor.com) · [GitHub Copilot CLI](https://github.com/features/copilot/cli) · [Windsurf](https://windsurf.com) · [Factory Droid](https://factory.ai) · omp · pi |
+| **浏览器与网页采集** | [Moli — Lexmount](https://github.com/lexmount/moli) · [Playwright](https://playwright.dev) · [Chromium](https://www.chromium.org) · [agent-browser — Vercel Labs](https://github.com/vercel-labs/agent-browser) · [Scrapling](https://github.com/D4Vinci/Scrapling) · [Requests](https://requests.readthedocs.io) · [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) · [cloudscraper](https://github.com/venomous/cloudscraper) · [Brotli](https://github.com/google/brotli) · [CloakBrowser — CloakHQ](https://github.com/CloakHQ/CloakBrowser) |
+| **用户名、人物与社交** | [Maigret](https://github.com/soxoj/maigret) · [Sherlock](https://github.com/sherlock-project/sherlock) · [Blackbird](https://github.com/p1ngul1n0/blackbird) · [instaloader](https://github.com/instaloader/instaloader) · [Osintgram](https://github.com/Datalux/Osintgram) · [toutatis](https://github.com/megadose/toutatis) · [ShareTrace](https://github.com/7onez/sharetrace) · [Telethon](https://github.com/LonamiWebs/Telethon) · [opentele2 — DedInc](https://github.com/DedInc/opentele2) · [GHunt — mxrch](https://github.com/mxrch/GHunt) · [Telegram API](https://core.telegram.org/api) · [FamilySearch](https://www.familysearch.org) · [FreeBMD](https://www.freebmd.org.uk) |
+| **邮箱与泄露数据** | [Holehe](https://github.com/megadose/holehe) · [h8mail](https://github.com/khast3x/h8mail) · [theHarvester](https://github.com/laramies/theHarvester) · [Have I Been Pwned](https://haveibeenpwned.com) · [Hudson Rock](https://www.hudsonrock.com) · [Intelligence X](https://intelx.io) · [OSINT Industries](https://www.osint.industries) · [LeakCheck](https://leakcheck.io) · [Lunar Domain Exposure](https://lunarcyber.com) · [keys.openpgp.org](https://keys.openpgp.org) · [Ubuntu keyserver](https://keyserver.ubuntu.com) · [Proton OpenPGP keyserver](https://proton.me) |
 | **域名、DNS、证书与基础设施** | [Subfinder](https://github.com/projectdiscovery/subfinder) · [Amass](https://github.com/owasp-amass/amass) · [assetfinder](https://github.com/tomnomnom/assetfinder) · [findomain](https://github.com/Findomain/Findomain) · [httpx](https://github.com/projectdiscovery/httpx) · [GAU](https://github.com/lc/gau) · [crt.sh](https://crt.sh) · [Shodan](https://www.shodan.io) (search · [InternetDB](https://internetdb.shodan.io) · [CTL](https://ctl.shodan.io)) · [Censys](https://censys.io) · [Netlas](https://netlas.io) · [Validin](https://validin.com) · [SecurityTrails](https://securitytrails.com) · [DNSlytics](https://dnslytics.com) · [ZETAlytics / ZoneCruncher](https://zetalytics.com) · [SSLMate CertSpotter](https://sslmate.com/certspotter/) · [crt.name](https://crt.name) · [agniops](https://app.agniops.in) · [CIRCL Passive DNS / Passive SSL](https://www.circl.lu/services/) · [WhoisXML API](https://whoisxmlapi.com) · [Whoxy](https://www.whoxy.com) · [whoisdomain](https://github.com/mboot-github/WhoisDomain) · [IPinfo](https://ipinfo.io) · [ipwho.is](https://ipwho.is) · [ViewDNS](https://viewdns.info) · [HackerTarget](https://hackertarget.com) · [Tranco](https://tranco-list.eu) · [Mozilla Public Suffix List](https://publicsuffix.org) · [CertKit](https://certkit.io) · [CertIndex](https://ctindex.io) · [IANA RDAP bootstrap](https://data.iana.org/rdap/) · [Hurricane Electric BGP Toolkit](https://bgp.he.net) · [ip-api](https://ip-api.com) · [JARM — Salesforce](https://github.com/salesforce/jarm) · [mmh3](https://github.com/hajimes/mmh3) · [BIND `dig` — ISC](https://www.isc.org/bind/) · [Sysinternals Whois](https://learn.microsoft.com/sysinternals/downloads/whois) · [psycopg](https://www.psycopg.org)（crt.sh PostgreSQL 备用通道） |
 | **威胁情报与沙箱** | [ChongLuaDao](https://chongluadao.vn)（自有 feed、Shield 与 WHOIS） · [VirusTotal](https://www.virustotal.com) · [urlscan.io](https://urlscan.io) · [Webamon](https://webamon.com) · [ANY.RUN](https://any.run) · [GreyNoise](https://www.greynoise.io) · [AbuseIPDB](https://www.abuseipdb.com) · [AlienVault OTX](https://otx.alienvault.com) · [abuse.ch](https://abuse.ch) (URLhaus · ThreatFox · MalwareBazaar) · [CIRCL cve-search](https://www.circl.lu) · [NVD](https://nvd.nist.gov) · [ransomware.live](https://www.ransomware.live) · [MISP](https://www.misp-project.org) · [PublicWWW](https://publicwww.com) · [Spamhaus](https://www.spamhaus.org) |
 | **搜索引擎与广告** | [SerpApi](https://serpapi.com) · [Bright Data SERP API](https://brightdata.com) · [Google Ads Transparency Center](https://adstransparency.google.com) · [Common Crawl](https://commoncrawl.org) · [Google sellers.json](https://iabtechlab.com/sellers-json/)（IAB Tech Lab） |
-| **密钥、代码与暴露面** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) · [GrayHatWarfare](https://grayhatwarfare.com) |
+| **密钥、代码与暴露面** | [TruffleHog](https://github.com/trufflesecurity/trufflehog) · [Gitleaks](https://github.com/gitleaks/gitleaks) · [GitHub CLI](https://cli.github.com) · [GrayHatWarfare](https://grayhatwarfare.com) · [Docker Hub](https://hub.docker.com) · [GitHub Container Registry](https://ghcr.io) · [Quay.io](https://quay.io) |
 | **电话** | [PhoneInfoga](https://github.com/sundowndev/phoneinfoga) · FreeCNAM · WhoCalld |
 | **地理定位与 WiFi** | [OpenStreetMap](https://www.openstreetmap.org) · [what3words](https://what3words.com) · [Overpass Turbo](https://overpass-turbo.eu) · [WiGLE](https://wigle.net) |
-| **图像、媒体与视觉** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [rmbg-cli — mrgoonie](https://github.com/mrgoonie/rmbg) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) · [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) |
+| **图像、媒体与视觉** | [ExifTool](https://exiftool.org) · [TinEye](https://tineye.com) · [FaceCheck.id](https://facecheck.id) · [FotoForensics](https://fotoforensics.com) · [picarta.ai](https://picarta.ai) · [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) · [FFmpeg](https://ffmpeg.org) · [ImageMagick](https://imagemagick.org) · [RMBG](https://huggingface.co/briaai/RMBG-1.4) · [rmbg-cli — mrgoonie](https://github.com/mrgoonie/rmbg) · [multix CLI — mrgoonie](https://github.com/mrgoonie/multix-cli) · [Google Gemini](https://ai.google.dev) · [pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar) / [ZBar](https://github.com/mchehab/zbar) · [whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2) · [Yandex Images](https://yandex.com/images) · [Bing Visual Search](https://www.bing.com/visualsearch) · [Google Lens](https://lens.google) · [PimEyes](https://pimeyes.com) · [python-qrcode](https://github.com/lincolnloop/python-qrcode) |
 | **区块链** | [Blockchair](https://blockchair.com) · [Etherscan](https://etherscan.io) · [Subscan](https://subscan.io) · [WalletExplorer](https://www.walletexplorer.com) · [Chainabuse](https://www.chainabuse.com) · [Blockstream Esplora](https://blockstream.info) · [Tronscan](https://tronscan.org) |
 | **中国／中文圈侦察** | [ENScan_GO](https://github.com/wgpsec/ENScan_GO) · [Kunyu](https://github.com/knownsec/Kunyu) · [fofax](https://github.com/xiecat/fofax) · [PyDork](https://github.com/blacknon/pydork) · [MediaCrawler](https://github.com/NanmiCoder/MediaCrawler) · [pypinyin](https://github.com/mozillazg/python-pinyin) · [OpenCC](https://github.com/BYVoid/OpenCC) · [jieba](https://github.com/fxsjy/jieba) · [FOFA](https://fofa.info) · [Quake (360)](https://quake.360.net) · [ZoomEye](https://www.zoomeye.ai) · [Hunter.how](https://hunter.how) · [GSXT](https://www.gsxt.gov.cn) · [信用中国](https://www.creditchina.gov.cn) · [Cninfo](http://www.cninfo.com.cn) |
 | **支付通道与哈希** | [ISO 13616 / ISO 7064](https://www.iso.org) (IBAN + mod-97 standards) · [NAPAS / VietQR](https://vietqr.vn) · [name-that-hash](https://github.com/HashPals/Name-That-Hash) |
-| **企业与应用注册信息** | [masothue.com](https://masothue.com) · [hsctvn.com](https://hsctvn.com) · [doanhnghiep.biz](https://doanhnghiep.biz)（越南税号／企业注册库）· [Google Play](https://play.google.com)（应用开发者法定名称） |
+| **企业与应用注册信息** | [masothue.com](https://masothue.com) · [hsctvn.com](https://hsctvn.com) · [doanhnghiep.biz](https://doanhnghiep.biz) · [thuvienphapluat.vn](https://thuvienphapluat.vn) · [infocom.vn](https://infocom.vn) · [tratencongty.com](https://www.tratencongty.com)（越南税号／企业注册库）· [GLEIF](https://www.gleif.org) · [UK Companies House](https://find-and-update.company-information.service.gov.uk) · [OpenCorporates](https://opencorporates.com) · [recherche-entreprises (France)](https://recherche-entreprises.api.gouv.fr) · [Brønnøysund Register Centre (Norway)](https://data.brreg.no) · [PRH (Finland)](https://avoindata.prh.fi) · [SEC EDGAR](https://www.sec.gov/edgar) · [Google Play](https://play.google.com)（应用开发者法定名称） |
 | **技艺与方法论** | [Rexxfield](https://rexxfield.com) · [ParanoidLab](https://paranoidlab.com) · [Social Links](https://sociallinks.io) · [SOsintOps — Speculator Project](https://github.com/SOsintOps/Speculator-Project) · [Wukong](https://github.com/SOsintOps/Wukong) (China-layer tool survey & access-reality matrix) · [Exploratores](https://github.com/SOsintOps/Exploratores) (reversible-redaction and IBAN-analysis *techniques* — independently reimplemented from its published documentation; that project is AGPL-3.0 and **no code was copied**) · [APWG eCrime 研究](https://ecrimeresearch.org)（八项技术背后的 2026 年论文）· [ISECOM](https://www.isecom.org)（Pete Herzog 的对手建模框架，AAM 叠加层即以此为基础） |
 | **交通追踪** | [ADS-B Exchange](https://www.adsbexchange.com) · [Flightradar24](https://www.flightradar24.com) · [MarineTraffic](https://www.marinetraffic.com) · [VesselFinder](https://www.vesselfinder.com) |
 | **暗网** | [Ahmia](https://ahmia.fi) · [OnionSearch](https://github.com/megadose/OnionSearch) · [ransomwatch](https://github.com/joshhighet/ransomwatch) |

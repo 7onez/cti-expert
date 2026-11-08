@@ -1,11 +1,18 @@
 <#
 CTI Expert - all-in-one PowerShell tool installer
-Usage: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 [-Headless] [-Go] [-All]
+Usage: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 [-Headless] [-Go] [-Telegram] [-GHunt] [-All] [-Help]
   -Headless  Auto-install the Chromium stack: Scrapling headless, agent-browser, and Playwright +
              Chromium (~200MB) for evidence screenshots, engage and the Cloudflare-escalation
-             render. DOM renders use Moli, installed by default ($env:NO_MOLI=1 opts out).
+             render, plus CloakBrowser. DOM renders use Moli, installed by default
+             ($env:NO_MOLI=1 opts out).
   -Go        Install Go-based tools (requires Go 1.21+)
-  -All       Install everything including headless + Go tools
+  -Telegram  Install the Telegram stack into the skill venv (telethon, opentele2,
+             qrcode[pil], python-socks[asyncio]) - research account only
+  -GHunt     Install GHunt as an isolated CLI (uv tool / pipx)
+  -All       Install everything including headless + Go + Telegram + GHunt
+  -Help      Show this help and exit without installing
+
+Opt-outs (env): NO_CLOAKBROWSER=1 NO_TELEGRAM=1 NO_GHUNT=1 NO_MOLI=1
 
 Package engine: uv-first. Bootstraps Astral's uv (winget / official installer / pip),
 creates the venv with `uv venv`, installs libs with `uv pip` and CLI tools with `uv tool`.
@@ -17,8 +24,18 @@ Supported platforms: Windows PowerShell 5.1+ and PowerShell 7+.
 param(
     [switch]$Headless,
     [switch]$Go,
-    [switch]$All
+    [switch]$Telegram,
+    [switch]$GHunt,
+    [switch]$All,
+    [switch]$Help
 )
+
+if ($Help) {
+    $helpLines = @(Get-Content -LiteralPath $PSCommandPath)
+    $helpEnd = [Array]::IndexOf($helpLines, '#>')
+    $helpLines[1..($helpEnd - 1)] | ForEach-Object { Write-Host $_ }
+    exit 0
+}
 
 Set-StrictMode -Version Latest
 # Intentionally NOT 'Stop'. In Windows PowerShell 5.1, $ErrorActionPreference='Stop'
@@ -33,6 +50,8 @@ $ErrorActionPreference = "Continue"
 if ($All) {
     $Headless = $true
     $Go = $true
+    $Telegram = $true
+    $GHunt = $true
 }
 
 $SkillDir = (Resolve-Path (Join-Path $PSScriptRoot ".."))
@@ -456,7 +475,9 @@ Write-Host "Venv:      $VenvDir"
 Write-Host "Installer: uv-first (pip/pipx/venv fallback)"
 if ($Headless) { Write-Host "Mode:      +headless" }
 if ($Go) { Write-Host "Mode:      +go" }
-if ($All) { Write-Host "Mode:      +all (headless + go)" }
+if ($Telegram) { Write-Host "Mode:      +telegram" }
+if ($GHunt) { Write-Host "Mode:      +ghunt" }
+if ($All) { Write-Host "Mode:      +all (headless + go + telegram + ghunt)" }
 
 Write-Section "uv (Astral package manager)"
 Install-Uv
@@ -813,6 +834,69 @@ if ($Headless) {
 }
 else {
     Write-Host "  --  Playwright not requested (add -Headless; installs playwright + Chromium)" -ForegroundColor Yellow
+}
+
+# CloakBrowser (optional; vn_corp -solve-cf search-box step for Cloudflare-walled masothue). Opt-in
+# with -Headless / -All, never baseline. Licence: run `cloakbrowser login` once, or set
+# CLOAKBROWSER_LICENSE_KEY in the gitignored .env.
+if ($Headless -and $env:NO_CLOAKBROWSER -ne "1") {
+    Invoke-Step "cloakbrowser" {
+        Invoke-VenvPip --quiet --upgrade cloakbrowser
+        if ($LASTEXITCODE -ne 0) { throw "cloakbrowser install failed (optional)" }
+        Log-Ok "cloakbrowser (then: cloakbrowser login)"
+    } | Out-Null
+}
+
+# Telegram stack (optional; `intel.py telegram` research collector). Opt-in with -Telegram / -All,
+# never baseline. Installs into the skill venv; the analyst runs the QR login in their own terminal.
+Write-Section "Telegram stack (telethon + opentele2)"
+if (-not $Telegram) {
+    Write-Host "  --  Telegram stack not requested (add -Telegram or -All)" -ForegroundColor Yellow
+}
+elseif ($env:NO_TELEGRAM -eq "1") {
+    Write-Host "  --  Telegram stack skipped (NO_TELEGRAM=1)" -ForegroundColor Yellow
+}
+else {
+    Invoke-VenvPip --quiet --upgrade telethon opentele2 "qrcode[pil]" "python-socks[asyncio]" *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Log-Ok "telethon + opentele2 + qrcode[pil] + python-socks[asyncio]"
+        Write-Host "    Next steps:"
+        Write-Host "      - Use a DEDICATED research Telegram account only - never a personal one."
+        Write-Host "      - In your own terminal: python scripts/backend/intel.py telegram login --qr --profile desktop"
+        Write-Host "      - TELEGRAM_API_ID / TELEGRAM_API_HASH are optional with opentele2 (desktop profile)."
+        Write-Host "      - Note: client-impersonating logins are against Telegram's API terms; the account may be banned."
+    }
+    else {
+        Log-Skip "Telegram stack (optional; pip install telethon opentele2 qrcode[pil] python-socks[asyncio] failed)"
+    }
+}
+
+# GHunt (optional; Google account OSINT CLI). Opt-in with -GHunt / -All, never baseline. Isolated
+# CLI (uv tool, pipx fallback) so its pinned deps never touch the skill venv. A miss is a skip.
+Write-Section "GHunt (Google account OSINT)"
+if (-not $GHunt) {
+    Write-Host "  --  GHunt not requested (add -GHunt or -All)" -ForegroundColor Yellow
+}
+elseif ($env:NO_GHUNT -eq "1") {
+    Write-Host "  --  GHunt skipped (NO_GHUNT=1)" -ForegroundColor Yellow
+}
+else {
+    $ghuntVia = $null
+    if (Test-Command "uv") {
+        uv tool install --force ghunt *> $null
+        if ($LASTEXITCODE -eq 0) { $ghuntVia = "uv tool" }
+    }
+    if (-not $ghuntVia -and (Test-Command "pipx")) {
+        pipx install --force ghunt *> $null
+        if ($LASTEXITCODE -eq 0) { $ghuntVia = "pipx" }
+    }
+    if ($ghuntVia) {
+        Log-Ok "ghunt ($ghuntVia)"
+        Write-Host "    Next step: ghunt login   (with a dedicated research Google account)"
+    }
+    else {
+        Log-Skip "ghunt (optional; install with: uv tool install ghunt  or  pipx install ghunt)"
+    }
 }
 
 Write-Section "Go tools"

@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # CTI Expert — all-in-one tool installer
-# Usage: bash scripts/install.sh [--headless] [--go] [--all]
+# Usage: bash scripts/install.sh [--headless] [--go] [--telegram] [--ghunt] [--all] [--help]
 #   --headless  Auto-install the Chromium stack: Scrapling headless, agent-browser, and
 #               Playwright + Chromium (~200MB) for evidence screenshots, engage and the
-#               Cloudflare-escalation render. DOM renders use Moli, installed by default.
+#               Cloudflare-escalation render, plus CloakBrowser. DOM renders use Moli,
+#               installed by default.
 #   --go        Install Go-based tools (requires Go 1.21+)
-#   --all       Install everything including headless + Go tools
+#   --telegram  Install the Telegram stack into the skill venv (telethon, opentele2,
+#               qrcode[pil], python-socks[asyncio]) — research account only
+#   --ghunt     Install GHunt as an isolated CLI (uv tool / pipx)
+#   --all       Install everything including headless + Go + Telegram + GHunt
+#   --help      Show this help and exit without installing
+#
+# Opt-outs (env): NO_CLOAKBROWSER=1 NO_TELEGRAM=1 NO_GHUNT=1 NO_PLAYWRIGHT=1 NO_MOLI=1
 #
 # Package engine: uv-first (Astral's uv handles the venv, `uv pip`, and `uv tool`);
 # bootstraps uv automatically, and falls back to python3 -m venv + pip/pipx when uv
@@ -45,12 +52,17 @@ VENV_PYTHON="$VENV_BIN/python3"
 
 OPT_HEADLESS=false
 OPT_GO=false
+OPT_TELEGRAM=false
+OPT_GHUNT=false
 OPT_ALL=false
 for arg in "$@"; do
   case $arg in
     --headless) OPT_HEADLESS=true ;;
     --go)       OPT_GO=true ;;
-    --all)      OPT_HEADLESS=true; OPT_GO=true; OPT_ALL=true ;;
+    --telegram) OPT_TELEGRAM=true ;;
+    --ghunt)    OPT_GHUNT=true ;;
+    --all)      OPT_HEADLESS=true; OPT_GO=true; OPT_TELEGRAM=true; OPT_GHUNT=true; OPT_ALL=true ;;
+    -h|--help)  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"; exit 0 ;;
   esac
 done
 
@@ -534,7 +546,9 @@ echo "Venv:      $HOME/.claude/skills/.venv"
 echo "Installer: uv-first (pip/pipx/venv fallback)"
 [[ "$OPT_HEADLESS" == true ]] && echo "Mode:     +headless"
 [[ "$OPT_GO" == true ]]       && echo "Mode:     +go"
-[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (headless + go)"
+[[ "$OPT_TELEGRAM" == true ]] && echo "Mode:     +telegram"
+[[ "$OPT_GHUNT" == true ]]    && echo "Mode:     +ghunt"
+[[ "$OPT_ALL" == true ]]      && echo "Mode:     +all (headless + go + telegram + ghunt)"
 
 # ── uv bootstrap ────────────────────────────────────────────
 section "uv (Astral package manager)"
@@ -1002,6 +1016,54 @@ elif vpip --quiet --upgrade playwright 2>/dev/null; then
   fi
 else
   log_skip "playwright (pip install deferred; screenshots/engage skip with a note without it)"
+fi
+
+# ── CloakBrowser (optional; vn_corp --solve-cf search-box step for Cloudflare-walled masothue) ──
+# Opt-in with the rest of the browser stack (--headless / --all), never baseline. The licence is
+# NOT handled here: run `cloakbrowser login` once (key cached in ~/.cloakbrowser), or put
+# CLOAKBROWSER_LICENSE_KEY in the gitignored .env. Without it vn_corp notes it and falls through.
+if [[ "$OPT_HEADLESS" == true && "${NO_CLOAKBROWSER:-}" != "1" ]]; then
+  vpip --quiet --upgrade cloakbrowser 2>/dev/null && log_ok "cloakbrowser (then: cloakbrowser login)" \
+    || log_skip "cloakbrowser (optional; pip install failed — vn_corp falls back to FlareSolverr/render)"
+fi
+
+# ── Telegram stack (optional; `intel.py telegram` research collector) ──
+# Opt-in with --telegram / --all, never baseline. Installs into the skill venv. The session is
+# NOT created here: the analyst runs the QR login interactively in their own terminal.
+section "Telegram stack (telethon + opentele2)"
+if [[ "$OPT_TELEGRAM" != true ]]; then
+  echo -e "  ${YELLOW}–${NC} Telegram stack not requested (add --telegram or --all)"
+elif [[ "${NO_TELEGRAM:-}" == "1" ]]; then
+  echo -e "  ${YELLOW}–${NC} Telegram stack skipped (NO_TELEGRAM=1)"
+elif vpip --quiet --upgrade telethon opentele2 'qrcode[pil]' 'python-socks[asyncio]' 2>/dev/null; then
+  log_ok "telethon + opentele2 + qrcode[pil] + python-socks[asyncio]"
+  echo "    Next steps:"
+  echo "      - Use a DEDICATED research Telegram account only — never a personal one."
+  echo "      - In your own terminal: python3 scripts/backend/intel.py telegram login --qr --profile desktop"
+  echo "      - TELEGRAM_API_ID / TELEGRAM_API_HASH are optional with opentele2 (desktop profile)."
+  echo "      - Note: client-impersonating logins are against Telegram's API terms; the account may be banned."
+else
+  log_skip "Telegram stack (optional; pip install telethon opentele2 qrcode[pil] python-socks[asyncio] failed)"
+fi
+
+# ── GHunt (optional; Google account OSINT CLI) ──
+# Opt-in with --ghunt / --all, never baseline. Isolated CLI (uv tool, pipx fallback) so its
+# pinned deps never touch the skill venv. A miss is a skip, never fatal.
+section "GHunt (Google account OSINT)"
+if [[ "$OPT_GHUNT" != true ]]; then
+  echo -e "  ${YELLOW}–${NC} GHunt not requested (add --ghunt or --all)"
+elif [[ "${NO_GHUNT:-}" == "1" ]]; then
+  echo -e "  ${YELLOW}–${NC} GHunt skipped (NO_GHUNT=1)"
+else
+  GHUNT_OK=false
+  if [[ -n "$UV_BIN" ]] && "$UV_BIN" tool install --force ghunt &>/dev/null 2>&1; then
+    GHUNT_OK=true; log_ok "ghunt (uv tool)"
+  elif [[ -n "$PIPX_BIN" ]] && "$PIPX_BIN" install --force ghunt &>/dev/null 2>&1; then
+    GHUNT_OK=true; log_ok "ghunt (pipx)"
+  else
+    log_skip "ghunt (optional; install with: uv tool install ghunt  or  pipx install ghunt)"
+  fi
+  [[ "$GHUNT_OK" == true ]] && echo "    Next step: ghunt login   (with a dedicated research Google account)"
 fi
 
 # ── Go tools (optional) ────────────────────────────────────────
