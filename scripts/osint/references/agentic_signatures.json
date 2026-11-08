@@ -1,0 +1,58 @@
+{
+  "_comment": "Tunables for the AGENTIC signature family (AGT-01..AGT-09) evaluated by scripts/osint/signature_scan.py and described in analysis/signature-catalog.md. Thresholds and patterns ONLY — no case data. A fired AGT signature identifies TOOLING (kit rung), never the human operator or sponsor (RULE 5): never an add_edge, never operator_lead. Patterns are Python regexes matched case-insensitively.",
+  "thresholds": {
+    "_comment": "Edit here, not in code. Times: *_ms milliseconds, *_s seconds, *_min minutes.",
+    "cadence_min_requests": 50,
+    "cadence_median_interval_ms": 1000,
+    "burst_interval_ms": 1000,
+    "burst_min_requests": 5,
+    "planner_gap_min_s": 1.5,
+    "planner_gap_max_s": 60,
+    "planner_min_bursts": 3,
+    "fanout_window_s": 10,
+    "fanout_min_hosts": 10,
+    "enumeration_min_items": 20,
+    "enumeration_ordered_ratio": 0.85,
+    "library_ua_share": 0.5,
+    "ua_mix_min_share": 0.05,
+    "retry_window_s": 10,
+    "retry_min_variations": 3,
+    "llm_artefact_min_hits": 1,
+    "tool_call_min_hits": 1,
+    "harvest_to_spray_max_min": 60
+  },
+  "library_user_agents": {
+    "_comment": "Default HTTP-library / CLI user agents — what agent frameworks send when nobody sets a UA.",
+    "values": ["python-httpx", "python-requests", "aiohttp", "go-http-client", "node-fetch", "undici",
+               "axios/", "^curl/", "^wget/", "okhttp", "libwww-perl", "^java/", "scrapy", "python-urllib",
+               "httpclient", "^got ", "reqwest", "ruby"]
+  },
+  "headless_user_agents": {
+    "_comment": "Headless / automation browsers an agent drives for JS-heavy steps.",
+    "values": ["headlesschrome", "puppeteer", "playwright", "phantomjs", "selenium", "webdriver",
+               "electron/", "splash"]
+  },
+  "declared_agent_user_agents": {
+    "_comment": "Self-declared AI agent / assistant fetchers. Declared and usually legitimate — counted as a mix signal only, never alone.",
+    "values": ["gptbot", "chatgpt-user", "oai-searchbot", "claudebot", "claude-user", "claude-searchbot",
+               "anthropic-ai", "perplexitybot", "perplexity-user", "google-extended", "ccbot",
+               "langchain", "llamaindex", "autogpt", "browser-use", "crewai"]
+  },
+  "llm_artefact_patterns": {
+    "_comment": "Assistant prose leaking into payloads, comments, form fields or log lines.",
+    "values": ["as an ai( language)? model", "i (can(no|')t|am unable to) (help|assist) with",
+               "certainly[!,] here('s| is)", "here is the (updated|modified|revised) (payload|code|request)",
+               "let me (try|now|first) ", "i('ll| will) now (try|attempt|send|enumerate)",
+               "<thinking>|</thinking>", "^```[a-z]*$", "\\bstep \\d+:\\s", "\\[insert [a-z ]+ here\\]",
+               "you are an? (helpful|expert|autonomous) ", "ignore (all )?previous instructions",
+               "system prompt"]
+  },
+  "tool_call_patterns": {
+    "_comment": "Tool-call / function-call JSON or agent-protocol fragments in logs or payloads.",
+    "values": ["\"tool_calls\"\\s*:", "\"function_call\"\\s*:", "\"tool_use\"", "\"tool_call_id\"\\s*:",
+               "\"arguments\"\\s*:\\s*\"\\{", "\"role\"\\s*:\\s*\"(assistant|tool|function)\"",
+               "<function_calls>|<invoke name=|<tool_call>", "\"type\"\\s*:\\s*\"function\"",
+               "\"name\"\\s*:\\s*\"(bash|shell|execute(_command)?|run_command|python|browser|http_request|fetch_url)\"",
+               "\\bmcp__[a-z0-9_]+", "thought:\\s.*\\baction:\\s", "\\baction_input\\s*:"]
+  }
+}

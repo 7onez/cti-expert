@@ -1,0 +1,14 @@
+{
+  "_comment": "Heuristics identify artifact handling roles, never people or operators. Counts of domains/emails/wallet directories do not establish unrelated owners. Analyst confirmation is required.",
+  "saas": {
+    "sso_workspace": {"hosts": ["larksuite.com", "feishu.cn", "workspace.google.com", "accounts.google.com", "login.microsoftonline.com", "office.com", "okta.com"], "paths": ["/sso/", "/workspace/"]},
+    "crm_helpdesk": {"hosts": ["salesforce.com", "hubspot.com", "zendesk.com", "freshdesk.com"], "paths": ["/crm/", "/helpdesk/"]},
+    "ecommerce_backend": {"hosts": ["admin.shopify.com", "sellercentral.amazon.com"], "paths": ["/merchant/", "/seller/", "/backoffice/"]},
+    "cms_admin": {"hosts": [], "paths": ["/wp-admin", "/wp-login.php", "/administrator/"]},
+    "banking_payment": {"hosts": ["dashboard.stripe.com", "business.paypal.com"], "paths": ["/banking/", "/payments/", "/payment-portal/"]},
+    "marketing_seo": {"hosts": ["semrush.com", "ahrefs.com", "ads.google.com", "mailchimp.com"], "paths": ["/marketing/", "/seo/"]},
+    "logistics": {"hosts": ["mydhl.express.dhl", "shipstation.com"], "paths": ["/logistics/", "/shipping/"]}
+  },
+  "file_patterns": {"dump": ["combolist", "combo_list", "combo-list", "credential_dump", "database_dump", "email_pass", "dump.sql"], "wallet": ["wallet"]},
+  "thresholds": {"dump_files": 3, "huge_credentials": 1000, "many_emails": 100, "many_domains": 50, "wallet_directories": 20, "vendor_logins": 30, "vendor_emails": 10, "vendor_admin_domains": 10}
+}

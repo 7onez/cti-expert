@@ -8,9 +8,13 @@ have all been ported across carriers for years. So this does the part that is de
 free, and names the part that is not, rather than inventing it.
 
 What it gives you: E.164 validation, country and region from the calling code, national-format
-split, the messaging-app deep links a handle-hunt starts from, and the ready-to-run source-search
-queries for finding the number quoted in a page (which is how a phone actually clusters scam
-infrastructure — an operator reuses a contact number across a whole estate).
+split, the messaging-app deep links a handle-hunt starts from (plus per-country ones such as Zalo
+for +84, from `references/phone_osint.json -> messaging_extra`), the ORIGINAL prefix allocation
+where the numbering plan is curated (`prefix_allocation`: the network a block was first assigned
+to, always with a `ported_caveat` — it is NOT the carrier, which stays in `not_determined`), and
+the ready-to-run source-search queries for finding the number quoted in a page (which is how a
+phone actually clusters scam infrastructure — an operator reuses a contact number across a whole
+estate).
 
 Offline and deterministic unless --enrich is passed with a key.
 
@@ -26,6 +30,30 @@ import json
 import os
 import re
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+
+# --- reference DATA (RULE 3): the conservative minimum is NO extra links and NO allocation table —
+#     a missing file never invents an allocation, it just omits the block (loudly, on stderr).
+_PO_FALLBACK = {"messaging_extra": {}, "messaging_notes": {}, "prefix_allocation": {}}
+
+
+def _load_refs():
+    try:
+        if WP not in sys.path:
+            sys.path.insert(0, WP)
+        from wp_refs import load_ref, ref_path  # noqa: E402
+        return load_ref(ref_path(__file__, "phone_osint.json"), _PO_FALLBACK)
+    except Exception:  # noqa: BLE001 — loader missing: the conservative minimum, loudly
+        print("[!] phone_osint.json not loaded — no extra links / prefix allocation", file=sys.stderr)
+        return dict(_PO_FALLBACK)
+
+
+_REFS = _load_refs()
+MESSAGING_EXTRA = _REFS.get("messaging_extra") or {}
+MESSAGING_NOTES = _REFS.get("messaging_notes") or {}
+PREFIX_ALLOCATION = _REFS.get("prefix_allocation") or {}
 
 # calling code -> (territory, national significant number length range)
 CC = {
@@ -64,6 +92,45 @@ def split_cc(digits):
         if digits[:n] in CC:
             return digits[:n], CC[digits[:n]]
     return None, (None, None)
+
+
+def prefix_allocation(cc, nsn):
+    """The block this NSN falls in per the curated numbering plan (`prefix_allocation` in
+    references/phone_osint.json) — the network the prefix was ORIGINALLY allocated to, never the
+    current carrier. None when the country is not curated. Longest written prefix wins."""
+    spec = PREFIX_ALLOCATION.get(cc)
+    if not isinstance(spec, dict) or not nsn:
+        return None
+    written = str(spec.get("trunk") or "") + nsn
+    lengths = spec.get("nsn_length") or {}
+    best = None
+    for net, prefixes in (spec.get("mobile") or {}).items():
+        for p in prefixes or []:
+            if written.startswith(p) and (best is None or len(p) > len(best[0])):
+                best = (p, net)
+    caveat = spec.get("ported_caveat")
+    if best:
+        p, net = best
+        exp = lengths.get("mobile")
+        return {"allocated_block": "mobile", "prefix": p, "originally_allocated_to": net,
+                "mvno_host": (spec.get("mvno_host") or {}).get(net),
+                "nsn_length_matches_block": (len(nsn) == exp) if exp else None,
+                "ported_caveat": caveat}
+    flp = spec.get("fixed_line_prefix")
+    if flp and written.startswith(flp):
+        area_code, area = None, None
+        for code, name in (spec.get("fixed_line") or {}).items():
+            if written.startswith(code) and (area_code is None or len(code) > len(area_code)):
+                area_code, area = code, name
+        exp = lengths.get("fixed_line")
+        return {"allocated_block": "fixed_line", "prefix": area_code or written[:len(flp) + 1],
+                "area": area, "originally_allocated_to": None,
+                "nsn_length_matches_block": (len(nsn) == exp) if exp else None,
+                "ported_caveat": spec.get("fixed_line_caveat") or caveat}
+    return {"allocated_block": None, "prefix": written[:3], "originally_allocated_to": None,
+            "note": "prefix not in the curated allocation table — unallocated, new, or "
+                    "special-service; not evidence of invalidity",
+            "ported_caveat": caveat}
 
 
 def analyse(raw):
@@ -117,6 +184,15 @@ def analyse(raw):
         "telegram": f"https://t.me/+{bare}",
         "viber": f"viber://chat?number=%2B{bare}",
     }
+    trunk = str((PREFIX_ALLOCATION.get(cc) or {}).get("trunk") or "0")
+    for name, tpl in (MESSAGING_EXTRA.get(cc) or {}).items():
+        out["messaging_links"][name] = (str(tpl).replace("{digits}", bare)
+                                        .replace("{national}", trunk + nsn).replace("{nsn}", nsn))
+    if MESSAGING_NOTES.get(cc):
+        out["messaging_note"] = MESSAGING_NOTES[cc]
+    alloc = prefix_allocation(cc, nsn)
+    if alloc:
+        out["prefix_allocation"] = alloc
     # The real pivot: an operator reuses one contact number across an estate, so finding the
     # number quoted in page source clusters the estate.
     forms = {e, bare, nsn, f"{cc} {nsn}", f"0{nsn}"}
@@ -130,6 +206,9 @@ def analyse(raw):
     out["next"] = ["reverse-WHOIS by registrant phone (whois_enrich --reverse-phone)",
                    "search_pivot the number as a selector",
                    "intelx_search the number against leak corpora"]
+    if cc == "84":
+        out["next"].append(f"vn_corp --by-phone {trunk}{nsn} — companies registering this contact "
+                           "number (a LEAD: accounting/agent numbers are shared across clients)")
     return out
 
 

@@ -107,3 +107,51 @@ Read the banner/info file for family + contacts; `grep`/read `passwords*` for
 `admin.`/`backend`/`/login` panel URLs; scan `autofill*` for emails/phones/names
 and `cek ktp`/finance keywords; extract `https?://` from `history*`; list cookie
 domains. Then apply the §4 triage and §5 correlation by hand.
+
+
+## 8. Corporate SaaS and machine-role additions
+
+```bash
+uv run "$SKILL_DIR/scripts/stealer_log_parse.py" /path/to/logs /path/to/output --subject-emails operator@example.com,subject@example.net
+```
+
+`--subject-emails` accepts comma/space-separated emails and flags exact, case-insensitive
+username matches. It does not infer aliases, ownership or successful authentication.
+
+## Corporate SaaS / administrative credential tagging
+
+Every parsed credential gains `saas_tags`, `subject_login`, and `rung: lead`. The reference
+`scripts/references/stealer_triage.json`
+contains host suffixes and URL path patterns for:
+
+- `sso_workspace`: Lark, Google Workspace, M365 and Okta;
+- `crm_helpdesk`: CRM and support systems;
+- `ecommerce_backend`: seller / merchant backends;
+- `cms_admin`: WordPress and other CMS administration;
+- `banking_payment`: banking and payment portals;
+- `marketing_seo`: advertising, marketing and SEO tools;
+- `logistics`: shipping and logistics systems.
+
+Host matching is boundary-aware (an unrelated suffix does not match). Paths are hints, not
+proof a site actually runs that product. The JSON includes per-log `saas_summary` and
+`subject_logins`; the report shows categories and the subject-login flag per credential.
+
+## Machine-role triage
+
+Each per-log `machine_triage` block contains `classification`, `basis`, observed `counts`,
+reference `thresholds`, `rung: lead`, and an attribution caveat. Rules run in this order:
+
+1. `aggregator`: at least 3 dump/combolist-named files; OR at least 1,000 credentials,
+   100 distinct email usernames/autofill emails and 50 URL domains; OR at least 20 wallet
+   directories alongside 100 distinct emails.
+2. `vendor_or_shared`: absent the aggregation rule, at least 30 credentials, 10 email
+   identities and 10 administrative/SaaS domains. Agency/client access or a shared endpoint is
+   a plausible explanation, not a finding about the machine's owner.
+3. `victim_endpoint`: neither threshold reached. This is the default bucket, not proof of
+   single-person use or absence of compromise elsewhere.
+
+All numbers and filename patterns live in `scripts/references/stealer_triage.json`. Wallet
+folders count storage locations, not people or on-chain owners. Many email/domain strings
+are diversity proxies, not verified unrelated victims. A combolist filename can be misleading:
+confirm file contents and provenance before treating a role hypothesis as established.
+

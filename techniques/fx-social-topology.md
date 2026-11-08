@@ -77,6 +77,37 @@ Anomalies:
   - 89% mutual-follow rate within that subgraph → coordinated behavior flag
 ```
 
+## Relative discovery
+
+Use only lawfully accessible public material. Start with same-surname accounts in
+following/follower/friend lists, maiden-name or former-surname variants, family tags and
+comments, and explicit “mom”, “bro”, “sister” or similar language. Kinship language can be
+figurative; a shared surname can be common and a follow can be incidental. Do not bypass
+private-profile controls or contact family members to validate a hypothesis.
+
+Cross-check public company/WHOIS records for shared surnames at the same address, and
+public obituaries or wedding pages for an explicitly named relationship. A company address
+may be a formation agent or shared office, and a WHOIS address may be a proxy; neither
+establishes a household. Reposts of one announcement are one source, not independent signals.
+Check dates, name collisions and whose account actually made a statement before grading.
+
+| Relationship status | Required basis |
+|---|---|
+| confirmed | An explicit relationship statement in a post/comment by the account, or an official record identifying the relationship; retain the source and assess account/record identity separately |
+| probable | Two independent signals supporting the same relationship, not two copies of one source |
+| possible | Surname-only match; no relationship established |
+
+Every relative remains a lead even when the relationship status is confirmed. Record
+`rung: "lead"`, `status`, the relationship claim, its source URL/date and a `caveat`
+explaining uncertainty and scope. Never call KB `add_edge` or create an `operator_lead`
+for relatives; a relationship is not an identity or common-operator edge. Keep relationship
+notes outside the KB identity graph and do not expand collection solely because kinship exists.
+
+Privacy: avoid collecting minors' identities, dates of birth, schools, routine locations or
+contact details. Public availability is not a reason to publish them. Omit incidental family
+details and retain only the minimum relevant, lawful evidence. See
+[public people records](people-records-global.md) for jurisdiction and access limitations.
+
 ## Limitations
 - Platform API restrictions limit collection depth; follower counts visible but full lists often blocked
 - Private accounts produce invisible edges — topology is always an undercount

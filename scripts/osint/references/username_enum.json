@@ -1,0 +1,89 @@
+{
+  "_comment": "Username enumeration provider endpoints and configurable numeric suffix interpretations. Suffixes are hints only, never recorded as DOB or identity evidence. Date candidates are calendar-validated.",
+  "platforms": {
+    "_comment": "Only curated detection methods; challenge and rate-limited responses remain unknown.",
+    "values": [
+      [
+        "github",
+        "https://api.github.com/users/{u}",
+        "api"
+      ],
+      [
+        "gitlab",
+        "https://gitlab.com/api/v4/users?username={u}",
+        "api_list"
+      ],
+      [
+        "keybase",
+        "https://keybase.io/_/api/1.0/user/lookup.json?username={u}",
+        "keybase"
+      ],
+      [
+        "npm",
+        "https://registry.npmjs.org/-/user/org.couchdb.user:{u}",
+        "api"
+      ],
+      [
+        "hackernews",
+        "https://hacker-news.firebaseio.com/v0/user/{u}.json",
+        "hn"
+      ],
+      [
+        "telegram",
+        "https://t.me/{u}",
+        "telegram"
+      ],
+      [
+        "dev.to",
+        "https://dev.to/{u}",
+        "status"
+      ]
+    ]
+  },
+  "patterns": {
+    "_comment": "Validation and trailing digit extraction expressions; all suffix heuristics use these patterns.",
+    "entries": {
+      "valid": "^[A-Za-z0-9._-]{1,64}$",
+      "suffix": "([0-9]+)$"
+    }
+  },
+  "numeric_suffix": {
+    "_comment": "Century windows and plausible four-digit year range are configurable interpretation thresholds, not assertions of age.",
+    "entries": {
+      "two_digit_windows": [
+        [
+          50,
+          99,
+          1900
+        ],
+        [
+          0,
+          15,
+          2000
+        ]
+      ],
+      "year_min": 1940,
+      "year_max": 2015,
+      "date_formats": [
+        "DDMM",
+        "MMDD",
+        "YYYYMMDD"
+      ],
+      "calendar_validation_year": 2000
+    }
+  },
+  "network": {
+    "_comment": "Default CLI network timeout and parallel worker count for public profile lookups.",
+    "entries": {
+      "timeout": 12,
+      "workers": 8
+    }
+  },
+  "telegram_markers": {
+    "_comment": "Public Telegram account markers; templates may change and positive detection remains a hypothesis.",
+    "values": [
+      "tgme_page_title",
+      "tgme_page_extra"
+    ]
+  }
+}

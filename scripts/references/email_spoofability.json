@@ -1,0 +1,22 @@
+{
+  "_comment": "SPOOFABILITY grade for a subject's mail domains (scripts/webpivot/email_hygiene.py :: spoofability). SPF is read from the apex TXT (reusing WebPivot/tools/wp_recon.parse_spf), DMARC from _dmarc.<domain> TXT (wp_recon.parse_dmarc). The grade is a POSTURE FACT about the domain — whether a third party can send mail that passes as it — never attribution evidence about who owns it (RULE 5). Vocabulary and thresholds only, never case data (RULE 1).",
+  "doh_endpoints": ["https://dns.google/resolve", "https://cloudflare-dns.com/dns-query"],
+  "limits": {
+    "_comment": "RFC 7208 §4.6.4: more than 10 DNS-querying terms (include, a, mx, ptr, exists, redirect) across the whole evaluation is a PERMERROR, and a permerror SPF protects nothing. max_include_depth bounds the recursive walk so a loop or a deep chain cannot hang the run.",
+    "max_dns_lookups": 10,
+    "max_include_depth": 6,
+    "required_pct": 100
+  },
+  "protected_policies": {
+    "_comment": "DMARC p= values that make a receiver act on a failure. With pct=required_pct and an SPF `all` in protected_spf_all the domain grades `protected`.",
+    "values": ["reject", "quarantine"]
+  },
+  "protected_spf_all": {
+    "_comment": "SPF terminal qualifiers that, under an enforcing DMARC policy, deny an unauthorised sender.",
+    "values": ["-all", "~all"]
+  },
+  "weak_spf_all": {
+    "_comment": "SPF terminal states that authorise or ignore an unknown sender. With no DMARC, or DMARC p=none, these grade `spoofable`. `missing` = no SPF record or no `all` term; `permerror` = more than max_dns_lookups or multiple v=spf1 records.",
+    "values": ["~all", "?all", "+all", "missing", "permerror"]
+  }
+}

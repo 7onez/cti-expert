@@ -1,0 +1,33 @@
+{
+  "_comment": "EXECUTIVE model for scripts/osint/exposure_score.py (--model executive), documented in analysis/weight-engine.md §7. DEDUCTIVE: a subject starts at start_score and loses max * rating / rating_max per criterion. Higher = SAFER (the opposite direction from the default composite, where higher = more exposed). Vocabulary and thresholds only, never case data (RULE 1).",
+  "settings": {
+    "start_score": 100,
+    "rating_max": 3,
+    "_rating_scale": "0 = no exposure found, 1 = minor, 2 = significant, 3 = severe / fully exposed"
+  },
+  "criteria": {
+    "_comment": "key -> {label, max, guide}. The maxima sum to start_score (100); a rating of rating_max on every criterion reaches 0.",
+    "entries": {
+      "c1": {"label": "Digital account footprint", "max": 15,
+             "guide": "how many accounts/handles are discoverable and linkable to the subject (social, forums, app stores, code hosts)"},
+      "c2": {"label": "PII exposure", "max": 20,
+             "guide": "national ID, date of birth, personal phone/e-mail, tax or registry numbers published or leaked"},
+      "c3": {"label": "Family / close-relation exposure", "max": 15,
+             "guide": "spouse, children, relatives or close associates identifiable and themselves exposed"},
+      "c4": {"label": "Physical address & habits", "max": 15,
+             "guide": "home address, routine locations, travel patterns, geotagged media"},
+      "c5": {"label": "Corporate assets & financial exposure", "max": 10,
+             "guide": "company roles, shareholdings, registered assets, payment or banking identifiers"},
+      "c6": {"label": "Political / reputation", "max": 10,
+             "guide": "political affiliation, controversy, adverse media, litigation"},
+      "c7": {"label": "Breach records & stealer logs", "max": 10,
+             "guide": "subject identifiers in breach corpora or infostealer logs (credential exposure)"},
+      "c8": {"label": "Account & infrastructure security", "max": 5,
+             "guide": "spoofable mail domains, no MFA evidence, exposed admin surfaces of the subject's own estate"}
+    }
+  },
+  "bands": {
+    "_comment": "Lower bound (inclusive) -> band, evaluated highest first. Score >= 80 low risk, 60-79 moderate, 40-59 high, < 40 critical.",
+    "entries": {"80": "LOW", "60": "MODERATE", "40": "HIGH", "0": "CRITICAL"}
+  }
+}

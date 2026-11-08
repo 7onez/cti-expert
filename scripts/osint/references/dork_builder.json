@@ -1,0 +1,417 @@
+{
+  "_comment": "Dork builder reference templates: emitted queries only, never executed. Severity describes potential exposure, not evidence or confidence. All people and affiliation hits remain leads.",
+  "platforms": {
+    "_comment": "Document hosts and exposure rationale; damage severity applies only if an analyst verifies a hit.",
+    "values": [
+      [
+        "scribd.com",
+        "site:scribd.com \"{t}\"",
+        "HIGH",
+        "uploaded internal docs"
+      ],
+      [
+        "slideshare.net",
+        "site:slideshare.net \"{t}\"",
+        "MEDIUM",
+        "decks with internal data"
+      ],
+      [
+        "docplayer.net",
+        "site:docplayer.net \"{t}\"",
+        "HIGH",
+        "mirrors leaked PDFs"
+      ],
+      [
+        "issuu.com",
+        "site:issuu.com \"{t}\"",
+        "MEDIUM",
+        "published brochures"
+      ],
+      [
+        "yumpu.com",
+        "site:yumpu.com \"{t}\"",
+        "MEDIUM",
+        "mirrored publications"
+      ],
+      [
+        "pdfcoffee.com",
+        "site:pdfcoffee.com \"{t}\"",
+        "HIGH",
+        "scraped document mirror"
+      ],
+      [
+        "vdocuments",
+        "site:vdocuments.mx OR site:vdocuments.net \"{t}\"",
+        "HIGH",
+        "doc mirror"
+      ],
+      [
+        "studylib.net",
+        "site:studylib.net \"{t}\"",
+        "MEDIUM",
+        "uploaded materials"
+      ],
+      [
+        "coursehero.com",
+        "site:coursehero.com \"{t}\"",
+        "LOW",
+        "academic uploads"
+      ],
+      [
+        "academia.edu",
+        "site:academia.edu \"{t}\"",
+        "LOW",
+        "papers, org names"
+      ],
+      [
+        "pastebin.com",
+        "site:pastebin.com \"{t}\"",
+        "CRITICAL",
+        "credentials and configs"
+      ],
+      [
+        "ghostbin/rentry",
+        "site:rentry.co OR site:ghostbin.com \"{t}\"",
+        "CRITICAL",
+        "paste mirrors"
+      ],
+      [
+        "trello.com",
+        "site:trello.com \"{t}\"",
+        "HIGH",
+        "public boards leak process"
+      ],
+      [
+        "s3 buckets",
+        "site:s3.amazonaws.com \"{t}\"",
+        "CRITICAL",
+        "open object storage"
+      ],
+      [
+        "azure blobs",
+        "site:blob.core.windows.net \"{t}\"",
+        "CRITICAL",
+        "open object storage"
+      ],
+      [
+        "gitlab snippets",
+        "site:gitlab.com \"{t}\" snippets",
+        "HIGH",
+        "pasted code and secrets"
+      ],
+      [
+        "google groups",
+        "site:groups.google.com \"{t}\"",
+        "MEDIUM",
+        "mailing-list archives"
+      ],
+      [
+        "archive.org",
+        "site:archive.org \"{t}\"",
+        "LOW",
+        "archived copies"
+      ]
+    ]
+  },
+  "filetypes": {
+    "_comment": "File extension query families graded by potential exposure rather than likelihood of a result.",
+    "values": [
+      [
+        "credentials",
+        "filetype:env OR filetype:ini OR filetype:cfg \"{t}\"",
+        "CRITICAL"
+      ],
+      [
+        "databases",
+        "filetype:sql OR filetype:db OR filetype:sqlite \"{t}\"",
+        "CRITICAL"
+      ],
+      [
+        "backups",
+        "filetype:bak OR filetype:old OR filetype:backup \"{t}\"",
+        "HIGH"
+      ],
+      [
+        "spreadsheets",
+        "filetype:xls OR filetype:xlsx OR filetype:csv \"{t}\"",
+        "HIGH"
+      ],
+      [
+        "documents",
+        "filetype:pdf OR filetype:doc OR filetype:docx \"{t}\"",
+        "MEDIUM"
+      ],
+      [
+        "logs",
+        "filetype:log \"{t}\"",
+        "HIGH"
+      ],
+      [
+        "keys",
+        "filetype:pem OR filetype:key OR filetype:ppk \"{t}\"",
+        "CRITICAL"
+      ]
+    ]
+  },
+  "severity_order": {
+    "_comment": "Severity ranking used to sort and apply the inclusive CLI severity threshold.",
+    "entries": {
+      "CRITICAL": 0,
+      "HIGH": 1,
+      "MEDIUM": 2,
+      "LOW": 3
+    }
+  },
+  "engines": {
+    "_comment": "Search-engine entry URLs for manual querying only; no automated requests are made.",
+    "values": [
+      "https://www.google.com/search?q=",
+      "https://duckduckgo.com/?q=",
+      "https://search.marcia.dev/?q=",
+      "https://www.bing.com/search?q="
+    ]
+  },
+  "patterns": {
+    "_comment": "A plain DNS hostname is treated as an organisation domain; company names never invent a mailbox domain.",
+    "entries": {
+      "domain": "(?i)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}"
+    }
+  },
+  "staff_emails": {
+    "_comment": "Public staff-name and email mentions are discovery leads, never proof of employment or mailbox ownership.",
+    "values": [
+      {
+        "host": "offsite mentions",
+        "template": "\"@{domain}\" -site:{domain}",
+        "severity": "LOW",
+        "why_it_matters": "Public staff email mentions and staff names; verify current employment.",
+        "domain_only": true
+      },
+      {
+        "host": "PDF",
+        "template": "filetype:pdf \"@{domain}\"",
+        "severity": "LOW",
+        "why_it_matters": "Staff names or public contact details in documents.",
+        "domain_only": true
+      },
+      {
+        "host": "spreadsheet",
+        "template": "filetype:xlsx \"@{domain}\"",
+        "severity": "LOW",
+        "why_it_matters": "Public contact lists may name staff; minimise personal data.",
+        "domain_only": true
+      },
+      {
+        "host": "linkedin.com/in",
+        "template": "site:linkedin.com/in \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Self-declared employment and staff-name leads; not verified affiliations.",
+        "domain_only": false
+      }
+    ]
+  },
+  "jobs": {
+    "_comment": "Job advertisements may reveal hiring geography, office locations and internal tools in job specifications; outdated and recruiter reposts need corroboration.",
+    "values": [
+      {
+        "host": "linkedin.com/jobs",
+        "template": "site:linkedin.com/jobs \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "indeed.com",
+        "template": "site:indeed.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "glassdoor.com",
+        "template": "site:glassdoor.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "jobstreet.com",
+        "template": "site:jobstreet.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "onlinejobs.ph",
+        "template": "site:onlinejobs.ph \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "kalibrr.com",
+        "template": "site:kalibrr.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "jobsdb.com",
+        "template": "site:jobsdb.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "vietnamworks.com",
+        "template": "site:vietnamworks.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "topcv.vn",
+        "template": "site:topcv.vn \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "infostud.com",
+        "template": "site:infostud.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "naukri.com",
+        "template": "site:naukri.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "stepstone.com",
+        "template": "site:stepstone.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "seek.com.au",
+        "template": "site:seek.com.au \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring geography, office locations and internal tools in job specs; check date and advertiser.",
+        "domain_only": false
+      },
+      {
+        "host": "generic careers",
+        "template": "\"{t}\" \"careers\"",
+        "severity": "LOW",
+        "why_it_matters": "Company career pages, office geography and vacancies.",
+        "domain_only": false
+      },
+      {
+        "host": "generic hiring",
+        "template": "\"{t}\" \"hiring\"",
+        "severity": "LOW",
+        "why_it_matters": "Hiring announcements and technology/tool requirements; not employee proof.",
+        "domain_only": false
+      }
+    ]
+  },
+  "freelancer_profiles": {
+    "_comment": "Public freelancer and tutor profiles may disclose claimed client work, teaching locations and internal tools; client claims require independent corroboration.",
+    "values": [
+      {
+        "host": "upwork.com",
+        "template": "site:upwork.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "fiverr.com",
+        "template": "site:fiverr.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "freelancer.com",
+        "template": "site:freelancer.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "onlinejobs.ph",
+        "template": "site:onlinejobs.ph \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "preply.com",
+        "template": "site:preply.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "italki.com",
+        "template": "site:italki.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      },
+      {
+        "host": "superprof.com",
+        "template": "site:superprof.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Claimed client work or teaching affiliation, staff-name and geography leads; self-declared.",
+        "domain_only": false
+      }
+    ]
+  },
+  "company_socials": {
+    "_comment": "Company social mentions may reveal official profiles, staff tags and hiring locations; mentions and similar names are not ownership evidence.",
+    "values": [
+      {
+        "host": "facebook.com",
+        "template": "site:facebook.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Company mentions, claimed official profiles, staff tags and hiring geography; verify control.",
+        "domain_only": false
+      },
+      {
+        "host": "instagram.com",
+        "template": "site:instagram.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Company mentions, claimed official profiles, staff tags and hiring geography; verify control.",
+        "domain_only": false
+      },
+      {
+        "host": "tiktok.com",
+        "template": "site:tiktok.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Company mentions, claimed official profiles, staff tags and hiring geography; verify control.",
+        "domain_only": false
+      },
+      {
+        "host": "youtube.com",
+        "template": "site:youtube.com \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Company mentions, claimed official profiles, staff tags and hiring geography; verify control.",
+        "domain_only": false
+      },
+      {
+        "host": "t.me",
+        "template": "site:t.me \"{t}\"",
+        "severity": "LOW",
+        "why_it_matters": "Company mentions, claimed official profiles, staff tags and hiring geography; verify control.",
+        "domain_only": false
+      }
+    ]
+  }
+}

@@ -300,6 +300,54 @@ Input variations to normalize before scanning:
 Rule: strip all non-digits, prepend "+" and country code
 ```
 
+### Vietnam (+84): Zalo, prefix allocation, registry reverse
+```
+phone_osint.py +84900000000
+  messaging_links.zalo       https://zalo.me/0900000000      (domestic form)
+  messaging_links.zalo_intl  https://zalo.me/84900000000     (E.164 digits)
+  messaging_note             Zalo shows a profile only if the account allows
+                             search-by-phone: "not found" is NOT absence; the
+                             profile name is self-declared.
+  prefix_allocation          {allocated_block: mobile, prefix: 090,
+                              originally_allocated_to: MobiFone, mvno_host,
+                              ported_caveat}
+  not_determined.carrier     unchanged — still needs a metered HLR/MNP lookup
+```
+- `prefix_allocation` is the network the prefix block was ORIGINALLY assigned to
+  (table: `scripts/osint/references/phone_osint.json`). Vietnam has had mobile number
+  portability since 2021 and MVNOs (Itelecom 087, Reddi 055) ride host networks, so
+  never report it as the carrier. Quote `ported_caveat` with it.
+- A 02x number reports `allocated_block: fixed_line` with the area code (024 Ha Noi,
+  028 TP Ho Chi Minh, ...). That is where the number was allocated, not where the
+  subscriber is; VoIP and hosted PBX services also issue geographic numbers.
+- Registry reverse: `wp_vncorp.py --by-phone 0900000000` lists companies whose
+  REGISTERED contact phone is the number. infocom.vn's listing masks the last digits,
+  so a listing hit is `listing_phone_masked` (consistent, not exact) until the
+  doanhnghiep.biz record page confirms `record_phone_exact`. Registration agents and
+  accounting firms file their own number for many clients: several exact hits set
+  `summary.shared_number`. Every row is a LEAD (RULE 5), never an operator attribution.
+- Person reverse: `wp_vncorp.py --by-person "<full name>" --corroborate "province=..,phone=.."`
+  (doanhnghiep.biz representative search + tratencongty.com). Names repeat at very high
+  rates: rows stay `candidate` unless an exact representative name AND a second datum
+  (address, province, dob, phone) match on the same record with none contradicting;
+  only then `linked: true`.
+- Forward MST / name lookups behind Cloudflare: masothue.com and thuvienphapluat.vn both wall
+  datacenter egress, and each walled mirror is reported as its own error with `cf_retry`.
+  `--solve-cf` (opt-in, slow) retries masothue with the OPTIONAL CloakBrowser step first
+  (headless, humanized, the module's Android UA), then FlareSolverr, then a Chromium render.
+  - DECOY: masothue answers a DIRECT `/Search/?q=<MST>` URL, even with the form's hidden token,
+    with a different, freshly registered company. So the CloakBrowser step never opens a search
+    URL: it types the query into the home-page search box and presses Enter, as a visitor
+    would. The tax-code guard still applies to every page: a record whose tax code is not the
+    queried MST is `unmatched`, never merged.
+  - Setup: `pip install cloakbrowser` (installed by `install.sh --headless` / `--all`), then
+    run `cloakbrowser login` once, or put `CLOAKBROWSER_LICENSE_KEY` in the gitignored `.env`.
+    Never write a key value into a tracked file, a case note or a report. Without the package
+    or licence, `cf_retry.reason` says so and the retry falls through.
+  - Egress: the step launches DIRECT unless `--proxy` is given, because the proxy pool's
+    datacenter exit kept the challenge up. thuvienphapluat.vn hard-blocks datacenter IPs
+    ("Sorry, you have been blocked") in every mode; it needs a residential `--proxy`.
+
 ---
 
 ## 7. Confidence Ratings

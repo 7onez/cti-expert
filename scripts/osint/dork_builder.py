@@ -12,9 +12,12 @@ Severity here grades the QUERY, not a result — how damaging a hit would be if 
 distinction matters: nothing below is evidence of anything until a human opens it.
 
 Pure: no network, no keys, deterministic.
+Organisation targets also receive staff-email, job, freelancer and company-social
+queries. These reveal possible staff names, hiring geography and tools in job specs,
+not proven employment or account ownership. Templates live in references/dork_builder.json.
 
 Usage:
-  dork_builder.py "Acme Corp"
+  dork_builder.py "Company A Ltd"
   dork_builder.py example.com --severity high --pretty
 """
 # /// script
@@ -23,40 +26,23 @@ Usage:
 import argparse
 import json
 import sys
+import os
+import re
 
-# (host, template, severity, why) — severity = damage IF a hit exists, not confidence of a hit.
-PLATFORMS = [
-    ("scribd.com",        'site:scribd.com "{t}"',              "HIGH",   "uploaded internal docs"),
-    ("slideshare.net",    'site:slideshare.net "{t}"',          "MEDIUM", "decks with internal data"),
-    ("docplayer.net",     'site:docplayer.net "{t}"',           "HIGH",   "mirrors leaked PDFs"),
-    ("issuu.com",         'site:issuu.com "{t}"',               "MEDIUM", "published brochures"),
-    ("yumpu.com",         'site:yumpu.com "{t}"',               "MEDIUM", "mirrored publications"),
-    ("pdfcoffee.com",     'site:pdfcoffee.com "{t}"',           "HIGH",   "scraped document mirror"),
-    ("vdocuments",        'site:vdocuments.mx OR site:vdocuments.net "{t}"', "HIGH", "doc mirror"),
-    ("studylib.net",      'site:studylib.net "{t}"',            "MEDIUM", "uploaded materials"),
-    ("coursehero.com",    'site:coursehero.com "{t}"',          "LOW",    "academic uploads"),
-    ("academia.edu",      'site:academia.edu "{t}"',            "LOW",    "papers, org names"),
-    ("pastebin.com",      'site:pastebin.com "{t}"',            "CRITICAL", "credentials and configs"),
-    ("ghostbin/rentry",   'site:rentry.co OR site:ghostbin.com "{t}"', "CRITICAL", "paste mirrors"),
-    ("trello.com",        'site:trello.com "{t}"',              "HIGH",   "public boards leak process"),
-    ("s3 buckets",        'site:s3.amazonaws.com "{t}"',        "CRITICAL", "open object storage"),
-    ("azure blobs",       'site:blob.core.windows.net "{t}"',   "CRITICAL", "open object storage"),
-    ("gitlab snippets",   'site:gitlab.com "{t}" snippets',     "HIGH",   "pasted code and secrets"),
-    ("google groups",     'site:groups.google.com "{t}"',       "MEDIUM", "mailing-list archives"),
-    ("archive.org",       'site:archive.org "{t}"',             "LOW",    "archived copies"),
-]
+WP = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..",
+                                   "intel_engine", "WebPivot", "tools"))
+if WP not in sys.path:
+    sys.path.insert(0, WP)
+from wp_refs import load_ref, ref_path
 
-FILETYPES = [
-    ("credentials",  'filetype:env OR filetype:ini OR filetype:cfg "{t}"',      "CRITICAL"),
-    ("databases",    'filetype:sql OR filetype:db OR filetype:sqlite "{t}"',    "CRITICAL"),
-    ("backups",      'filetype:bak OR filetype:old OR filetype:backup "{t}"',   "HIGH"),
-    ("spreadsheets", 'filetype:xls OR filetype:xlsx OR filetype:csv "{t}"',     "HIGH"),
-    ("documents",    'filetype:pdf OR filetype:doc OR filetype:docx "{t}"',     "MEDIUM"),
-    ("logs",         'filetype:log "{t}"',                                      "HIGH"),
-    ("keys",         'filetype:pem OR filetype:key OR filetype:ppk "{t}"',      "CRITICAL"),
-]
-
-ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+_FALLBACK = {"platforms": [], "filetypes": [], "severity_order": {
+    "CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3},
+    "engines": [], "patterns": {"domain": r"(?!)"},
+    "staff_emails": [], "jobs": [], "freelancer_profiles": [], "company_socials": []}
+_REFS = load_ref(ref_path(__file__, "dork_builder.json"), _FALLBACK)
+PLATFORMS = _REFS["platforms"]
+FILETYPES = _REFS["filetypes"]
+ORDER = _REFS["severity_order"]
 
 
 def main():
@@ -79,12 +65,23 @@ def main():
         if ORDER[sev] <= floor:
             rows.append({"kind": "filetype", "family": name, "severity": sev,
                          "query": tmpl.format(t=t)})
+    domain = t.lower() if re.fullmatch(_REFS["patterns"]["domain"], t) else ""
+    for family in ("staff_emails", "jobs", "freelancer_profiles", "company_socials"):
+        for entry in _REFS[family]:
+            if entry.get("domain_only") and not domain:
+                continue
+            if ORDER[entry["severity"]] <= floor:
+                rows.append({"kind": "organisation", "family": family,
+                             "host": entry["host"], "severity": entry["severity"],
+                             "why_it_matters": entry["why_it_matters"],
+                             "query": entry["template"].format(t=t, domain=domain),
+                             "rung": "lead",
+                             "caveat": "Search query only; hits need corroboration and never establish identity or employment."})
     rows.sort(key=lambda r: ORDER[r["severity"]])
 
     out = {"target": t, "queries": rows, "count": len(rows),
            "severity_counts": {s: sum(1 for r in rows if r["severity"] == s) for s in ORDER},
-           "engines": ["https://www.google.com/search?q=", "https://duckduckgo.com/?q=",
-                       "https://search.marcia.dev/?q=", "https://www.bing.com/search?q="],
+           "engines": _REFS["engines"],
            "execution": ("NOT RUN. Automated querying of these engines gets the egress blocked "
                          "within a few requests and breaks on every layout change; several doc "
                          "hosts also forbid it. Open them in a browser you control."),

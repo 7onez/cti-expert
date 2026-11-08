@@ -1,0 +1,65 @@
+{
+  "_comment": "phone_osint — per-country reference DATA (RULE 3): extra messaging deep links and the ORIGINAL prefix allocation table. Nothing here is case data: these are public numbering-plan facts and public deep-link URL shapes. Editing a network's prefixes, or adding a country, is a data edit, not a code change.",
+  "messaging_extra": {
+    "_comment": "Calling code -> {link name: URL template}. Placeholders: {digits} = E.164 digits without '+', {national} = domestic form with the trunk prefix (e.g. 0 + NSN), {nsn} = national significant number. Merged into the tool's messaging_links next to whatsapp/telegram/viber.",
+    "entries": {
+      "84": {
+        "zalo": "https://zalo.me/{national}",
+        "zalo_intl": "https://zalo.me/{digits}"
+      }
+    }
+  },
+  "messaging_notes": {
+    "_comment": "Calling code -> one-line reading note emitted with the extra links.",
+    "entries": {
+      "84": "Zalo resolves a phone to a profile only when the account allows search-by-phone; a 'not found' page is not evidence the number has no Zalo account, and a profile name is self-declared."
+    }
+  },
+  "prefix_allocation": {
+    "_comment": "Calling code -> numbering-plan allocation. `trunk` is the domestic trunk prefix used to build the written prefix (0 + leading NSN digits). `mobile` maps the network the prefix block was ORIGINALLY allocated to -> written prefixes. `mvno_host` names the host network of an MVNO where the MVNO rides one. `fixed_line` maps a written geographic area code -> area. `nsn_length` gives the expected NSN length per class. `ported_caveat` is emitted verbatim on every hit. Vietnam: mobile blocks after the 2018 11->10 digit conversion (MIC Decision 798/QD-BTTTT); fixed-line area codes after the 2017 conversion. The fixed_line list is the major areas only — an unlisted 02x code is reported as fixed-line with area unknown.",
+    "entries": {
+      "84": {
+        "trunk": "0",
+        "nsn_length": {"mobile": 9, "fixed_line": 10},
+        "mobile": {
+          "Viettel": ["086", "096", "097", "098", "032", "033", "034", "035", "036", "037", "038", "039"],
+          "VinaPhone": ["088", "091", "094", "081", "082", "083", "084", "085"],
+          "MobiFone": ["089", "090", "093", "070", "076", "077", "078", "079"],
+          "Vietnamobile": ["092", "056", "058"],
+          "Gmobile": ["099", "059"],
+          "Itelecom": ["087"],
+          "Reddi": ["055"]
+        },
+        "mvno_host": {
+          "Itelecom": "VinaPhone",
+          "Reddi": "MobiFone"
+        },
+        "fixed_line_prefix": "02",
+        "fixed_line": {
+          "024": "Ha Noi",
+          "028": "TP Ho Chi Minh",
+          "0225": "Hai Phong",
+          "0236": "Da Nang",
+          "0292": "Can Tho",
+          "0251": "Dong Nai",
+          "0274": "Binh Duong",
+          "0254": "Ba Ria - Vung Tau",
+          "0258": "Khanh Hoa",
+          "0234": "Thua Thien Hue",
+          "0238": "Nghe An",
+          "0237": "Thanh Hoa",
+          "0222": "Bac Ninh",
+          "0203": "Quang Ninh",
+          "0220": "Hai Duong",
+          "0263": "Lam Dong",
+          "0262": "Dak Lak",
+          "0272": "Long An",
+          "0297": "Kien Giang",
+          "0296": "An Giang"
+        },
+        "ported_caveat": "Allocation is the network this prefix block was ORIGINALLY assigned to. Vietnam has run mobile number portability since 2021 (and MVNOs ride host networks), so the CURRENT carrier can differ — this is not a carrier determination and must not be reported as one.",
+        "fixed_line_caveat": "A 02x area code names where the fixed-line number was allocated, not where the subscriber is; VoIP and hosted PBX services also issue geographic numbers."
+      }
+    }
+  }
+}

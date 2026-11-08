@@ -191,6 +191,60 @@ def weighted_composite(subject):
 
 ---
 
+## 7. Executive Model (deductive, `--model executive`)
+
+A second, separate model for a **protected person** (an executive, a public figure, a client
+under a protective-intelligence engagement). It answers "how much of this person can an
+adversary assemble?" with an analyst rating per criterion, and runs the opposite way from §1–§6:
+the subject **starts at 100 and loses points**, so **higher = safer**. Never put an executive score
+and a composite score in the same column of a report.
+
+```
+SCORE     = 100 − Σ deduction_i                 (over the RATED criteria only)
+deduction = max_i × rating_i / 3                rating ∈ {0,1,2,3}
+  0 = no exposure found   1 = minor   2 = significant   3 = severe / fully exposed
+```
+
+| # | Criterion | Max deduction | Rate on (examples) |
+|---|---|---|---|
+| C1 | Digital account footprint | 15 | discoverable, linkable accounts and handles |
+| C2 | PII exposure | 20 | national ID, date of birth, personal phone / e-mail, tax or registry numbers |
+| C3 | Family / close-relation exposure | 15 | spouse, children, relatives, close associates identifiable and exposed |
+| C4 | Physical address & habits | 15 | home address, routine locations, travel patterns, geotagged media |
+| C5 | Corporate assets & financial exposure | 10 | company roles, shareholdings, registered assets, payment identifiers |
+| C6 | Political / reputation | 10 | affiliation, controversy, adverse media, litigation |
+| C7 | Breach records & stealer logs | 10 | subject identifiers in breach corpora or infostealer logs |
+| C8 | Account & infrastructure security | 5 | spoofable mail domains (`email_hygiene.py` spoofability), no MFA evidence, exposed admin surfaces |
+
+The maxima sum to 100, so rating every criterion 3 reaches 0.
+
+| Score | Band |
+|---|---|
+| ≥ 80 | LOW |
+| 60–79 | MODERATE |
+| 40–59 | HIGH |
+| < 40 | CRITICAL |
+
+**Worked example.** C1=2, C2=3, C3=1, C4=0, C5=2, C6=1, C7=3, C8=3 →
+deductions 10 + 20 + 5 + 0 + 6.67 + 3.33 + 10 + 5 = 60 → **40 (HIGH)**, coverage 8/8.
+
+**Coverage, not silence.** An unrated criterion is *unknown*, not *clean*. The tool lists it in
+`missing`, reports `coverage` as `rated/8`, and adds `score_floor` / `band_floor` — the score if
+every unrated criterion proved fully exposed. A subject rated on 3/8 criteria with score 71.67
+(MODERATE) and floor 16.67 (CRITICAL) has not been assessed as moderate; the report says so.
+
+Each rating SHOULD carry a rationale (`cN_rationale`) naming the evidence that drove it, so the
+score can be re-derived and challenged. Criteria, maxima and bands live in
+`scripts/osint/references/exposure_executive.json`.
+
+```bash
+exposure_score.py --model executive --set c1=2 --set c2=3 --set c2_rationale="ID number in a leak"
+exposure_score.py --model executive ratings.json   # {"c1": 2, "c2": {"rating": 3, "rationale": "..."}}
+exposure_score.py --model executive --list
+```
+
+---
+
 ## Cross-References
 
 - `analysis/exposure-model.md` — dimension-level exposure scoring that uses this engine

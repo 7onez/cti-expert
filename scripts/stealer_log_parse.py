@@ -29,6 +29,8 @@ import os
 import re
 import json
 import datetime
+import argparse
+from urllib.parse import urlsplit
 from collections import Counter, defaultdict
 
 for _s in (sys.stdout, sys.stderr):
@@ -36,6 +38,85 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+
+_TRIAGE_FALLBACK = {
+    "saas": {"cms_admin": {"hosts": [], "paths": ["/wp-admin", "/wp-login.php"]}},
+    "file_patterns": {"dump": ["combolist"], "wallet": ["wallet"]},
+    "thresholds": {"dump_files": 3, "huge_credentials": 1000, "many_emails": 100,
+                   "many_domains": 50, "wallet_directories": 20, "vendor_logins": 30,
+                   "vendor_emails": 10, "vendor_admin_domains": 10},
+}
+
+
+def _triage_refs():
+    eng = os.path.normpath(os.path.join(os.path.dirname(__file__), "..",
+                                       "intel_engine", "WebPivot", "tools"))
+    if eng not in sys.path:
+        sys.path.insert(0, eng)
+    try:
+        from wp_refs import load_ref, ref_path
+        return load_ref(ref_path(__file__, "stealer_triage.json"), _TRIAGE_FALLBACK)
+    except ImportError:
+        print("[refs] stealer_triage loader unavailable; reduced category coverage", file=sys.stderr)
+        return _TRIAGE_FALLBACK
+
+
+_TRIAGE = _triage_refs()
+_ROLE_CAVEAT = ("Heuristic artifact-role lead, not attribution. A stored credential, mailbox, "
+                "wallet directory or shared artifact does not identify the machine user, "
+                "establish ownership, or prove unrelated victims. No KB edges.")
+
+
+def tag_credentials(passwords, subject_emails=()):
+    subjects = {e.strip().casefold() for e in subject_emails if e.strip()}
+    for r in passwords:
+        try:
+            u = urlsplit(r.get("url", ""))
+            host, path = (u.hostname or "").lower(), u.path.lower()
+        except ValueError:
+            host, path = "", ""
+        r["saas_tags"] = [
+            cat for cat, rule in _TRIAGE["saas"].items()
+            if any(host == h or host.endswith("." + h) for h in rule.get("hosts", []))
+            or any(path.startswith(p) or p in path for p in rule.get("paths", []))]
+        r["subject_login"] = r.get("login", "").strip().casefold() in subjects
+        r["rung"] = "lead"
+
+
+def classify_machine(passwords, emails, files):
+    t, patterns = _TRIAGE["thresholds"], _TRIAGE["file_patterns"]
+    identities = {e.casefold() for e in emails}
+    identities.update(r.get("login", "").strip().casefold() for r in passwords
+                      if EMAIL_RE.fullmatch(r.get("login", "").strip()))
+    domains = {domain_of(r.get("url", "")) for r in passwords if r.get("url")}
+    admin_domains = {domain_of(r.get("url", "")) for r in passwords
+                     if r.get("saas_tags") or classify_endpoint(r.get("url", ""))[0]}
+    dumps = [p for p in files if any(k in os.path.basename(p).lower()
+                                    for k in patterns["dump"])]
+    wallet_dirs = {os.path.dirname(p) for p in files
+                   if any(k in p.lower() for k in patterns["wallet"])}
+    counts = {"credentials": len(passwords), "distinct_emails": len(identities),
+              "credential_domains": len(domains), "admin_saas_domains": len(admin_domains),
+              "dump_files": len(dumps), "wallet_directories": len(wallet_dirs)}
+    basis = []
+    if len(dumps) >= t["dump_files"]:
+        basis.append(f"dump/combolist filenames {len(dumps)} >= {t['dump_files']}")
+    if (len(passwords) >= t["huge_credentials"] and len(identities) >= t["many_emails"]
+            and len(domains) >= t["many_domains"]):
+        basis.append("large credential collection with many distinct email and URL domains")
+    if len(wallet_dirs) >= t["wallet_directories"] and len(identities) >= t["many_emails"]:
+        basis.append("many wallet directories plus many distinct email identities")
+    if basis:
+        kind = "aggregator"
+    elif (len(passwords) >= t["vendor_logins"] and len(identities) >= t["vendor_emails"]
+          and len(admin_domains) >= t["vendor_admin_domains"]):
+        kind = "vendor_or_shared"
+        basis.append("many admin/SaaS domains and email identities; client access or shared use possible")
+    else:
+        kind = "victim_endpoint"
+        basis.append("no aggregation/shared-use threshold reached; default, not proof of a single user")
+    return {"classification": kind, "basis": basis, "counts": counts,
+            "thresholds": dict(t), "rung": "lead", "caveat": _ROLE_CAVEAT}
 
 # ── helpers ───────────────────────────────────────────────────────────────
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
@@ -362,16 +443,18 @@ def profile(passwords, autofill_pairs, emails, history_urls, cookie_domains):
 
 
 # ── report ───────────────────────────────────────────────────────────────────
-def analyze_log(folder):
+def analyze_log(folder, subject_emails=()):
     files = walk_files(folder)
     info, info_text, _ = parse_info(files)
     family = detect_family(info_text, files)
     contacts = extract_contacts(info_text)
     passwords = parse_passwords(files)
+    tag_credentials(passwords, subject_emails)
     af_pairs, emails, phones = parse_autofill(files)
     history = parse_history(files)
     cookies, cookie_total = parse_cookies(files)
     verdict, score, hits, admin_logins = profile(passwords, af_pairs, emails, history, cookies)
+    machine_triage = classify_machine(passwords, emails, files)
     # admin/sensitive endpoints that were *browsed* (in history) even without creds
     admin_browsed = {}
     for u in history:
@@ -382,6 +465,9 @@ def analyze_log(folder):
     return {
         "log": os.path.basename(folder), "family": family, "host": info,
         "contacts": contacts, "verdict": verdict, "score": score, "signals": hits,
+        "machine_triage": machine_triage, "rung": "lead", "caveat": _ROLE_CAVEAT,
+        "saas_summary": dict(Counter(tag for r in passwords for tag in r["saas_tags"])),
+        "subject_logins": [dict(r) for r in passwords if r["subject_login"]],
         "passwords": passwords, "admin_logins": admin_logins,
         "admin_browsed": admin_browsed,
         "autofill": af_pairs, "emails": emails, "phones": phones,
@@ -541,6 +627,12 @@ def build_report(root, logs):
                  + (f" · build `{md_escape(h.get('build'))}`" if h.get("build") else "")
                  + (f" · v{md_escape(h.get('version'))}" if h.get("version") else ""))
         L.append(f"- **Verdict:** **{l['verdict']}** (signal score {l['score']})")
+        tri = l["machine_triage"]
+        L.append(f"- **Machine triage (lead):** {tri['classification']} — "
+                 + "; ".join(tri["basis"]))
+        L.append("- **Limits:** " + tri["caveat"])
+        L.append("- **Corporate SaaS categories:** " + json.dumps(l["saas_summary"]))
+        L.append(f"- **Exact subject-mailbox login matches:** {len(l['subject_logins'])}")
         sig = "; ".join(f"{k}: {', '.join(sorted(set(v)))}" for k, v in l["signals"].items() if v)
         if sig:
             L.append(f"- **Profiling signals:** {md_escape(sig)}")
@@ -569,10 +661,12 @@ def build_report(root, logs):
 
         if l["passwords"]:
             L.append(f"\n**All recovered credentials ({len(l['passwords'])}):**\n")
-            L.append("| URL | Login | Password |\n|---|---|---|")
+            L.append("| URL | Login | Password | SaaS categories | Subject login |\n|---|---|---|---|---|")
             rows, more = cap(l["passwords"], 300)
             for r in rows:
-                L.append(f"| {md_escape(r.get('url',''))} | {md_escape(r.get('login',''))} | {md_escape(r.get('password',''))} |")
+                L.append(f"| {md_escape(r.get('url',''))} | {md_escape(r.get('login',''))} | "
+                         f"{md_escape(r.get('password',''))} | {', '.join(r['saas_tags'])} | "
+                         f"{'yes' if r['subject_login'] else 'no'} |")
             if more:
                 L.append(f"| _+{more} more credentials_ | | |")
 
@@ -598,11 +692,15 @@ def build_report(root, logs):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: stealer_log_parse.py <log-folder> [out-dir]")
-        sys.exit(1)
-    root = os.path.abspath(sys.argv[1])
-    out_dir = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else os.getcwd()
+    ap = argparse.ArgumentParser(description="Offline stealer-log exposure and machine-role triage.")
+    ap.add_argument("root", help="log folder or folder of per-host logs")
+    ap.add_argument("out_dir", nargs="?", default=os.getcwd())
+    ap.add_argument("--subject-emails", default="",
+                    help="comma/space-separated subject emails; exact case-insensitive login match")
+    a = ap.parse_args()
+    subject_emails = a.subject_emails.replace(",", " ").split()
+    root = os.path.abspath(a.root)
+    out_dir = os.path.abspath(a.out_dir)
     if not os.path.isdir(root):
         print(f"Not a folder: {root}")
         sys.exit(1)
@@ -619,7 +717,7 @@ def main():
     logs = []
     for d in sorted(targets):
         try:
-            logs.append(analyze_log(d))
+            logs.append(analyze_log(d, subject_emails))
             print(f"  + {os.path.basename(d)}: {logs[-1]['family']} | {logs[-1]['verdict']}")
         except Exception as e:  # never let one bad log abort the batch
             print(f"  ! {os.path.basename(d)}: skipped ({e})")

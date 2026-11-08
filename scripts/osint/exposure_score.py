@@ -14,16 +14,26 @@ its own. Feed it JSON, or name indicators on the command line. Missing indicator
 missing and EXCLUDED from the denominator — a subject scored on 3 of 11 indicators is not
 comparable to one scored on 11, and the output says which it is.
 
+The EXECUTIVE model (--model executive, analysis/weight-engine.md §7) is a different, DEDUCTIVE
+score for a protected person: start at 100, eight criteria C1..C8 each rated 0-3 by the analyst,
+deduction = max * rating / 3. Higher = SAFER. Criteria, maxima and bands are reference DATA
+(references/exposure_executive.json). Unrated criteria are reported as coverage gaps, never
+silently scored as 0 deduction.
+
 Usage:
   exposure_score.py --set breach_count=3 --set account_security=40
   exposure_score.py indicators.json --pretty
   exposure_score.py --list          # show the weight table
+  exposure_score.py --model executive --set c1=2 --set c2=3 --set c2_rationale="ID number in a leak"
+  exposure_score.py --model executive ratings.json   # {"c1": 2, "c2": {"rating": 3, "rationale": "..."}}
+  exposure_score.py --model executive --list
 """
 # /// script
 # requires-python = ">=3.9"
 # ///
 import argparse
 import json
+import os
 import sys
 
 # (key, group, weight, raw_min, raw_max)  — from analysis/weight-engine.md §1 and §2
@@ -104,15 +114,167 @@ def score(indicators):
     return out
 
 
+# ── EXECUTIVE model: deductive 8-criteria score (analysis/weight-engine.md §7) ──────────────────
+# Fallback = the documented model itself, so a missing reference file changes nothing silently
+# (load_ref still warns on stderr).
+_EXEC_FALLBACK = {
+    "settings": {"start_score": 100, "rating_max": 3},
+    "criteria": {
+        "c1": {"label": "Digital account footprint", "max": 15},
+        "c2": {"label": "PII exposure", "max": 20},
+        "c3": {"label": "Family / close-relation exposure", "max": 15},
+        "c4": {"label": "Physical address & habits", "max": 15},
+        "c5": {"label": "Corporate assets & financial exposure", "max": 10},
+        "c6": {"label": "Political / reputation", "max": 10},
+        "c7": {"label": "Breach records & stealer logs", "max": 10},
+        "c8": {"label": "Account & infrastructure security", "max": 5},
+    },
+    "bands": {"80": "LOW", "60": "MODERATE", "40": "HIGH", "0": "CRITICAL"},
+}
+
+
+def _load_exec_refs():
+    try:
+        eng = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "..", "intel_engine", "WebPivot", "tools"))
+        if eng not in sys.path:
+            sys.path.insert(0, eng)
+        from wp_refs import load_ref, ref_path
+        return load_ref(ref_path(__file__, "exposure_executive.json"), _EXEC_FALLBACK)
+    except Exception:  # noqa: BLE001 — loader missing: the embedded model, loudly
+        print("[!] exposure_executive.json not loaded — using the embedded model", file=sys.stderr)
+        return dict(_EXEC_FALLBACK)
+
+
+def _exec_inputs(raw):
+    """{cN: number | {"rating", "rationale"}, cN_rationale: str} -> ({cN: rating}, {cN: text})."""
+    ratings, notes = {}, {}
+    for k, v in raw.items():
+        k = str(k).strip().lower()
+        if k.endswith("_rationale"):
+            notes[k[:-len("_rationale")]] = str(v)
+        elif isinstance(v, dict):
+            if v.get("rating") is not None:
+                ratings[k] = v["rating"]
+            if v.get("rationale"):
+                notes[k] = str(v["rationale"])
+        else:
+            ratings[k] = v
+    return ratings, notes
+
+
+def score_executive(raw, refs=None):
+    """Deductive executive score. `raw` = {c1..c8: rating 0..rating_max, cN_rationale: str}.
+
+    score = start - Σ max_i * rating_i / rating_max over the RATED criteria. Unrated criteria
+    are listed in `missing`, their maxima summed into `unassessed_max_deduction`, and
+    `score_floor` shows the worst case if every unrated criterion turned out fully exposed."""
+    refs = refs or _load_exec_refs()
+    crit = refs["criteria"]
+    start = float(refs["settings"].get("start_score", 100))
+    rmax = float(refs["settings"].get("rating_max", 3))
+    bands = sorted(((float(t), b) for t, b in refs["bands"].items()), reverse=True)
+    ratings, notes = _exec_inputs(raw)
+
+    rows, missing, invalid, total_ded, unassessed = [], [], [], 0.0, 0.0
+    for key, c in crit.items():
+        mx = float(c["max"])
+        r = ratings.get(key)
+        row = {"criterion": key, "label": c.get("label", key), "max": mx}
+        if r is not None:
+            try:
+                r = float(r)
+            except (TypeError, ValueError):
+                invalid.append(f"{key}={r!r} (not a number)")
+                r = None
+            else:
+                if not 0 <= r <= rmax:
+                    invalid.append(f"{key}={r:g} (outside 0-{rmax:g})")
+                    r = None
+        if r is None:
+            missing.append(key)
+            unassessed += mx
+            row.update(rating=None, deduction=None)
+        else:
+            ded = mx * r / rmax
+            total_ded += ded
+            row.update(rating=r, deduction=round(ded, 2))
+        if notes.get(key):
+            row["rationale"] = notes[key]
+        rows.append(row)
+
+    n, rated = len(crit), len(crit) - len(missing)
+    unknown = sorted(set(ratings) - set(crit))
+    out = {"model": "executive", "start": start, "rows": rows,
+           "deductions_total": round(total_ded, 2), "missing": missing,
+           "coverage": f"{rated}/{n}", "coverage_ratio": round(rated / n, 4) if n else 0.0}
+    if invalid:
+        out["invalid"] = invalid
+    if unknown:
+        out["ignored_unknown_criteria"] = unknown
+    if rated == 0:
+        out.update(score=None, band=None,
+                   verdict="NO CRITERIA RATED — nothing to score")
+        return out
+    sc = start - total_ded
+    out["score"] = round(sc, 2)
+    out["band"] = next(b for t, b in bands if sc >= t)
+    out["unassessed_max_deduction"] = round(unassessed, 2)
+    out["score_floor"] = round(sc - unassessed, 2)
+    if missing:
+        out["band_floor"] = next(b for t, b in bands if out["score_floor"] >= t)
+        out["verdict"] = (f"rated on {rated}/{n} criteria — unrated ({', '.join(missing)}) are NOT "
+                          f"zero exposure; worst case {out['score_floor']:g} ({out['band_floor']}) "
+                          f"if they prove fully exposed")
+    else:
+        out["verdict"] = f"fully rated on all {n} criteria"
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Composite 0-100 subject exposure score.")
-    ap.add_argument("infile", nargs="?", help="JSON file of {indicator: raw_value}")
+    ap.add_argument("infile", nargs="?", help="JSON file of {indicator: raw_value} "
+                    "(executive: {cN: rating | {rating, rationale}, cN_rationale: text})")
+    ap.add_argument("--model", choices=("composite", "executive"), default="composite",
+                    help="composite = the weight-engine 0-100 (default, higher = more exposed); "
+                         "executive = deductive 8-criteria score from 100 (higher = safer)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
-                    help="set an indicator inline (repeatable)")
+                    help="set an indicator inline (repeatable); executive also takes "
+                         "cN_rationale=TEXT")
     ap.add_argument("--list", action="store_true", help="print the weight table and exit")
     ap.add_argument("--pretty", action="store_true")
     ap.add_argument("-o", "--out")
     a = ap.parse_args()
+
+    if a.model == "executive":
+        refs = _load_exec_refs()
+        if a.list:
+            print(f"{'CRITERION':<11}{'LABEL':<42}{'MAX':>5}")
+            for k, c in refs["criteria"].items():
+                print(f"{k:<11}{c.get('label', k):<42}{float(c['max']):>5g}")
+            print(f"start {refs['settings'].get('start_score', 100)}; deduction = max * rating / "
+                  f"{refs['settings'].get('rating_max', 3)}; bands: "
+                  + ", ".join(f">={t} {b}" for t, b in refs["bands"].items()))
+            return 0
+        raw = {}
+        if a.infile:
+            raw.update(json.load(open(a.infile, encoding="utf-8")))
+        for kv in a.set:
+            if "=" not in kv:
+                ap.error(f"--set expects KEY=VALUE, got {kv!r}")
+            k, v = kv.split("=", 1)
+            raw[k.strip()] = v
+        res = score_executive(raw, refs)
+        print(f"executive exposure: {res['score']} ({res['band']}) coverage {res['coverage']} — "
+              f"{res['verdict']}", file=sys.stderr)
+        if res.get("invalid"):
+            print(f"  invalid rating(s) treated as unrated: {'; '.join(res['invalid'])}",
+                  file=sys.stderr)
+        txt = json.dumps(res, indent=2 if a.pretty else None, ensure_ascii=False)
+        if a.out:
+            open(a.out, "w", encoding="utf-8").write(txt)
+        print(txt)
+        return 0
 
     if a.list:
         print(f"{'INDICATOR':<24}{'GROUP':<16}{'WEIGHT':>7}  RAW RANGE")

@@ -6,12 +6,36 @@
     "timeout_seconds": 15
   },
   "sources": {
-    "_comment": "Public VN business-registry mirrors, queried in order. `mst_url` is used for a 10/13-digit tax-code (MST) query; `name_url` (falling back to `mst_url` if absent) is used for a company-name query. Each is a keyless HTML page — no account, no key.",
+    "_comment": "Public VN business-registry mirrors, queried in order. `mst_url` is used for a 10/13-digit tax-code (MST) query; `name_url` (falling back to `mst_url` if absent) is used for a company-name query. Each is a keyless HTML page — no account, no key. A source may add `listing` (same {card_start, fields} shape as reverse_sources) — its results page is cut into rows and the row whose tax code (or name) matches the query is followed to `detail_url` — and `page_fields` ({scope_start, scope_end, null_values, fields}) when its record page defeats the generic label_map parser. Probe 2026-11-08 (Android UA, direct): masothue.com answers a Cloudflare 'Just a moment' challenge and thuvienphapluat.vn a Cloudflare 'Attention Required' block (both reported as errors with `cf_retry`; `--solve-cf` retries via FlareSolverr / a Chromium render, which did not clear either from a datacenter egress); hsctvn.com redirects off-host to an unrelated shop (off-host guard -> error); doanhnghiep.biz answers — its `/tim-kiem?keyword=` path IGNORES the parameter and serves the newest-registrations list, so the working paths are the `/<MST>` record page and `/tim-kiem/?timkiem=`. thuvienphapluat.vn's search form (`timtheo` = ma-so-thue | ten-doanh-nghiep, `tukhoa` = query), listing rows (`tr.item_mst_o`) and record-page layout were read from Wayback captures of the same paths (2025-07 record page, 2026-10 listing), because the live site was walled from the probe egress.",
     "entries": {
       "masothue": {
         "label": "masothue.com",
         "mst_url": "https://masothue.com/Search/?q={query}&type=auto",
-        "name_url": "https://masothue.com/Search/?q={query}&type=company"
+        "name_url": "https://masothue.com/Search/?q={query}&type=company",
+        "listing": {
+          "_comment": "A company-name query lands on a results list; the row whose name matches is followed to its record page. `listing_marker` (the results page title) decides list-vs-record, because a masothue RECORD page also carries data-prefetch rows (related companies).",
+          "listing_marker": "<title>\\s*Tra cứu",
+          "card_start": "<div data-prefetch=\"/",
+          "fields": {
+            "name": {"re": "<h3>\\s*<a[^>]*>([^<]+)</a>", "on": "html"},
+            "detail_href": {"re": "<h3>\\s*<a href=\"([^\"]+)\"", "on": "html"},
+            "tax_code": {"re": "Mã số thuế:\\s*(\\d{10}(?:-\\d{3})?)"}
+          }
+        },
+        "cloakbrowser": {
+          "_comment": "OPTIONAL --solve-cf step tried BEFORE FlareSolverr / render_cf (pip install cloakbrowser; licence via `cloakbrowser login` or CLOAKBROWSER_LICENSE_KEY in the gitignored .env). masothue answers a DIRECT /Search/ URL — even with the form's hidden token — with a DECOY: a different, freshly registered company. So a URL matching `search_url_re` is never navigated to: the `query_param` value is typed into `input_selector` on `home_url` and Enter pressed, then the page must leave the home URL within `result_timeout_ms`; any other URL (a record page) is opened directly in the same session. One headless, humanized session per run (free tier = 1 concurrent session). android_ua: true — live test 2026-11-08 with the module's Android Chrome UA on the page context still returned the correct record (tax code + title matched), so the project's Android-UA rule holds here.",
+          "home_url": "https://masothue.com/",
+          "search_url_re": "/Search/",
+          "query_param": "q",
+          "input_selector": "input[name='q']",
+          "goto_timeout_ms": 45000,
+          "result_timeout_ms": 30000,
+          "headless": true,
+          "humanize": true,
+          "android_ua": true,
+          "_egress_comment": "use_process_proxy: false — live 2026-11-08 the process proxy pool's exit (a datacenter HTTP proxy) kept CloakBrowser on the 'Just a moment' interstitial (search box never appeared, 30 s timeout), while a direct launch cleared it. So without an explicit --proxy the CloakBrowser step launches DIRECT (Chromium forced to --no-proxy-server, which it would otherwise read from HTTP(S)_PROXY); pass --proxy (e.g. a residential one) to route it, or set true to use the pool. The target is a public business registry, not the adversary's infrastructure.",
+          "use_process_proxy": false
+        }
       },
       "hsctvn": {
         "label": "hsctvn.com",
@@ -20,9 +44,43 @@
       },
       "doanhnghiep_biz": {
         "label": "doanhnghiep.biz",
-        "mst_url": "https://doanhnghiep.biz/tim-kiem?keyword={query}",
-        "name_url": "https://doanhnghiep.biz/tim-kiem?keyword={query}"
+        "mst_url": "https://doanhnghiep.biz/{query}",
+        "name_url": "https://doanhnghiep.biz/tim-kiem/?timkiem={query}"
+      },
+      "thuvienphapluat": {
+        "label": "thuvienphapluat.vn",
+        "mst_url": "https://thuvienphapluat.vn/ma-so-thue/tra-cuu-ma-so-thue-doanh-nghiep?timtheo=ma-so-thue&tukhoa={query}",
+        "name_url": "https://thuvienphapluat.vn/ma-so-thue/tra-cuu-ma-so-thue-doanh-nghiep?timtheo=ten-doanh-nghiep&tukhoa={query}",
+        "listing": {
+          "card_start": "<tr class=\"item_mst_o\"",
+          "fields": {
+            "tax_code": {"re": "<strong>\\s*(\\d{10}(?:-\\d{3})?)\\s*</strong>", "on": "html"},
+            "name": {"re": "class=\"tvpl-mst-result-name\"[^>]*>([^<]+)</a>", "on": "html"},
+            "detail_href": {"re": "href=\"([^\"]*-mst-[\\d-]+\\.html)\"", "on": "html"}
+          }
+        },
+        "page_fields": {
+          "scope_start": "\\n\\d{10}(?:-\\d{3})?\\n-\\n",
+          "scope_end": "THAY ĐỔI GẦN ĐÂY|DOANH NGHIỆP MỚI CẬP NHẬT",
+          "null_values": ["Thông tin không được công bố.", "Thông tin không được công bố"],
+          "fields": {
+            "tax_code": {"re": "Mã số thuế:\\s*(\\d{10}(?:-\\d{3})?)"},
+            "company_name_vn": {"re": "^\\n?\\d{10}(?:-\\d{3})?\\n-\\n([^\\n]+)"},
+            "company_name_intl": {"re": "Tên quốc tế:\\s*([^\\n]+)"},
+            "legal_representative": {"re": "Đại diện Pháp luật:\\s*([^\\n]+)"},
+            "address": {"re": "Địa chỉ trụ sở(?:\\s*\\(sau sáp nhập\\))?:\\s*([^\\n]+)"},
+            "phone": {"re": "Điện thoại:\\s*([^\\n]+)"},
+            "status": {"re": "Tình trạng:\\s*([^\\n]+)"},
+            "registration_date": {"re": "Ngày cấp:\\s*([\\d/]+)"}
+          }
+        }
       }
+    }
+  },
+  "value_trim": {
+    "_comment": "Canonical field -> regexes (case-insensitive, dot-all) REMOVED from a parsed value, applied by every parser (label_map pairs, page_fields, reverse listings). A mirror's representative cell often carries a trailing 'Ngoài ra, <name> còn đại diện các doanh nghiệp…' list of the other companies that person represents (doanhnghiep.biz and masothue.com record pages); without the cut the name field reads as name + prose. That list is a separate lead, not part of the name.",
+    "entries": {
+      "legal_representative": ["[\\s,;:.-]*Ngo(?:à|a)i ra\\b.*$"]
     }
   },
   "label_map": {
@@ -37,5 +95,66 @@
       "status": ["tình trạng", "tinh trang", "trạng thái", "trang thai"],
       "registration_date": ["ngày cấp", "ngay cap", "ngày hoạt động", "ngay hoat dong", "ngày thành lập", "ngay thanh lap"]
     }
+  },
+  "reverse_sources": {
+    "_comment": "REVERSE modes (`--by-phone`, `--by-person`): mirrors whose RESULTS LISTING can be searched by a contact phone or a legal-representative name, each with the regexes that cut one listing into records and read each record. `by_phone_url` / `by_person_url` take the URL-encoded query (`{query}`); a mirror without one is skipped for that mode. `card_start` is a regex on the raw HTML marking the start of each record. Each `fields` entry is {re, on}: `on: html` runs on the raw record HTML, `on: text` on the record with every tag turned into a newline, entities unescaped and NFC-normalised; group 1 is the value. `phones` may hold several numbers separated by `phone_split`; `*` marks mirror-masked digits. Probe 2026-11-08: infocom.vn indexes the registered contact phone (shown masked, last digits '*') but not the representative; doanhnghiep.biz has a dedicated representative search (`/nguoi-dai-dien/?name=`, accented input) and no phone index; tratencongty.com searches company names and shows the representative (tax code is an image, not parsed). masothue.com (Cloudflare challenge) and hsctvn.com (off-host redirect) are left out because neither answered a search.",
+    "entries": {
+      "infocom": {
+        "label": "infocom.vn",
+        "by_phone_url": "https://infocom.vn/search?q={query}",
+        "card_start": "<h2[^>]*>\\s*<a title=\"",
+        "fields": {
+          "name": {"re": "<a title=\"([^\"]+)\"", "on": "html"},
+          "detail_href": {"re": "<a title=\"[^\"]*\"[^>]*href=\"([^\"]+)\"", "on": "html"},
+          "address": {"re": "<li[^>]*>\\s*<i[^>]*>\\s*</i>\\s*<span[^>]*>(?!\\s*MST)([^<]+)</span>", "on": "html"},
+          "tax_code": {"re": "MST:\\s*(\\d{10}(?:-\\d{3})?)", "on": "text"},
+          "phones": {"re": "<li[^>]*>\\s*<span[^>]*>\\s*<i[^>]*>\\s*</i>([^<]*\\d[^<]*)</span>", "on": "html"}
+        },
+        "phone_split": "\\s+-\\s+|/|,"
+      },
+      "doanhnghiep_biz": {
+        "label": "doanhnghiep.biz",
+        "by_person_url": "https://doanhnghiep.biz/nguoi-dai-dien/?name={query}",
+        "card_start": "<h6>\\s*<a href=\"",
+        "fields": {
+          "name": {"re": "<h6>\\s*<a[^>]*>([^<]+)</a>", "on": "html"},
+          "detail_href": {"re": "<h6>\\s*<a href=\"([^\"]+)\"", "on": "html"},
+          "tax_code": {"re": "Mã số thuế:\\s*(\\d{10}(?:-\\d{3})?)", "on": "text"},
+          "registration_date": {"re": "Ngày hoạt động:\\s*([\\d/]+)", "on": "text"},
+          "legal_representative": {"re": "Người đại diện:\\s*([^\\n]+)", "on": "text"},
+          "address": {"re": "<address>(?:\\s*<i[^>]*>\\s*</i>)?\\s*([^<]+)</address>", "on": "html"}
+        }
+      },
+      "tratencongty": {
+        "label": "tratencongty.com",
+        "by_person_url": "https://www.tratencongty.com/search/{query}",
+        "card_start": "<div class=\"search-results\">",
+        "fields": {
+          "name": {"re": "<a href=\"[^\"]+\">([^<]+)</a>", "on": "html"},
+          "detail_href": {"re": "<a href=\"([^\"]+)\"", "on": "html"},
+          "tax_code": {"re": "Mã số thuế:\\s*(\\d{10}(?:-\\d{3})?)", "on": "text"},
+          "legal_representative": {"re": "Đại diện pháp luật:\\s*([^\\n]+)", "on": "text"},
+          "address": {"re": "Địa chỉ:\\s*([^\\n]+)", "on": "text"}
+        }
+      }
+    }
+  },
+  "reverse_detail": {
+    "_comment": "The record page used to VERIFY a reverse-mode row by its tax code (MST): the listing masks or omits the phone, the record page carries it in full. `url` takes `{mst}`; fields are read with the same label_map as a forward lookup. `max_verify` caps record fetches per run.",
+    "label": "doanhnghiep.biz",
+    "url": "https://doanhnghiep.biz/{mst}",
+    "max_verify": 10
+  },
+  "reverse_settings": {
+    "_comment": "max_rows caps rows kept per mirror listing. shared_phone_threshold: when this many DISTINCT companies list the same exact contact number it is flagged as a shared service number (accounting / registration agent), which is the common case and says nothing about who controls any one company. address_token_overlap is the share of the analyst's folded address tokens (length >= 2) that must appear in the record's address for an `address` corroboration. province_prefixes are folded administrative prefixes stripped from a `province` corroborator before matching.",
+    "max_rows": 50,
+    "shared_phone_threshold": 3,
+    "address_token_overlap": 0.7,
+    "province_prefixes": ["thanh pho", "tinh", "tp"]
+  },
+  "reverse_caveats": {
+    "_comment": "Emitted verbatim in reverse-mode output (RULE 5).",
+    "by_phone": "A company that lists this number as its registered contact is a LEAD, not an attribution: registration agents and accounting firms file their own number for many clients, and a masked-listing match is only consistent, not exact, until the record page confirms it.",
+    "by_person": "Vietnamese personal names repeat at very high rates. A representative-name hit is a CANDIDATE homonym until a second datum (address, province, date of birth, phone) matches on the same record; even a linked row is a registry fact about that company, never an operator attribution on its own."
   }
 }
