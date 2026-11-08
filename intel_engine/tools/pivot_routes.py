@@ -237,8 +237,11 @@ def _ghunt_ready():
 
 
 def _opencorporates_configured():
+    """OpenCorporates FREE WEBSITE mode can sign in: cloakbrowser importable AND (saved session
+    file OR OPENCORPORATES_EMAIL + _PASSWORD). Offline — no browser is launched. The premium
+    API token is deliberately NOT a gate: the route never spends it."""
     import wp_corp as WC
-    return bool(WC._oc_token())
+    return WC.oc_web_configured()
 
 
 # GrayHatWarfare corpus route → wp_buckets lookup mode.
@@ -1010,19 +1013,23 @@ def _run_pgp(query):
 def _run_corp(route, query, *, case="", free_only=False):
     import wp_corp as WC
     if route == "corp.opencorporates":
-        if free_only:
-            return {"skipped": "corp.opencorporates is metered; free_only"}
-        if not WC._oc_token():
-            return {"skipped": "no OPENCORPORATES_API_TOKEN set"}
+        if not WC.oc_web_configured():
+            return {"skipped": "OpenCorporates website mode not configured (cloakbrowser + "
+                               "`wp_corp.py opencorporates-login`)"}
         providers = ["opencorporates"]
     else:
         providers = [n for n, cfg in WC.PROVIDERS.items()
                      if not str(n).startswith("_") and isinstance(cfg, dict) and cfg.get("keyless")
                      and not cfg.get("metered")]
     jur = _case_jurisdiction(case)
-    res = WC.run("company", query, jurisdiction=jur, providers=providers)
+    res = WC.run("company", query, jurisdiction=jur, providers=providers,
+                 oc_api=False)                       # route is free: never the metered API
     if not isinstance(res, dict) or res.get("error"):
         return {"error": str((res or {}).get("error") or "empty result")}
+    oc = (res.get("providers") or {}).get("opencorporates") or {}
+    if route == "corp.opencorporates" and oc.get("status") in ("gated", "skipped", "error"):
+        why = oc.get("gated") and f"gated: {oc['gated']} (collection gap, not a negative)"
+        return {"skipped": why or oc.get("reason") or oc.get("error") or oc.get("status")}
     rows = []
     for c in res.get("companies") or []:
         ev = {"name": c.get("name"), "jurisdiction": c.get("jurisdiction"), "status": c.get("status"),

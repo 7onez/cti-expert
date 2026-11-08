@@ -1,5 +1,5 @@
 {
-  "_comment": "wp_corp — GLOBAL company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, France recherche-entreprises, Norway Brreg, Finland PRH, SEC EDGAR; VN routed to wp_vncorp, CN to cn_recon). Every endpoint template, per-provider jurisdiction scope, HTML id map, formation-agent wording and the RULE 5 caveats live here so a registry moving an endpoint is a data edit. Templates take URL-encoded {query}/{number}/{lei}/{officer_id}/{cik}/{jurisdiction}/{page}/{size} substituted by the caller. Probed live 2026-11-08: GLEIF, Brreg, PRH answer through the egress pool; Companies House (site + API), recherche-entreprises and the three sec.gov hosts are refused by every pool exit and reach direct via scripts/proxy/vendor_hosts.json (public registry/index APIs, never a case target); OpenCorporates refuses keyless API calls (HTTP 401) and its website serves a reCAPTCHA wall, so it only runs with OPENCORPORATES_API_TOKEN. UA POLICY: every provider gets the repo's Android UA (wp_net.DEFAULT_UA) EXCEPT SEC EDGAR, whose published fair-access policy (sec.gov/os/accessing-edgar-data) requires a declared User-Agent naming the requester and a contact e-mail — set SEC_EDGAR_USER_AGENT in the environment / gitignored .env to your organisation + contact; `settings.sec_user_agent_default` is a placeholder only. Nothing here is case data.",
+  "_comment": "wp_corp — GLOBAL company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, France recherche-entreprises, Norway Brreg, Finland PRH, SEC EDGAR; VN routed to wp_vncorp, CN to cn_recon). Every endpoint template, per-provider jurisdiction scope, HTML id map, formation-agent wording and the RULE 5 caveats live here so a registry moving an endpoint is a data edit. Templates take URL-encoded {query}/{number}/{lei}/{officer_id}/{cik}/{jurisdiction}/{page}/{size} substituted by the caller. Probed live 2026-11-08: GLEIF, Brreg, PRH answer through the egress pool; Companies House (site + API), recherche-entreprises and the three sec.gov hosts are refused by every pool exit and reach direct via scripts/proxy/vendor_hosts.json (public registry/index APIs, never a case target). OpenCorporates runs through its FREE WEBSITE in a CloakBrowser session (group `opencorporates_web`): anonymous searches hit a 'Checking your browser' reCAPTCHA gate and company pages show no officers, so a free account logged in via `wp_corp.py opencorporates-login` is what makes it useful; the v0.4 API (HTTP 401 without a token) is premium and used only as a secondary when OPENCORPORATES_API_TOKEN is set. UA POLICY: every provider gets the repo's Android UA (wp_net.DEFAULT_UA) EXCEPT SEC EDGAR, whose published fair-access policy (sec.gov/os/accessing-edgar-data) requires a declared User-Agent naming the requester and a contact e-mail — set SEC_EDGAR_USER_AGENT in the environment / gitignored .env to your organisation + contact; `settings.sec_user_agent_default` is a placeholder only. Nothing here is case data.",
   "settings": {
     "_comment": "timeout_seconds per HTTP call; max_results caps rows kept per provider search; detail_max caps how many matched companies get their officer/address-history pages fetched in `company` mode (each costs 1-4 extra requests); officer_pages caps Companies House officer-list pages (35 rows each); verify_max caps candidate appointment pages fetched to test a `company=` corroboration; address_token_overlap is the share of the analyst's address tokens that must appear in a record address for `address=` to match.",
     "timeout_seconds": 20,
@@ -58,7 +58,6 @@
         "label": "OpenCorporates",
         "jurisdictions": ["*"],
         "keyless": false,
-        "keyless_probe": true,
         "key_env": ["OPENCORPORATES_API_TOKEN", "OPENCORPORATES_API_KEY"],
         "metered": true,
         "api": "https://api.opencorporates.com/v0.4",
@@ -112,6 +111,32 @@
       "VN": {"module": "wp_vncorp", "note": "Routed to wp_vncorp (vn_corp tool) — Vietnamese MST/name registry mirrors."},
       "CN": {"tool": "cn_recon", "note": "PRC company/ICP recon is the cn_recon tool: pass the domain, ICP serial or company name there (company=...)."}
     }
+  },
+  "opencorporates_web": {
+    "_comment": "OpenCorporates FREE WEBSITE via CloakBrowser (optional dependency, imported lazily; the repo .venv carries it). Paths are appended to `site`; {jur_path} is '/<jurisdiction_code>' when a jurisdiction is given, else ''. Credentials are ONLY OPENCORPORATES_EMAIL / OPENCORPORATES_PASSWORD from the process env or the gitignored .env (written by `wp_corp.py opencorporates-login`), never CLI arguments. The Playwright storage_state is kept OUTSIDE the repo at `session_path` (override $OPENCORPORATES_SESSION, chmod 600) and reused; a logged-out page triggers one re-login when credentials exist, else the run stays anonymous and a gated search is reported as a collection gap (`gated: recaptcha`), never as a negative. `gate_markers` identify the interstitial (the word 'recaptcha' alone is NOT a marker: every page loads the reCAPTCHA script); `logged_in_markers` identify a signed-in page. Pacing: `delay_seconds` between page loads, one browser per run; a gate still present after `captcha_wait_seconds` stops every further OpenCorporates load for the run. `detail_max` company pages are opened per company search. `use_process_proxy` false launches Chromium direct (opencorporates.com is a vendor host, not a target).",
+    "site": "https://opencorporates.com",
+    "signin": "/users/sign_in",
+    "search_companies": "/companies{jur_path}?q={query}",
+    "search_officers": "/officers{jur_path}?q={query}",
+    "company": "/companies/{jurisdiction}/{number}",
+    "officer": "/officers/{officer_id}",
+    "email_env": "OPENCORPORATES_EMAIL",
+    "password_env": "OPENCORPORATES_PASSWORD",
+    "session_env": "OPENCORPORATES_SESSION",
+    "session_path": "~/.config/cti-expert/sessions/opencorporates.json",
+    "email_selector": "input[name='user[email]'], input[type=email]",
+    "password_selector": "input[name='user[password]'], input[type=password]",
+    "submit_selector": "form#new_user button[type=submit], form#new_user input[type=submit], button[type=submit], input[type=submit]",
+    "gate_markers": ["Checking your browser", "challenge-form"],
+    "logged_in_markers": ["/users/sign_out", "Sign out", "Log out"],
+    "login_error_markers": ["Invalid Email or password", "Invalid email or password"],
+    "delay_seconds": 2.5,
+    "captcha_wait_seconds": 20,
+    "goto_timeout_ms": 60000,
+    "detail_max": 2,
+    "headless": true,
+    "humanize": true,
+    "use_process_proxy": false
   },
   "ch_officer_fields": {
     "_comment": "Companies House officer-list HTML: element id prefix (followed by -N, the row index) -> normalised officer field. A renamed id is a data edit here.",

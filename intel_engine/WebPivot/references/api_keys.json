@@ -387,16 +387,28 @@
         "free_fallback": "keyless find-and-update.company-information.service.gov.uk HTML",
         "signup": "https://developer.company-information.service.gov.uk/"
       },
+      "OPENCORPORATES_EMAIL": {
+        "service": "OpenCorporates (free website account)",
+        "aliases": [],
+        "companion": [],
+        "requires": ["OPENCORPORATES_PASSWORD"],
+        "metered": false,
+        "impact": "medium",
+        "unlocks": "corp_registry OpenCorporates WEBSITE mode (CloakBrowser, signed in with a free account): company + officer search across ~140 jurisdictions and the officer lists on company pages; also the auto corp.opencorporates pivot route. Save it with `wp_corp.py opencorporates-login` (tests the login, writes both vars to the .env, keeps the session outside the repo)",
+        "without_it": "anonymous OpenCorporates searches hit a reCAPTCHA gate (reported as a collection gap) and company pages show no officers; jurisdictions outside the keyless registries return only GLEIF LEI data",
+        "free_fallback": "GLEIF (global LEI), Companies House, recherche-entreprises, Brreg, PRH, SEC EDGAR, vn_corp, cn_recon",
+        "signup": "https://opencorporates.com/users/sign_up"
+      },
       "OPENCORPORATES_API_TOKEN": {
-        "service": "OpenCorporates",
+        "service": "OpenCorporates API (optional premium)",
         "aliases": ["OPENCORPORATES_API_KEY"],
         "companion": [],
         "requires": [],
         "metered": true,
-        "impact": "medium",
-        "unlocks": "corp_registry: company + officer search across ~140 jurisdictions OpenCorporates aggregates (beyond the keyless GLEIF, UK, FR, NO, FI, SEC registries)",
-        "without_it": "no cross-jurisdiction officer search; OpenCorporates refuses keyless API use, so jurisdictions outside the keyless registries return only GLEIF LEI data",
-        "free_fallback": "GLEIF (global LEI), Companies House, recherche-entreprises, Brreg, PRH, SEC EDGAR, vn_corp, cn_recon",
+        "impact": "low",
+        "unlocks": "corp_registry: the premium v0.4 API as a SECONDARY when the website mode is gated or unavailable (metered; never used by the free corp.opencorporates route)",
+        "without_it": "nothing lost for most work — the free website account (OPENCORPORATES_EMAIL) covers the same search; the API refuses keyless use",
+        "free_fallback": "OpenCorporates website mode (OPENCORPORATES_EMAIL + OPENCORPORATES_PASSWORD), GLEIF, Companies House, recherche-entreprises, Brreg, PRH, SEC EDGAR",
         "signup": "https://opencorporates.com/api_accounts/new"
       }
     }

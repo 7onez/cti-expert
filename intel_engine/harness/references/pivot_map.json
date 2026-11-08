@@ -178,10 +178,11 @@
       "count_probe": "single"
     },
     "corp.opencorporates": {
-      "_comment": "IDENTITY (metered): the same company search on OpenCorporates. Offered only when OPENCORPORATES_API_TOKEN is set (route_runnable); metered, so it is always a proposal item. Same fact-only rows as corp.registry.",
+      "_comment": "IDENTITY (free, account-bound): the same company search on the OpenCorporates FREE WEBSITE via CloakBrowser (wp_corp website mode — company search, then the top company pages' officer lists), signed in with the analyst's free account. Offered only when cloakbrowser is importable AND a saved session (~/.config/cti-expert/sessions/opencorporates.json / $OPENCORPORATES_SESSION) or OPENCORPORATES_EMAIL + OPENCORPORATES_PASSWORD exist (route_runnable, offline). Free, so it runs automatically (count_probe single), but round_cap 2 because each call drives a slow browser on the analyst's account. The premium API (OPENCORPORATES_API_TOKEN) is NOT used by this route — it stays a metered secondary of the corp_registry tool only. Same fact-only rows as corp.registry.",
       "types": ["org"],
-      "metered": true,
-      "count_probe": "none"
+      "metered": false,
+      "count_probe": "single",
+      "round_cap": 2
     },
     "telegram.resolve": {
       "_comment": "IDENTITY (free, read-only): resolve a @handle / t.me link with the analyst's Telethon research session (wp_telegram mode resolve). Offered only when Telethon + a session exist (offline check, no network). Rows: the account's other usernames (telegram.account, kit) and its numeric id (telegram.account_id, fact-only). round_cap bounds flood-limit exposure per round.",

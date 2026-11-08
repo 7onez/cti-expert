@@ -372,8 +372,14 @@ CLI-first cascade:
   address, direct/ultimate parent, direct children) + the national register for XX: UK Companies
   House (profile, previous names, officers, registered-office history), France recherche-entreprises
   (dirigeants), Norway Brreg (roller), Finland PRH (no officers published), SEC EDGAR (CIK, former
-  names, business/mailing address); OpenCorporates when `OPENCORPORATES_API_TOKEN` is set. VN routes
-  to `vn_corp`, CN to `cn_recon`.
+  names, business/mailing address). VN routes to `vn_corp`, CN to `cn_recon`.
+- OpenCorporates (~140 jurisdictions) runs on its **free website** in a CloakBrowser session signed
+  in with your free account: run `.venv/bin/python3 wp_corp.py opencorporates-login` once (prompts,
+  tests the login live, only then saves `OPENCORPORATES_EMAIL`/`_PASSWORD` to the gitignored `.env`;
+  the session is reused from `~/.config/cti-expert/sessions/`). Anonymous runs see company pages
+  without officers and searches answer `gated: recaptcha` — a collection gap, never a negative.
+  The premium API (`OPENCORPORATES_API_TOKEN`) is only a metered secondary. Officer-search rows show
+  the company's life span, not the appointment dates — open the officer page (`oc:<n>`) for those.
 - `company-officers gb:00000000` → one company's officer list; `officer-appointments <CH officer
   url|gb:<id>|oc:<n>>` → the same officer record's other appointments (the strongest
   company-to-company pivot the register gives you).

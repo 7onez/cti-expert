@@ -578,13 +578,23 @@
     },
     {
       "id": "opencorporates",
-      "name": "OpenCorporates",
+      "name": "OpenCorporates (free website account)",
+      "env": "OPENCORPORATES_EMAIL",
+      "extra": ["OPENCORPORATES_PASSWORD"],
+      "category": "corporate",
+      "tier": "free",
+      "url": "https://opencorporates.com/users/sign_up",
+      "unlocks": "corp_registry / intel.py corp: OpenCorporates WEBSITE mode (CloakBrowser, signed in) — company + officer search across ~140 jurisdictions and company officer lists; auto corp.opencorporates route. Set with `wp_corp.py opencorporates-login` (tests the login before writing)"
+    },
+    {
+      "id": "opencorporates_api",
+      "name": "OpenCorporates API (optional premium)",
       "env": "OPENCORPORATES_API_TOKEN",
       "aliases": ["OPENCORPORATES_API_KEY"],
       "category": "corporate",
       "tier": "paid",
       "url": "https://opencorporates.com/api_accounts/new",
-      "unlocks": "corp_registry / intel.py corp: company + officer search across ~140 jurisdictions (keyless API use is refused)"
+      "unlocks": "corp_registry: premium v0.4 API, only a metered secondary when the website mode is gated/unavailable (keyless API use is refused)"
     }
   ]
 }

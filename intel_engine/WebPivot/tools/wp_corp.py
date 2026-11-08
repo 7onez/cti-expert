@@ -15,14 +15,17 @@ are DATA in `references/corp_registry.json`, RULE 3):
 
 Providers: GLEIF LEI (global, keyless; legal name, LEI, registration authority id, legal/HQ address,
 direct/ultimate parent, direct children), UK Companies House (keyless HTML of find-and-update, or
-the REST API when COMPANIES_HOUSE_API_KEY is set), OpenCorporates (API v0.4 with
-OPENCORPORATES_API_TOKEN; the keyless API answers 401 and the site a reCAPTCHA wall, so keyless is
-probed once and reported `skipped`), France recherche-entreprises (dirigeants inline), Norway
+the REST API when COMPANIES_HOUSE_API_KEY is set), OpenCorporates (the FREE WEBSITE in one
+CloakBrowser per run, signed in with the analyst's free account — OPENCORPORATES_EMAIL /
+OPENCORPORATES_PASSWORD from env/.env only, session reused from ~/.config/cti-expert/sessions/;
+anonymous runs get company pages without officers and searches `gated: recaptcha` = a collection
+gap; the premium v0.4 API is a secondary only when OPENCORPORATES_API_TOKEN is set), France
+recherche-entreprises (dirigeants inline), Norway
 Brreg (roller), Finland PRH (no officers published), SEC EDGAR (CIK search + submissions; declared
 UA per SEC fair-access policy). Jurisdiction VN routes to `wp_vncorp` (imported lazily), CN to a
 pointer at the cn_recon tool.
 
-Output is TRI-STATE per provider — {status: ok|empty|error|skipped, url, results[]} — plus
+Output is TRI-STATE per provider — {status: ok|empty|error|skipped|gated, url, results[]} — plus
 normalised `companies[]` and `officers[]`. RULE 5: every officer row is `rung: "lead"` with a caveat
 (nominee directors, formation agents, same-name strangers). Officer-search rows are `candidate`
 until an analyst datum (`--corroborate birth=YYYY-MM,address=..,postcode=..,company=..`) matches on
@@ -40,6 +43,9 @@ CLI:
   python3 wp_corp.py officer "Registrant Name" --jurisdiction GB --corroborate birth=1980-01,postcode=AB1 2CD
   python3 wp_corp.py company-officers gb:00000000
   python3 wp_corp.py officer-appointments https://find-and-update.company-information.service.gov.uk/officers/<id>/appointments
+  python3 wp_corp.py officer-appointments oc:<officer number>        (OpenCorporates website)
+  .venv/bin/python3 wp_corp.py opencorporates-login                   (TTY only: prompts, tests the
+      login live, then writes OPENCORPORATES_EMAIL/PASSWORD to the skill .env and saves the session)
 """
 import argparse
 import base64
@@ -789,24 +795,21 @@ def _oc_token():
 
 
 def _oc_get(path_key, extra="", **kw):
-    """-> (url_without_token, data, provider_block_on_failure|None)."""
+    """PREMIUM API (secondary path) -> (url_without_token, data, provider_block_on_failure|None).
+    Never called without OPENCORPORATES_API_TOKEN — the free path is the website (below)."""
     cfg = _oc_cfg()
     if not cfg:
         return None, None, _pv("skipped", reason="opencorporates not configured")
     url = cfg["api"] + _fmt(cfg[path_key], **kw) + extra
     tok = _oc_token()
-    if not tok and not cfg.get("keyless_probe"):
-        return url, None, _pv("skipped", url, reason="no OPENCORPORATES_API_TOKEN set")
-    full = url + (("&" if "?" in url else "?") + "api_token=" + _q(tok) if tok else "")
+    if not tok:
+        return url, None, _pv("skipped", url, reason="no OPENCORPORATES_API_TOKEN (premium API) set")
+    full = url + ("&" if "?" in url else "?") + "api_token=" + _q(tok)
     data, err, status = _json(full)
-    if tok:
-        _record("opencorporates", path_key, kw.get("query") or kw.get("number") or kw.get("officer_id"),
-                None, err is None, 1 if _oc_cfg().get("metered", True) else 0)
+    _record("opencorporates", path_key, kw.get("query") or kw.get("number") or kw.get("officer_id"),
+            None, err is None, 1 if cfg.get("metered", True) else 0)
     if err:
-        if not tok and status in (401, 403, 429):
-            return url, None, _pv("skipped", url, reason=f"keyless access refused ({err}); set "
-                                                         "OPENCORPORATES_API_TOKEN")
-        return url, None, _pv("error", url, error=err)
+        return url, None, _pv("error", url, error=err, via="api")
     return url, (data or {}).get("results") or {}, None
 
 
@@ -834,24 +837,25 @@ def _oc_company(co):
                        address_history=hist, officers=offs)
 
 
-def oc_search(query, oc_jur=None):
+def oc_api_search(query, oc_jur=None):
     extra = _fmt(_oc_cfg().get("jurisdiction_param", ""), jurisdiction=oc_jur) if oc_jur else ""
     url, res, fail = _oc_get("search_companies", extra, query=query, size=SETTINGS["max_results"])
     if fail:
         return fail, []
     comps = [_oc_company(w.get("company")) for w in res.get("companies") or []]
-    return _pv("ok" if comps else "empty", url, [_pointer(c) for c in comps]), comps
+    return _pv("ok" if comps else "empty", url, [_pointer(c) for c in comps], via="api"), comps
 
 
-def oc_company(oc_jur, number):
+def oc_api_company(oc_jur, number):
     url, res, fail = _oc_get("company", jurisdiction=oc_jur, number=number)
     if fail:
         return fail, []
     c = _oc_company(res.get("company"))
-    return _pv("ok" if c.get("name") else "empty", url, [_pointer(c)]), ([c] if c.get("name") else [])
+    return (_pv("ok" if c.get("name") else "empty", url, [_pointer(c)], via="api"),
+            [c] if c.get("name") else [])
 
 
-def oc_officer_search(name, oc_jur=None):
+def oc_api_officer_search(name, oc_jur=None):
     extra = _fmt(_oc_cfg().get("jurisdiction_param", ""), jurisdiction=oc_jur) if oc_jur else ""
     url, res, fail = _oc_get("search_officers", extra, query=name, size=SETTINGS["max_results"] * 2)
     if fail:
@@ -868,10 +872,10 @@ def oc_officer_search(name, oc_jur=None):
                       "appointed": o.get("start_date"), "resigned": o.get("end_date"),
                       "other_appointments_url": o.get("opencorporates_url"),
                       "source_url": o.get("opencorporates_url"), "provider": "opencorporates"})
-    return _pv("ok" if cands else "empty", url), cands
+    return _pv("ok" if cands else "empty", url, via="api"), cands
 
 
-def oc_officer(officer_id):
+def oc_api_officer(officer_id):
     url, res, fail = _oc_get("officer", officer_id=officer_id)
     if fail:
         return fail, None
@@ -885,7 +889,542 @@ def oc_officer(officer_id):
                               "correspondence_address": o.get("address"),
                               "source_url": o.get("opencorporates_url")}] if co else [],
             "note": "OpenCorporates officer records are per-appointment; search the same name for siblings."}
-    return _pv("ok" if card["name"] else "empty", url), card
+    return _pv("ok" if card["name"] else "empty", url, via="api"), card
+
+
+# ---------------------------------------------------------------- OpenCorporates FREE WEBSITE
+# One CloakBrowser per run (closed by run()'s finally), a reused storage_state session kept
+# outside the repo, credentials only from env/.env. See references/corp_registry.json ->
+# opencorporates_web for every tunable and the reasoning.
+_OC_WEB_FALLBACK = {
+    "site": "https://opencorporates.com", "signin": "/users/sign_in",
+    "search_companies": "/companies{jur_path}?q={query}", "search_officers": "/officers{jur_path}?q={query}",
+    "company": "/companies/{jurisdiction}/{number}", "officer": "/officers/{officer_id}",
+    "email_env": "OPENCORPORATES_EMAIL", "password_env": "OPENCORPORATES_PASSWORD",
+    "session_env": "OPENCORPORATES_SESSION",
+    "session_path": "~/.config/cti-expert/sessions/opencorporates.json",
+    "email_selector": "input[name='user[email]'], input[type=email]",
+    "password_selector": "input[name='user[password]'], input[type=password]",
+    "submit_selector": "button[type=submit], input[type=submit]",
+    "gate_markers": ["Checking your browser"], "logged_in_markers": ["/users/sign_out"],
+    "login_error_markers": ["Invalid Email or password"],
+    "delay_seconds": 2.5, "captcha_wait_seconds": 20, "goto_timeout_ms": 60000, "detail_max": 2,
+    "headless": True, "humanize": True, "use_process_proxy": False,
+}
+OC_WEB = {**_OC_WEB_FALLBACK, **(_REFS.get("opencorporates_web") or {})}
+_OCW = {}
+
+
+def _oc_creds():
+    return _secret(OC_WEB["email_env"]), _secret(OC_WEB["password_env"])
+
+
+def oc_session_path() -> str:
+    return os.path.expanduser(os.environ.get(OC_WEB["session_env"]) or OC_WEB["session_path"])
+
+
+def oc_web_available() -> bool:
+    """cloakbrowser importable in THIS interpreter (offline check, nothing imported)."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec("cloakbrowser") is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def oc_web_configured() -> bool:
+    """Website mode can sign in: cloakbrowser present AND (saved session OR email+password)."""
+    email, pw = _oc_creds()
+    return oc_web_available() and (os.path.isfile(oc_session_path()) or bool(email and pw))
+
+
+def _scrub(text) -> str:
+    """Remove the credential values from any string that may reach output."""
+    s = str(text or "")
+    for v in _oc_creds():
+        if v:
+            s = s.replace(v, "***")
+    return s
+
+
+def _mask_email(e) -> str:
+    e = str(e or "")
+    if "@" not in e:
+        return "***"
+    user, dom = e.split("@", 1)
+    return f"{user[:1]}***@{dom[:1]}***{dom[dom.rfind('.'):] if '.' in dom else ''}"
+
+
+def _oc_open():
+    """-> (page, None) | (None, reason). Launches once per run."""
+    if _OCW.get("error"):
+        return None, _OCW["error"]
+    if _OCW.get("page") is not None:
+        return _OCW["page"], None
+    try:
+        import cloakbrowser  # noqa: E402 — OPTIONAL dependency
+    except ImportError:
+        _OCW["error"] = ("cloakbrowser not installed in this interpreter — run with the repo "
+                         ".venv/bin/python3 (or `pip install cloakbrowser` + `cloakbrowser login`)")
+        return None, _OCW["error"]
+    kw = {"headless": bool(OC_WEB.get("headless", True)), "humanize": bool(OC_WEB.get("humanize", True))}
+    pcfg = None
+    if OC_WEB.get("use_process_proxy"):
+        try:
+            import wp_browser
+            pcfg = wp_browser.proxy_for_chromium(None)
+        except Exception:  # noqa: BLE001
+            pcfg = None
+    if pcfg:
+        kw["proxy"] = pcfg
+    else:
+        kw["args"] = ["--no-proxy-server"]
+    if os.environ.get("CLOAKBROWSER_LICENSE_KEY"):
+        kw["license_key"] = os.environ["CLOAKBROWSER_LICENSE_KEY"]
+    try:
+        b = cloakbrowser.launch(**kw)
+        sp = oc_session_path()
+        ctx_kw = {"user_agent": UA}
+        if os.path.isfile(sp):
+            ctx_kw["storage_state"] = sp
+        ctx = b.new_context(**ctx_kw)
+        _OCW.update(browser=b, ctx=ctx, page=ctx.new_page(), last=0.0)
+    except Exception as e:  # noqa: BLE001
+        _OCW["error"] = _scrub(f"cloakbrowser launch failed: {type(e).__name__}: {e}")
+        return None, _OCW["error"]
+    return _OCW["page"], None
+
+
+def _oc_save_session():
+    ctx = _OCW.get("ctx")
+    if ctx is None or not _OCW.get("logged_in"):
+        return
+    sp = oc_session_path()
+    try:
+        os.makedirs(os.path.dirname(sp), mode=0o700, exist_ok=True)
+        ctx.storage_state(path=sp)
+        os.chmod(sp, 0o600)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _oc_close():
+    b = _OCW.get("browser")
+    _oc_save_session()
+    _OCW.clear()
+    if b is not None:
+        try:
+            b.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _oc_content(page):
+    import time
+    for _ in range(6):
+        try:
+            page.wait_for_load_state("domcontentloaded")
+            return page.content()
+        except Exception:  # noqa: BLE001 — still navigating; retry
+            time.sleep(1.5)
+    try:
+        return page.content()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _has(html_text, markers):
+    return any(m in (html_text or "") for m in markers or [])
+
+
+def oc_is_gated(html_text) -> bool:
+    return _has(html_text, OC_WEB.get("gate_markers"))
+
+
+def oc_is_logged_in(html_text) -> bool:
+    return _has(html_text, OC_WEB.get("logged_in_markers"))
+
+
+def _oc_goto(url):
+    """Paced load -> (html, None) | (None, 'gated'|reason). A gate that does not clear within
+    captcha_wait_seconds stops every further OpenCorporates load for the run."""
+    import time
+    if _OCW.get("stopped"):
+        return None, _OCW["stopped"]
+    page, err = _oc_open()
+    if err:
+        return None, err
+    wait = float(OC_WEB.get("delay_seconds") or 0) - (time.time() - _OCW.get("last", 0.0))
+    if wait > 0:
+        time.sleep(wait)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=int(OC_WEB.get("goto_timeout_ms") or 60000))
+    except Exception as e:  # noqa: BLE001
+        _OCW["last"] = time.time()
+        return None, _scrub(f"{type(e).__name__}: {e}")
+    html_text = _oc_content(page)
+    deadline = time.time() + float(OC_WEB.get("captcha_wait_seconds") or 0)
+    while oc_is_gated(html_text) and time.time() < deadline:
+        time.sleep(2)
+        html_text = _oc_content(page)
+    _OCW["last"] = time.time()
+    if oc_is_gated(html_text):
+        _OCW["gated_url"] = url
+        if _OCW.get("logged_in"):
+            _OCW["stopped"] = "gated"
+        return None, "gated"
+    if oc_is_logged_in(html_text):
+        _OCW["logged_in"] = True
+    return html_text, None
+
+
+def _oc_login():
+    """Sign in with the env/.env credentials -> (ok, reason). Saves the session on success."""
+    import time
+    email, pw = _oc_creds()
+    _OCW["login_tried"] = True
+    if not (email and pw):
+        return False, f"no {OC_WEB['email_env']} / {OC_WEB['password_env']} set"
+    html_text, err = _oc_goto(OC_WEB["site"] + OC_WEB["signin"])
+    if err:
+        return False, f"sign-in page: {err}"
+    if oc_is_logged_in(html_text):
+        return True, "already signed in"
+    page = _OCW["page"]
+    try:
+        page.fill(OC_WEB["email_selector"], email)
+        page.fill(OC_WEB["password_selector"], pw)
+        page.click(OC_WEB["submit_selector"])
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(3)
+    except Exception as e:  # noqa: BLE001
+        return False, _scrub(f"sign-in form: {type(e).__name__}: {e}")
+    html_text = _oc_content(page)
+    if _has(html_text, OC_WEB.get("login_error_markers")):
+        return False, "sign-in rejected (invalid email or password)"
+    if not oc_is_logged_in(html_text):
+        html_text, err = _oc_goto(OC_WEB["site"] + "/")
+        if err or not oc_is_logged_in(html_text):
+            return False, "sign-in did not produce a signed-in page" + (f" ({err})" if err else "")
+    _OCW["logged_in"] = True
+    _oc_save_session()
+    return True, "signed in"
+
+
+def _oc_fetch(url):
+    """Load `url` signed-in when possible -> (html|None, err|None, mode 'session'|'anonymous').
+    A logged-out page triggers ONE re-login when credentials exist, then the page is reloaded."""
+    fresh = not os.path.isfile(oc_session_path())
+    if fresh and not _OCW.get("login_tried") and all(_oc_creds()):
+        ok, why = _oc_login()                      # no saved session: sign in before the first page
+        _OCW["login_result"] = why
+    html_text, err = _oc_goto(url)
+    if not _OCW.get("logged_in") and not _OCW.get("login_tried") and all(_oc_creds()):
+        ok, why = _oc_login()                      # saved session expired: one re-login
+        _OCW["login_result"] = why
+        if ok:
+            html_text, err = _oc_goto(url)
+    return html_text, err, ("session" if _OCW.get("logged_in") else "anonymous")
+
+
+def _oc_web_pv(status, url, results=None, mode=None, **kw):
+    pv = _pv(status, url, results, via="website", session=mode, **kw)
+    if _OCW.get("login_result") and not _OCW.get("logged_in"):
+        pv["login"] = _OCW["login_result"]
+    return pv
+
+
+def _oc_gate_pv(url, mode, err):
+    if err == "gated":
+        return _oc_web_pv("gated", url, mode=mode, gated="recaptcha", collection_gap=True,
+                          note=("reCAPTCHA gate did not clear — a collection GAP, not a negative. "
+                                + ("Run `wp_corp.py opencorporates-login` so searches run signed in."
+                                   if mode == "anonymous" else "Stopped further OpenCorporates loads this run.")))
+    return _oc_web_pv("error", url, mode=mode, error=_scrub(err))
+
+
+_OC_COMPANY_HREF = re.compile(r"/companies/([a-z]{2}(?:_[a-z]{2})?)/([^\"/?#]+)")
+
+
+def oc_web_parse_search(html_text):
+    site = OC_WEB["site"]
+    out = []
+    for cls, li in re.findall(r'<li class="search-result company([^"]*)">(.*?)</li>', html_text or "", re.S):
+        a = re.search(r'<a class="company_search_result[^"]*" href="([^"]+)"[^>]*>(.*?)</a>', li, re.S)
+        if not a:
+            continue
+        m = _OC_COMPANY_HREF.search(a.group(1))
+        start = re.search(r'class="start_date"[^>]*>(.*?)</span>', li, re.S)
+        end = re.search(r'class="end_date"[^>]*>(.*?)</span>', li, re.S)
+        addr = re.search(r'<span class="address">(.*?)</span>', li, re.S)
+        prev = re.findall(r'Previously/Alternatively known as (.*?)</span>', li, re.S)
+        label = re.search(r'<span class="status label">(.*?)</span>', li, re.S)
+        status = " ".join(cls.split()) or (_txt(label.group(1)) if label else None)
+        out.append(company_row("opencorporates", _txt(a.group(2)), m.group(2) if m else None,
+                               m.group(1) if m else None, site + a.group(1),
+                               status=status, incorporated=_txt(start.group(1)) if start else None,
+                               dissolved=_txt(end.group(1)) if end else None,
+                               registered_address=_txt(addr.group(1)) if addr else None,
+                               previous_names=[{"name": _txt(p), "period": None} for p in prev]))
+    return out
+
+
+def _oc_dd(html_text, cls):
+    """Inner HTML of <dd class="cls…">, or None — also None for the anonymous 'please log in to
+    see this data' placeholder (absent data, never a value)."""
+    m = re.search(r'<dd class="%s(?:\s[^"]*)?"[^>]*>(.*?)</dd>' % re.escape(cls), html_text or "", re.S)
+    if not m or re.search(r"log in to see", _txt(m.group(1)), re.I):
+        return None
+    return m.group(1)
+
+
+def _oc_officer_items(block, active, page_url):
+    site = OC_WEB["site"]
+    rows = []
+    for li in re.findall(r'<li class="attribute_item">(.*?)</li>', block or "", re.S):
+        a = re.search(r'<a class="officer[^"]*" href="(/officers/(\d+))"[^>]*>(.*?)</a>(.*)', li, re.S)
+        if not a:
+            continue
+        rest = a.group(4)
+        role = re.match(r"\s*,\s*([^,<]+?)\s*,", rest)
+        start = re.search(r'class="start_date"[^>]*>(.*?)</span>', rest, re.S)
+        end = re.search(r'class="end_date"[^>]*>(.*?)</span>', rest, re.S)
+        rows.append(officer_row(_txt(a.group(3)), "opencorporates", page_url,
+                                role=role.group(1).strip() if role else None,
+                                appointed=_txt(start.group(1)) if start else None,
+                                resigned=_txt(end.group(1)) if end else None,
+                                status="active" if active else "inactive",
+                                officer_id=a.group(2), other_appointments_url=site + a.group(1)))
+    return rows
+
+
+def oc_web_parse_company(html_text, page_url=None):
+    """Company page -> company_row; officers only when signed in (anonymous pages carry a
+    'N officers available, please log in' stub, reported as `officers_gated`)."""
+    h1 = re.search(r'<h1 class="wrapping_heading[^"]*"[^>]*>(.*?)</h1>', html_text or "", re.S)
+    m = _OC_COMPANY_HREF.search(page_url or "")
+    inc = _txt(_oc_dd(html_text, "incorporation_date"))
+    inc = re.sub(r"\s*\(.*?\)\s*$", "", inc) or None
+    dis = _txt(_oc_dd(html_text, "dissolution_date"))
+    dis = re.sub(r"\s*\(.*?\)\s*$", "", dis) or None
+    prev = [_txt(x) for x in re.findall(r'<li class="name_line">(.*?)</li>', _oc_dd(html_text, "previous_names") or "", re.S)]
+    act = _oc_dd(html_text, "officers")
+    inact = _oc_dd(html_text, "inactive_officers")
+    officers = _oc_officer_items(act, True, page_url) + _oc_officer_items(inact, False, page_url)
+    gated = [_txt(x) for x in re.findall(r'href="/users/sign_in[^"]*"[^>]*>([^<]*officers available[^<]*)</a>',
+                                          html_text or "")]
+    c = company_row("opencorporates", _txt(h1.group(1)) if h1 else None,
+                    _txt(_oc_dd(html_text, "company_number")) or (m.group(2) if m else None),
+                    m.group(1) if m else None, page_url,
+                    status=_txt(_oc_dd(html_text, "status")) or None, incorporated=inc, dissolved=dis,
+                    registered_address=_txt(_oc_dd(html_text, "registered_address")) or None,
+                    company_type=_txt(_oc_dd(html_text, "company_type")) or None,
+                    other_identifiers=_txt(_oc_dd(html_text, "other_identifiers")) or None,
+                    registry_source=_txt(_oc_dd(html_text, "source")) or None,
+                    previous_names=[{"name": p, "period": None} for p in prev], officers=officers)
+    if gated and not officers:
+        c["officers_gated"] = gated
+    return c
+
+
+def oc_web_parse_officer_search(html_text):
+    site = OC_WEB["site"]
+    blk = re.search(r'<ul class="officers unstyled">(.*?)</ul>\s*(?:</div>|<div)', html_text or "", re.S)
+    out = []
+    for li in re.findall(r"<li[^>]*>(.*?)</li>", blk.group(1) if blk else "", re.S):
+        a = re.search(r'<a class="officer[^"]*" href="(/officers/(\d+))"[^>]*>(.*?)</a>(.*)', li, re.S)
+        if not a:
+            continue
+        rest = a.group(4)
+        role = re.match(r"\s*([^,<]+?)\s*,", rest)
+        co = re.search(r'<a class="company[^"]*" href="([^"]+)"[^>]*>(.*?)</a>', rest, re.S)
+        cm = _OC_COMPANY_HREF.search(co.group(1)) if co else None
+        start = re.search(r'class="start_date"[^>]*>(.*?)</span>', rest, re.S)
+        end = re.search(r'class="end_date"[^>]*>(.*?)</span>', rest, re.S)
+        addr = re.search(r'<span class="address">(.*?)</span>', rest, re.S)
+        inactive = 'class="officer inactive' in li
+        out.append({"name": _txt(a.group(3)), "officer_id": a.group(2),
+                    "role": role.group(1).strip() if role else None,
+                    "birth_month_year": None, "address": _txt(addr.group(1)) if addr else None,
+                    "companies": [{"name": _txt(co.group(2)), "number": cm.group(2) if cm else None,
+                                   "jurisdiction": cm.group(1) if cm else None,
+                                   "url": site + co.group(1),
+                                   # the listing's "(Country, start-end)" is the COMPANY's life
+                                   # span, not the appointment — open the officer page for that
+                                   "incorporated": _txt(start.group(1)) if start else None,
+                                   "dissolved": _txt(end.group(1)) if end else None}] if co else [],
+                    "appointed": None, "resigned": None,
+                    "officer_status": "inactive" if inactive else "active",
+                    "other_appointments_url": site + a.group(1), "source_url": site + a.group(1),
+                    "provider": "opencorporates"})
+    return out
+
+
+def oc_web_parse_officer(html_text, page_url=None):
+    site = OC_WEB["site"]
+    h1 = re.search(r"<h1[^>]*>(.*?)</h1>", html_text or "", re.S)
+    co = re.search(r'<a class="company[^"]*" href="([^"]+)"[^>]*>(.*?)</a>', _oc_dd(html_text, "company") or "", re.S)
+    cm = _OC_COMPANY_HREF.search(co.group(1)) if co else None
+    f = {k: (_txt(_oc_dd(html_text, k)) or None) for k in
+         ("address", "position", "occupation", "nationality", "start_date", "end_date", "date_of_birth")}
+    return {"name": _txt(h1.group(1)) if h1 else None, "provider": "opencorporates",
+            "birth_month_year": norm_birth(f["date_of_birth"]) or f["date_of_birth"],
+            "nationality": f["nationality"], "occupation": f["occupation"], "source_url": page_url,
+            "appointments": [{"company_name": _txt(co.group(2)), "company_number": cm.group(2) if cm else None,
+                              "jurisdiction": cm.group(1) if cm else None,
+                              "company_url": site + co.group(1), "role": f["position"],
+                              "appointed": f["start_date"], "resigned": f["end_date"],
+                              "correspondence_address": f["address"], "source_url": page_url}] if co else [],
+            "note": "OpenCorporates officer records are per-appointment; search the same name for siblings."}
+
+
+def _oc_web_url(key, **kw):
+    jur = kw.pop("jur", None)
+    path = OC_WEB[key].replace("{jur_path}", "/" + _q(jur) if jur else "")
+    return OC_WEB["site"] + _fmt(path, **kw)
+
+
+def oc_web_search(query, oc_jur=None, detail=None):
+    url = _oc_web_url("search_companies", jur=oc_jur, query=query.strip())
+    html_text, err, mode = _oc_fetch(url)
+    if err:
+        return _oc_gate_pv(url, mode, err), []
+    comps = oc_web_parse_search(html_text)
+    # the site ranks by its own relevance; put exact / token name matches first so the
+    # `detail_max` company pages opened are the ones the analyst asked for
+    comps.sort(key=lambda c: -_MATCH_RANK.get(_name_match(query, c.get("name")) or "", 0))
+    comps = comps[:int(SETTINGS["max_results"])]
+    budget = int(OC_WEB.get("detail_max") or 0) if detail is None else int(detail)
+    for c in comps[:budget]:
+        h, e, _ = _oc_fetch(c["source_url"])
+        if e:
+            c["detail_errors"] = {"company_page": "gated" if e == "gated" else _scrub(e)}
+            continue
+        full = oc_web_parse_company(h, c["source_url"])
+        for k, v in full.items():
+            if v not in (None, "", []) and k not in ("provider", "source_url"):
+                c[k] = v
+    return _oc_web_pv("ok" if comps else "empty", url, [_pointer(c) for c in comps], mode=mode), comps
+
+
+def oc_web_company(oc_jur, number):
+    url = _oc_web_url("company", jurisdiction=oc_jur, number=number)
+    html_text, err, mode = _oc_fetch(url)
+    if err:
+        return _oc_gate_pv(url, mode, err), []
+    c = oc_web_parse_company(html_text, url)
+    if not c.get("name"):
+        return _oc_web_pv("empty", url, mode=mode), []
+    return _oc_web_pv("ok", url, [_pointer(c)], mode=mode), [c]
+
+
+def oc_web_officer_search(name, oc_jur=None):
+    url = _oc_web_url("search_officers", jur=oc_jur, query=name.strip())
+    html_text, err, mode = _oc_fetch(url)
+    if err:
+        return _oc_gate_pv(url, mode, err), []
+    cands = oc_web_parse_officer_search(html_text)
+    return _oc_web_pv("ok" if cands else "empty", url, mode=mode), cands
+
+
+def oc_web_officer(officer_id):
+    url = _oc_web_url("officer", officer_id=officer_id)
+    html_text, err, mode = _oc_fetch(url)
+    if err:
+        return _oc_gate_pv(url, mode, err), None
+    card = oc_web_parse_officer(html_text, url)
+    card["officer_id"] = officer_id
+    return _oc_web_pv("ok" if card.get("name") else "empty", url,
+                      [{"company_name": a["company_name"], "company_number": a["company_number"]}
+                       for a in card["appointments"]], mode=mode), card
+
+
+# ---------------------------------------------------------------- OpenCorporates dispatch
+def _oc_with_api(web_call, api_call):
+    """Website first; the premium API only as a SECONDARY when a token is set and the website
+    did not answer ok (gated / skipped / error). The website block is kept as `website`."""
+    if oc_web_available():
+        pv, res = web_call()
+    else:
+        pv, res = _pv("skipped", via="website", reason=_oc_open()[1]), ([] if api_call else None)
+    if pv["status"] in ("ok", "empty") or not _oc_token() or not _OCW.get("api_ok", True):
+        return pv, res
+    apv, ares = api_call()
+    apv["website"] = {k: pv.get(k) for k in ("status", "url", "gated", "error", "reason") if pv.get(k)}
+    return apv, ares
+
+
+def oc_search(query, oc_jur=None, detail=None):
+    return _oc_with_api(lambda: oc_web_search(query, oc_jur, detail), lambda: oc_api_search(query, oc_jur))
+
+
+def oc_company(oc_jur, number):
+    return _oc_with_api(lambda: oc_web_company(oc_jur, number), lambda: oc_api_company(oc_jur, number))
+
+
+def oc_officer_search(name, oc_jur=None):
+    return _oc_with_api(lambda: oc_web_officer_search(name, oc_jur), lambda: oc_api_officer_search(name, oc_jur))
+
+
+def oc_officer(officer_id):
+    return _oc_with_api(lambda: oc_web_officer(officer_id), lambda: oc_api_officer(officer_id))
+
+
+def oc_unconfigured_reason():
+    """Why a DEFAULT (not explicitly requested) run skips OpenCorporates, or None if it runs."""
+    if oc_web_configured() or _oc_token():
+        return None
+    if not oc_web_available():
+        return ("cloakbrowser not installed in this interpreter (repo .venv has it); the website "
+                "mode needs it")
+    return ("not configured: run `wp_corp.py opencorporates-login` (free account) — or pass "
+            "--provider opencorporates for an anonymous run (company pages only; searches are gated)")
+
+
+def opencorporates_login() -> int:
+    """Interactive (TTY only): prompt e-mail + password, test the login live, and ONLY on success
+    write both to the skill .env (apikeys.write_env, chmod 600) and save the session."""
+    import getpass
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print(json.dumps({"tool": "corp_registry", "mode": "opencorporates-login",
+                          "error": "interactive only — run it in a terminal (credentials are never "
+                                   "accepted as arguments)"}))
+        return 2
+    if not oc_web_available():
+        print(json.dumps({"error": _oc_open()[1]}))
+        return 2
+    email = input("OpenCorporates account e-mail: ").strip()
+    pw = getpass.getpass("OpenCorporates password (not echoed): ")
+    if not email or not pw:
+        print(json.dumps({"error": "e-mail and password are both required; nothing written"}))
+        return 1
+    # The typed values live only in this process's env for the test login (so _scrub masks them
+    # in any error); the process exits right after.
+    os.environ[OC_WEB["email_env"]], os.environ[OC_WEB["password_env"]] = email, pw
+    _OCW.clear()
+    ok, why = _oc_login()
+    _oc_close()
+    if not ok:
+        print(json.dumps({"tool": "corp_registry", "mode": "opencorporates-login", "ok": False,
+                          "reason": _scrub(why), "written": False}))
+        return 1
+    try:
+        sys.path.insert(0, os.path.normpath(os.path.join(HERE, "..", "..", "..", "scripts", "apikeys")))
+        import apikeys  # noqa: E402 — the repo's .env writer (chmod 600)
+        apikeys.write_env(OC_WEB["email_env"], email)
+        apikeys.write_env(OC_WEB["password_env"], pw)
+        env_path = apikeys.ENV_PATH
+    except Exception as e:  # noqa: BLE001
+        print(json.dumps({"ok": True, "written": False, "session": oc_session_path(),
+                          "error": f"login worked but the .env write failed: {type(e).__name__}"}))
+        return 1
+    print(json.dumps({"tool": "corp_registry", "mode": "opencorporates-login", "ok": True,
+                      "account": _mask_email(email), "written": [OC_WEB["email_env"], OC_WEB["password_env"]],
+                      "env_file": env_path, "session": oc_session_path()}))
+    return 0
 
 
 # ============================================================================ France
@@ -1360,7 +1899,11 @@ def company(query, jurisdiction=None, providers=None, detail=None, corroborate=N
     budget = int(SETTINGS["detail_max"] if detail is None else detail)
     for name in _selected(iso, providers):
         if name == "opencorporates":
-            pv, comps = oc_search(query, oc_jur)
+            why = None if providers and name in providers else oc_unconfigured_reason()
+            if why:
+                out["providers"][name] = _pv("skipped", reason=why)
+                continue
+            pv, comps = oc_search(query, oc_jur, detail)
         elif name in _SEARCHERS:
             pv, comps = _SEARCHERS[name](query) if name != "gleif" else gleif_search(query, iso)
         else:
@@ -1391,6 +1934,10 @@ def officer(name, jurisdiction=None, providers=None, corroborate=None, verify=No
     cands = []
     for pname in _selected(iso, providers):
         if pname == "opencorporates":
+            why = None if providers and pname in providers else oc_unconfigured_reason()
+            if why:
+                out["providers"][pname] = _pv("skipped", reason=why)
+                continue
             pv, cs = oc_officer_search(name, oc_jur)
         elif pname in _OFFICER_SEARCHERS:
             pv, cs = _OFFICER_SEARCHERS[pname](name)
@@ -1443,13 +1990,9 @@ def company_officers(spec, corroborate=None):
         if comps and _DETAILERS.get(local):
             _DETAILERS[local](comps[0])
         out["providers"][local] = pv
-    elif _oc_token():
-        pv, comps = oc_company(oc_jur, num)
-        out["providers"]["opencorporates"] = pv
     else:
-        out["providers"]["opencorporates"] = _pv("skipped", reason=f"no keyless registry configured for {iso}; "
-                                                                   "set OPENCORPORATES_API_TOKEN")
-        comps = []
+        pv, comps = oc_company(oc_jur, num)        # website (anonymous: fields only, no officers)
+        out["providers"]["opencorporates"] = pv
     out["companies"] = comps
     out["officers"] = [o for c in comps for o in c.get("officers") or []]
     return _summarise(out)
@@ -1496,11 +2039,15 @@ def _summarise(out):
     return out
 
 
-def run(mode, query, jurisdiction=None, providers=None, corroborate=None, detail=None, verify=None):
-    """Single entry point for the harness. Never raises."""
+def run(mode, query, jurisdiction=None, providers=None, corroborate=None, detail=None, verify=None,
+        oc_api=True):
+    """Single entry point for the harness. Never raises. `oc_api=False` forbids the metered
+    OpenCorporates API secondary (the free pivot route uses the website only)."""
     corr = parse_corroborate(corroborate if isinstance(corroborate, list) else
                              ([corroborate] if corroborate else []))
     only = [p.strip() for p in providers.split(",")] if isinstance(providers, str) and providers else providers
+    _OCW.clear()
+    _OCW["api_ok"] = bool(oc_api)
     try:
         if mode == "company":
             return company(query, jurisdiction, only, detail, corr)
@@ -1512,15 +2059,19 @@ def run(mode, query, jurisdiction=None, providers=None, corroborate=None, detail
             return officer_appointments(query, corr)
         return {"tool": "corp_registry", "error": f"unknown mode {mode!r}; one of {', '.join(MODES)}"}
     except Exception as e:  # noqa: BLE001 — tri-state contract: report, never raise
-        return {"tool": "corp_registry", "mode": mode, "query": query, "error": f"{type(e).__name__}: {e}"}
+        return {"tool": "corp_registry", "mode": mode, "query": query,
+                "error": _scrub(f"{type(e).__name__}: {e}")}
+    finally:
+        _oc_close()                                 # one OpenCorporates browser per run
 
 
 def main():
     ap = argparse.ArgumentParser(description="Global company + officer registry pivot (GLEIF, Companies "
                                              "House, OpenCorporates, FR, NO, FI, SEC; VN->vn_corp, CN->cn_recon). "
                                              "Officers are LEADS (RULE 5).")
-    ap.add_argument("mode", choices=MODES)
-    ap.add_argument("query", help="company name/number | officer full name | <jur>:<number> | officer id/url")
+    ap.add_argument("mode", choices=MODES + ("opencorporates-login",))
+    ap.add_argument("query", nargs="?", help="company name/number | officer full name | <jur>:<number> | "
+                                             "officer id/url (not used by opencorporates-login)")
     ap.add_argument("--jurisdiction", "-j", default=None, help="ISO-2 (GB, FR, NO, FI, US, VN, CN) or OpenCorporates code (us_de)")
     ap.add_argument("--provider", default=None, help="comma list to restrict providers (gleif,companies_house,...)")
     ap.add_argument("--corroborate", action="append", default=[], metavar="K=V,...",
@@ -1529,6 +2080,10 @@ def main():
     ap.add_argument("--verify", type=int, default=None, help="officer candidates whose appointments are fetched for corroboration")
     ap.add_argument("--json", action="store_true", help="compact JSON")
     a = ap.parse_args()
+    if a.mode == "opencorporates-login":
+        return opencorporates_login()
+    if not a.query:
+        ap.error(f"{a.mode} needs a query")
     out = run(a.mode, a.query, a.jurisdiction, a.provider, a.corroborate, a.detail, a.verify)
     print(json.dumps(out, indent=None if a.json else 2, ensure_ascii=False))
     return 0 if not out.get("error") else 1
