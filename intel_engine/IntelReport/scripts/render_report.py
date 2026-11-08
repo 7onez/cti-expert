@@ -78,7 +78,10 @@ _I18N_FALLBACK = {
                "appendix": "Appendix", "figure": "Figure", "table": "Table",
                "audience_technical": "Technical briefing",
                "audience_executive": "Executive briefing",
-               "audience_le": "Law-enforcement briefing"},
+               "audience_le": "Law-enforcement briefing",
+               "author": "Author", "version": "Version", "created": "Created",
+               "modified": "Last modified", "hours": "Analyst effort", "hours_unit": "h",
+               "client": "Client"},
         "vi": {"contents": "Mục lục", "appendix": "Phụ lục"},
     },
     # Deliberately thin: these are the analyst's WORDS, and a half-remembered fallback glossary
@@ -504,6 +507,8 @@ def build_defs_and_cover(m, tmpdir, resource_dir="."):
     caserow = ((r"\textbf{%s} & %s \\" % (tex_escape(S(lang, "reference")), caseid))
                if caseid else "")
     basis = tex_escape(m.get("basis") or S(lang, "basis_default"))
+    eng_rows = "".join(r"\textbf{%s} & %s \\" % (tex_escape(lbl), tex_escape(val)) + "\n"
+                       for _, lbl, val in engagement_rows(m))
     cover = os.path.join(tmpdir, "cover.tex")
     with open(cover, "w", encoding="utf-8") as fh:
         fh.write(r"""\begin{titlepage}
@@ -521,16 +526,33 @@ def build_defs_and_cover(m, tmpdir, resource_dir="."):
 %s
 \textbf{%s} & %s \\
 \textbf{%s} & %s \\
-\end{tabular}\par}
+%s\end{tabular}\par}
 \vspace{0.6cm}{\color{grid}\hrule height 0.6pt}\par
 \vspace{0.25cm}{\footnotesize\headingfont\color{muted} %s: %s}\par
 \end{titlepage}
 \clearpage
 """ % (cls, title, subtitle, caserow,
             tex_escape(S(lang, "date")), date,
-            tex_escape(S(lang, "basis")), basis,
+            tex_escape(S(lang, "basis")), basis, eng_rows,
             tex_escape(S(lang, "handling")), cls))
     return defs, cover
+
+
+ENGAGEMENT_KEYS = ("author", "version", "created", "modified", "hours", "client")
+
+
+def engagement_rows(m):
+    """[(key, label, value)] for the cover's document-control rows — frontmatter author / version
+    / created / modified / hours / client (house_report writes them from the analyst's imported
+    `engagement` block). Only keys that carry a value: no engagement, no rows, no blank rows."""
+    lang = m.get("lang") or DEFAULT_LANG
+    eng = m.get("engagement") or {}
+    rows = []
+    for k in ENGAGEMENT_KEYS:
+        v = str(eng.get(k) or "").strip()
+        if v:
+            rows.append((k, S(lang, k), f"{v} {S(lang, 'hours_unit')}" if k == "hours" else v))
+    return rows
 
 
 def run(cmd):
@@ -732,11 +754,16 @@ def render_docx(body, stem, m, resource_dir):
         sub = f"{S(lang, 'reference')}: {m['ref']}" + (f" — {sub}" if sub else "")
     if m["classification"]:
         sub = (m["classification"] + (" — " + sub if sub else "")).strip()
+    # Word's title block holds title / subtitle / author / date only: author goes to `author`, the
+    # rest of the document control (version · dates · effort · client) rides on the date line —
+    # page 1, like the PDF cover. (abstract is not used: pandoc heads it "Abstract".)
+    rows = engagement_rows(m)
+    rest = " · ".join(f"{lbl}: {val}" for k, lbl, val in rows if k != "author")
     cmd = ["pandoc", body, "-o", out,
            "--from", PANDOC_FROM,
            "--number-sections", "--toc", "--toc-depth=%d" % m.get("toc_depth", 3),
            "-M", f"title={m['title']}",
-           "-M", f"date={m['date']}",
+           "-M", f"date={m['date']}" + (f" — {rest}" if rest else ""),
            "-M", "toc-title=%s" % S(lang, "contents"),
            # Word tags the runs with this, so the reviewer's spellchecker stops underlining
            # every Vietnamese word in a document they are supposed to redline.
@@ -744,6 +771,9 @@ def render_docx(body, stem, m, resource_dir):
            "--resource-path", resource_dir]
     if sub:
         cmd += ["-M", f"subtitle={sub}"]
+    for k, _, val in rows:
+        if k == "author":
+            cmd += ["-M", f"author={val}"]
     if os.path.isfile(REFERENCE_DOCX):
         cmd += ["--reference-doc", REFERENCE_DOCX]
     return out if run(cmd) else None
@@ -839,6 +869,9 @@ def main():
     # Collection basis shown on the cover. Set it honestly: a run that retrieved live pages,
     # fingerprinted TLS or probed an endpoint is NOT passive. Frontmatter `basis:` overrides it.
     m["basis"] = fm.get("basis") or S(lang, "basis_default")
+    # Document control (author · version · dates · effort · client) shown on the cover — only
+    # the keys the frontmatter actually carries.
+    m["engagement"] = {k: fm[k] for k in ENGAGEMENT_KEYS if fm.get(k)}
 
     # OPSEC: the document displays an EXTERNAL reference, never the internal
     # case-store id. Resolve the reference in this order: explicit flag/frontmatter

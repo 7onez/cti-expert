@@ -1,0 +1,35 @@
+{
+  "_comment": "Anti-inflation rules for headline counts in the report JSON (`metrics[]` and `counting_rules[]`), read by cti_report_sections.validate_metrics (build_report_data.py and the generators). A rule only WARNS — the numbers are never changed. Vocabulary only, never case data (RULE 1).",
+  "entity_terms": {
+    "_comment": "Words in a metric label that make the reader assume one counted item = one real-world entity (a person, an account, a machine, a record).",
+    "values": ["account", "accounts", "user", "users", "victim", "victims", "customer", "customers",
+               "client", "clients", "person", "persons", "people", "individual", "individuals",
+               "employee", "employees", "member", "members", "host", "hosts", "machine", "machines",
+               "device", "devices", "endpoint", "endpoints", "server", "servers", "record", "records",
+               "identity", "identities", "subscriber", "subscribers", "organisation", "organisations",
+               "organization", "organizations", "company", "companies"]
+  },
+  "non_entity_units": {
+    "_comment": "Units of what was actually counted that are NOT one entity each: one account can own many tokens or credentials, one machine many log lines, one attack many chains.",
+    "values": ["token", "tokens", "credential", "credentials", "cookie", "cookies", "session", "sessions",
+               "password", "passwords", "secret", "secrets", "key", "keys", "hash", "hashes",
+               "byte", "bytes", "kb", "mb", "gb", "tb", "line", "lines", "row", "rows", "log", "logs",
+               "entry", "entries", "request", "requests", "event", "events", "file", "files",
+               "chain", "chains", "attack_chain", "attack_chains", "attempt", "attempts", "hit", "hits",
+               "match", "matches", "url", "urls", "combo", "combos", "combolist"]
+  },
+  "attempted_terms": {
+    "_comment": "Status / label words for an action that was tried but not shown to succeed.",
+    "values": ["attempted", "attempt", "attempts", "tried", "unproven", "unconfirmed", "suspected",
+               "attempted_unproven", "probable", "possible", "inferred", "unverified"]
+  },
+  "confirmed_terms": {
+    "_comment": "Status / label words for an outcome shown to have happened.",
+    "values": ["confirmed", "verified", "proven", "successful", "succeeded", "observed",
+               "strong_indirect", "compromised"]
+  },
+  "unit_fields": {
+    "_comment": "Row keys read (in order) for WHAT a metric row counted.",
+    "values": ["unit", "source", "counts", "counted", "basis"]
+  }
+}

@@ -84,7 +84,9 @@ from cti_docx_diagrams import add_entity_diagram, add_network_topology, add_clou
 from cti_docx_sections import (
     add_executive_summary, add_subject_profile, add_findings_section,
     add_connections_section, add_source_list, add_intelligence_gaps,
-    add_recommendations, add_methodology_notes
+    add_recommendations, add_methodology_notes, add_key_questions, add_counting_rules,
+    add_analysis_sections, add_sources_checked, add_generated_footer, add_engagement,
+    add_identity_cards, add_client_seeds
 )
 
 
@@ -115,7 +117,8 @@ def load_data(json_path: str) -> dict:
     case.setdefault("status", "active")
 
     from cti_text_normalize import normalize_obj
-    return normalize_obj(data)
+    from cti_report_sections import prepare
+    return prepare(normalize_obj(data), "generate-cti-docx")
 
 
 def generate_output_path(data: dict, output_path: str = None) -> str:
@@ -147,9 +150,14 @@ def build_report(data: dict, lang: str = "en") -> Document:
     # 4. Table of contents (anchor now; entries baked after the body is built)
     toc_anchor = begin_toc(doc, S["contents"])
 
-    # 5. Executive summary
+    # 5. Document control (engagement front matter), executive summary
+    add_engagement(doc, data)
     add_executive_summary(doc, data)
 
+    # 6. Key questions (analyst report block) — right after the summary they answer — then the
+    #    subject identity card
+    add_key_questions(doc, data)
+    add_identity_cards(doc, data)
 
     # 7. Subject profiles
     add_subject_profile(doc, data)
@@ -206,14 +214,23 @@ def build_report(data: dict, lang: str = "en") -> Document:
     # 13. Sources
     add_source_list(doc, data)
 
-    # 14. Intelligence gaps
-    add_intelligence_gaps(doc, data)
+    # 14. Methodology notes, client-provided details, then what each headline number counts
+    add_methodology_notes(doc, data)
+    add_client_seeds(doc, data)
+    add_counting_rules(doc, data)
 
-    # 15. Recommendations
+    # 15. Roles, incident timeline, ATT&CK mapping, scenarios (analyst report block)
+    add_analysis_sections(doc, data)
+
+    # 16. Recommendations (P1/P2/P3 when a roadmap exists)
     add_recommendations(doc, data)
 
-    # 16. Methodology notes
-    add_methodology_notes(doc, data)
+    # 17. Open questions (table) / intelligence gaps (bullets)
+    add_intelligence_gaps(doc, data)
+
+    # 18. Appendices — QA warnings, sources checked (zero-hit rows kept)
+    add_sources_checked(doc, data)
+    add_generated_footer(doc)
     # Bake a real clickable TOC into the field cache (Word still auto-updates it).
     finalize_toc(doc, toc_anchor)
     return doc

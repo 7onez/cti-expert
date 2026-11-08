@@ -16,7 +16,9 @@
         "table": "Table",
         "audience_technical": "Technical briefing",
         "audience_executive": "Executive briefing",
-        "audience_le": "Law-enforcement briefing"
+        "audience_le": "Law-enforcement briefing",
+        "author": "Author", "version": "Version", "created": "Created", "modified": "Last modified",
+        "hours": "Analyst effort", "hours_unit": "h", "client": "Client"
       },
       "vi": {
         "reference": "Số hiệu",
@@ -30,7 +32,9 @@
         "table": "Bảng",
         "audience_technical": "Báo cáo kỹ thuật",
         "audience_executive": "Báo cáo tóm tắt cho lãnh đạo",
-        "audience_le": "Báo cáo phục vụ cơ quan chức năng"
+        "audience_le": "Báo cáo phục vụ cơ quan chức năng",
+        "author": "Người thực hiện", "version": "Phiên bản", "created": "Ngày tạo", "modified": "Cập nhật",
+        "hours": "Thời lượng phân tích", "hours_unit": "giờ", "client": "Khách hàng"
       }
     }
   },

@@ -22,6 +22,11 @@ a pipeline fetch does and is skipped, not forced, when that policy blocks (`--no
   shared.txt           shared-indicator seeds (artifact register)
   knowledge/reference.jsonl   §2.5 verdicts (benign rows are marked "excluded")
   knowledge/operators.jsonl   confirmed-operator ledger
+  evidence/imported/   analyst `report` blocks via report_sections.load (key questions, roles,
+                       incident timeline, ATT&CK mapping, scenarios, P1-P3 roadmap, open
+                       questions, counting rules, findings' confirmation / not-proven)
+  tool_calls.jsonl     + case-scoped licensed-API rows -> the "Sources checked" appendix
+                       (report_sections.sources_checked; zero-hit sources are listed)
 
 House rules enforced here (IntelReport SKILL Rules 0–23): decision statement first, BLUF table and
 bottom-line callout, Methodology early with both scales, headings unnumbered (the template numbers
@@ -34,6 +39,7 @@ Usage:
     python3 tools/house_report.py <CASE-ID|case-dir> [--stem NAME] [--classification TLP:AMBER]
                                   [--audience technical|executive|le] [--no-figures] [--md-only]
                                   [--no-screenshots] [--max-screenshots 40] [--screenshot-timeout 30] [--no-archive-fallback]
+                                  [--show-sensitive]
 """
 from __future__ import annotations
 
@@ -136,6 +142,8 @@ import house_report_captures as hrc  # noqa: E402
 import house_report_correlations as hrx  # noqa: E402
 import house_report_dossier as hrd  # noqa: E402
 import house_report_charts as hrg  # noqa: E402
+import house_report_sections as hrs  # noqa: E402
+import report_sections  # noqa: E402
 try:  # registrar/privacy-proxy classifier for the Registrant-eras table (best-effort)
     sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
     from whois_enrich import is_privacy as _is_privacy  # noqa: E402
@@ -302,6 +310,22 @@ def load_case(case_dir: str, mask_personas: bool = False) -> dict:
             continue
         if n not in _MASK_EXTRA:
             _MASK_EXTRA.append(n)
+    # Analyst report sections (evidence_import `report` blocks) + the sources-checked ledger view.
+    # A damaged import or ledger degrades to "no section", never to a failed report.
+    try:
+        c["report_sections"] = report_sections.load(case_dir)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"report sections not read: {e}\n")
+        c["report_sections"] = {}
+    try:
+        c["sources_checked"] = report_sections.sources_checked(case_dir)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"sources checked not read: {e}\n")
+        c["sources_checked"] = []
+    try:
+        c["qa_warnings"] = report_sections.lint(c["report_sections"])
+    except Exception as e:  # noqa: BLE001 — QA never blocks the report
+        c["qa_warnings"] = [f"QA lint not run: {e}"]
     return c
 
 
@@ -1277,8 +1301,12 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         basis = "Passive OSINT"
 
     L = []
+    eng = (c.get("report_sections") or {}).get("engagement") or {}
+    eng_meta = [f'{k}: "{scrub(str(eng[k]), escape=False).replace(chr(34), chr(39))}"'
+                for k in ("author", "version", "created", "modified", "hours", "client")
+                if eng.get(k) not in (None, "")]
     L += ["---", f'title: "{title[:140].replace(chr(34), chr(39))}"', f"case_id: {case}",
-          f"classification: {classification}", f"date: {observed}", f'basis: "{basis}"', "---", ""]
+          f"classification: {classification}", f"date: {observed}", f'basis: "{basis}"', *eng_meta, "---", ""]
 
     # I — Executive summary
     L += ["# Executive Summary — Key Judgments", "", f"*{purpose}*", ""]
@@ -1300,6 +1328,12 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     if brand:
         L.append(f"- **{brand_label}:** {_md_escape(brand)}")
     L.append("")
+    rs = hrs.render(c.get("report_sections") or {}, c.get("sources_checked") or [], scrub, _md_escape, cited,
+                    show_sensitive=bool(c.get("show_sensitive")), warnings=c.get("qa_warnings") or [])
+    if rs["key_questions"]:
+        L += [rs["key_questions"], ""]
+    if rs["identity_card"]:
+        L += [rs["identity_card"], ""]
 
     # II — Methodology
     L += ["# Methodology", "", "## Approach", "", METHOD_MD, "",
@@ -1309,6 +1343,19 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     charts = figs.get("charts") or {}
     if hrg.confidence_md(charts, observed):
         L += ["The case's own judgments, placed on both scales:", "", hrg.confidence_md(charts, observed), ""]
+    if rs["counting_rules"]:
+        L += [rs["counting_rules"], ""]
+    if rs["key_counts"]:
+        L += [rs["key_counts"], ""]
+    if rs["client_details"]:
+        L += [rs["client_details"], ""]
+    if eng:
+        L += ["## Document control", "", "| Field | Value |", "|:------|:----------------------------|"]
+        for k, label in (("author", "Author"), ("version", "Version"), ("created", "Created"),
+                         ("modified", "Last modified"), ("hours", "Analyst effort (hours)"), ("client", "Client")):
+            if eng.get(k) not in (None, ""):
+                L.append(f"| {label} | {_md_escape(scrub(str(eng[k])))} |")
+        L.append("")
 
     # III — Scope and seed
     L += ["# Scope and the seed", ""]
@@ -1342,6 +1389,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     ev_table = find_section(secs, "evidentiary finding", "evidence detail")
     if ev_table:
         L += ["## Evidence detail", "", demote_headings(scrub(ev_table)), ""]
+    if rs["findings_boundaries"]:
+        L += [rs["findings_boundaries"], ""]
 
     # V — The cluster
     L += ["# The cluster", ""]
@@ -1399,6 +1448,9 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += [hrg.heatmaps_md(charts, observed), ""]
     if charts and hrg.missing_md(charts):
         L += [hrg.missing_md(charts), ""]
+    for key in ("incident_timeline", "attack_mapping"):
+        if rs[key]:
+            L += [rs[key], ""]
     corr, dated_ledger = condense_timeline_ledger(figs.get("timeline_md", ""), figs.get("timeline_events"))
     if corr:
         L += ["## Temporal correlations", "", corr, ""]
@@ -1437,6 +1489,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     confs = find_section(secs, "confidence")
     if confs:
         L += [demote_headings(scrub(confs)), ""]
+    if rs["roles"]:
+        L += [rs["roles"], ""]
 
     # VIII — Alternative analysis
     L += ["# Alternative analysis", ""]
@@ -1459,6 +1513,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     mo = c.get("mo_neighbours") or {}
     if mo.get("related_personas") or mo.get("bulk_origins"):
         L += [related_personas_md(mo, masked=bool(c.get("mask_personas"))), ""]
+    if rs["scenarios"]:
+        L += [rs["scenarios"], ""]
 
     # IX — Gaps
     L += ["# Gaps and limitations", ""]
@@ -1468,11 +1524,15 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += [demote_headings(scrub(gaps_md)), ""]
     elif gaps:
         L += [f"- {scrub(g)}" for g in gaps] + [""]
-    else:
+    elif not rs["open_questions"]:
         L += ["_None recorded._", ""]
+    if rs["open_questions"]:
+        L += [rs["open_questions"], ""]
 
     # X — Recommendations
     L += ["# Recommendations", ""]
+    if rs["roadmap"]:
+        L += [rs["roadmap"], ""]
     rec = find_section(secs, "recommendation")
     if rec:
         L += [demote_headings(scrub(rec)), ""]
@@ -1489,6 +1549,10 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
                                   created_of=lambda h: era_start_of(c, figs, h))
     if caps:
         L += ["## Captured pages", "", caps, ""]
+    if rs["sources_checked"]:
+        L += ["# Sources checked", "", rs["sources_checked"], ""]
+    if rs["qa_warnings"]:
+        L += ["# QA warnings", "", rs["qa_warnings"], ""]
     L += [
           "# Domain and infrastructure profiles", "", domain_profiles(c), "",
           "# Cluster enumeration", "", cluster_enumeration(c), ""]
@@ -1516,12 +1580,15 @@ def cluster_hosts(c: dict) -> list:
 def build(case_arg: str, stem: str | None, classification: str, audience: str,
           no_figures: bool, md_only: bool, screenshots: bool = True,
           max_screenshots: int = 40, screenshot_timeout: int = 30, archives: bool = True,
-          mask_personas: bool = False) -> dict:
+          mask_personas: bool = False, show_sensitive: bool = False) -> dict:
     case_dir = _case_dir(case_arg)
     if not os.path.isdir(case_dir):
         sys.exit(f"case dir not found: {case_dir}")
     os.environ.setdefault("WP_CASE_DIR", case_dir)      # per-case memos (ipinfo etc.) span rebuilds
     c = load_case(case_dir, mask_personas=mask_personas)
+    c["show_sensitive"] = bool(show_sensitive)
+    for w in hrs.redact(c.get("qa_warnings"), c.get("report_sections"), show_sensitive):
+        sys.stderr.write(f"QA warning: {w}\n")
     classification = classification or case_classification(case_dir) or "TLP:AMBER"
     rep_dir = os.path.join(case_dir, "report")
     os.makedirs(rep_dir, exist_ok=True)
@@ -1634,11 +1701,14 @@ def main():
     ap.add_argument("--mask-personas", action="store_true",
                     help="render the MO-neighbour 'Related personas' table in aggregated/masked form "
                          "(default: verified persona identities in clear with the rung-10 caveat)")
+    ap.add_argument("--show-sensitive", action="store_true",
+                    help="print client-provided details marked sensitive (default: rendered as "
+                         "'provided by client — withheld' in the Client-provided details table and identity card)")
     a = ap.parse_args()
     out = build(a.case, a.stem, a.classification, a.audience, a.no_figures, a.md_only,
                 screenshots=not a.no_screenshots, max_screenshots=a.max_screenshots,
                 screenshot_timeout=a.screenshot_timeout, archives=not a.no_archive_fallback,
-                mask_personas=a.mask_personas)
+                mask_personas=a.mask_personas, show_sensitive=a.show_sensitive)
     for k, v in out.items():
         print(f"  {k:14s} {v if k != 'render_error' else chr(10) + v}")
     sys.exit(1 if "render_error" in out else 0)

@@ -1,0 +1,127 @@
+{
+  "_comment": "Reference data for tools/report_sections.py — the reader that merges the analyst `report` blocks evidence_import stored under cases/<case>/evidence/imported/ and builds the 'Sources checked' appendix from the case's tool-call ledger (cases/<case>/tool_calls.jsonl) and the case-scoped rows of the licensed-API ledger (MEMORY/api_usage.jsonl). The row SCHEMA (required keys, enums, id patterns) lives in evidence_import.json `report_sections`; this file only holds merge keys, ledger field names and the public source-class wording. RULE 1: vocabulary only, never case data.",
+
+  "merge_keys": {
+    "_comment": "Section -> the row keys that identify one row across imports. A later import (by file mtime) replaces an earlier row with the same key. Sections carrying an `id` (KQ-nn, OQ-nn, SC-nn, Tnnn, MAP-nn) merge on it; roles / roadmap / counting_rules have no id and merge on a content key (compared case-insensitively, whitespace-collapsed).",
+    "entries": {
+      "key_questions": ["id"],
+      "open_questions": ["id"],
+      "scenarios": ["id"],
+      "incident_timeline": ["id"],
+      "attack_mapping": ["id"],
+      "roles": ["entity", "role"],
+      "roadmap": ["priority", "action"],
+      "counting_rules": ["metric"],
+      "metrics": ["metric"],
+      "subject_profile": ["entity", "field", "value"],
+      "client_seeds": ["type", "value"]
+    }
+  },
+
+  "selector_args": {
+    "_comment": "Tool-call ledger `args` keys read, in order, as the SELECTOR a call was made against. The first non-empty one wins; a call with none of them is recorded against the whole case ('(case)').",
+    "values": ["selector", "target", "indicator", "url", "domain", "domains", "email", "emails", "phone", "numbers",
+               "ip", "hash", "address", "addresses", "username", "package", "cve", "product", "ssid", "serial",
+               "company", "query", "name", "seed"]
+  },
+
+  "hit_fields": {
+    "_comment": "Record fields read (in order) as the number of results a call returned. An int is used as-is, a list/dict by its length. A record carrying none of them has hits 'unknown' — never guessed. The tool-call ledger currently records arguments only, so its rows are 'unknown' unless a future ledger adds one of these fields.",
+    "values": ["hits", "results", "result_count", "n_results", "count", "total"]
+  },
+
+  "error_fields": {
+    "_comment": "Record fields whose truthy value marks the call as an error. A licensed-API row with ok=false is an error as well.",
+    "values": ["error", "failed"]
+  },
+
+  "source_classes": {
+    "_comment": "Tool / provider name (lower-case) -> the PUBLIC source class shown in the report's 'Sources checked' appendix (IntelReport Rule 12: no internal tool or vendor names in the report). Unlisted names fall back to the name with underscores as spaces, then the house vendor scrub.",
+    "entries": {
+      "pivot_extract": "live page and infrastructure collection",
+      "fallback_probe": "live page and infrastructure collection",
+      "domain_liveness": "live page and DNS check",
+      "capture_screenshot": "live page capture",
+      "capture_evidence": "live page capture",
+      "subdomain_enum": "subdomain enumeration",
+      "origin_history": "passive DNS / hosting history",
+      "passive_ssl": "certificate archive",
+      "cert_pivot": "certificate search",
+      "cert_overlap": "certificate comparison",
+      "reverse_whois": "registration-data service",
+      "whoisxml": "registration-data service",
+      "rdap": "registration data (RDAP)",
+      "intelx_search": "leak-corpus search",
+      "intelx": "leak-corpus search",
+      "deep_profile": "breach and account-existence search",
+      "osint_industries": "account-existence search",
+      "username_enum": "username enumeration",
+      "github_osint": "code-hosting profile",
+      "github_harvest": "code-hosting commit history",
+      "wayback_fetch": "web-archive",
+      "wayback_harvest": "web-archive",
+      "wayback_exhaust": "web-archive",
+      "threat_check": "reputation feed",
+      "cld": "anti-scam verdict service",
+      "censys": "web-scan index",
+      "fofa": "web-scan index",
+      "urlscan": "web-scan index",
+      "shodan": "web-scan index",
+      "validin": "passive DNS",
+      "securitytrails": "passive DNS",
+      "ipinfo": "IP/ASN data",
+      "ip_info": "IP/ASN data",
+      "phone_osint": "telephone numbering data",
+      "vn_corp": "business registry",
+      "cn_recon": "business registry / ICP filing",
+      "app_developer": "app-store listing",
+      "meta_transparency": "social-platform transparency data",
+      "crypto_balance": "blockchain explorer",
+      "msft_recon": "cloud-tenant directory",
+      "email_hygiene": "mail DNS records",
+      "grayhatwarfare": "open storage index",
+      "anyrun_lookup": "malware sandbox",
+      "analyze_artifact": "file analysis",
+      "search_pivot": "web search",
+      "serp_ads": "web search advertising",
+      "traffic_rank": "popularity ranking",
+      "impersonation_hunt": "lookalike-domain search",
+      "misp_search": "threat-sharing platform"
+    }
+  },
+
+  "lint": {
+    "_comment": "report_sections.lint() — QA warnings over the subject_profile / client_seeds rows (warn, never block; rendered as the house report's 'QA warnings' appendix and returned as evidence_import `report_lint`). profile_fields = the subject_profile field enum. Identifier keys: e-mail lower-cased; a phone = digits only (>= min_phone_digits) for phone_fields; a profile URL on a platform_hosts host -> <platform>:<numeric id> (from id_query_params, an all-digit path segment of >= min_id_digits, or basis_id_pattern on the row's basis) plus handle:<vanity> (first path segment after skip_path_segments); an alias/account value -> handle:<lower, @ stripped>, or <platform>:<id> when it is all digits and the row's source is a platform URL. compatible_fields = field groups one identifier may legitimately sit under on ONE entity (any other pair is 'incompatible'); wildcard_fields never conflict. basis_required_fields need basis + source (evidence_import also rejects them without). single_valued_fields: a client seed that differs from every CONFIRMED row of the field is a contradiction (dates compared after date_formats parsing). seed_type_fields maps a client seed `type` onto a profile field. Near-duplicate handles: edit distance 1 or equal once . _ - are removed, both at least near_duplicate_min_length long; finding_handle_types = finding indicator types also checked.",
+    "profile_fields": ["name", "alias", "dob", "birthplace", "email", "phone", "address", "company",
+                       "account", "relative", "other"],
+    "handle_fields": ["alias", "account"],
+    "phone_fields": ["phone", "account", "other"],
+    "compatible_fields": [["alias", "account"], ["email", "account"], ["phone", "account"]],
+    "wildcard_fields": ["other"],
+    "basis_required_fields": ["alias", "relative"],
+    "single_valued_fields": ["dob", "birthplace"],
+    "date_fields": ["dob"],
+    "date_formats": ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d", "%Y%m%d"],
+    "seed_type_fields": {"dob": "dob", "date_of_birth": "dob", "birthday": "dob", "birth_date": "dob",
+                         "birthplace": "birthplace", "place_of_birth": "birthplace",
+                         "name": "name", "full_name": "name", "alias": "alias", "nickname": "alias",
+                         "handle": "alias", "username": "account", "account": "account",
+                         "profile": "account", "profile_url": "account", "email": "email",
+                         "e_mail": "email", "phone": "phone", "mobile": "phone", "telephone": "phone",
+                         "address": "address", "company": "company", "employer": "company",
+                         "relative": "relative"},
+    "platform_hosts": {"facebook.com": "facebook", "fb.com": "facebook", "instagram.com": "instagram",
+                       "tiktok.com": "tiktok", "t.me": "telegram", "telegram.me": "telegram",
+                       "x.com": "x", "twitter.com": "x", "youtube.com": "youtube", "github.com": "github",
+                       "zalo.me": "zalo", "linkedin.com": "linkedin", "threads.net": "threads",
+                       "vk.com": "vk"},
+    "strip_host_prefixes": ["www.", "m.", "mobile.", "web.", "mbasic."],
+    "id_query_params": ["id", "uid", "user_id", "profile_id"],
+    "skip_path_segments": ["in", "user", "users", "c", "channel", "people", "pages", "u", "s"],
+    "basis_id_pattern": "(?i)\\b(?:profile id|user ?id|uid|id)\\s*[:=#]?\\s*(\\d{5,})",
+    "min_id_digits": 5,
+    "min_phone_digits": 8,
+    "near_duplicate_min_length": 4,
+    "finding_handle_types": ["username", "handle", "social", "alias", "account"]
+  }
+}

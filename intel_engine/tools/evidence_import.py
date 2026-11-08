@@ -3,7 +3,7 @@
 
     evidence_import.py import <case> <findings.json> [--kb DIR]
 
-Input: a JSON list (or {"findings": [...]}) of graded findings:
+Input: a JSON list (or {"findings": [...], "report": {...}}) of graded findings:
 
     {"claim": "...", "source_url": "https://...", "rung": "owner|kit|neighbour",
      "rung_class": "whois.registrant_email", "admiralty": "B2",
@@ -11,7 +11,21 @@ Input: a JSON list (or {"findings": [...]}) of graded findings:
      "selector_links": [{"from": "site-a.example", "to": "registrant@example.com",
                          "rel": "registrant_of"}],
      "attributes": [{"entity": "site-a.example", "attribute": "whois_registrar",
-                     "value": "Registrar B", "valid_from": "2026-03-01"}]}
+                     "value": "Registrar B", "valid_from": "2026-03-01"}],
+     "confirmation": "strong_indirect", "not_proven": "who controls the mailbox"}
+
+Optional `report` block (schema: references/evidence_import.json `report_sections`): lists of
+key_questions (KQ-nn), open_questions (OQ-nn), roles, scenarios (SC-nn), roadmap (P1-P3),
+incident_timeline (Tnnn, ISO-8601 `when`), attack_mapping (MAP-nn, technique_id T1234[.567]),
+counting_rules and metrics ({metric, value number, unit, values[] as-is, status, components[]} —
+the anti-inflation validator's input; `values` may hold secrets and is never printed or ingested),
+subject_profile ({entity default "subject", field, value, basis, source, admiralty?, status};
+basis + source REQUIRED on alias / relative rows), client_seeds ({type, value, note?, sensitive})
+and `engagement` — ONE object, not a list ({author, version, created, modified, hours, client?}).
+The summary's `report_lint` carries report_sections.lint() QA warnings (warn only, never blocks).
+Each malformed row is rejected with a message, the rest are stored in the same
+imported record and read back by tools/report_sections.py for the house report. Report rows —
+roles included — NEVER touch the KB (RULE 5: a role is analyst judgement for the report only).
 
 What it does:
   * entries missing `claim` or a valid `admiralty` grade are REJECTED, each with a message;
@@ -32,7 +46,9 @@ What it does:
     attribute is a plain analyst fact. Without valid_from the effective date is the import day.
     A row with an unreadable entity, an empty value, a malformed or reserved attribute name, or an
     unparseable date is skipped with a note; the rest of the finding still imports. The summary
-    lists each row's outcome (create / extend / supersede / dispute / skip).
+    lists each row's outcome (create / extend / supersede / dispute / skip);
+  * optional finding `confirmation` (references `finding_fields`) and `not_proven` are stored
+    with the finding for the report only; an unknown confirmation is dropped with a note.
 
 Analyst ownership: this tool writes ONLY under evidence/imported/ and the KB — never
 assessment.md / assessment.json or any other case file.
@@ -77,6 +93,10 @@ _REF_FALLBACK = {
     "attribute_rows": {"name_pattern": "^[a-z][a-z0-9_]{0,63}$",
                        "reserved": ["analyst_finding", "kit_sibling", "neighbour", "mention",
                                     "kind"]},
+    "finding_fields": {"confirmation": ["confirmed", "strong_indirect", "attempted_unproven",
+                                        "unverified"]},
+    # No schema until the file is read: every report row is rejected (never stored unchecked).
+    "report_sections": {},
 }
 _REF = load_ref(os.path.join(KB_TOOLS, "references", "evidence_import.json"), _REF_FALLBACK)
 ADMIRALTY_RE = re.compile(str((_REF.get("admiralty") or {}).get("pattern")
@@ -91,6 +111,11 @@ DEFAULT_REL = _PROV["default_rel"]
 _ROWS = dict(_REF_FALLBACK["attribute_rows"], **(_REF.get("attribute_rows") or {}))
 ATTRIBUTE_NAME_RE = re.compile(str(_ROWS["name_pattern"]))
 RESERVED_ATTRIBUTES = frozenset(_ROWS["reserved"])
+CONFIRMATION_LEVELS = tuple(str(x).lower() for x in
+                            ((_REF.get("finding_fields") or {}).get("confirmation")
+                             or _REF_FALLBACK["finding_fields"]["confirmation"]))
+REPORT_SCHEMA = {k: v for k, v in (_REF.get("report_sections") or {}).items()
+                 if isinstance(v, dict)}
 
 _RUNG_ALIASES = {"owner": "owner", "kit": "kit", "neighbour": "neighbour", "neighbor": "neighbour"}
 IMPORT_SUBDIR = os.path.join("evidence", "imported")
@@ -185,6 +210,7 @@ def validate(entries):
             notes.append("owner finding carries no selector_links — no edge written")
         f["attributes"], row_notes = _attribute_rows(raw.get("attributes"))
         notes += row_notes
+        notes += _boundary_fields(f)
         f["notes"] = notes
         accepted.append(f)
     return accepted, rejected
@@ -224,14 +250,178 @@ def _attribute_rows(rows):
     return good, notes
 
 
+def _boundary_fields(f):
+    """Normalise the optional report-only `confirmation` / `not_proven` on finding `f` in place.
+    A bad value is dropped with a note — never rejects the finding, never reaches the KB."""
+    notes = []
+    conf = f.pop("confirmation", None)
+    if conf not in (None, ""):
+        level = re.sub(r"[\s\-]+", "_", str(conf).strip().lower())
+        if level in CONFIRMATION_LEVELS:
+            f["confirmation"] = level
+        else:
+            notes.append(f"confirmation {conf!r} is not one of {', '.join(CONFIRMATION_LEVELS)} — "
+                         f"dropped")
+    np_ = f.pop("not_proven", None)
+    if np_ not in (None, ""):
+        if isinstance(np_, str) and np_.strip():
+            f["not_proven"] = np_.strip()
+        else:
+            notes.append("not_proven is not a non-empty string — dropped")
+    return notes
+
+
+def _iso_ok(v) -> bool:
+    """ISO-8601 date (YYYY-MM-DD) or date-time (`Z` accepted)."""
+    s = str(v or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return False
+    try:
+        if len(s) == 10:
+            datetime.date.fromisoformat(s)
+        else:
+            datetime.datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith(("Z", "z")) else s)
+        return True
+    except ValueError:
+        return False
+
+
+def _report_row(spec, raw):
+    """One report row -> (normalised row, None) or (None, reason). Spec keys: required, enums,
+    patterns, dates, lists (strings), numbers, raw_lists (scalars kept as-is), objects (a list of
+    sub-rows validated with their own spec)."""
+    if not isinstance(raw, dict):
+        return None, "row is not a JSON object"
+    row = {}
+    lists = set(spec.get("lists") or [])
+    raw_lists = set(spec.get("raw_lists") or [])
+    objects = spec.get("objects") or {}
+    for k, v in raw.items():
+        if k in lists:
+            if isinstance(v, str):
+                v = [v] if v.strip() else []
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                return None, f"`{k}` must be a list of strings"
+            row[k] = [x.strip() for x in v if x.strip()]
+        elif k in raw_lists:
+            if not isinstance(v, list) or not all(isinstance(x, (str, int, float)) and not isinstance(x, bool)
+                                                  for x in v):
+                return None, f"`{k}` must be a list of strings / numbers"
+            row[k] = list(v)                       # as-is: the duplicate check needs the raw items
+        elif k in objects:
+            if not isinstance(v, list):
+                return None, f"`{k}` must be a list of objects"
+            subs = []
+            for j, sub in enumerate(v):
+                s, why = _report_row(objects[k], sub)
+                if s is None:
+                    return None, f"`{k}[{j}]`: {why}"
+                subs.append(s)
+            row[k] = subs
+        elif isinstance(v, str):
+            row[k] = v.strip()
+        elif v is None or isinstance(v, (int, float, bool)):
+            row[k] = v
+        else:
+            return None, f"`{k}` must be a string"
+    for k, v in (spec.get("defaults") or {}).items():
+        if row.get(k) in (None, ""):
+            row[k] = v
+    for k in spec.get("numbers") or []:
+        v = row.get(k)
+        if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v != v):
+            return None, f"`{k}` {v!r} is not a number"
+    for k in spec.get("booleans") or []:
+        if row.get(k) is not None and not isinstance(row[k], bool):
+            return None, f"`{k}` {row[k]!r} is not true / false"
+    for k in spec.get("required") or []:
+        if row.get(k) in (None, "", []):
+            return None, f"missing required `{k}`"
+    # conditional requirements: {"field": {"alias": ["basis", "source"]}} — keyed on the RAW value,
+    # matched the way enums are (case-insensitive, spaces/hyphens as underscores)
+    for k, by_val in (spec.get("required_when") or {}).items():
+        val = re.sub(r"[\s\-]+", "_", str(row.get(k) or "").strip().lower())
+        for need in (by_val or {}).get(val) or []:
+            if row.get(need) in (None, "", []):
+                return None, f"missing required `{need}` (required when {k} = {val})"
+    for k, allowed in (spec.get("enums") or {}).items():
+        if row.get(k) in (None, ""):
+            continue
+        val = str(row[k]).strip()
+        allowed = [str(a) for a in allowed]
+        hit = next((a for a in allowed if a.lower() == re.sub(r"[\s\-]+", "_", val.lower())), None)
+        if hit is None:
+            return None, f"`{k}` {val!r} is not one of {', '.join(allowed)}"
+        row[k] = hit
+    for k, pat in (spec.get("patterns") or {}).items():
+        if row.get(k) in (None, ""):
+            continue
+        if k == "admiralty":
+            row[k] = normalise_admiralty(row[k]) or str(row[k])
+        if not re.match(pat, str(row[k])):
+            return None, f"`{k}` {row[k]!r} does not match {pat}"
+    for k in spec.get("dates") or []:
+        if row.get(k) not in (None, "") and not _iso_ok(row[k]):
+            return None, f"`{k}` {row[k]!r} is not an ISO-8601 date / date-time"
+    return row, None
+
+
+def validate_report(report):
+    """Split a `report` block into (accepted {section: [rows]}, rejected [{section, index, reason}]).
+    Schema: references/evidence_import.json `report_sections`. RULE 5: rows are report data only."""
+    if report is None:
+        return {}, []
+    if not isinstance(report, dict):
+        return {}, [{"section": "report", "index": None, "reason": "`report` is not a JSON object"}]
+    accepted, rejected = {}, []
+    for section, rows in report.items():
+        if str(section).startswith("_"):
+            continue
+        spec = REPORT_SCHEMA.get(section)
+        if spec is None:
+            rejected.append({"section": section, "index": None,
+                             "reason": f"unknown report section (known: {', '.join(REPORT_SCHEMA) or 'none — schema not loaded'})"})
+            continue
+        if spec.get("kind") == "object":           # one object, not a list of rows (engagement)
+            row, why = _report_row(spec, rows)
+            if row is None:
+                rejected.append({"section": section, "index": None, "reason": why, "entry": rows})
+            else:
+                accepted[section] = row
+            continue
+        if not isinstance(rows, list):
+            rejected.append({"section": section, "index": None, "reason": "section is not a list"})
+            continue
+        good, seen = [], set()
+        for i, raw in enumerate(rows):
+            row, why = _report_row(spec, raw)
+            if row is not None and row.get("id"):
+                if row["id"] in seen:
+                    row, why = None, f"duplicate id {row['id']} in this import"
+                else:
+                    seen.add(row["id"])
+            if row is None:
+                rejected.append({"section": section, "index": i, "reason": why, "entry": raw})
+            else:
+                good.append(row)
+        if good:
+            accepted[section] = good
+    return accepted, rejected
+
+
 def _load_findings(path):
+    """(findings list, report block or None)."""
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    if isinstance(doc, dict) and isinstance(doc.get("findings"), list):
-        return doc["findings"]
+    if isinstance(doc, dict) and (isinstance(doc.get("findings"), list) or "report" in doc):
+        findings = doc.get("findings")
+        if findings is not None and not isinstance(findings, list):
+            raise ValueError("`findings` must be a JSON list")
+        return findings or [], doc.get("report")
     if isinstance(doc, list):
-        return doc
-    raise ValueError("findings file must be a JSON list or an object with a `findings` list")
+        return doc, None
+    raise ValueError("findings file must be a JSON list or an object with a `findings` list "
+                     "and/or a `report` block")
 
 
 def _ingest(kb, case, findings, record_ref, when):
@@ -290,6 +480,15 @@ def _ingest(kb, case, findings, record_ref, when):
     return edges, facts, results
 
 
+def _lint(report, findings):
+    """report_sections.lint over THIS import's accepted rows — warnings only, never blocks."""
+    try:
+        import report_sections  # noqa: E402 — sibling module; lazy so a broken reader never blocks import
+        return report_sections.lint(report, findings)
+    except Exception as exc:  # noqa: BLE001
+        return [f"lint not run: {exc}"]
+
+
 def import_findings(case, findings_path, kb_root=None):
     """Validate, store and ingest one findings file. Returns a JSON-able summary dict; on a
     missing case or unreadable file returns {"error": ...} (never raises)."""
@@ -299,10 +498,11 @@ def import_findings(case, findings_path, kb_root=None):
     try:
         with open(findings_path, "rb") as fh:
             blob = fh.read()
-        entries = _load_findings(findings_path)
+        entries, report_raw = _load_findings(findings_path)
     except (OSError, ValueError) as exc:
         return {"error": f"cannot read findings {findings_path}: {exc}"}
     accepted, rejected = validate(entries)
+    report, report_rejected = validate_report(report_raw)
     when = _utcnow()
     sha = hashlib.sha256(blob).hexdigest()
     out_dir = os.path.join(cdir, IMPORT_SUBDIR)
@@ -311,16 +511,23 @@ def import_findings(case, findings_path, kb_root=None):
     case_id = os.path.basename(os.path.normpath(cdir))
     record = {"source": SOURCE, "case": case_id, "imported_at": when,
               "source_file": os.path.basename(findings_path), "sha256": sha,
-              "accepted": accepted, "rejected": rejected}
+              "accepted": accepted, "rejected": rejected,
+              "report": report, "report_rejected": report_rejected}
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=2, ensure_ascii=False)
     record_ref = "/".join(("cases", case_id, "evidence", "imported", os.path.basename(out_path)))
     kb = KB(kb_root or os.path.join(ROOT, "knowledge"), case=case_id)
     edges, facts, attr_results = _ingest(kb, case_id, accepted, record_ref, when)
+    # report rows (roles included) are never ingested — analyst judgement for the report (RULE 5)
     return {"case": case_id, "stored": out_path, "source": SOURCE,
             "accepted": len(accepted), "rejected": len(rejected),
             "edges": edges, "facts": facts, "attributes": attr_results,
-            "rejections": [f"entry {r['index']}: {r['reason']}" for r in rejected],
+            "report": {s: (len(rows) if isinstance(rows, list) else 1) for s, rows in report.items()},
+            "report_rejected": len(report_rejected),
+            "report_lint": _lint(report, accepted),
+            "rejections": [f"entry {r['index']}: {r['reason']}" for r in rejected]
+            + [f"report.{r['section']}" + (f"[{r['index']}]" if r["index"] is not None else "")
+               + f": {r['reason']}" for r in report_rejected],
             "notes": [f"{f['id']}: {n}" for f in accepted for n in f["notes"]]}
 
 

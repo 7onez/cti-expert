@@ -29,6 +29,14 @@ LLM involvement and zero egress — reading only what the pipeline already wrote
                        ONLY source on a non-domain (social / selector) case with an empty raw/
   scope.json + assessment.json   the case verdict -> `verdict.malicious_supported` (cti_refs),
                        the gate for any figure that would call a domain malicious
+  evidence/imported/*.json `report` block + the case tool-call ledger (engine report_sections):
+                       key_questions / open_questions / roles / scenarios / roadmap /
+                       incident_timeline / attack_mapping / counting_rules / sources_checked, and
+                       per-finding `confirmation` / `not_proven`; `metric_warnings` from
+                       validate_metrics (anti-inflation: warns, never changes a number);
+                       subject_profile / client_seeds (sensitive values "provided by client —
+                       withheld" unless --show-sensitive) / engagement (cover analyst) and
+                       `qa_warnings` from report_sections.lint
 
 It degrades gracefully: a case missing any of these still yields a valid report JSON from
 whatever is present. §2.5 discipline is preserved mechanically — shared/CDN infrastructure,
@@ -44,6 +52,7 @@ Author: CTI Expert — https://github.com/7onez/cti-expert
 import argparse
 import datetime
 import functools
+import glob
 import ipaddress
 import json
 import os
@@ -55,6 +64,8 @@ from cti_case_meta import case_classification, expansion_anchor, raw_name_index 
 from cti_case_evidence import build_layer, intake_seed  # noqa: E402
 from cti_refs import malicious_verdict  # noqa: E402
 from cti_text_normalize import normalize_obj  # noqa: E402
+from cti_report_sections import gap_strings, validate_metrics  # noqa: E402,F401 — re-exported
+import cti_report_sections as RSX  # noqa: E402
 
 
 def _ct_and_related(raw_objs):
@@ -71,6 +82,71 @@ def _ct_and_related(raw_objs):
         return {}, [], None
     ct, rel = ER.ct_and_related(list(raw_objs))
     return ct, rel, ER.WR
+
+
+# report-JSON keys carried verbatim from the analyst `report` block (evidence_import ->
+# intel_engine/tools/report_sections.load); `metrics` is optional and only checked, never changed.
+_REPORT_KEYS = ("key_questions", "open_questions", "roles", "scenarios", "roadmap",
+                "incident_timeline", "attack_mapping", "counting_rules", "metrics",
+                "subject_profile", "client_seeds")
+
+
+def _report_sections(case_dir):
+    """(sections dict, sources_checked rows) from the engine's report_sections reader, or ({}, [])
+    when the engine is not vendored / the reader fails (stderr says which)."""
+    home = os.environ.get("INTEL_HOME") or os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "intel_engine"))
+    tools = os.path.join(home, "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import report_sections as RS  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: report_sections unavailable ({exc}); "
+                         "house-report sections omitted.\n")
+        return {}, []
+    try:
+        sections = RS.load(case_dir) or {}
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: report_sections.load failed ({exc}).\n")
+        sections = {}
+    try:
+        checked = RS.sources_checked(case_dir) or []
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: report_sections.sources_checked failed ({exc}).\n")
+        checked = []
+    return (sections if isinstance(sections, dict) else {}), (checked if isinstance(checked, list) else [])
+
+
+def _finding_boundaries(case_dir, findings, sections):
+    """Copy evidence-import `confirmation` / `not_proven` onto the report finding built from the same
+    claim (matched on the normalised claim text, the key cti_case_evidence dedupes on)."""
+    from cti_case_evidence import _norm_claim  # noqa: PLC0415
+    by_claim, by_id = {}, {}
+
+    def take(row):
+        b = {k: row[k] for k in ("confirmation", "not_proven") if row.get(k)} if isinstance(row, dict) else {}
+        if not b:
+            return
+        claim = _norm_claim(row.get("claim") or row.get("description"))
+        if claim:
+            by_claim.setdefault(claim, b)
+        if row.get("id"):
+            by_id.setdefault(str(row["id"]), b)
+
+    for path in sorted(glob.glob(os.path.join(case_dir, "evidence", "imported", "*.json"))):
+        doc = _load_json(path)
+        for row in (doc.get("accepted") or []) if isinstance(doc, dict) else []:
+            take(row)
+    fb = sections.get("findings_boundaries")
+    if isinstance(fb, dict):
+        fb = [{**v, "id": v.get("id") or k} for k, v in fb.items() if isinstance(v, dict)]
+    for row in fb if isinstance(fb, list) else []:
+        take(row)
+    for f in findings:
+        b = by_id.get(str(f.get("evidence_id") or "")) or by_claim.get(_norm_claim(f.get("description")))
+        for k, v in (b or {}).items():
+            f.setdefault(k, v)
 
 
 GENERATOR = "CTI Expert — https://github.com/7onez/cti-expert"
@@ -455,7 +531,7 @@ def _cld_denylisted(cld_block):
     return bool(result and str(result).lower() in ("malicious", "suspicious", "phishing", "scam"))
 
 
-def build(case_dir, kb_dir, classification=None):
+def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     case_id = os.path.basename(os.path.abspath(case_dir).rstrip("/"))
     raws = dict(_iter_raw(case_dir))
     hosts = sorted(raws)
@@ -917,6 +993,32 @@ def build(case_dir, kb_dir, classification=None):
 
     verdict_ok, verdict_basis = malicious_verdict(case_dir)
 
+    # ---- analyst report block (evidence_import `report`) + sources-checked ledger --------------
+    from cti_third_party_mask import mask_obj  # noqa: PLC0415
+    sections, checked = _report_sections(case_dir)
+    house = {k: mask_obj([r for r in sections.get(k) or [] if isinstance(r, dict)], keep=keep,
+                         hosts=set(estate) | {seed}, extra=extra, current_case=case_id)
+             for k in _REPORT_KEYS if isinstance(sections.get(k), list) and sections.get(k)}
+    _finding_boundaries(case_dir, findings, sections)
+    eng = sections.get("engagement")
+    if isinstance(eng, dict) and eng:
+        house["engagement"] = eng
+    # QA lint over the unwithheld sections (it compares client seeds with confirmed rows); any
+    # sensitive client value it quotes is scrubbed below unless --show-sensitive
+    qa = RSX.qa_lint(sections, findings, "build_report_data")
+    raw_sensitive = [s.get("value") for s in house.get("client_seeds") or [] if s.get("sensitive")]
+    if house.get("open_questions"):
+        # structured OQ rows lead; the converter's own collection gaps stay after them
+        derived = gap_strings(house["open_questions"])
+        gaps = derived + [g for g in gaps if g not in derived]
+    if house.get("roadmap"):
+        # the analyst's prioritised roadmap replaces the generic default list (flat form kept for
+        # consumers that read `recommendations` as strings); assessment.md recommendations follow
+        recs = [f"{r.get('priority') or 'P?'}: {r.get('action')}"
+                + (f" (owner: {r['owner']})" if r.get("owner") else "")
+                + (f" — done when: {r['done_when']}" if r.get("done_when") else "")
+                for r in house["roadmap"] if r.get("action")] + (_recommendations(case_dir) or [])
+
     report = {
         "generator": GENERATOR,
         "case": {
@@ -954,6 +1056,18 @@ def build(case_dir, kb_dir, classification=None):
             "new owner-controlled evidence.",
         ],
     }
+    report.update(house)
+    RSX.withhold_client(report, show_sensitive)
+    RSX.apply_engagement(report)
+    report["qa_warnings"] = RSX.scrub_withheld(qa, report, raw_sensitive)
+    for w in report["qa_warnings"]:
+        sys.stderr.write(f"build_report_data: QA WARNING — {w}\n")
+    if checked:
+        report["sources_checked"] = checked
+    warns = validate_metrics(report)
+    for w in warns:
+        sys.stderr.write(f"build_report_data: METRIC WARNING — {w}\n")
+    report["metric_warnings"] = warns
     return report
 
 
@@ -968,11 +1082,13 @@ def main():
     ap.add_argument("--kb", default=None, help="knowledge dir (default: engine knowledge/)")
     ap.add_argument("--print", action="store_true", dest="show", help="also print the JSON")
     ap.add_argument("--classification", default=None, help="handling caveat for the cover/header (default: the case's TLP marking, else UNCLASSIFIED//FOUO)")
+    ap.add_argument("--show-sensitive", action="store_true", help="print client-provided values marked "
+                    "sensitive (default: 'provided by client — withheld')")
     a = ap.parse_args()
     if not os.path.isdir(a.case_dir):
         sys.exit(f"not a case directory: {a.case_dir}")
     kb = a.kb or os.path.normpath(os.path.join(a.case_dir, "..", "..", "knowledge"))
-    report = normalize_obj(build(a.case_dir, kb, a.classification))
+    report = normalize_obj(build(a.case_dir, kb, a.classification, a.show_sensitive))
     out = a.out or os.path.join(a.case_dir, "report-data.json")
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)

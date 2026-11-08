@@ -262,7 +262,8 @@ def main():
     json_data = load_json(json_path) if json_path and os.path.exists(json_path) else build_minimal_json_from_md(md_path)
     has_json = json_path is not None and os.path.exists(json_path)
     from cti_text_normalize import normalize_obj
-    json_data = normalize_obj(json_data)
+    from cti_report_sections import prepare
+    json_data = prepare(normalize_obj(json_data), "generate-cti-docx-hybrid")
 
     if not output_path:
         output_path = resolve_output_path(md_path, json_data)
@@ -275,6 +276,14 @@ def main():
 
         print("[Phase 2] Applying CTI styles")
         apply_cti_styles(doc)
+
+        if has_json:
+            # analyst report-block sections the Markdown body does not already carry (before the
+            # rebuild, so they reach the baked TOC)
+            from cti_docx_sections import add_missing_house_sections
+            added = add_missing_house_sections(doc, json_data)
+            if added:
+                print(f"[Phase 2] Appended report-block sections: {', '.join(added)}")
 
         print("[Phase 2] Prepending cover page + TOC, injecting charts")
         case_dir = os.path.dirname(os.path.abspath(json_path)) if json_path else os.path.dirname(os.path.abspath(output_path))

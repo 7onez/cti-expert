@@ -405,24 +405,69 @@ appears and says so (Rule 19: an absent finding and an absent search look identi
 
 | # | Section | Carries | Rule |
 |:-:|:---------------------|:-------------------------------------------------|:----|
-| I | Executive Summary — Key Judgments | **the purpose statement first**, then the BLUF table: judgment · attribution level · confidence | 0, 1 |
-| II | Methodology & confidence | the tradecraft (not our tools), the threshold of proof this report was written against, NATO Admiralty + ICD-203 tables | 0, 5, 6, 14 |
+| I | Executive Summary — Key Judgments | **the purpose statement first**, then the BLUF table: judgment · attribution level · confidence; then **Key questions** (KQ · question · status · answer · confidence) and the **Subject identity card** (one table per entity: field · value · status · basis · source `[n]` · grade; empty fields omitted; *client-provided* values tagged) when the analyst imported them | 0, 1 |
+| II | Methodology & confidence | the tradecraft (not our tools), the threshold of proof this report was written against, NATO Admiralty + ICD-203 tables; **Counting rules** (metric · what it counts · what it does not mean), **Key counts** (metric · value · unit · status), **Client-provided details** (type · value · note; sensitive values withheld) and **Document control** (author · version · created · modified · hours · client) when imported | 0, 5, 6, 14 |
 | III | The seed and what it is | the seed **named**, what it impersonates or sells, its liveness state | 12a/12b |
-| IV | Lifecycle timeline | registration cohorts, registrant eras, hosting windows, cert batches — and the contemporaneity verdict per link | 20 |
-| V… | Findings — one section per cluster / entity / link | table → facts → prose, each with its figure | 2, 15 |
-| … | Attribution — who, and at what rung | same-kit / same-operator / same-actor / a named persona / unattributed + why, with the identity gap | — |
-| … | Alternative analysis | every benign explanation considered, its status, and the evidence that decided it | 22 |
+| IV | Lifecycle timeline | registration cohorts, registrant eras, hosting windows, cert batches — and the contemporaneity verdict per link; **Incident timeline** (Tnnn · UTC · event · proves · not proven · evidence) and **ATT&CK mapping** (MAP · technique · tactic · status observed/attempted/inferred · limits) when imported | 20 |
+| V… | Findings — one section per cluster / entity / link | table → facts → prose, each with its figure; each graded finding's **confirmation level** and a **Not proven** line when imported | 2, 15 |
+| … | Attribution — who, and at what rung | same-kit / same-operator / same-actor / a named persona / unattributed + why, with the identity gap; **Roles** (entity · role · basis · confidence) with the RULE 5 note — a role is analyst judgement, never an attribution | — |
+| … | Alternative analysis | every benign explanation considered, its status, and the evidence that decided it; **Scenarios** (feasibility × impact + controls) when imported | 22 |
 | … | Rejected links | what was tested and did NOT survive, with the prevalence/benign reason | 15, 22 |
-| … | Gaps & limitations | what could not be verified; what a keyless / passive / blocked collection could not have seen | 19 |
-| … | Recommendations / consumer note | referral pathways, preservation targets — scoped to the Rule 0 decision | 18 |
+| … | Gaps & limitations | what could not be verified; what a keyless / passive / blocked collection could not have seen; **Open questions** (OQ · question · decision at stake · sources needed · window) augment the gaps text | 19 |
+| … | Recommendations / consumer note | referral pathways, preservation targets — scoped to the Rule 0 decision; imported roadmap rows grouped **P1 (this week) / P2 (this month) / P3 (ongoing)** | 18 |
 | … | References | `[n]` source class · full clickable URL, one row per link cited in the text | 21 |
 | A | Artifact register | Artifact · Value · Source class · Admiralty grade | 7, 13 |
 | B | Evidence ledger | When (UTC) · Indicator · Claim · Source (Admiralty) · Evidence link | 21 |
-| C | Domain & infrastructure profiles | one Field·Value dossier per domain in scope | 17 |
-| D | Cluster enumeration | all N members by name, when a finding counts them | 12b |
-| E | Glossary | Term · plain-English meaning, for every acronym / jargon term the report uses | 23 |
+| C | Sources checked | Source (public class) · selector · calls · hits · status · first / last UTC — every source queried, **zero-hit rows included**; present when the case has a tool-call / licensed-API ledger | 19 |
+| … | QA warnings | `report_sections.lint()` findings over the imported sections (identifier collisions, unsourced identity rows, look-alike handles, client details contradicting confirmed findings); present only when a check fired; warn only, never blocks | 19 |
+| D | Domain & infrastructure profiles | one Field·Value dossier per domain in scope | 17 |
+| E | Cluster enumeration | all N members by name, when a finding counts them | 12b |
+| F | Glossary | Term · plain-English meaning, for every acronym / jargon term the report uses | 23 |
 
 Appendices follow the raw-LaTeX `\appendix` marker (see below) and number as `Appendix A`, `B`, …
+
+### Structured report sections — the `evidence_import` `report` block
+
+The bold additions in the table above are never written by hand into the house body and never
+invented: they render only from rows the analyst imported (`evidence_import <case> <file.json>`).
+The file is `{"findings": [...], "report": {...}}`; every `report` key is optional and holds a list
+of rows. Each malformed row is **rejected with a message** in the import output and the rest are
+stored inside the same content-addressed record under `evidence/imported/`. Report rows — `roles`
+included — **never touch the KB** (RULE 5). `tools/report_sections.py` merges imports (a later
+import wins per `id`; id-less rows merge on their content key). Every cell passes through the
+house scrub (Rule 12) and every evidence URL becomes a cited `[n]` (Rule 21). Schema (the
+authoritative copy is `tools/kb/references/evidence_import.json` `report_sections`):
+
+| Key | Row fields (required **bold**) | Enums / formats |
+|:----|:-----------------------------|:----------------|
+| finding (in `findings`) | `confirmation`, `not_proven` (both optional) | confirmation: confirmed · strong_indirect · attempted_unproven · unverified (an unknown value is dropped with a note) |
+| `key_questions` | **id**, **question**, **status**, answer, confidence, refs[] | id `KQ-nn`; status answered · partial · open; confidence high · moderate · low |
+| `open_questions` | **id**, **question**, decision_at_stake, sources_needed[], window_start, window_end, owner | id `OQ-nn`; windows ISO-8601 |
+| `roles` | **entity**, **role**, **basis**, confidence, admiralty | role operator · supplier · publisher · intruder · facilitator · victim · unknown; admiralty `A1`–`F6` |
+| `scenarios` | **id**, **title**, **feasibility**, **impact**, narrative, controls[] | id `SC-nn`; feasibility high · moderate · low; impact very_high · high · moderate · low |
+| `roadmap` | **priority**, **action**, owner, done_when | priority P1 · P2 · P3 |
+| `incident_timeline` | **id**, **when**, **event**, proves, not_proven, evidence[], kind | id `Tnnn`; when ISO-8601 date or date-time; kind technical · context |
+| `attack_mapping` | **id**, **technique_id**, **tactic**, **status**, technique, chain, evidence, limits | id `MAP-nn`; technique_id `T1234` or `T1234.567`; status observed · attempted · inferred |
+| `counting_rules` | **metric**, **counts**, **does_not_mean** | — |
+| `metrics` | **metric**, **value**, **unit**, values[], status, components[] ({**label**, **value**, status}) | value a JSON number; unit = what ONE counted item is (token, credential, account, record, host, byte, attack_chain …); status confirmed · attempted · mixed; `values[]` (strings/numbers) stored as-is for the anti-inflation duplicate check — **never printed** (only its count, as "Items listed") and never ingested; merges across imports on `metric` |
+| `subject_profile` | entity (default `subject`), **field**, **value**, **status**, basis, source, admiralty | field name · alias · dob · birthplace · email · phone · address · company · account · relative · other; status confirmed · probable · possible; admiralty `A1`–`F6`; **basis + source REQUIRED on alias and relative rows** (an unsourced alias / relative is how the wrong person enters a profile); merges on (entity, field, value); never the KB |
+| `client_seeds` | **type**, **value**, note, sensitive | sensitive true/false (default false); a sensitive value renders "provided by client — withheld" — in the Client-provided details table, in any identity-card row that originated from it, and inside QA warnings — unless `house_report --show-sensitive`; merges on (type, value); never the KB |
+| `engagement` | ONE object, not a list: **author**, **version**, **created**, modified, hours, client | created / modified ISO-8601; hours a number; the latest valid import wins; rendered into the report front matter (YAML `author`, `version`, `created`, `modified`, `hours`, `client`) and a Document control table in Methodology |
+
+An unknown `report` key, a duplicate `id` inside one import, a non-ISO date or an enum outside its
+list rejects that row (or section) only. The **Sources checked** appendix needs no import: it is
+built from the case's own ledgers (`report_sections.sources_checked`); a call whose ledger row
+records no result count shows hits `n/r`, status "ran — result count not recorded" — never a guess.
+
+**QA lint** (`report_sections.lint(sections, findings=None)`; rules and thresholds in
+`tools/kb/references/report_sections.json` `lint`) warns — in the import output as `report_lint`, on
+house_report's stderr and in the *QA warnings* appendix — and never blocks: (a) one identifier
+(lower-cased e-mail, digits-only phone, `platform:id` from a profile URL or an id named in the
+row's basis, handle) on two different entities, or on one entity under incompatible fields (e.g. the
+same profile as `account` and `relative`); (b) an alias / relative row without basis or source;
+(c) any other identity row without a source; (d) near-duplicate handles (edit distance 1, or equal
+once `.` `_` `-` are removed) — a typo or a look-alike; (e) a client-provided detail contradicting a
+*confirmed* row of a single-valued field (two dates of birth).
 
 ## Audience — ASK first, then tailor the report
 

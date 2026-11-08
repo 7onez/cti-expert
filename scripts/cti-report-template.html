@@ -322,6 +322,7 @@ td .mono{font-family:var(--mono);font-size:12.5px}
     <section class="view active" data-view="overview"></section>
     <section class="view" data-view="entities"></section>
     <section class="view" data-view="findings"></section>
+    <section class="view" data-view="analysis"></section>
     <section class="view" data-view="graph"></section>
     <section class="view" data-view="blueprint"></section>
     <section class="view" data-view="editorial"></section>
@@ -409,6 +410,13 @@ var ARCHIFY=(DATA.archify_diagram_html&&typeof DATA.archify_diagram_html==='stri
 var ED_ENTITY=(DATA.editorial_entity_svg&&typeof DATA.editorial_entity_svg==='string')?DATA.editorial_entity_svg:'';
 var ED_TOPO=(DATA.editorial_topology_svg&&typeof DATA.editorial_topology_svg==='string')?DATA.editorial_topology_svg:'';
 var CLOUDIMG=(DATA.cloud_arch_png&&typeof DATA.cloud_arch_png==='string')?DATA.cloud_arch_png:'';
+// analyst report-block sections, pre-rendered and escaped by generate-cti-html.py (cti_report_sections)
+var HOUSE_KQ=(DATA.house_kq_html&&typeof DATA.house_kq_html==='string')?DATA.house_kq_html:'';
+var HOUSE_ID=(DATA.house_identity_html&&typeof DATA.house_identity_html==='string')?DATA.house_identity_html:'';
+var ENG=(DATA.engagement&&typeof DATA.engagement==='object'&&!Array.isArray(DATA.engagement))?DATA.engagement:null;
+var HOUSE=(DATA.house_sections_html&&typeof DATA.house_sections_html==='string')?DATA.house_sections_html:'';
+var HAS_OQ=Array.isArray(DATA.open_questions)&&DATA.open_questions.length>0;
+var HAS_ROADMAP=Array.isArray(DATA.roadmap)&&DATA.roadmap.length>0;
 
 /* ============================ helpers ============================ */
 function $(s,r){return (r||document).querySelector(s);}
@@ -659,7 +667,7 @@ function countBy(arr,fn){var m={};arr.forEach(function(x){var k=fn(x);if(k==null
 function renderOverview(){
   var v=$('[data-view="overview"]');
   var crit=FINDINGS.filter(function(f){return /CRITICAL|HIGH/i.test(f.weight);}).length;
-  var html='';
+  var html=HOUSE_ID?HOUSE_ID+'<div style="height:16px"></div>':'';
   // KPI row
   var kpis=[
     {lab:'Subjects',val:SUBJECTS.length,ic:'🎯',sub:SUBJECTS.filter(function(s){return s.verified;}).length+' verified'},
@@ -673,6 +681,7 @@ function renderOverview(){
 
   // exec summary (full width)
   html+='<div class="card exec" style="margin-top:16px"><h3>Executive Summary</h3><p>'+esc(DATA.executive_summary||'—')+'</p></div>';
+  html+=HOUSE_KQ;
 
   // finding-type pie + severity bar + confidence donut
   var ftypes=countBy(FINDINGS,function(f){return (f.type||'other').toLowerCase();});
@@ -745,6 +754,7 @@ function renderFindings(){
       (sub?'<span class="tag">'+tmeta(sub.type).e+' '+esc(sub.label)+'</span>':'')+
       '<span class="fid" style="margin-left:auto">'+esc(f.id||'')+'</span></div>'+
       '<div class="fdesc">'+esc(f.description||'')+'</div>'+
+      (f.confirmation||f.not_proven?'<div class="fdesc" style="font-size:12.5px;color:var(--muted)">'+(f.confirmation?'<b>Confirmation:</b> '+esc(String(f.confirmation).replace(/_/g,' '))+' ':'')+(f.not_proven?'<b>Not proven:</b> '+esc(f.not_proven):'')+'</div>':'')+
       '<div class="fmeta">'+
       (f.tags||[]).map(function(t){return '<span class="tag">#'+esc(t)+'</span>';}).join('')+
       '<span class="conf" style="margin-left:auto"><span class="confbar"><i style="width:'+num(f.confidence)+'%"></i></span>'+num(f.confidence)+'%</span>'+
@@ -995,11 +1005,13 @@ function renderSources(){
   html+='</div>';
   // recommendations
   html+='<div class="card"><h3>Recommendations ('+RECS.length+')</h3>';
+  if(HAS_ROADMAP)html+='<div class="empty" style="text-align:left">Prioritised P1/P2/P3 roadmap: see Analysis.</div>';
   html+=RECS.length?('<ul class="ulist rec">'+RECS.map(function(r,i){return '<li><span class="n">'+(i+1)+'</span><span>'+esc(r)+'</span></li>';}).join('')+'</ul>'):'<div class="empty">None.</div>';
   html+='</div></div>';
   // gaps + caveats
   html+='<div class="grid two" style="margin-top:16px">';
   html+='<div class="card"><h3>Intelligence Gaps ('+GAPS.length+')</h3>';
+  if(HAS_OQ)html+='<div class="empty" style="text-align:left">Structured open questions (decision at stake, sources needed, window): see Analysis.</div>';
   html+=GAPS.length?('<ul class="ulist gap">'+GAPS.map(function(g){return '<li><span class="n">!</span><span>'+esc(g)+'</span></li>';}).join('')+'</ul>'):'<div class="empty">None noted.</div>';
   html+='</div>';
   html+='<div class="card"><h3>Caveats &amp; Methodology</h3>';
@@ -1045,6 +1057,10 @@ function openSubject(id){
 }
 $('#drawerX').addEventListener('click',function(){$('#drawer').classList.remove('open');});
 
+function renderAnalysis(){
+  $('[data-view="analysis"]').innerHTML=HOUSE||'<div class="empty">No analyst report sections in this case.</div>';
+}
+
 function renderEvidence(){
   var v=$('[data-view="evidence"]');
   var html='<div class="section-h"><h2>Evidence Screenshots</h2><span class="hint">'+EVID.length+' captured · visual backup for findings</span></div>';
@@ -1072,6 +1088,7 @@ var VIEWS=[
   ['overview','📊','Overview',null],
   ['entities','🎯','Entities',SUBJECTS.length],
   ['findings','🔬','Findings',FINDINGS.length],
+  ['analysis','🧭','Analysis',null],
   ['graph','🕸','Network Graph',CONNS.length],
   ['blueprint','🗺','Blueprint',null],
   ['editorial','🖋','Editorial',null],
@@ -1083,6 +1100,7 @@ var VIEWS=[
 ];
 if(!ARCHIFY){VIEWS=VIEWS.filter(function(v){return v[0]!=='blueprint';});}
 if(!ED_ENTITY&&!ED_TOPO&&!CLOUDIMG){VIEWS=VIEWS.filter(function(v){return v[0]!=='editorial';});}
+if(!HOUSE){VIEWS=VIEWS.filter(function(v){return v[0]!=='analysis';});}
 var RENDERED={};
 function buildNav(){
   var nav=$('#nav');
@@ -1094,7 +1112,7 @@ function buildNav(){
 function go(view){
   $$('.navitem').forEach(function(n){n.classList.toggle('active',n.getAttribute('data-go')===view);});
   $$('.view').forEach(function(s){s.classList.toggle('active',s.getAttribute('data-view')===view);});
-  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[view]();RENDERED[view]=1;}
+  if(!RENDERED[view]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,analysis:renderAnalysis,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[view]();RENDERED[view]=1;}
   else if(view==='graph'){buildGraphSVG();}
   window.scrollTo(0,0);
 }
@@ -1142,7 +1160,7 @@ $('#themeBtn').addEventListener('click',function(){
 $('#defangBtn').addEventListener('click',function(){defangOn=!defangOn;toast('Defang '+(defangOn?'ON — values masked':'off'));if(RENDERED.indicators){RENDERED.indicators=0;}var a=$('.navitem.active');if(a&&a.getAttribute('data-go')==='indicators')go('indicators');});
 $('#printBtn').addEventListener('click',function(){
   // render every view so print shows the whole report
-  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[v[0]]();RENDERED[v[0]]=1;}});
+  VIEWS.forEach(function(v){if(!RENDERED[v[0]]){({overview:renderOverview,entities:renderEntities,findings:renderFindings,analysis:renderAnalysis,graph:renderGraph,blueprint:renderBlueprint,editorial:renderEditorial,topology:renderTopology,timeline:renderTimeline,indicators:renderIndicators,sources:renderSources,evidence:renderEvidence})[v[0]]();RENDERED[v[0]]=1;}});
   setTimeout(function(){window.print();},120);
 });
 $('#menubtn').addEventListener('click',function(){$('#sidebar').classList.toggle('open');});
@@ -1164,6 +1182,8 @@ function boot(){
   if(C.date)meta.push(['Date',C.date]);
   if(C.status)meta.push(['Status',C.status]);
   if(C.classification)meta.push(['Classification',cls]);
+  // document control (analyst report-block `engagement`; its author is already C.analyst): version · created · modified · hours
+  if(ENG)[['version','Version'],['created','Created'],['modified','Modified'],['hours','Hours'],['client','Client']].forEach(function(k){if(ENG[k[0]]!=null&&ENG[k[0]]!=='')meta.push([k[1],String(ENG[k[0]])]);});
   $('#metarow').innerHTML=meta.map(function(m){return '<span class="chip"><span class="dot"></span>'+m[0]+': <b>'+esc(m[1])+'</b></span>';}).join('');
   $('#footL').textContent=(C.id?C.id+' · ':'')+(C.label||'')+(C.date?' · '+C.date:'');
   $('#genstamp').textContent=C.date||'';

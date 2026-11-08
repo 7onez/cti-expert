@@ -20,6 +20,7 @@ generator (see scripts/sample-cti-report-data.json and SKILL.md §8).
 
 Author: Hieu Ngo - chongluadao.vn
 """
+import html as H
 import sys
 import os
 import json
@@ -37,6 +38,7 @@ for _s in (sys.stdout, sys.stderr):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cti_text_normalize import normalize_obj
 from cti_timeouts import CALL_TIMEOUT  # per-call ceiling (CTI_CALL_TIMEOUT)
+import cti_report_sections as RS
 
 PLACEHOLDER = "__CTI_CASE_DATA__"
 
@@ -143,6 +145,73 @@ def build_cloud_arch(data):
     return (png_data_uri(png) if png else None), note
 
 
+def _house_table(data, key, note=""):
+    """One analyst report-block section as a card with an escaped table; '' when absent."""
+    rows = RS.rows(data, key)
+    if not rows:
+        return ""
+    title, cols = RS.SECTION[key]
+    out = ['<div class="card" style="margin-top:16px"><h3>%s (%d)</h3>' % (H.escape(title), len(rows))]
+    if note:
+        out.append('<div class="empty" style="text-align:left">%s</div>' % H.escape(note))
+    out.append('<div style="overflow-x:auto">' + _table_html(cols, rows) + "</div></div>")
+    return "".join(out)
+
+
+def _table_html(cols, rows):
+    head = "".join("<th>%s</th>" % H.escape(h) for _, h in cols)
+    body = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % H.escape(RS.cell(r, f)) for f, _ in cols)
+                   for r in rows)
+    return "<table><thead><tr>%s</tr></thead><tbody>%s</tbody></table>" % (head, body)
+
+
+def _warn_card(title, warns, note=""):
+    if not warns:
+        return ""
+    return ('<div class="card" style="margin-top:16px"><h3>%s (%d)</h3>%s<ul class="ulist gap">%s</ul></div>'
+            % (H.escape(title), len(warns),
+               '<div class="empty" style="text-align:left">%s</div>' % H.escape(note) if note else "",
+               "".join('<li><span class="n">!</span><span>%s</span></li>' % H.escape(w) for w in warns)))
+
+
+def build_identity_html(data):
+    """Subject identity card — one table per entity (fixed field order, empty fields omitted)."""
+    cards = RS.identity_cards(data)
+    if not cards:
+        return ""
+    return ('<div class="card"><h3>Subject Identity Card</h3><div class="empty" style="text-align:left">%s</div>%s</div>'
+            % (H.escape(RS.IDENTITY_NOTE),
+               "".join('<h4 style="margin:12px 0 6px">%s</h4><div style="overflow-x:auto">%s</div>'
+                       % (H.escape(ent), _table_html(RS.IDENTITY_COLS, rows)) for ent, rows in cards)))
+
+
+def build_house_html(data):
+    """(key-questions html, analysis-view html) from the analyst report block, house-report order:
+    Client-provided details, Counting rules (+ metric warnings), Roles, Incident timeline, ATT&CK
+    mapping, Scenarios, Recommendations P1/P2/P3, Open questions, QA warnings, Sources checked.
+    Values escaped, never masked (sensitive client values arrive already withheld)."""
+    kq = _house_table(data, "key_questions")
+    parts = [_house_table(data, "client_seeds", RS.CLIENT_NOTE),
+             _house_table(data, "counting_rules", RS.COUNTING_NOTE),
+             _warn_card("Metric warnings", [w for w in data.get("metric_warnings") or [] if w])]
+    parts += [_house_table(data, "roles", RS.ROLES_NOTE), _house_table(data, "incident_timeline"),
+              _house_table(data, "attack_mapping"), _house_table(data, "scenarios")]
+    groups = RS.roadmap_groups(data)
+    if groups:
+        cols = RS.SECTION["roadmap"][1]
+        parts.append('<div class="card" style="margin-top:16px"><h3>%s</h3>%s</div>' % (
+            H.escape(RS.SECTION["roadmap"][0]),
+            "".join('<h4 style="margin:12px 0 6px">%s (%d)</h4>%s' % (H.escape(h), len(rows), _table_html(cols, rows))
+                    for h, rows in groups)))
+    parts += [_house_table(data, "open_questions"),
+              _warn_card(RS.SECTION["qa_warnings"][0], [w for w in data.get("qa_warnings") or [] if w], RS.QA_NOTE),
+              _house_table(data, "sources_checked", RS.SOURCES_CHECKED_NOTE)]
+    body = "".join(p for p in parts if p)
+    if body:
+        body = '<div class="section-h"><h2>Analysis</h2></div>' + body
+    return kq, body
+
+
 def main(argv):
     if len(argv) < 2:
         print("usage: generate-cti-html.py <case.json> <out.html> [template.html]")
@@ -170,7 +239,15 @@ def main(argv):
               % (PLACEHOLDER, count))
         return 1
 
-    norm = normalize_obj(data)
+    norm = RS.prepare(normalize_obj(data), "generate-cti-html")
+    house_kq, house_body = build_house_html(norm)
+    house_id = build_identity_html(norm)
+    if house_id:
+        norm["house_identity_html"] = house_id
+    if house_kq:
+        norm["house_kq_html"] = house_kq
+    if house_body:
+        norm["house_sections_html"] = house_body
     ed_entity, ed_topo, ed_note = build_editorial_svgs(data)
     if ed_entity:
         norm["editorial_entity_svg"] = ed_entity
@@ -201,6 +278,8 @@ def main(argv):
     print("  Blueprint (Archify): %s" % ("embedded — %s" % archify_note if archify_html else "not embedded — %s" % archify_note))
     print("  Editorial (Diagram Design): %s" % ("embedded — %s" % ed_note if (ed_entity or ed_topo) else "not embedded — %s" % ed_note))
     print("  Cloud arch (Diagram AI Generator): %s" % ("embedded — %s" % cloud_note if cloud_uri else "not embedded — %s" % cloud_note))
+    print("  Analysis sections (report block): %s" % (
+        "embedded" if (house_kq or house_body) else "none in this report JSON"))
     print("  open in any browser - fully offline, no external dependencies.")
     return 0
 
