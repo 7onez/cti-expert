@@ -10,7 +10,9 @@ Implements the entity / relationship / evidence model from the architecture doc 
   * sighting history: a re-observed fact/edge keeps its first and last observation, a count of
     distinct sightings (a new UTC day or a new evidence_ref; a same-day re-ingest of the same
     evidence is not one) and its newest evidence_refs (cap: references/kb_memory.json).
-      fact:  first_observed … observed_at (last), observations, evidence_refs
+      fact:  first_observed … observed_at (last), observations, evidence_refs, and evidence_seen —
+             the UNCAPPED set of every evidence_ref it was ever observed with (a superseded fact
+             revives only on evidence outside it)
       edge:  observed_at (first) … last_observed, observations, evidence_refs
   * case provenance: every fact/edge lists the `cases` whose collections recorded it (UNATTRIBUTED
     for a sighting with no known case, and for everything written before provenance existed).
@@ -249,23 +251,38 @@ def _slot(ent, attribute):
     return [f for f in ent.get("facts") or [] if f.get("attribute") == attribute]
 
 
+def _evidence_seen(f):
+    """Every evidence_ref a fact has ever been observed with. `evidence_seen` is uncapped (unlike
+    the kb_memory.json-capped evidence_refs); a fact written before it existed falls back to the
+    refs it still lists, and gains the full set from its next write on."""
+    seen = f.get("evidence_seen")
+    if seen is None:
+        seen = [*(f.get("evidence_refs") or []), f.get("evidence_ref")]
+    return {r for r in seen if r}
+
+
+def _note_evidence(f, ref):
+    """Record `ref` in the fact's uncapped evidence membership set."""
+    seen = _evidence_seen(f)
+    if ref:
+        seen.add(ref)
+    if seen:
+        f["evidence_seen"] = sorted(seen)
+
+
 def _supersede(facts, losers, winner, clear=True):
     """Mark `losers` superseded by `winner`, history kept: superseded_by, and superseded_at — when
     the KB replaced it (transaction time, never a source date). The source-validity window is
     closed at the winner's effective day only for a CHANGE (that day falls after the loser's own
     start). A CORRECTION — the winner takes effect on or before the loser's start, i.e. its source
     says the loser never held — is flagged `corrected` and its validity is left untouched: closing
-    it would end the window before it begins. `superseded_evidence` accumulates the evidence_refs
-    the loser lists at each supersession (its kb_memory.json-capped evidence_refs), so only evidence
-    it never had can revive it. With `clear`, a fact DISPUTING with the winner's value is
-    corroboration now and loses its dispute."""
+    it would end the window before it begins. Revival is gated in add_fact on `evidence_seen`
+    (uncapped): only evidence the loser never had can bring it back. With `clear`, a fact
+    DISPUTING with the winner's value is corroboration now and loses its dispute."""
     wid, eff, wv = fact_id(winner), effective_day(winner), _norm_value(winner["value"])
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     for f in losers:
         f["status"], f["superseded_by"], f["superseded_at"] = "superseded", wid, now
-        f["superseded_evidence"] = sorted(
-            {r for r in [f.get("evidence_ref"), *(f.get("evidence_refs") or []),
-                         *(f.get("superseded_evidence") or [])] if r})
         start = effective_day(f)
         if eff and start and eff <= start:
             f["corrected"] = True
@@ -452,10 +469,9 @@ class KB:
             rec = idx[key]
             outcome = "extend"
             was = rec.get("status")
-            known = set(rec.get("evidence_refs") or []) | set(rec.get("superseded_evidence") or [])
-            known.add(rec.get("evidence_ref"))
-            new_evidence = bool(evidence_ref) and evidence_ref not in known
+            new_evidence = bool(evidence_ref) and evidence_ref not in _evidence_seen(rec)
             _apply_sighting(rec, "first_observed", "observed_at", observed_at, evidence_ref, case=c)
+            _note_evidence(rec, evidence_ref)
             _merge_validity(rec, valid_from, valid_until)
             if single and (was in (None, "active") or (was == "superseded" and new_evidence)):
                 # Re-judge on re-observation. An ACTIVE value only ever wins here (settling a legacy
@@ -484,6 +500,7 @@ class KB:
                     "cases": [c or UNATTRIBUTED]}
             if evidence_ref:
                 fact["evidence_refs"] = [evidence_ref]
+                fact["evidence_seen"] = [evidence_ref]
             _merge_validity(fact, valid_from, valid_until)
             if single:
                 action, sup, rivals = reconcile(_slot(ent, attribute), fact)
@@ -535,6 +552,7 @@ class KB:
             if refs:
                 cur["evidence_refs"] = refs[:EVIDENCE_REFS_CAP]
             _merge_validity(cur, f.get("valid_from"), f.get("valid_until"))
+            cur["evidence_seen"] = sorted(_evidence_seen(cur) | _evidence_seen(f))
         self._bump_seen(ent, f.get("first_observed"))
         self._bump_seen(ent, f.get("observed_at"))
         self._save_entity(ent)
