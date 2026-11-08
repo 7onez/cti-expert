@@ -51,6 +51,16 @@ Anomalies:
   - Redaction check: FAILED — 3 text spans selectable under black boxes
 ```
 
+## Leaked-Source Archives: `.git` and Timestamp Forensics
+A leaked or sold source tree (zip / tar / extracted directory) is a document too. Run `analyze_artifact.py <archive|DIR> --leads`; three top-level blocks appear when they have content:
+- **`git`** — any `.git/` (nested or bare) left inside: `config` remotes + `user.name/email`, reflog lines (`logs/HEAD`, `logs/refs/*`: old/new sha, `name <email>`, epoch, TZ offset, action), refs/packed-refs, and commit/tag objects from loose objects and whole (non-delta) pack entries. Plus manifest identity: go.mod `module`, package.json / composer.json name, repository, author, pyproject / setup.cfg / Cargo.toml, `.npmrc` registries, `.gitmodules` URLs. The `tz_histogram` of commit offsets is a working-hours/region hint.
+- **`archive_time`** — bulk-copy clusters (many files in one second: originals lost to a copy step), directory-only seconds (packaging time), sequential generation runs, stripped times (DOS 1980-01-01 / epoch 0), future or implausible dates. A zip stores DOS **local** time; when a UT (0x5455) or NTFS (0x000a) extra field also gives UTC, local − UTC is the **packer's clock offset** (`inferred_utc_offset`, with its basis). Home-directory usernames, UNC hostnames and tar owner names are flagged as author metadata.
+- **`keys`** — PEM / DER / base64-in-config / OpenSSH keys and X.509 certs reduced to one SubjectPublicKeyInfo and deduplicated by SPKI SHA-256, so a private key, its public half in a JSON config and its certificate collapse to ONE row with every occurrence. Private material is never printed.
+
+Example (synthetic): `identity Example Operator <operator@example.com> roles=author/committer tz=+0700` · `module [go] git.example.com/example-org/panel` · `50 files (36%) share 2024-03-01T10:00:00Z — bulk copy` · `packer offset UTC+07:00 (204/204)` · `rsa spki=<sha256> x2 [pem:pkcs8, pem:spki]`.
+
+All of it is **lead-grade**: committer strings are self-asserted, clocks and zones are set by whoever packed the files, and sample keys travel between unrelated projects. Corroborate (registrant, payment, platform record) before any attribution; none of these rows becomes a KB edge.
+
 ## Limitations
 - Password-protected documents require cracking tools outside this technique's scope
 - Metadata can be set to arbitrary values; treat as a finding to verify, not ground truth

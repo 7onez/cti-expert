@@ -30,7 +30,7 @@ import analyze_artifact  # noqa: E402 — BINARY_EXTENSIONS (references/binary_i
 
 
 KINDS = {"app:apk", "app:desktop_installer"}
-FILE_KINDS = {"apk", "pe", "elf", "macho", "jar", "zip", "dex", "gzip",
+FILE_KINDS = {"apk", "pe", "elf", "macho", "jar", "zip", "dex", "gzip", "tar", "directory",
               "msi", "deb", "rpm", "pkg", "dmg", "asar"}
 
 

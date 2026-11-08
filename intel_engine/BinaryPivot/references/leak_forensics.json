@@ -1,0 +1,98 @@
+{
+  "_comment": "Tunables for the leaked-source forensics layers of analyze_artifact.py: tools/bp_archive_time.py (member-source reader + timestamp forensics), tools/bp_git.py (embedded .git + module identifiers) and tools/bp_keys.py (SPKI key dedupe). Everything these layers report is a FACT or a LEAD (rung 'lead') — a committer string, a module path, a packer timezone or a shared key is never a KB edge and never names an operator on its own. Extend the lists here, not in Python.",
+
+  "source_limits": {
+    "_comment": "Caps on what one run reads from an archive or directory. max_members = members enumerated (the rest are counted, not read); max_member_bytes = bytes read from any single member; max_total_bytes = read budget across all layers sharing one source; max_walk_depth = directory recursion depth for a local directory target.",
+    "max_members": 200000,
+    "max_member_bytes": 8388608,
+    "max_total_bytes": 268435456,
+    "max_walk_depth": 40
+  },
+
+  "archive_time": {
+    "_comment": "Bulk-copy cluster = one second (zip: DOS 2-second granularity) shared by >= bulk_min_files files OR by >= bulk_min_fraction of all files (and at least bulk_floor files). seq_* = sequential generation run: >= seq_min_files files whose consecutive mtimes are <= seq_max_gap_seconds apart and span >= 2 distinct seconds. implausible_before_year = earliest year accepted as a real authoring time (DOS 1980-01-01 and tar epoch 0 are counted as stripped, not implausible). future_slack_seconds = tolerance past 'now' before a date is called future. max_events = rows kept in events[]. offset_round_minutes = rounding for the DOS-local vs UT/NTFS-UTC packer offset.",
+    "bulk_min_files": 20,
+    "bulk_min_fraction": 0.3,
+    "bulk_floor": 5,
+    "seq_min_files": 10,
+    "seq_max_gap_seconds": 2,
+    "implausible_before_year": 1990,
+    "future_slack_seconds": 86400,
+    "max_events": 60,
+    "offset_round_minutes": 15,
+    "max_author_hits": 40,
+    "content_scan_max_bytes": 262144
+  },
+
+  "author_path_patterns": {
+    "_comment": "Regexes (Python, case-insensitive) whose FIRST group is a username / hostname leaked in a member path or a small text member. A hit says the packer's environment leaked; it is a lead, never an identity on its own.",
+    "values": [
+      "/home/([a-z_][a-z0-9_.\\-]{0,31})/",
+      "/Users/([A-Za-z0-9_.\\-]{1,64})/",
+      "[A-Za-z]:\\\\Users\\\\([^\\\\/\"'<>]{1,64})\\\\",
+      "[A-Za-z]:/Users/([^\\\\/\"'<>]{1,64})/",
+      "\\\\\\\\([A-Za-z0-9\\-]{2,63})\\\\[A-Za-z0-9$_\\-]+\\\\"
+    ]
+  },
+
+  "author_ignore_users": {
+    "_comment": "Path usernames that are build-system or placeholder accounts, not people (CI runners, container defaults, documentation placeholders).",
+    "values": ["runner", "root", "user", "username", "admin", "builder", "build", "jenkins", "travis",
+               "circleci", "vsts", "vssadministrator", "runneradmin", "default", "public", "shared",
+               "all users", "you", "yourname", "me", "ubuntu", "node", "app", "docker", "vagrant"]
+  },
+
+  "git": {
+    "_comment": "max_objects = loose objects inspected per repo; max_commits = commit rows kept in commits[]; max_pack_bytes = largest packfile walked for commit/tag objects (bigger packs are listed and counted only); max_object_bytes = largest single decompressed commit/tag object kept; max_reflog_lines per repo; max_identities kept.",
+    "max_objects": 20000,
+    "max_commits": 200,
+    "max_pack_bytes": 134217728,
+    "max_pack_objects": 200000,
+    "max_object_bytes": 1048576,
+    "max_reflog_lines": 5000,
+    "max_identities": 200,
+    "max_module_files": 200
+  },
+
+  "module_files": {
+    "_comment": "Manifest file basename -> ecosystem. Their declared module path / package name / author / repository survive re-skinning of the product and are leads to the original project.",
+    "entries": {
+      "go.mod": "go",
+      "package.json": "npm",
+      "composer.json": "composer",
+      "pyproject.toml": "python",
+      "setup.cfg": "python",
+      "Cargo.toml": "cargo",
+      ".npmrc": "npm-registry",
+      ".gitmodules": "git-submodule"
+    }
+  },
+
+  "module_skip_dirs": {
+    "_comment": "Path components whose manifests are third-party dependencies, not the leaked project itself.",
+    "values": ["node_modules", "vendor", "bower_components", "site-packages", "dist-packages",
+               ".venv", "venv", "third_party", "3rdparty", ".yarn", ".pnpm-store", "Pods"]
+  },
+
+  "keys": {
+    "_comment": "max_scan_bytes = largest member scanned for key material; max_keys = distinct keys kept; max_occurrences = occurrences kept per key. text_extensions are scanned even if they look binary; der_extensions are tried as raw DER; keystore_extensions are recorded as present-but-opaque (password-protected containers).",
+    "max_scan_bytes": 2097152,
+    "max_keys": 200,
+    "max_occurrences": 50
+  },
+
+  "key_der_extensions": {
+    "_comment": "Member extensions tried as raw DER (certificate / SPKI / PKCS#1 / PKCS#8 / SEC1).",
+    "values": [".der", ".cer", ".crt", ".key", ".pub", ".spki"]
+  },
+
+  "key_keystore_extensions": {
+    "_comment": "Password-protected key containers: recorded with spki_sha256=null and a reason (opening them needs the password and a crypto library).",
+    "values": [".p12", ".pfx", ".jks", ".keystore", ".bks", ".kdbx"]
+  },
+
+  "benign_spki_sha256": {
+    "_comment": "SHA-256 (hex, lower-case) of SubjectPublicKeyInfo DER for PUBLIC demo / test / documentation keys that ship in many unrelated projects (framework sample keys, library test vectors). A match is marked benign: it links nothing. Seeded with one synthetic sentinel (64 zeros) that no real SPKI hashes to, because reference value lists must be non-empty; add a real hash only after confirming the key is published as a sample.",
+    "values": ["0000000000000000000000000000000000000000000000000000000000000000"]
+  }
+}

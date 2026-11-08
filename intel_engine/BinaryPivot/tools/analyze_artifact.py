@@ -19,6 +19,12 @@ survive re-skinning and cluster an operator's whole app portfolio:
   * PACKER / PROTECTOR / obfuscation triage (entropy + section/member signatures)  <-- why a
       protected sample's string sweep is thin; routes it to a dynamic sandbox. A named protector
       (UPX / VMProtect / Qihoo Jiagu / Tencent Legu / …) is also a weak, kit-level clustering hint.
+  * LEAKED-SOURCE layers for archives (.zip/.jar/.apk/.tar/.tgz) and LOCAL DIRECTORIES, as
+      top-level result blocks (each omitted when empty; all leads, never KB edges):
+      `git` (bp_git: embedded .git identities/remotes/reflog/commits + go.mod/package.json/…
+      module identifiers), `archive_time` (bp_archive_time: bulk-copy clusters, packaging time,
+      sequential runs, stripped/implausible times, packer UTC offset, author-metadata presence),
+      `keys` (bp_keys: keys/certs deduplicated by SPKI SHA-256; private material never output).
 
 Output is WebPivot-shaped JSON ({meta, artifacts, pivots}) so the SAME KB ingester and case
 graph consume it — the APK's signing cert becomes a shared indicator that clusters with the web
@@ -29,7 +35,7 @@ Zero required dependencies (Python 3 stdlib). Optional accelerators, used only i
   file(1) (type id), strings(1) (faster string sweep; pure-Python fallback otherwise).
 
 Usage:
-  analyze_artifact.py <file|URL> [--pretty] [-o OUT.json] [--leads] [--case NAME]
+  analyze_artifact.py <file|DIR|URL> [--pretty] [-o OUT.json] [--leads] [--case NAME]
   analyze_artifact.py https://cdn.evil.example/app.apk --leads
   analyze_artifact.py ./MetaTrader.exe -o cases/foo/bin/MetaTrader.exe.json --pretty
   analyze_artifact.py app.apk --keep DIR      # also save the downloaded file to DIR
@@ -54,6 +60,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bp_refs  # noqa: E402 — reference DATA lives in references/*.json (RULE 3)
 import bp_anyrun  # noqa: E402 — ANY.RUN TI Lookup: query builder (keyless) + live lookups (--anyrun)
 import bp_rea  # noqa: E402 — REA deep-static layer (on by default; --no-rea); static commands only
+import bp_archive_time  # noqa: E402 — member reader (zip/tar/dir) + leak-archive timestamp forensics
+import bp_git  # noqa: E402 — embedded .git identities/remotes/commits + module identifiers (leads)
+import bp_keys  # noqa: E402 — key/cert material deduplicated by SPKI SHA-256 (hashes only)
 # Per-call ceiling for helper binaries (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
 # 5000s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
 try:
@@ -240,6 +249,8 @@ def detect_type(raw, meta):
         kind = "pkg"
     elif len(raw) >= 512 and raw[-512:-508] == b"koly":
         kind = "dmg"
+    elif raw[257:262] == b"ustar":
+        kind = "tar"         # POSIX/GNU tar (leaked source trees); gzip'd tar stays "gzip"
     if kind == "zip":
         try:
             names = set(zipfile.ZipFile(_bio(raw)).namelist())
@@ -1258,8 +1269,84 @@ def _rea_layer(target, raw, kind, meta, keep_dir):
                 pass
 
 
+# ----------------------------------------------------------------------------- leaked-source layers
+def _sweep_source(src, cap=400):
+    """IOC sweep over a MemberSource's text-like members (tar / directory targets)."""
+    iocs, scanned = {}, 0
+    for m in src.members:
+        if scanned >= cap:
+            break
+        if m["is_dir"] or not _TEXT_SCAN.search(m["name"]) or "/.git/" in "/" + m["name"]:
+            continue
+        body = src.read(m["name"])
+        if body:
+            _merge_iocs(iocs, scan_iocs(strings_of(body), label=m["name"]))
+            scanned += 1
+    return iocs
+
+
+def _leak_layers(src):
+    """Leaked-source forensics over an archive or directory: {'git', 'archive_time', 'keys'},
+    each omitted when empty. Every row is a fact/lead (rung 'lead') — never a tracker/KB edge."""
+    out = {}
+    if src is None:
+        return out
+    for key, mod in (("git", bp_git), ("archive_time", bp_archive_time), ("keys", bp_keys)):
+        try:
+            block = mod.analyze_source(src)
+        except Exception as e:  # noqa: BLE001 — an additive layer never fails the analysis
+            block = {"error": f"{type(e).__name__}: {e}"}
+        if block:
+            out[key] = block
+    return out
+
+
+def _dir_manifest_hashes(src):
+    """Directory 'hash': SHA-256 over the sorted (path, size, sha256) manifest of its files, so a
+    directory target still gets a stable id. Not a file hash — never searched in malware repos."""
+    lines, total = [], 0
+    for m in sorted(src.members, key=lambda x: x["name"]):
+        if m["is_dir"]:
+            continue
+        body = src.read(m["name"]) or b""
+        total += m["size"]
+        lines.append(f"{m['name']}\t{m['size']}\t{hashlib.sha256(body).hexdigest()}")
+    blob = "\n".join(lines).encode()
+    return {"md5": hashlib.md5(blob).hexdigest(), "sha1": hashlib.sha1(blob).hexdigest(),
+            "sha256": hashlib.sha256(blob).hexdigest(), "size": total,
+            "basis": "manifest of (path, size, sha256) for every file — not a file hash"}
+
+
+def analyze_directory(target):
+    """A LOCAL directory (an extracted leak, a seized tree): IOC sweep over its text members plus
+    the leaked-source layers. No REA / packer triage / file-hash pivots (not a single binary)."""
+    path = os.path.abspath(os.path.expanduser(target))
+    src = bp_archive_time.MemberSource.from_dir(path)
+    leak = _leak_layers(src)                     # before hashing: hashing spends the read budget
+    src.budget = int(bp_archive_time._LIM["max_total_bytes"])
+    hashes = _dir_manifest_hashes(src)
+    src.budget = int(bp_archive_time._LIM["max_total_bytes"])
+    iocs = _sweep_source(src)
+    art = {"file_kind": "directory", "file_type": "directory", "hashes": hashes,
+           "member_count": len(src.members)}
+    art["iocs"] = {k: v for k, v in iocs.items() if v}
+    meta = {"source": target, "filename": os.path.basename(path.rstrip(os.sep)), "host": None}
+    pivots = [p for p in build_pivots("directory", hashes, art, iocs, meta)
+              if p["kind"] != "file:sha256"]
+    meta["host"] = f"artifact:directory:{hashes['sha256'][:16]}"
+    meta["collector"] = "binarypivot/analyze_artifact"
+    result = {"meta": meta,
+              "artifacts": {"title": f"directory {meta['filename']}",
+                            "trackers": to_trackers(art, iocs), "binary": art},
+              "pivots": pivots}
+    result.update(leak)
+    return result
+
+
 # ----------------------------------------------------------------------------- main analyze
 def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None, rea=True):
+    if not re.match(r"^https?://", target, re.I) and os.path.isdir(os.path.expanduser(target)):
+        return analyze_directory(target)
     raw, meta = acquire(target, keep_dir=keep_dir, timeout=timeout, ua=ua)
     if not raw:
         return {"meta": meta, "artifacts": {}, "pivots": [],
@@ -1290,6 +1377,20 @@ def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None, rea=True):
             if teams:
                 art["apple_team"] = teams
         iocs = _merge_iocs(iocs, scan_iocs(strings_of(raw), label=kind))
+
+    # Leaked-source layers (git / archive_time / keys) for any zip-family or tar(.gz) archive.
+    src = None
+    if kind in ("apk", "jar", "zip", "ooxml"):
+        src = bp_archive_time.open_source(raw=raw)
+    elif kind in ("tar", "gzip", "unknown"):
+        try:
+            src = bp_archive_time.MemberSource.from_tar(raw)
+            art["container"] = "tar"
+            art["member_count"] = len(src.members)
+            iocs = _merge_iocs(iocs, _sweep_source(src))
+        except Exception:  # noqa: BLE001 — not a tar: nothing to add
+            src = None
+    leak = _leak_layers(src)
 
     # Deep-static layer (opt-in). Its indicators stay in art["rea"] — never merged into `iocs`,
     # whose wallet/Firebase/S3/messenger labels become KB edges. They reach trackers only through
@@ -1324,6 +1425,7 @@ def analyze(target, keep_dir=None, timeout=60, anyrun=False, ua=None, rea=True):
         },
         "pivots": pivots,
     }
+    result.update(leak)   # top-level git / archive_time / keys blocks (absent when empty)
     # ANY.RUN is consulted (never fed): it reports what OTHER people's detonations of these
     # artifacts recorded. Most valuable exactly when `protection` says the string sweep is thin —
     # a packed sample's real endpoints only exist at runtime.
@@ -1384,7 +1486,8 @@ def render_leads(result):
               "tron_wallet", "telegram", "whatsapp", "email", "onion", "google_api_key"):
         if iocs.get(k):
             lines.append(f"{k:14s} {', '.join(iocs[k][:10])}")
-    lines += _rea_lead_lines(a)
+    lines += _rea_lead_lines(a) if a.get("file_kind") != "directory" else []
+    lines += _leak_lead_lines(result)
     lines.append("")
     lines.append("## Pivots (high→low)")
     for p in result["pivots"]:
@@ -1393,6 +1496,58 @@ def render_leads(result):
         for q in p["queries"][:4]:
             lines.append(f"          · {q['service']}: {q['query']}")
     return "\n".join(lines)
+
+
+def _leak_lead_lines(result):
+    """Short --leads lines for the leaked-source layers (git / archive_time / keys). All leads."""
+    out = []
+    g = result.get("git") or {}
+    if g:
+        out += ["", f"## Embedded git / project identity — {len(g.get('repos') or [])} repo(s)  "
+                    "[leads: self-asserted, corroborate before attribution]"]
+        if g.get("error"):
+            out.append(f"⚠ git layer error: {g['error']}")
+        for i in (g.get("identities") or [])[:10]:
+            tz = ",".join(list(i.get("tz_offsets") or {})[:4])
+            out.append(f"  identity {i['name']} <{i['email']}>  roles={'/'.join(i['roles'])}  "
+                       f"n={i['count']}  {i.get('first_seen_utc') or '?'} → {i.get('last_seen_utc') or '?'}"
+                       + (f"  tz={tz}" if tz else ""))
+        for r in (g.get("remotes") or [])[:8]:
+            out.append(f"  remote   {r['name']} = {r['url']}"
+                       + ("  ⚠ embedded credential" if r.get("embedded_credential") else ""))
+        for mp in (g.get("module_paths") or [])[:8]:
+            extra = mp.get("repository") or mp.get("urls") or mp.get("registries") or ""
+            out.append(f"  module   [{mp['ecosystem']}] {mp.get('name') or ''} {extra}  ← {mp['file']}".rstrip())
+        if g.get("commits"):
+            out.append(f"  commits  {len(g['commits'])} parsed; tz histogram {json.dumps(g.get('tz_histogram') or {})}")
+    t = result.get("archive_time") or {}
+    if t:
+        off = t.get("inferred_utc_offset") or {}
+        out += ["", f"## Archive timestamps — {t.get('files', 0)} files, clock={t.get('clock')}, "
+                    f"stripped={t.get('stripped_timestamps', 0)}"
+                    + (f", packer offset UTC{off['offset']} ({off['agreeing']}/{off['compared']})" if off else "")]
+        if t.get("error"):
+            out.append(f"⚠ archive_time layer error: {t['error']}")
+        for j in (t.get("judgments") or [])[:8]:
+            out.append(f"  · {j}")
+        for h in ((t.get("author_metadata") or {}).get("hits") or [])[:5]:
+            out.append(f"  author-metadata {h['kind']}={h['value']}  ← {h['where']}")
+    k = result.get("keys") or {}
+    if k:
+        out += ["", f"## Key material — {k.get('distinct', 0)} distinct key(s), "
+                    f"{k.get('private_keys', 0)} private  [SPKI SHA-256; private material never shown]"]
+        if k.get("error"):
+            out.append(f"⚠ keys layer error: {k['error']}")
+        for row in (k.get("keys") or [])[:10]:
+            members = sorted({o["member"] for o in row["occurrences"]})
+            out.append(f"  {row['kind']:8s} {'PRIVATE ' if row['is_private'] else ''}"
+                       f"spki={row.get('spki_sha256') or 'n/a (' + row.get('reason', '?') + ')'}  "
+                       f"x{row['occurrence_count']} [{', '.join(row['forms'])}]"
+                       + ("  (benign sample key)" if row.get("benign") else "")
+                       + f"  ← {', '.join(members[:4])}")
+        for s in (k.get("keystores") or [])[:5]:
+            out.append(f"  keystore {s['member']} ({s['size']}B) — opaque, needs password")
+    return out
 
 
 def _rea_lead_lines(a):
@@ -1421,7 +1576,8 @@ def _rea_lead_lines(a):
 # ----------------------------------------------------------------------------- cli
 def main():
     ap = argparse.ArgumentParser(description="Static IOC extraction from scam-site binaries (APK / exe / zip).")
-    ap.add_argument("target", help="local file path or http(s) URL to the artifact")
+    ap.add_argument("target", help="local file path, local directory (extracted leak / source "
+                                   "tree), or http(s) URL to the artifact")
     ap.add_argument("-o", "--output", help="write full result JSON here")
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON to stdout")
     ap.add_argument("--leads", action="store_true", help="human-readable ranked leads to stdout")
