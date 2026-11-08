@@ -44,6 +44,7 @@ import os
 import re
 import sys
 import json
+import tempfile
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -381,8 +382,24 @@ class KB:
         return ent
 
     def _save_entity(self, ent):
-        with open(self._ent_file(ent["type"], ent["value"]), "w", encoding="utf-8") as fh:
-            json.dump(ent, fh, indent=2, ensure_ascii=False)
+        """Write an entity file atomically: a uniquely named temp file in the same directory, then
+        os.replace. An interrupted write (killed process, full disk) leaves the previous file intact
+        instead of a truncated one, and concurrent writers never share a temp name. No fsync: this
+        guards against process death, not power loss."""
+        path = self._ent_file(ent["type"], ent["value"])
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".ent-", suffix=".tmp")
+        try:
+            try:                        # mkstemp is 0600; keep the file's mode (new files 0644)
+                os.chmod(tmp, os.stat(path).st_mode & 0o777)
+            except OSError:
+                os.chmod(tmp, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(ent, fh, indent=2, ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+            raise
 
     def _bump_seen(self, ent, observed_at):
         seen = [x for x in (ent.get("first_seen"), observed_at) if x]
