@@ -158,6 +158,33 @@ python3 scripts/phish_domain_survival.py evil.top --refs myrefs.json
 
 Regression-tested by `tests/test_phish_domain_survival.py` (run in `scripts/audit.sh`).
 
+### `wp_takedown.py` — takedown / relocation watch
+
+Survival does not end at a takedown: a held lure is usually rebuilt on a fresh name, often on
+the same server. `intel_engine/WebPivot/tools/wp_takedown.py` checks the outcome:
+
+```bash
+python3 WebPivot/tools/wp_takedown.py held-shop.example --json
+python3 WebPivot/tools/wp_takedown.py --case CASE-0001          # every collected apex, read-only
+python3 WebPivot/tools/wp_takedown.py example.com --hunt --ip 203.0.113.10 --no-fetch
+```
+
+1. **Status** — RDAP EPP set: `clientHold`/`serverHold` → `held`; `redemptionPeriod`/
+   `pendingDelete` → `deleted`; `serverDeleteProhibited` & other server locks count only on top
+   of a hold. DNS adds `dns:nxdomain`, `dns:no_ns` and sinkhole/registry-hold nameservers
+   (→ `suspended`). `held_since` is an RDAP event date with its basis (usually `last changed`).
+2. **Successor hunt** (held/suspended/deleted, or `--hunt`) — last known origin IPs (case
+   origin history → HackerTarget hostsearch → live A; CDN/parking/bogon edges skipped), keyless
+   reverse-IP, then each co-tenant's live page vs the held domain's last capture (case raw, else
+   Wayback): favicon mmh3, DOM skeleton (`body`), distinctive `<title>`.
+
+Output per domain: `status` (active|held|suspended|deleted|unknown), `signals[]`,
+`held_since`, `successors[]` {`domain`, `shared_ip`, `content_match` title|favicon|body|none,
+`first_seen`, `rung`, `caveat`}. **RULE 5:** a shared IP alone is co-tenancy (`rung: lead`); a
+content match raises a successor only to a kit sibling (`rung: kit`) — never an owner, never a
+KB edge. A successor registered after `held_since` that serves the held kit is the relocation
+lead to collect next. Patterns and limits: `WebPivot/references/takedown.json`.
+
 ---
 
 *Phishing Domain Survival Module v1.0.0 — for authorized threat-intelligence use.*

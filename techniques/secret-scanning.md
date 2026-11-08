@@ -150,6 +150,44 @@ committer with `/github-osint` before naming anyone.
 
 ---
 
+## 4b. Public container registries — Docker Hub, GHCR, Quay (`container_registry`)
+
+A built image is a second copy of the source tree that is rarely reviewed: `ENV`/`ARG` values,
+`--build-arg` pairs and copied `.env` files survive in the image even after the repository is
+cleaned. Operators and their contractors push to personal registry namespaces, so the namespace
+itself is also a pivot. `intel_engine/WebPivot/tools/wp_container.py` reads only what the registry
+serves to anonymous pullers:
+
+1. **Namespace** (`example`, `ghcr.io/<owner>`, `quay.io/<ns>`): repositories with description,
+   pull/star counts, `last_updated`, registration date; the Docker Hub user/org profile (full name,
+   company, profile URL). Anonymous Hub paging stops near 100 items, so several orderings are
+   unioned; GHCR has no keyless list API, so the owner's GitHub packages page is read instead.
+2. **Image config blob** (default, a few KB per image): manifest → linux/amd64 entry of a
+   multi-arch index → config — `Env` (names + first/last-3 preview), `Cmd`/`Entrypoint`, `Labels`
+   (`org.opencontainers.image.source` → the source repo to hand to `/github-osint`, `authors`,
+   `vendor`) and every `history[].created_by` build step, each secret-scanned.
+3. **Layers** (`--layers` only): each layer streamed up to 50 MB (200 MB per run, see
+   `references/container_registry.json`), tar members matched by path (`.env`, `*.yml`,
+   `*.properties`, `id_rsa`, `*.pem`, `settings.py`, `appsettings*.json`, `application*.yml`,
+   `.npmrc`, `.docker/config.json` …) and scanned. Oversized layers are read partially and flagged
+   `truncated`.
+
+```bash
+python3 intel_engine/WebPivot/tools/wp_container.py example --max-images 3        # namespace
+python3 intel_engine/WebPivot/tools/wp_container.py example/app:1.2 --json         # one image
+python3 intel_engine/WebPivot/tools/wp_container.py ghcr.io/example/app --layers --case CASE-0001
+```
+
+**Grading:** a secret is reported as kind + path + redacted preview + `sha256(value)` — the value
+itself is never printed, and nothing is validated (use §7a, authorised scope only). Every identity
+(profile name, label author/vendor, config `author`, the namespace itself) is `rung: "lead"`:
+namespaces are often a personal developer, contractor or CI account and labels are copied from
+base images, so corroborate before naming anyone — never a cluster edge on this signal alone. An
+HTTP 429 stops the run with a partial result; Docker Hub counts manifest GETs against its anonymous
+pull limit.
+
+---
+
 ## 5. Fallback Cascade
 
 ```

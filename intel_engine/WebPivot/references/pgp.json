@@ -1,0 +1,67 @@
+{
+  "_comment": "wp_pgp — keyless PGP keyserver pivot (e-mail / v4-v6 fingerprint / long key id -> public key(s) -> UIDs, creation times, subkeys, third-party certifiers). Every endpoint template, the Proton domain list and the algorithm-name tables live here (RULE 3) so a keyserver moving or a new algorithm id is a data edit, not a code change. `{email}`, `{fpr}`, `{keyid}` and `{search}` are URL-encoded by the caller before substitution. Nothing here is case data — public keyserver hostnames and RFC 4880 / RFC 9580 vocabulary only. RULE 5: an e-mail or name found in a key's UID is SELF-ASSERTED by whoever made the key (no keyserver except keys.openpgp.org verifies anything) — it is a LEAD, never an edge, never an operator.",
+  "settings": {
+    "_comment": "timeout_seconds is the socket timeout per keyserver request. max_body_bytes caps how much of a response is parsed (popular keys on HKP servers carry thousands of certifications); anything beyond is truncated and flagged. max_certifiers_per_uid caps the third-party certifier list emitted per UID so a heavily-signed key does not flood the output.",
+    "timeout_seconds": 20,
+    "max_body_bytes": 4000000,
+    "max_certifiers_per_uid": 50
+  },
+  "sources": {
+    "_comment": "Queried in this order. `kind` is 'vks' (keys.openpgp.org Verifying Key Service: returns ONE armored key, 404 when absent, and strips every UID whose e-mail the owner has not verified — so a key found by fingerprint may legitimately carry no UID) or 'hkp' (classic HKP: `get` returns armored key(s), `index` with options=mr returns machine-readable pub:/uid: lines). `by_*` keys are templates per selector type; a missing template means the source cannot answer that selector type and it is reported as skipped. `only_email_domains` restricts a source to e-mail selectors on those domains (Proton's HKP only knows Proton-hosted addresses). `account_age_proxy` marks a source whose primary-key creation time approximates mailbox creation. `serves_decoy_keys` marks a source that answers NON-EXISTENT addresses with a well-formed key carrying a plausible past creation date (Proton does this as anti-enumeration — observed 2026-11: random 20-hex local parts on proton.me/pm.me all return 200 + a key, stable across repeats); for such a source the age is reported `rung: unverified` unless a UID is certified by one of `ca_signer_uids` (the Signer's User ID subpacket of a third-party certification by the provider's own CA key — a vendor address, not case data).",
+    "entries": {
+      "keys_openpgp_org": {
+        "label": "keys.openpgp.org (VKS)",
+        "kind": "vks",
+        "by_email": "https://keys.openpgp.org/vks/v1/by-email/{email}",
+        "by_fingerprint": "https://keys.openpgp.org/vks/v1/by-fingerprint/{fpr}",
+        "by_keyid": "https://keys.openpgp.org/vks/v1/by-keyid/{keyid}"
+      },
+      "keyserver_ubuntu": {
+        "label": "keyserver.ubuntu.com (HKP)",
+        "kind": "hkp",
+        "get": "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search={search}",
+        "index": "https://keyserver.ubuntu.com/pks/lookup?op=index&options=mr&search={search}"
+      },
+      "proton": {
+        "label": "Proton (HKP)",
+        "kind": "hkp",
+        "get": "https://mail-api.proton.me/pks/lookup?op=get&search={search}",
+        "only_email_domains": ["proton.me", "protonmail.com", "protonmail.ch", "pm.me"],
+        "account_age_proxy": true,
+        "serves_decoy_keys": true,
+        "ca_signer_uids": ["openpgp-ca@proton.me"]
+      }
+    }
+  },
+  "pubkey_algorithms": {
+    "_comment": "RFC 9580 §9.1 public-key algorithm ids -> short name.",
+    "entries": {
+      "1": "RSA", "2": "RSA-E", "3": "RSA-S", "16": "ElGamal", "17": "DSA",
+      "18": "ECDH", "19": "ECDSA", "20": "ElGamal-legacy", "22": "EdDSA-legacy",
+      "25": "X25519", "26": "X448", "27": "Ed25519", "28": "Ed448"
+    }
+  },
+  "curve_oids": {
+    "_comment": "Hex of the DER OID body (without tag/length) carried in ECDH/ECDSA/EdDSA key material -> curve name (RFC 9580 §9.2).",
+    "entries": {
+      "2a8648ce3d030107": "NIST P-256",
+      "2b81040022": "NIST P-384",
+      "2b81040023": "NIST P-521",
+      "2b2403030208010107": "brainpoolP256r1",
+      "2b240303020801010b": "brainpoolP384r1",
+      "2b240303020801010d": "brainpoolP512r1",
+      "2b06010401da470f01": "Ed25519",
+      "2b060104019755010501": "Curve25519",
+      "2b656f": "X448",
+      "2b6571": "Ed448"
+    }
+  },
+  "fixed_key_bits": {
+    "_comment": "Algorithms with a fixed key size and no curve OID (RFC 9580 v6 native key types).",
+    "entries": {"25": 255, "26": 448, "27": 255, "28": 448}
+  },
+  "key_flags": {
+    "_comment": "Key Flags subpacket (type 27) bit -> usage letter, gpg-style.",
+    "entries": {"1": "C", "2": "S", "4": "E", "8": "E", "32": "A"}
+  }
+}

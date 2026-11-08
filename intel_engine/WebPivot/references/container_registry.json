@@ -1,0 +1,142 @@
+{
+  "_comment": "wp_container — passive PUBLIC container-registry OSINT (Docker Hub, GHCR, Quay, any OCI v2 registry for a single image). Endpoint templates, size caps, the member-path patterns read out of layer tarballs, and the secret SHAPES matched against config blobs / history / layer files live here (RULE 3) so a registry API change or a new key shape is a data edit. Everything here is public vendor vocabulary or a regex — never a case value, never a credential. Placeholders `{ns}`, `{repo}`, `{owner}`, `{img}`, `{ref}`, `{digest}`, `{page}`, `{page_size}` are URL-safe values substituted by the caller.",
+  "settings": {
+    "_comment": "timeout_seconds = per-request socket timeout (wp_common floors it at the engine CALL_TIMEOUT). page_size / max_repos bound the namespace listing walk. max_images = how many of a namespace's repositories get their config blob inspected (0 = list only); max_tags = tags returned per repository. platform = the os/arch picked out of a multi-arch index. config_max_bytes caps a config blob read. layer_max_bytes / layers_total_max_bytes cap layer streaming (only with --layers): a layer larger than the cap is read PARTIALLY (members before the cap are still scanned) and flagged truncated; once the total is reached no further layer is opened. member_max_bytes caps one tar member read; max_members_per_layer caps how many tar headers are walked per layer; max_history_cmds caps history lines returned per image.",
+    "timeout_seconds": 30,
+    "page_size": 100,
+    "max_repos": 500,
+    "max_images": 3,
+    "max_tags": 25,
+    "platform": {"os": "linux", "architecture": "amd64"},
+    "config_max_bytes": 8000000,
+    "layer_max_bytes": 52428800,
+    "layers_total_max_bytes": 209715200,
+    "member_max_bytes": 1048576,
+    "max_members_per_layer": 200000,
+    "max_history_cmds": 200
+  },
+  "registries": {
+    "_comment": "Per-registry endpoints. `aliases` = hostnames a ref may be written with. `registry` = the OCI distribution base. `token` = the anonymous pull-token template (avoids the 401 round trip; when absent or failing the module follows the WWW-Authenticate Bearer challenge instead). Listing endpoints are registry-specific and keyless: Docker Hub v2 namespaces API + the user/org profile — Hub refuses anonymous paging past ~100 items (403 'pagination offset too large'), so `orderings` are walked in turn and the names unioned; Quay public repository API; GHCR has NO keyless listing API, so the owner's public GitHub packages page is read for container package names (`ghcr_pages`, tried in order).",
+    "entries": {
+      "docker.io": {
+        "aliases": ["docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com", "hub.docker.com"],
+        "registry": "https://registry-1.docker.io",
+        "token": "https://auth.docker.io/token?service=registry.docker.io&scope=repository:{ns}/{repo}:pull",
+        "list": "https://hub.docker.com/v2/namespaces/{ns}/repositories?page_size={page_size}&page={page}&ordering={ordering}",
+        "list_alt": "https://hub.docker.com/v2/repositories/{ns}/?page_size={page_size}&page={page}&ordering={ordering}",
+        "orderings": ["", "last_updated", "-last_updated", "name", "-name", "pull_count", "-pull_count"],
+        "tags": "https://hub.docker.com/v2/namespaces/{ns}/repositories/{repo}/tags?page_size={page_size}&page=1",
+        "user": "https://hub.docker.com/v2/users/{ns}/",
+        "org": "https://hub.docker.com/v2/orgs/{ns}/",
+        "repo_page": "https://hub.docker.com/r/{ns}/{repo}"
+      },
+      "ghcr.io": {
+        "aliases": ["ghcr.io"],
+        "registry": "https://ghcr.io",
+        "token": "https://ghcr.io/token?service=ghcr.io&scope=repository:{ns}/{repo}:pull",
+        "ghcr_pages": ["https://github.com/orgs/{ns}/packages?ecosystem=container", "https://github.com/{ns}?tab=packages&ecosystem=container"]
+      },
+      "quay.io": {
+        "aliases": ["quay.io"],
+        "registry": "https://quay.io",
+        "token": "https://quay.io/v2/auth?service=quay.io&scope=repository:{ns}/{repo}:pull",
+        "list": "https://quay.io/api/v1/repository?namespace={ns}&public=true",
+        "tags": "https://quay.io/api/v1/repository/{ns}/{repo}/tag/?limit={page_size}&onlyActiveTags=true",
+        "repo_page": "https://quay.io/repository/{ns}/{repo}"
+      }
+    }
+  },
+  "media_types": {
+    "_comment": "Accept header for manifest GETs (index/list first so a multi-arch tag resolves to its index, then the platform entry is fetched by digest), and the media types recognised as an index vs a single manifest. Layer media types containing `zstd` need the optional stdlib compression.zstd (Python 3.14+); otherwise that layer is skipped with a note.",
+    "accept": ["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json", "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"],
+    "index": ["application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"]
+  },
+  "identity_labels": {
+    "_comment": "Image LABEL keys read as identity LEADS (rung lead, never an edge — a namespace or label is often a personal dev/contractor account or a copied base-image label). `source` labels yield source_repo_url.",
+    "entries": {
+      "source": ["org.opencontainers.image.source", "org.label-schema.vcs-url", "org.opencontainers.image.url", "org.label-schema.url"],
+      "person": ["org.opencontainers.image.authors", "maintainer", "MAINTAINER", "author", "org.label-schema.maintainer"],
+      "org": ["org.opencontainers.image.vendor", "org.label-schema.vendor", "vendor"]
+    }
+  },
+  "member_paths": {
+    "_comment": "Regexes (Python re, case-insensitive) on a layer tar member path: a member is READ and secret-scanned only if it matches `include` and no `exclude`. Excludes drop language runtimes / vendored packages / CA bundles whose YAML/JSON/PEM files are public and drown the signal.",
+    "include": [
+      "(^|/)\\.env(\\.[\\w.-]+)?$",
+      "\\.(ya?ml|properties|toml|ini|conf|cfg)$",
+      "\\.(pem|key|p12|pfx|jks|keystore)$",
+      "(^|/)id_(rsa|dsa|ecdsa|ed25519)$",
+      "(^|/)settings(_[\\w-]+)?\\.py$",
+      "(^|/)local_settings\\.py$",
+      "(^|/)appsettings[\\w.-]*\\.json$",
+      "(^|/)application[\\w.-]*\\.(ya?ml|properties)$",
+      "(^|/)(config|secrets?|credentials?|firebase|google-services|service[-_]account)[\\w.-]*\\.json$",
+      "(^|/)\\.npmrc$",
+      "(^|/)\\.pypirc$",
+      "(^|/)\\.dockercfg$",
+      "(^|/)\\.docker/config\\.json$",
+      "(^|/)\\.git-credentials$",
+      "(^|/)\\.pgpass$",
+      "(^|/)\\.netrc$",
+      "(^|/)\\.aws/(credentials|config)$",
+      "(^|/)wp-config\\.php$",
+      "(^|/)\\.htpasswd$"
+    ],
+    "exclude": [
+      "(^|/)node_modules/",
+      "(^|/)(site|dist)-packages/",
+      "^(\\./)?usr/(share|lib|lib64|include)/",
+      "^(\\./)?usr/local/(lib|include|share)/",
+      "^(\\./)?(proc|sys|dev)/",
+      "^(\\./)?etc/ssl/certs/",
+      "^(\\./)?etc/(ca-certificates|pki/ca-trust)/",
+      "(^|/)\\.wh\\.",
+      "(^|/)(test|tests|testdata|fixtures|examples?)/"
+    ]
+  },
+  "secret_patterns": {
+    "_comment": "Secret SHAPES (Python re). `group` = which capture group is the secret value (0 = whole match). The first five mirror the credential shapes scripts/audit.sh 5b blocks from the tracked tree; the rest are common vendor/structure shapes. `named_assignment` is the generic KEY=value catch for a secret-NAMED key; its value is dropped when it matches `placeholder_values`.",
+    "entries": {
+      "stripe_key": {"regex": "\\b[sr]k_live_[A-Za-z0-9]{16,}", "group": 0},
+      "aws_access_key_id": {"regex": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b", "group": 0},
+      "github_token": {"regex": "\\bgh[pousr]_[A-Za-z0-9]{36,}\\b", "group": 0},
+      "github_pat": {"regex": "\\bgithub_pat_[A-Za-z0-9_]{60,}", "group": 0},
+      "slack_token": {"regex": "\\bxox[abprs]-[A-Za-z0-9-]{10,}", "group": 0},
+      "aws_secret_access_key": {"regex": "(?i)aws_?secret_?access_?key[\"'\\s]*[:=]\\s*[\"']?([A-Za-z0-9/+=]{40})\\b", "group": 1},
+      "google_api_key": {"regex": "\\bAIza[0-9A-Za-z_\\-]{35}\\b", "group": 0},
+      "private_key": {"regex": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----", "group": 0},
+      "npm_token": {"regex": "\\bnpm_[A-Za-z0-9]{36}\\b", "group": 0},
+      "npmrc_auth_token": {"regex": "_auth(?:Token)?\\s*=\\s*[\"']?([^\\s\"'$]{12,})", "group": 1},
+      "docker_auth": {"regex": "\"auth\"\\s*:\\s*\"([A-Za-z0-9+/=]{12,})\"", "group": 1},
+      "telegram_bot_token": {"regex": "\\b\\d{8,10}:AA[A-Za-z0-9_-]{33}\\b", "group": 0},
+      "sendgrid_key": {"regex": "\\bSG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}\\b", "group": 0},
+      "jwt": {"regex": "\\beyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}", "group": 0},
+      "url_credentials": {"regex": "\\b[a-z][a-z0-9+.-]{1,20}://[^/\\s:@'\"]{1,64}:([^/\\s:@'\"]{3,128})@[\\w.-]+", "group": 1},
+      "named_assignment": {"regex": "(?i)\\b([A-Z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|PWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CLIENT_?SECRET|CREDENTIALS?)[A-Z0-9_.-]*)[\"']?\\s*[:=]\\s*[\"']?([^\\s\"',;#}]{8,})", "group": 2}
+    }
+  },
+  "secret_env_name": {
+    "_comment": "An Env / build-arg NAME matching `regex` with a non-placeholder value of >= min_len chars is reported as kind env_named_secret even when no vendor shape matches. `benign` names are never reported (base-image version pins and checksums).",
+    "regex": "(?i)(SECRET|TOKEN|PASSWORD|PASSWD|PWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?)",
+    "min_len": 8,
+    "benign": ["(?i)_(VERSION|SHA256|SHA512|SHA1|MD5|CHECKSUM|URL_PATH)$", "(?i)^GPG_KEYS?$", "(?i)_FILE$"]
+  },
+  "placeholder_values": {
+    "_comment": "Values that are templates, not secrets (case-insensitive regex, matched against the whole value).",
+    "values": [
+      "(?i)^(changeme|change_me|password|secret|token|none|null|nil|true|false|undefined|example|test|dummy|xxx+|\\*+|redacted)$",
+      "^\\$\\{?[A-Za-z_][A-Za-z0-9_]*",
+      "^%\\(?[A-Za-z_]",
+      "^<[^>]*>$",
+      "^\\{\\{.*\\}\\}$",
+      "(?i)^(your|my|insert|replace|put)[-_ ]",
+      "(?i)example",
+      "^/(run|var|etc|tmp)/"
+    ]
+  },
+  "caveats": {
+    "_comment": "Fixed caveat strings attached to output (RULE 5).",
+    "identity": "LEAD only: a registry namespace or image label is often a personal developer / contractor / CI account or a label copied from a base image — corroborate before naming anyone; never an edge on this signal alone.",
+    "secret": "FACT that a credential-shaped string is published in a public image; not attribution and NOT validated. Values are never printed — preview is first/last 3 chars, sha256 identifies the value for dedupe."
+  }
+}

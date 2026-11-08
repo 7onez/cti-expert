@@ -1,0 +1,38 @@
+{
+  "_comment": "TAKEDOWN / RELOCATION WATCH (wp_takedown.py). Reads a domain's RDAP EPP status set and its DNS delegation to decide whether it was HELD, SUSPENDED or DELETED, then hunts SUCCESSOR domains on the last known origin IPs (keyless HackerTarget reverse-IP) and compares their live page with the held domain's last capture (case raw or Wayback). Every successor is a LEAD: a shared IP alone is co-tenancy (RULE 5); a content match only raises it to a KIT sibling — the same kit, never proof of the same owner. All values are data so an analyst extends them without touching code.",
+  "epp_status": {
+    "_comment": "RDAP status strings normalised (lower-case, spaces/underscores/hyphens removed) -> the state they evidence. Precedence when several apply: deleted > suspended > held. `serverdeleteprohibited` is listed under `lock_after_hold`, NOT here: on its own it is an ordinary registry lock and only counts as a takedown signal when a hold status is also present.",
+    "held": ["clienthold", "serverhold"],
+    "suspended": [],
+    "deleted": ["redemptionperiod", "pendingdelete", "pendingrestore"]
+  },
+  "lock_after_hold": {
+    "_comment": "Registry locks that a takedown typically adds ON TOP of a hold (so the operator cannot move or delete the name to escape it). Reported as a signal only when a hold status is present.",
+    "values": ["serverdeleteprohibited", "serverupdateprohibited", "servertransferprohibited", "serverrenewprohibited"]
+  },
+  "held_since_events": {
+    "_comment": "RDAP eventAction values (lower-case) tried IN ORDER for `held_since` once a takedown status is present. RDAP carries no dedicated hold event, so `last changed` is the usual best proxy — the basis is always reported beside the date.",
+    "values": ["suspension", "deletion", "last changed", "last update of rdap database"]
+  },
+  "sinkhole_ns": {
+    "_comment": "Nameserver patterns used by registrars / registries / takedown programmes for suspended or sinkholed names. `suffixes` match a nameserver exactly or as a dot-suffix; `substrings` match anywhere in the nameserver name. Conservative on purpose — a false sinkhole verdict marks a live domain as taken down. Extend locally.",
+    "suffixes": ["spam-and-abuse.com", "microsoftinternetsafety.net"],
+    "substrings": ["sinkhole", "suspended-domain", "suspended-for", "takedown", "abuse-hold", "registrar-hold"]
+  },
+  "skip_reverse_ip_status": {
+    "_comment": "wp_origin_history.classify() statuses whose co-tenants are strangers or meaningless (shared CDN edge, parking farm, non-routable answer). Reverse-IP is not run on these addresses; the IP is still reported with the reason.",
+    "values": ["cdn", "parking", "bogon", "invalid"]
+  },
+  "limits": {
+    "_comment": "Bounds that keep one run polite on keyless endpoints. max_ips = last-known origin IPs reverse-looked-up per held domain; max_candidates = co-tenant apexes whose page is fetched and compared; max_cotenant_list = co-tenant leads listed per IP when not fetched; http_timeout seconds per candidate page / favicon.",
+    "max_ips": 3,
+    "max_candidates": 15,
+    "max_cotenant_list": 50,
+    "http_timeout": 15
+  },
+  "caveats": {
+    "_comment": "RULE 5 caveat text attached to each successor row: co_tenant = shared IP only (lead), kit = content match ({match} is filled with favicon|body|title).",
+    "co_tenant": "Shared IP only — co-tenancy on a server, not an operator link (RULE 5). Lead for re-check; never an edge.",
+    "kit": "Serves the same {match} as the held domain's last capture — same KIT sibling, not proof of the same owner (RULE 5). Lead; never an edge or operator attribution."
+  }
+}

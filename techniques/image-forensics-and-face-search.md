@@ -27,6 +27,7 @@ Upload a face photo to find matching social profiles, blogs, and news articles. 
 - **Usage:** Upload image via browser or paste URL → results list matching faces with source URLs
 - **Strength:** Cross-platform identity correlation from a single face crop
 - **Limitation:** Requires a clear, front-facing face crop for highest match rate
+- **Access:** paid credits for full results and its terms forbid automation — manual use only; `wp_revimg.py` lists it as a manual link and never calls it (same for PimEyes)
 
 ### 2.2 FotoForensics — Error Level Analysis
 **URL:** https://fotoforensics.com/
@@ -82,6 +83,16 @@ Reverse image search engine. Finds all indexed instances of an image across the 
 - **Strength:** Best tool for provenance dating — "Oldest" sort finds first appearance
 - **Limitation:** Does not index all web content; absence of result does not confirm originality
 
+### 2.8 wp_revimg — Automated Reverse-Image Pass (in-skill)
+**Path:** `intel_engine/WebPivot/tools/wp_revimg.py` (MCP tool `reverse_image`); tunables in `intel_engine/WebPivot/references/reverse_image.json`
+
+One image URL or local file → sha256 + perceptual aHash/dHash (Pillow if installed, else sha256 only), dimensions, embedded EXIF (via `wp_docmeta`), search links for Yandex / Bing Visual Search / Google Lens / TinEye, manual-only face-engine links, and Yandex's keyless "sites containing this image" list (page URL, title, snippet, `wayback_hint`).
+
+- **Image URL:** the URL is sent to Yandex (discloses it to Yandex); `--links-only` builds links + fingerprint without querying.
+- **Local file:** nothing leaves the machine without `--confirm-upload` (MCP `confirm=true`); the default answer is a briefing naming the engine that would receive the bytes plus manual steps. With confirm it uploads to Yandex only.
+- **Status per engine:** `ok` / `blocked` (CAPTCHA — not a negative) / `unparsed` (layout change — not a negative) / `error`. A CAPTCHA'd page saved from a browser can be parsed offline with `--parse-html`.
+- **Every hit is `rung: "lead"`** — the same picture on another page proves reuse of the image, not who is in it or who runs the page. Never a KB edge or an operator link; faces need independent corroboration (name + context on the matched page).
+
 ---
 
 ## 3. Investigation Workflow
@@ -94,14 +105,16 @@ Step 1: EXIF extraction — establish metadata baseline
   └─ If Software shows Photoshop/GIMP → flag as post-processed; proceed to Step 5
 
 Step 2: Reverse image search — establish provenance
-  └─ Submit to TinEye; sort results by "Oldest" to find first publication
-  └─ Record earliest date and source URL as provenance anchor
+  └─ Run wp_revimg.py on the image URL (or the local file, confirm-gated) → Yandex sites + engine links
+  └─ Open the TinEye link; sort results by "Oldest" to find first publication
+  └─ Record earliest date and source URL as provenance anchor (use each hit's wayback_hint to date it)
   └─ If multiple versions exist → crop distinctive background region and re-search
+  └─ Treat every hit as a LEAD: reuse of an image is not identity
 
 Step 3: Face search — identify subjects (if face visible)
   └─ Crop face region tightly (eyes/nose/mouth visible)
-  └─ Upload to FaceCheck.id → review matched profiles
-  └─ Cross-reference matched identities with other OSINT subjects in case model
+  └─ Upload BY HAND to FaceCheck.id / PimEyes (paid, ToS forbids automation) → review matched profiles
+  └─ A face match is a lead: corroborate with name + context before linking it to any OSINT subject
 
 Step 4: AI geolocation — locate capture scene (if location unknown)
   └─ Submit full image to picarta.ai → record predicted coordinates + confidence
@@ -121,6 +134,12 @@ Step 5: Manipulation detection — assess authenticity (if authenticity question
 ## 4. CLI Commands & Expected Output
 
 ```bash
+# Reverse-image pass — fingerprint + engine links + Yandex "sites" (hits are LEADS)
+python3 intel_engine/WebPivot/tools/wp_revimg.py https://example.com/photo.jpg --case CASE-0001
+python3 intel_engine/WebPivot/tools/wp_revimg.py ./photo.jpg                   # briefing only, no upload
+python3 intel_engine/WebPivot/tools/wp_revimg.py ./photo.jpg --confirm-upload  # uploads to Yandex
+python3 intel_engine/WebPivot/tools/wp_revimg.py --parse-html saved_sites.html  # CAPTCHA'd? parse a saved page
+
 # EXIF extraction — local (requires exiftool)
 # Install: apt install libimage-exiftool-perl
 exiftool -GPSLatitude -GPSLongitude -GPSAltitude -DateTimeOriginal -Make -Model -Software target.jpg

@@ -1,0 +1,41 @@
+{
+  "_comment": "Reference data for tools/masked_hint.py — correlating MASKED account-recovery hints (de*****@mail.example, *******08, +84 *** *** *12, •••• 4321) against selectors a case already holds. A hint match is CORROBORATING only: it may raise confidence in a selector that is ALREADY linked by real evidence, never create a join key, never a KB edge (CLAUDE.md RULE 5). Keys starting with _ are documentation.",
+  "mask_chars": {
+    "_comment": "`always` are never a real selector character, so they mask in every hint. `contextual` are legal in an e-mail local part (x, _), so in an E-MAIL hint they only count as a mask when the hint has no `always` mask character and they form a run of at least `email_min_run`; in a phone/digit hint they always mask.",
+    "always": ["*", "•", "·", "●", "∙", "⋅", "‧", "⁎", "✱", "＊"],
+    "contextual": ["x", "X", "_"],
+    "email_min_run": 3
+  },
+  "providers": {
+    "_comment": "Length semantics of a mask run, per provider that DISPLAYED the hint (not the mail domain). `unknown` = the run is a display constant/padding and says nothing about how many characters it hides (match one-or-more). `exact` = one mask character per hidden character. Every major recovery flow observed pads with a fixed-width run, so all are `unknown` until an analyst verifies otherwise against an account they control — switching one to `exact` without that check silently drops true matches. `generic_exact` exists for a site whose hint was verified to be per-character.",
+    "entries": {
+      "unknown": {"length": "unknown", "note": "default — the mask run length is not trusted"},
+      "microsoft": {"length": "unknown", "note": "fixed-width padding after the first characters of the local part; phone shows the last digits"},
+      "google": {"length": "unknown", "note": "first characters of the local part, padded run; phone shows the last digits"},
+      "apple": {"length": "unknown", "note": "first character(s) and the masked domain; phone shows the last digits"},
+      "facebook": {"length": "unknown", "note": "first and last local-part characters with a padded run; masked domain label"},
+      "instagram": {"length": "unknown", "note": "first and last local-part characters with a padded run"},
+      "paypal": {"length": "unknown", "note": "first local-part character and first domain character, padded runs"},
+      "generic_exact": {"length": "exact", "note": "one mask character per hidden character — use only when verified"}
+    }
+  },
+  "matching": {
+    "_comment": "`min_hidden` = the fewest characters an unknown-length run may stand for. `min_visible_email` / `min_visible_phone` = discriminating visible characters a hint needs before a single unique match is reported as `corroborates` (below it the verdict is `consistent`: the hint does not contradict the candidate, but too little is shown to single it out). Visible characters of a common mail domain are not discriminating.",
+    "min_hidden": 1,
+    "min_visible_email": 3,
+    "min_visible_phone": 4
+  },
+  "common_mail_domains": {
+    "_comment": "Mail domains shared by millions of unrelated accounts: their visible letters carry no discriminating weight in a hint.",
+    "values": ["gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "yahoo.com", "ymail.com", "icloud.com", "me.com", "mac.com", "aol.com", "proton.me", "protonmail.com", "gmx.com", "gmx.net", "mail.com", "yandex.ru", "yandex.com", "mail.ru", "qq.com", "163.com", "126.com", "zoho.com"]
+  },
+  "calling_codes": {
+    "_comment": "ITU country calling codes used to split an E.164 candidate into country code + national number (stdlib only, no phonenumbers). Longest prefix wins.",
+    "values": ["1", "7", "20", "27", "30", "31", "32", "33", "34", "36", "39", "40", "41", "43", "44", "45", "46", "47", "48", "49", "51", "52", "53", "54", "55", "56", "57", "58", "60", "61", "62", "63", "64", "65", "66", "81", "82", "84", "86", "90", "91", "92", "93", "94", "95", "98", "211", "212", "213", "216", "218", "220", "221", "225", "233", "234", "237", "251", "254", "255", "256", "260", "263", "351", "352", "353", "354", "355", "356", "357", "358", "359", "370", "371", "372", "373", "374", "375", "380", "381", "382", "385", "386", "387", "389", "420", "421", "502", "503", "504", "505", "506", "507", "591", "593", "595", "598", "852", "853", "855", "856", "880", "886", "960", "961", "962", "963", "964", "965", "966", "967", "968", "970", "971", "972", "973", "974", "975", "976", "977", "992", "993", "994", "995", "996", "998"]
+  },
+  "case_scan": {
+    "_comment": "How --case enumerates the selectors a case already holds (read-only). JSON files under cases/<id>/ larger than `max_file_bytes` are skipped. A string is an e-mail candidate when the whole value is an address; a phone candidate only under a key containing one of `phone_keys`.",
+    "max_file_bytes": 20000000,
+    "phone_keys": ["phone", "tel", "mobile", "whatsapp", "msisdn"]
+  }
+}

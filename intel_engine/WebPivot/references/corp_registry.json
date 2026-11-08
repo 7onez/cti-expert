@@ -1,0 +1,173 @@
+{
+  "_comment": "wp_corp — GLOBAL company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, France recherche-entreprises, Norway Brreg, Finland PRH, SEC EDGAR; VN routed to wp_vncorp, CN to cn_recon). Every endpoint template, per-provider jurisdiction scope, HTML id map, formation-agent wording and the RULE 5 caveats live here so a registry moving an endpoint is a data edit. Templates take URL-encoded {query}/{number}/{lei}/{officer_id}/{cik}/{jurisdiction}/{page}/{size} substituted by the caller. Probed live 2026-11-08: GLEIF, Brreg, PRH answer through the egress pool; Companies House (site + API), recherche-entreprises and the three sec.gov hosts are refused by every pool exit and reach direct via scripts/proxy/vendor_hosts.json (public registry/index APIs, never a case target); OpenCorporates refuses keyless API calls (HTTP 401) and its website serves a reCAPTCHA wall, so it only runs with OPENCORPORATES_API_TOKEN. UA POLICY: every provider gets the repo's Android UA (wp_net.DEFAULT_UA) EXCEPT SEC EDGAR, whose published fair-access policy (sec.gov/os/accessing-edgar-data) requires a declared User-Agent naming the requester and a contact e-mail — set SEC_EDGAR_USER_AGENT in the environment / gitignored .env to your organisation + contact; `settings.sec_user_agent_default` is a placeholder only. Nothing here is case data.",
+  "settings": {
+    "_comment": "timeout_seconds per HTTP call; max_results caps rows kept per provider search; detail_max caps how many matched companies get their officer/address-history pages fetched in `company` mode (each costs 1-4 extra requests); officer_pages caps Companies House officer-list pages (35 rows each); verify_max caps candidate appointment pages fetched to test a `company=` corroboration; address_token_overlap is the share of the analyst's address tokens that must appear in a record address for `address=` to match.",
+    "timeout_seconds": 20,
+    "max_results": 10,
+    "detail_max": 2,
+    "officer_pages": 2,
+    "verify_max": 5,
+    "gleif_children_max": 20,
+    "address_token_overlap": 0.7,
+    "sec_user_agent_env": "SEC_EDGAR_USER_AGENT",
+    "sec_user_agent_default": "cti-expert research contact@example.com"
+  },
+  "jurisdiction_aliases": {
+    "_comment": "Analyst-typed jurisdiction -> ISO-3166 alpha-2 used for routing. OpenCorporates sub-national codes (us_de, ca_bc) route by their country prefix; the full code is still passed to OpenCorporates.",
+    "entries": {"UK": "GB", "ENGLAND": "GB", "SCOTLAND": "GB", "WALES": "GB", "USA": "US", "FRANCE": "FR", "NORWAY": "NO", "FINLAND": "FI", "VIETNAM": "VN", "CHINA": "CN", "PRC": "CN"}
+  },
+  "providers": {
+    "_comment": "Provider registry, queried in declaration order. `jurisdictions` ['*'] = global (always queried); a national registry is queried when no jurisdiction is given or when it matches. `key_env` names the env var(s) that unlock a keyed path; `keyless` false means the provider is skipped (with the reason) when no key is set. `metered` true = every keyed call is written to the api_usage ledger with credits=1; false = logged with credits=0 for visibility only. Companies House REST uses HTTP basic auth (key as username, empty password; free key from developer.company-information.service.gov.uk) and replaces the HTML path when COMPANIES_HOUSE_API_KEY is set.",
+    "entries": {
+      "gleif": {
+        "label": "GLEIF LEI API",
+        "jurisdictions": ["*"],
+        "keyless": true,
+        "search_name": "https://api.gleif.org/api/v1/lei-records?filter[fulltext]={query}&page[size]={size}",
+        "search_number": "https://api.gleif.org/api/v1/lei-records?filter[entity.registeredAs]={query}&page[size]={size}",
+        "jurisdiction_filter": "&filter[entity.jurisdiction]={jurisdiction}",
+        "record": "https://api.gleif.org/api/v1/lei-records/{lei}",
+        "search_exact": "https://api.gleif.org/api/v1/lei-records?filter[entity.legalName]={query}&page[size]={size}",
+        "direct_parent": "https://api.gleif.org/api/v1/lei-records/{lei}/direct-parent",
+        "ultimate_parent": "https://api.gleif.org/api/v1/lei-records/{lei}/ultimate-parent",
+        "direct_children": "https://api.gleif.org/api/v1/lei-records/{lei}/direct-children?page[size]={size}",
+        "public_url": "https://search.gleif.org/#/record/{lei}"
+      },
+      "companies_house": {
+        "label": "UK Companies House",
+        "jurisdictions": ["GB"],
+        "keyless": true,
+        "key_env": ["COMPANIES_HOUSE_API_KEY", "CH_API_KEY"],
+        "metered": false,
+        "site": "https://find-and-update.company-information.service.gov.uk",
+        "search_companies": "/search/companies?q={query}",
+        "search_officers": "/search/officers?q={query}",
+        "company": "/company/{number}",
+        "officers": "/company/{number}/officers?page={page}",
+        "address_filings": "/company/{number}/filing-history?category=address",
+        "appointments": "/officers/{officer_id}/appointments",
+        "api": "https://api.company-information.service.gov.uk",
+        "api_search_companies": "/search/companies?q={query}&items_per_page={size}",
+        "api_search_officers": "/search/officers?q={query}&items_per_page={size}",
+        "api_company": "/company/{number}",
+        "api_officers": "/company/{number}/officers?items_per_page=100",
+        "api_address_filings": "/company/{number}/filing-history?category=address&items_per_page=100",
+        "api_appointments": "/officers/{officer_id}/appointments?items_per_page=100"
+      },
+      "opencorporates": {
+        "label": "OpenCorporates",
+        "jurisdictions": ["*"],
+        "keyless": false,
+        "keyless_probe": true,
+        "key_env": ["OPENCORPORATES_API_TOKEN", "OPENCORPORATES_API_KEY"],
+        "metered": true,
+        "api": "https://api.opencorporates.com/v0.4",
+        "search_companies": "/companies/search?q={query}&per_page={size}",
+        "search_officers": "/officers/search?q={query}&per_page={size}",
+        "company": "/companies/{jurisdiction}/{number}",
+        "officer": "/officers/{officer_id}",
+        "jurisdiction_param": "&jurisdiction_code={jurisdiction}",
+        "public_url": "https://opencorporates.com"
+      },
+      "recherche_entreprises": {
+        "label": "France recherche-entreprises (api.gouv.fr)",
+        "jurisdictions": ["FR"],
+        "keyless": true,
+        "search_name": "https://recherche-entreprises.api.gouv.fr/search?q={query}&per_page={size}",
+        "search_person": "https://recherche-entreprises.api.gouv.fr/search?nom_personne={last}&prenoms_personne={first}&per_page={size}",
+        "public_url": "https://annuaire-entreprises.data.gouv.fr/entreprise/{number}"
+      },
+      "brreg": {
+        "label": "Norway Brønnøysund (data.brreg.no)",
+        "jurisdictions": ["NO"],
+        "keyless": true,
+        "search_name": "https://data.brreg.no/enhetsregisteret/api/enheter?navn={query}&size={size}",
+        "record": "https://data.brreg.no/enhetsregisteret/api/enheter/{number}",
+        "roles": "https://data.brreg.no/enhetsregisteret/api/enheter/{number}/roller",
+        "public_url": "https://virksomhet.brreg.no/nb/oppslag/enheter/{number}"
+      },
+      "prh": {
+        "label": "Finland PRH / YTJ open data",
+        "jurisdictions": ["FI"],
+        "keyless": true,
+        "search_name": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies?name={query}",
+        "record": "https://avoindata.prh.fi/opendata-ytj-api/v3/companies?businessId={number}",
+        "public_url": "https://tietopalvelu.ytj.fi/yritys/{number}",
+        "officers_note": "PRH open data publishes no officers/board members; use the paid trade-register extract for roles."
+      },
+      "sec_edgar": {
+        "label": "SEC EDGAR",
+        "jurisdictions": ["US"],
+        "keyless": true,
+        "search_name": "https://efts.sec.gov/LATEST/search-index?keysTyped={query}",
+        "submissions": "https://data.sec.gov/submissions/CIK{cik}.json",
+        "public_url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}",
+        "officers_note": "EDGAR has no officer register; officers/insiders appear as Form 3/4/5 reporting owners (searchable by name in `officer` mode as CIK candidates)."
+      }
+    }
+  },
+  "routes": {
+    "_comment": "Jurisdictions handled by ANOTHER tool, not duplicated here. VN calls wp_vncorp (forward lookup for `company`, reverse by-person for `officer`); CN returns a pointer to the cn_recon tool (ICP / registry recon).",
+    "entries": {
+      "VN": {"module": "wp_vncorp", "note": "Routed to wp_vncorp (vn_corp tool) — Vietnamese MST/name registry mirrors."},
+      "CN": {"tool": "cn_recon", "note": "PRC company/ICP recon is the cn_recon tool: pass the domain, ICP serial or company name there (company=...)."}
+    }
+  },
+  "ch_officer_fields": {
+    "_comment": "Companies House officer-list HTML: element id prefix (followed by -N, the row index) -> normalised officer field. A renamed id is a data edit here.",
+    "entries": {
+      "officer-role": "role",
+      "officer-date-of-birth": "birth_month_year",
+      "officer-appointed-on": "appointed",
+      "officer-resigned-on": "resigned",
+      "officer-nationality": "nationality",
+      "officer-country-of-residence": "country_of_residence",
+      "officer-address-value": "correspondence_address",
+      "officer-occupation": "occupation"
+    }
+  },
+  "ch_appointment_fields": {
+    "_comment": "Companies House officer-appointments HTML: id prefix (followed by N or -N) -> normalised appointment field.",
+    "entries": {
+      "company-status-value": "company_status",
+      "correspondence-address-value": "correspondence_address",
+      "appointment-type-value": "role",
+      "appointed-value": "appointed",
+      "resigned-value": "resigned",
+      "nationality-value": "nationality",
+      "country-of-residence-value": "country_of_residence",
+      "occupation-value": "occupation"
+    }
+  },
+  "address_change_patterns": {
+    "_comment": "Regexes over a filing-history description that yield a previous registered address: named groups `old`, `new`, `date`. Companies House words an AD01 as 'Registered office address changed from X to Y on D'.",
+    "values": [
+      "Registered office address changed from (?P<old>.+?) to (?P<new>.+?) on (?P<date>\\d{1,2} \\w+ \\d{4})"
+    ]
+  },
+  "formation_agent_patterns": {
+    "_comment": "GENERIC wording that marks a company-formation agent, registered-office / virtual-office provider or mail-forwarding address (case-insensitive regex, matched against registered and correspondence addresses). A hit means many unrelated companies share that address — it is NOT a same-operator link (RULE 5). Generic vocabulary only; never add a real address from a case.",
+    "values": [
+      "company formations?",
+      "formations? (ltd|limited|llp)",
+      "registered office (ltd|limited|services?|provider)",
+      "registered agents?",
+      "virtual office",
+      "mail ?forwarding",
+      "business (centre|center) services?",
+      "\\bc/o\\b",
+      "\\bp\\.?o\\.? box\\b",
+      "corporate services? (ltd|limited|provider)",
+      "secretarial services?",
+      "nominee (director|secretary|services?)"
+    ]
+  },
+  "caveats": {
+    "_comment": "RULE 5 text attached to every officer row / officer search. Officers are LEADS: nominee directors, formation-agent secretaries and same-name strangers are routine, so no row becomes a KB edge or an operator attribution.",
+    "entries": {
+      "officer": "Registry officer = LEAD, not attribution: nominee directors, formation-agent secretaries and corporate officers are common, and the filed details are self-declared.",
+      "officer_search": "Officer-name search returns HOMONYM CANDIDATES: same-name strangers are the norm. A candidate is `linked` only when an analyst datum (--corroborate birth=/address=/postcode=/company=) matches on the same record and none contradicts.",
+      "formation_agent": "Address matches formation-agent / registered-office-provider wording: hundreds of unrelated companies share it — never cluster on it."
+    }
+  }
+}

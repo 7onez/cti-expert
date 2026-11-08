@@ -1,0 +1,78 @@
+{
+  "_comment": "wp_telegram — phone/username → Telegram account LEAD lookup over MTProto (Telethon, optional, lazily imported). Tunables, the session location, the briefing/caveat/setup prose the tool prints, the status-class → last-seen bucket map and the t.me link patterns live here (RULE 3) so an analyst can retune pacing or a link shape without editing Python. RULE 1: nothing here is case data — only generic Telegram vocabulary and synthetic placeholders. RULE 5: every row this tool emits is rung 'lead' with a caveat; a phone→account hit is never a KB edge and never an operator link.",
+  "settings": {
+    "_comment": "session_default = where the analyst's research-account session lives when $TELEGRAM_SESSION is unset; it is a CREDENTIAL (it logs in as that account), so it defaults to the per-user config dir OUTSIDE the repo, and the tool refuses any session/photo path inside the repo that git does not ignore. max_phones_per_run caps one `phone` call (Telegram throttles contact imports per account and day; a burst gets the research account flood-limited or banned). import_delay_seconds paces one import from the next. flood_sleep_threshold is handed to Telethon: 0 = never auto-sleep on a FloodWait, stop and return the partial result instead. connect_timeout_seconds bounds the MTProto connect. photo_max_bytes bounds the profile photo read into memory. default_profile = the opentele2 device profile used when none is given (a key of `profiles`); desktop_system = the OS the desktop profile's generated device claims (windows|macos|linux). qr_wait_seconds = how long one QR login code is waited on before it is re-created; qr_max_recreate = how many times it is re-created before login gives up; qr_png_prefix = the private temp-dir prefix for the QR PNG (deleted after login).",
+    "session_default": "~/.config/cti-expert/sessions/telegram.session",
+    "max_phones_per_run": 10,
+    "import_delay_seconds": 4,
+    "flood_sleep_threshold": 0,
+    "connect_timeout_seconds": 20,
+    "photo_max_bytes": 5242880,
+    "default_profile": "desktop",
+    "desktop_system": "windows",
+    "qr_wait_seconds": 120,
+    "qr_max_recreate": 10,
+    "qr_png_prefix": "cti-tgqr-"
+  },
+  "profiles": {
+    "_comment": "opentele2 backend: login --profile name → the opentele2 API class whose official api_id + generated device the session presents. The device is derived deterministically from a per-session unique_id and frozen in the session sidecar at login, so every later connection reuses the same api_id + device (changing either mid-life is what gets an account flagged).",
+    "entries": {
+      "desktop": "TelegramDesktop",
+      "android": "TelegramAndroid",
+      "ios": "TelegramIOS"
+    }
+  },
+  "stealer_log_markers": {
+    "_comment": "File/dir names (case-insensitive, exact) that mark a stealer-log dump. `login --tdata DIR` refuses when DIR, its parent or its grandparent contains any of them: importing a tdata from a stealer log or a case is account takeover of a third party, not OSINT. Only the analyst's own research install is ever imported.",
+    "values": ["Passwords.txt", "All Passwords.txt", "Autofills", "Autofill", "Cookies", "Wallets", "System.txt", "UserInformation.txt", "Information.txt", "Browsers", "ImportantAutofills.txt", "Brute.txt"]
+  },
+  "status_buckets": {
+    "_comment": "Telethon UserStatus* class name → the last-seen bucket reported. Telegram only discloses an exact time (online / offline with was_online) when the account's privacy allows it; otherwise it returns a coarse bucket, and UserStatusEmpty means 'hidden or a long time ago' — not 'never used'.",
+    "entries": {
+      "UserStatusOnline": "online",
+      "UserStatusOffline": "offline",
+      "UserStatusRecently": "recently",
+      "UserStatusLastWeek": "within_week",
+      "UserStatusLastMonth": "within_month",
+      "UserStatusEmpty": "hidden_or_long_ago"
+    }
+  },
+  "link_patterns": {
+    "_comment": "Regexes (case-insensitive, matched against the input with any scheme stripped) that classify a `resolve` target. Each value must have exactly one capture group. invite = a private invite hash (read via CheckChatInvite, never joined); private_channel = t.me/c/<id>/… (needs the entity already known to the session); username = a public t.me / telegram.me / telegram.dog link or a bare @handle; peer_id = -100<id> channel id or a bare positive user id.",
+    "entries": {
+      "invite": "^(?:t\\.me|telegram\\.me|telegram\\.dog)/(?:\\+|joinchat/)([A-Za-z0-9_-]{8,})",
+      "private_channel": "^(?:t\\.me|telegram\\.me|telegram\\.dog)/c/(\\d+)",
+      "username": "^(?:(?:t\\.me|telegram\\.me|telegram\\.dog)/(?:s/)?|@)?([A-Za-z][A-Za-z0-9_]{3,31})(?:[/?#].*)?$",
+      "peer_id": "^(-100\\d+|\\d+)$"
+    }
+  },
+  "caveats": {
+    "_comment": "Caveat text attached to every output row (RULE 5). phone = for a contact-import match; not_found = for a miss (privacy can hide a registered number); resolve = for public entity metadata; names = always appended, because display names, bios and usernames are self-set.",
+    "entries": {
+      "phone": "LEAD only: a phone→account match proves the number is registered to this Telegram account at query time — not who the person is, and not that they control the number today (numbers are recycled). Never a KB edge or operator link without independent corroboration.",
+      "not_found": "No account returned. Either the number is not on Telegram, or its owner set 'Who can find me by my number' to 'My Contacts' — a miss is not proof of absence.",
+      "resolve": "LEAD only: public entity metadata as Telegram serves it to the research account. Ownership/admin of a channel is not shown here and must be established separately.",
+      "names": "Names, usernames, bios and photos are self-set by the account holder and can impersonate anyone."
+    }
+  },
+  "briefing": {
+    "_comment": "Printed by `phone` WITHOUT --confirm-import (nothing is sent). One line each; {n}, {account}, {session}, {max}, {delay} are filled by the tool. Describes exactly what leaves the host so the analyst can decide.",
+    "values": [
+      "Sends contacts.ImportContacts for {n} number(s), one at a time, {delay}s apart, from the research account {account} (session {session}).",
+      "Each import carries the number plus a placeholder first name and a random client_id; nothing else about the case is sent.",
+      "Every imported contact is removed again with contacts.DeleteContacts in a finally block; numbers that were already contacts of the research account are left untouched.",
+      "The number's owner is NOT notified, but Telegram logs the import against the research account, and if the owner later saves the research account's number the two can see each other as contacts.",
+      "Telegram rate-limits imports per account and per day; a FloodWait stops the run and returns the partial result (at most {max} numbers per call).",
+      "Re-run with --confirm-import (MCP: confirm=true) to send."
+    ]
+  },
+  "setup": {
+    "_comment": "Setup steps printed whenever the tool skips (Telethon missing, API credentials missing, no authorised session). Ordered; generic, no account data.",
+    "values": [
+      "Install Telethon into the analyst's environment (not the repo): pip install telethon (plus python-socks if egress goes through a proxy).",
+      "EITHER create an API app for the RESEARCH account at https://my.telegram.org → API development tools and put TELEGRAM_API_ID and TELEGRAM_API_HASH in the gitignored .env (/apikeys), OR pip install opentele2 — it presents an official Telegram app api_id + a realistic device, and then TELEGRAM_API_ID/HASH are optional.",
+      "Log in once, interactively, in your own terminal: python3 intel_engine/WebPivot/tools/wp_telegram.py login [--qr] [--profile desktop|android|ios] — you type the phone, the login code and any 2FA password at the prompt (or scan the QR with the research account's phone; pip install qrcode pillow to render it); the tool never accepts them as arguments.",
+      "Check with: python3 intel_engine/WebPivot/tools/wp_telegram.py status --sessions"
+    ]
+  }
+}

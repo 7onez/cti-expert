@@ -1,0 +1,66 @@
+{
+  "_comment": "Reference DATA for WebPivot/tools/wp_google.py — the GHunt (github.com/mxrch/GHunt) wrapper that turns an email address or Gaia ID into Google-account LEADS. Edit here, not in Python: the binary names, the session-file locations whose PRESENCE means `ghunt login` was done (contents are never read), the setup steps shown when it is missing, the keyless URL templates, the user-type -> account-kind map and the per-field caveats. Every output value is a lead (SKILL.md RULE 5), never a KB edge or an operator link.",
+  "settings": {
+    "_comment": "GHunt owns authenticated HTTP transport (including its Google-client user agents and proxy behaviour); the wrapper makes no direct HTTP requests. timeout_seconds bounds one subprocess run; bin_env optionally selects a GHunt executable, never a credential.",
+    "entries": {
+      "timeout_seconds": 180,
+      "bin_env": "GHUNT_BIN"
+    }
+  },
+  "binaries": {
+    "_comment": "Executable names looked up on PATH, in order, when GHUNT_BIN is unset. If none is found but the `ghunt` Python package is importable in this interpreter it is run as `python -c 'from ghunt.ghunt import main; main()'`.",
+    "values": ["ghunt"]
+  },
+  "session_files": {
+    "_comment": "Where `ghunt login` stores the analyst's own research-account session (GHuntCreds default: ~/.malfrats/ghunt/creds.m). Only existence and non-zero size are checked — the file is NEVER opened, read, copied or printed, and no cookie/token is ever accepted as an argument.",
+    "values": ["~/.malfrats/ghunt/creds.m"]
+  },
+  "setup": {
+    "_comment": "Shown verbatim in the `skipped` result when GHunt is not installed or has no session. The login step must use the analyst's dedicated research Google account, never a personal or client account.",
+    "values": [
+      "pipx install ghunt   (or: uv tool install ghunt)",
+      "ghunt login   (sign in with the analyst's dedicated research Google account — GHunt's own login flow; never paste cookies into this tool)"
+    ]
+  },
+  "endpoints": {
+    "_comment": "Keyless URL templates built from a Gaia ID / email / name. They are emitted as links for the analyst to open; this tool does not fetch them. {gaia}, {email} and {q} are URL-encoded before substitution.",
+    "entries": {
+      "maps_contrib": "https://www.google.com/maps/contrib/{gaia}/reviews",
+      "maps_contrib_photos": "https://www.google.com/maps/contrib/{gaia}/photos",
+      "calendar_embed": "https://calendar.google.com/calendar/embed?src={email}",
+      "youtube_channel_search": "https://www.youtube.com/results?search_query={q}&sp=EgIQAg%3D%3D"
+    }
+  },
+  "account_kinds": {
+    "_comment": "People-API userTypes (as GHunt returns them) mapped to an account kind. Workspace wins when any workspace type, a Chat customerId or isEntrepriseUser is present; unknown types fall through to `unknown`.",
+    "entries": {
+      "GOOGLE_APPS_USER": "workspace",
+      "GOOGLE_APPS_ADMIN_DISABLED": "workspace",
+      "GOOGLE_USER": "personal",
+      "GPLUS_USER": "personal",
+      "GOOGLE_ONE_USER": "personal",
+      "GOOGLE_FAMILY_USER": "personal",
+      "GOOGLE_FAMILY_CHILD_USER": "personal (family child account)",
+      "GOOGLE_FAMILY_CONVERTED_CHILD_USER": "personal (family child account)",
+      "GPLUS_DISABLED_BY_ADMIN": "workspace"
+    }
+  },
+  "caveats": {
+    "_comment": "Per-lead caveat text attached to each emitted lead (RULE 5: every Google-account datum is a lead to corroborate, not an attribution). Keys are the lead types wp_google.py emits.",
+    "entries": {
+      "overall": "Google-account data is a LEAD (RULE 5), not proof of who operates an account. Missing or skipped data does not prove an account exists or is absent. Never add it as a KB edge or operator link without independent corroboration.",
+      "gaia_id": "Stable Google account identifier for this address at lookup time; one person can hold many accounts and an address can be re-pointed.",
+      "profile_name": "Self-declared display name — anyone can type any name.",
+      "profile_photo": "A custom photo may be a stock, borrowed or AI image; reverse-search before treating it as the account holder's face.",
+      "cover_photo": "Self-chosen image; same caution as the profile photo.",
+      "last_profile_edit": "Last time the PROFILE container changed (photo/name), not last login or last activity.",
+      "maps_contrib": "A Maps review or photo shows a place the account VISITED (or claims to), not a residence or workplace; clusters suggest a region, not an address.",
+      "maps_stats": "Public contribution counts only; private contributions are invisible, so zero is not proof of inactivity.",
+      "calendar": "A public calendar exposes what the owner chose to publish; event titles can be shared or imported, not necessarily attended.",
+      "play_games": "Play Games profiles are often auto-created with a random gamertag; a name or avatar here is self-chosen.",
+      "youtube": "Name-search guess only — Google exposes no gaia->channel link; any channel matching the name is unverified.",
+      "services": "Services the account can be reached on (in-app reachability), not proof of active use.",
+      "workspace_customer": "A Workspace customer ID identifies the tenant (organisation), not the person; two addresses sharing it share an employer/tenant, which is itself only a lead."
+    }
+  }
+}

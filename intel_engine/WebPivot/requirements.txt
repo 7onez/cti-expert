@@ -3,6 +3,15 @@
 
 requests            # faster/robust fetching (falls back to urllib if absent)
 playwright          # rendered post-JS DOM via --render  (then: playwright install chromium)
+cloakbrowser        # OPTIONAL: wp_vncorp --solve-cf search-box step for Cloudflare-walled masothue.com
+                    # (licence: `cloakbrowser login`, or CLOAKBROWSER_LICENSE_KEY in the gitignored .env;
+                    # without it the retry notes "cloakbrowser: not installed" and falls through)
+telethon            # OPTIONAL: wp_telegram (telegram_lookup) MTProto client for the research account
+opentele2           # OPTIONAL: wp_telegram official-app profile + device (TELEGRAM_API_ID/HASH optional),
+                    # `login --qr`, own-tdata import, `status --sessions` (against Telegram's API terms)
+qrcode[pil]         # OPTIONAL: wp_telegram `login --qr` terminal/PNG QR code (else the tg:// URL only)
+python-socks[asyncio]  # OPTIONAL: Telethon through the configured proxy (without it wp_telegram skips
+                    # rather than connect from this host directly)
 openpyxl            # --master with a .xlsx path (falls back to CSV if absent)
 brotli              # decode Wayback id_ captures stored with Content-Encoding: br (without it such a
                     # capture is reported undecodable and retried next run — never read as empty)

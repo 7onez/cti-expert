@@ -493,7 +493,7 @@ Step 3: Google indexed Telegram content (Telegago CSE)
 
 Step 4: Username/phone correlation
   └─ Telegram usernames often reused on other platforms → feed to /username
-  └─ Phone number visible to contacts → if known, check via contacts import
+  └─ Phone number visible to contacts → if known, resolve it with telegram_lookup (§15.4)
 
 Step 5: Join link analysis (ShareTrace — Section 9)
   └─ joinchat hashes decode to numeric user IDs without contacting Telegram
@@ -507,6 +507,75 @@ Step 5: Join link analysis (ShareTrace — Section 9)
 - **Message forwarding headers** → reveal original author of forwarded messages
 - **Subscriber demographics** → TGStat shows audience location/language distribution
 - **Bot interactions** → usage patterns reveal interests and services used
+
+### 15.4 Phone → Telegram Account Resolution (`telegram_lookup`)
+
+Telegram exposes no public phone lookup. The one reliable method is the client's own contact
+import: a logged-in user account imports the number as a contact, and Telegram returns the user it
+belongs to — unless the owner set *Privacy → Phone Number → Who can find me by my number* to
+*My Contacts*. `intel_engine/WebPivot/tools/wp_telegram.py` (MCP `telegram_lookup`) automates that
+against the analyst's **research account**, never a personal one.
+
+```
+Setup (once):
+  pip install telethon [python-socks]            # optional dependency, analyst's own env
+  TELEGRAM_API_ID / TELEGRAM_API_HASH            # my.telegram.org → API development tools, in .env
+    — or — pip install opentele2 [qrcode pillow] # official-app api_id + realistic device; no own API id
+  python3 wp_telegram.py login                   # interactive; YOU type phone, code, 2FA
+  python3 wp_telegram.py login --qr [--profile desktop|android|ios]   # scan with the research phone
+  python3 wp_telegram.py login --tdata DIR --own-account [--passcode-prompt]  # own Desktop install
+  python3 wp_telegram.py status --sessions       # backend/device, active sessions, consistency checks
+
+Phone (OUTBOUND, confirm two-step):
+  python3 wp_telegram.py phone +447700900000             # BRIEFING only — nothing sent
+  python3 wp_telegram.py phone +447700900000 --confirm-import  # import → read → DeleteContacts (finally)
+
+Public entity (no import, no confirm):
+  python3 wp_telegram.py resolve @example_channel
+  python3 wp_telegram.py resolve https://t.me/+AbCdEfGhIjKl   # invite PREVIEW; never joins
+```
+
+What a hit returns: numeric user id (persistent across username changes — the identifier to
+record), every username including collectible (Fragment) ones, first/last name, bot / verified /
+premium / scam / fake flags, a last-seen bucket (exact time only if the owner's privacy allows),
+and the profile photo as sha256 + dimensions (bytes only with `--save-photo DIR`, outside the repo
+or in the case folder) — feed the photo to reverse image search, the username to `/username`.
+
+Operational rules:
+
+- **Footprint.** The owner is not notified, but the import is logged against the research account,
+  and if the owner ever saves the research account's number they see each other as contacts. The
+  tool deletes every contact it imported; contacts that pre-existed are left alone.
+- **Rate limits.** Imports are throttled per account and day. A `FloodWait` stops the run and
+  returns the partial result — do not retry in a loop; a research account that keeps hitting it
+  gets limited or banned. Small batches (`max_phones_per_run` in `references/telegram.json`).
+- **Session = credential.** The session file (default `~/.config/cti-expert/sessions/`, override
+  `$TELEGRAM_SESSION`) logs in as the research account. It is created only by the tool's own
+  interactive login; no code, password, cookie or session string is ever passed as an argument.
+- **A miss is not absence.** "Not found" covers both "not on Telegram" and "findable by contacts only".
+- **One device per session, for life.** With opentele2 the session presents an official Telegram
+  app's api_id and a generated device (`--profile`, default desktop). Both are fixed at login and
+  stored in the session sidecar; every later run reuses them, and a different `--profile` against
+  the same session is refused — an authorisation whose api_id/device changes mid-life is what gets
+  research accounts flagged. Want another profile? Use a new `$TELEGRAM_SESSION` path.
+- **QR login.** The `tg://login?token=…` URL (printed, rendered as a terminal QR, and as a PNG in a
+  private temp dir that is deleted afterwards) is a live login token while it is valid — scan it
+  only with the research account's phone. It is re-created on expiry a bounded number of times
+  (`qr_max_recreate`); a 2FA password is asked for in the terminal, never as an argument.
+- **tdata = the analyst's OWN install only.** `--tdata` requires `--own-account` and refuses any
+  directory in the repo, the case store or a `cases/` path, or next to stealer-log artefacts
+  (`stealer_log_markers` in `references/telegram.json`). Using a tdata from a case or a stealer log
+  is taking over a third party's account, not OSINT. The default creates a NEW authorisation; the
+  desktop app keeps its own. `--reuse-desktop-session` shares the app's auth key instead (both
+  clients then live or die together) and prints a warning.
+- **`status --sessions` is read-only.** It lists the research account's active sessions and runs
+  opentele2's consistency checks; the tool never terminates a session.
+
+**Attribution (SKILL.md RULE 5).** A phone→account match proves the number is registered to that
+Telegram account at query time — not who the person is, and not that they still control the number
+(numbers are recycled). Display names, bios, usernames and photos are self-set. Every row is
+`rung: "lead"` with a caveat; it never becomes a KB edge or an operator link without independent
+corroboration.
 
 ---
 

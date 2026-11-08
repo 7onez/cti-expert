@@ -45,10 +45,10 @@ pip3 install holehe
 pip3 install h8mail
 ```
 
-### Tertiary — GHunt (Gmail-specific intelligence)
+### Tertiary — GHunt (Google account leads)
 ```bash
-pip3 install ghunt
-ghunt login   # OAuth setup required (one-time)
+pipx install ghunt   # or: uv tool install ghunt
+ghunt login         # analyst's dedicated research account; GHunt's own login flow
 ```
 
 ### Domain-wide — theHarvester
@@ -160,28 +160,39 @@ h8mail -t targets.txt
 [*] Saved results to h8mail_results.json
 ```
 
-### GHunt (Gmail targets only)
+### GHunt — Google account leads
+
+Use the wrapper (email addresses need not end in Gmail):
 ```bash
-# One-time login
-ghunt login
+# One-time setup, performed by the analyst; never pass cookies or tokens to the wrapper
+pipx install ghunt   # alternatively: uv tool install ghunt
+ghunt login         # analyst's dedicated research Google account
 
-# Email investigation
-ghunt email user@example.com
-
-# Profile enrichment
-ghunt gaia <GAIA_ID>
+python3 intel_engine/WebPivot/tools/wp_google.py operator@example.com --dry-run --json
+python3 intel_engine/WebPivot/tools/wp_google.py operator@example.com --json
+python3 intel_engine/WebPivot/tools/wp_google.py 000000000000000000000 --mode gaia --json
+# Offline mapping of an analyst-saved GHunt JSON export:
+python3 intel_engine/WebPivot/tools/wp_google.py operator@example.com --input-json /tmp/ghunt.json
 ```
 
-**Expected output:**
-```
-Name: John Doe
-Profile picture: https://lh3.googleusercontent.com/...
-Last profile edit: 2023-08-14
-Google Maps reviews: 12 reviews (public)
-YouTube channel: Linked
-Google Calendar: Partially public
-Hangouts: Active
-```
+The wrapper maps GHunt's `PROFILE_CONTAINER` JSON into Gaia ID, public display name
+(if returned), profile/cover photos and default-photo flag, last profile edit, Maps
+contribution link/counts, public Calendar flag, Play Games, reachable services and
+personal/Workspace account type. Gaia mode does not query Calendar or Play Games;
+unavailable fields remain `null`, not false. YouTube is only a name-based channel
+search guess, never a verified Gaia-to-channel link.
+
+Not installed or not logged in returns `skipped` and `setup`; a supplied Gaia ID
+still yields the keyless Maps contribution URL without making a network request.
+`--dry-run` checks only executable/session-file presence, never credential contents
+or validity. No account credentials are accepted as arguments. GHunt owns its
+authenticated HTTP transport; the wrapper itself makes no direct HTTP requests.
+
+Every account result is `rung: "lead"` with a caveat (RULE 5), never a KB edge or
+operator attribution. A Maps review indicates a place visited or claimed, **not
+residence**. Profile names/photos are self-declared. An empty result can reflect
+privacy, provider failure or an expired session; it is not proof of absence.
+
 
 ### theHarvester (domain-wide)
 ```bash
@@ -335,16 +346,25 @@ Cross-reference with email-forensics.md:
 
 ## 8. Proton Mail Account Intelligence
 
-**Method:** Query the Proton HKP keyserver (free, no auth, no API key).
+**Tool (preferred):** `intel_engine/WebPivot/tools/wp_pgp.py` — keyless; queries Proton's HKP only for proton.me / protonmail.com / protonmail.ch / pm.me addresses and parses the key with a stdlib OpenPGP reader (no gpg needed).
+
+```bash
+python3 intel_engine/WebPivot/tools/wp_pgp.py username@proton.me --json
+# -> proton_account_age {account_created_utc_approx, rung, account_exists, ca_certified_by, caveat}
+```
+
+**Decoy keys — read before trusting a date.** Proton's HKP now answers *every* address on its domains, including ones that do not exist, with a well-formed key carrying a plausible past creation date (anti-enumeration; random addresses return a stable decoy). A key alone therefore proves neither that the account exists nor when it was made. `wp_pgp.py` reports the date as `rung: "lead"` / `account_exists: true` only when a UID carries a third-party certification whose Signer's User ID is a Proton CA UID (`references/pgp.json -> sources.proton.ca_signer_uids`); otherwise `rung: "unverified"`, `account_exists: null`. Absence of the CA certification does **not** prove the account is fake — corroborate existence elsewhere (holehe-class checks, breach data, the address appearing in the case) before putting the date on a timeline.
+
+**Manual fallback** (tool unavailable):
 
 ```bash
 # Step 1: Fetch raw PGP public key for any Proton email
 curl -s "https://mail-api.proton.me/pks/lookup?op=get&search=username@proton.me"
 
-# Step 2: Parse key creation timestamp
-# The PGP key contains creation date = Proton account creation date
-# Use gpg to extract:
-curl -s "https://mail-api.proton.me/pks/lookup?op=get&search=username@proton.me" | gpg --show-keys 2>/dev/null
+# Step 2: Parse key creation timestamp + certifications
+# Primary-key creation date ≈ Proton account creation date (only if the account is real — see decoys above)
+curl -s "https://mail-api.proton.me/pks/lookup?op=get&search=username@proton.me" | gpg --show-keys --with-sig-list 2>/dev/null
+# A certification from the Proton CA UID on the address UID corroborates a real account
 
 # Step 3: Alternative — use online decoder
 # Visit: https://kriztalz.sh/proton-date/
@@ -355,40 +375,53 @@ curl -s "https://mail-api.proton.me/pks/lookup?op=get&search=username@proton.me"
 
 | Field | Forensic Value | Confidence |
 |---|---|---|
-| Account creation date | When Proton account was created (UTC) | HIGH |
+| Account creation date | When Proton account was created (UTC) — CA-certified keys only | MEDIUM (lead); UNVERIFIED without CA certification |
 | Key algorithm | RSA vs ECC — technical sophistication indicator | LOW |
 | Key size | 2048 vs 4096 — security consciousness indicator | LOW |
 | Associated emails | If multiple UIDs on key, reveals alt addresses | MEDIUM |
 
-**Integration:** Feed creation date into `/timeline`. If Proton account was created shortly before suspicious activity, this is a strong temporal correlation signal.
+**Integration:** Feed a `rung: "lead"` creation date into `/timeline`. If the Proton account was created shortly before suspicious activity, this is a temporal correlation signal — a lead, never on its own an identity link (RULE 5). A key rotation or added address resets the date.
 
 ---
 
 ## 9. PGP Key Search (Technical Targets)
 
-**Method:** Query OpenPGP keyserver (free, no auth).
+**Tool (preferred):** `intel_engine/WebPivot/tools/wp_pgp.py` — keyless, one call across keys.openpgp.org (VKS `by-email` / `by-fingerprint` / `by-keyid`), keyserver.ubuntu.com (HKP `op=get` + `op=index&options=mr`) and Proton (Proton addresses only). Endpoints live in `intel_engine/WebPivot/references/pgp.json`.
+
+```bash
+python3 intel_engine/WebPivot/tools/wp_pgp.py user@example.com --json
+python3 intel_engine/WebPivot/tools/wp_pgp.py "<40-hex fingerprint, spaces ok>" --json
+python3 intel_engine/WebPivot/tools/wp_pgp.py 0x0123456789ABCDEF --json   # long key id
+python3 intel_engine/WebPivot/tools/wp_pgp.py --file key.asc --json        # offline: parse a key you already hold
+# -> {selector, selector_type, normalized, sources[], keys[], pivots[], proton_account_age, caveats[]}
+```
+
+Each `sources[]` entry is tri-state (`found` true / false / null + `error`, or `skipped`). `keys[]` is the merged view, deduped by fingerprint: `{fingerprint, key_id, algo, bits|curve, created_utc, expires_utc, usage, revoked, uids[{uid, name, comment, email, self_sig_created_utc, certifiers[], certifier_uids[]}], subkeys[], sources[]}`. `pivots[]` lists every new e-mail and name seen in a UID and every third-party certifier key id as `rung: "lead"` — UIDs are self-asserted by whoever made the key (only keys.openpgp.org verifies the mailbox it serves), and signatures are parsed, not cryptographically verified. Never an edge, never an operator on this signal alone (RULE 5).
+
+**Manual fallback** (tool unavailable):
 
 ```bash
 # Search by email address
-curl -s "https://keys.openpgp.org/vks/v1/by-email/user@example.com"
+curl -s "https://keys.openpgp.org/vks/v1/by-email/user@example.com" | gpg --show-keys
+
+# Ubuntu keyserver (HKP; machine-readable index lists every key for the term)
+curl -s "https://keyserver.ubuntu.com/pks/lookup?op=index&options=mr&search=user@example.com"
+curl -s "https://keyserver.ubuntu.com/pks/lookup?op=get&search=user@example.com" | gpg --show-keys --with-sig-list
 
 # Search on MIT keyserver (broader, older keys)
 # WebSearch: site:pgp.mit.edu "user@example.com"
-
-# Search on Ubuntu keyserver
-# WebSearch: site:keyserver.ubuntu.com "user@example.com"
 ```
 
 **What it reveals:**
 
 | Field | Forensic Value | Confidence |
 |---|---|---|
-| Key creation date | When key was generated (account origin timeline) | HIGH |
-| User IDs (UIDs) | Names, emails, comments embedded in key | HIGH |
-| Key signatures | Who signed their key = trust network / associates | MEDIUM |
+| Key creation date | When key was generated (account origin timeline) | HIGH (for the key; LEAD for the person) |
+| User IDs (UIDs) | Names, emails, comments embedded in key — self-asserted | LEAD |
+| Key signatures | Who signed their key = trust network / associates | LEAD |
 | Keyserver upload date | When they published the key | MEDIUM |
 
-**When to use:** Target is a developer, security professional, journalist, or technically sophisticated individual. PGP keys are uncommon for general users but reveal rich identity data for technical targets.
+**When to use:** Target is a developer, security professional, journalist, or technically sophisticated individual. PGP keys are uncommon for general users but reveal rich identity data for technical targets. Also run it on any fingerprint found in a page, a commit signature, a `security.txt` `Encryption:` field or a document's metadata.
 
 ---
 
@@ -446,6 +479,31 @@ Google Account Recovery: https://accounts.google.com/signin/usernamerecovery
 **IMPORTANT:** This technique requires manual execution (CAPTCHAs, JS rendering). Claude generates the URLs and instructions; the analyst visits them.
 
 **Ethics:** Do NOT complete password resets. Do NOT attempt unauthorized access. This is strictly for existence verification.
+
+### Recovery-hint correlation (masked e-mail / phone)
+
+Password-reset and login flows often show the account's recovery selector MASKED —
+`op*****@example.com`, `j***@e*****.com`, `*******08`, `+84 *** *** *12`, `•••• 4321`. A hint
+cannot be searched, but it can be TESTED against selectors the case already holds
+(**T2:** `intel.py masked-hint`, **T1:** `masked_hint_match`):
+
+    python3 intel_engine/tools/masked_hint.py --hints "op*****@example.com,*******08" --case CASE-0001
+    python3 intel_engine/tools/masked_hint.py --hints "..." --candidates "operator@example.com,+84900000008"
+
+- Mask characters `* • · ●` always mask; `x X _` mask in digit hints, and in e-mail hints only as a
+  run of 3+. Mask runs are UNKNOWN length by default: Microsoft/Google/Apple/Facebook/Instagram/PayPal
+  pad with a fixed-width run, so the asterisk count is not the hidden length. Use
+  `--provider generic_exact` only for a display verified to be one mask character per hidden character.
+- Phones are compared as digits in E.164 and national (with/without trunk 0) forms; a hint that
+  starts with `+` is matched against E.164 only.
+- Verdicts: `corroborates` = exactly one known candidate fits AND enough discriminating characters
+  are visible (letters of a common mail domain such as gmail.com do not count); `consistent` = several fit,
+  or one fits on too few characters; `no_match`. Thresholds and provider semantics live in
+  `intel_engine/tools/kb/references/masked_hint.json`.
+- RULE 5: a hint match is CORROBORATING only. It can raise confidence in a selector the case already
+  links by real evidence (registrant WHOIS, a breach record); it is never a join key, never a KB edge,
+  and never names an operator. Two visible characters plus a mail domain fit thousands of strangers —
+  `no_match` against a strong candidate is the more informative result (it contradicts the link).
 
 ---
 

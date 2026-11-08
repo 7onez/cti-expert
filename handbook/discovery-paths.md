@@ -367,6 +367,25 @@ CLI-first cascade:
 - Search: `"OrgName" incorporation OR registered OR founded`
 - Look for: Registration date, jurisdiction, officers, registered agent
 
+**Official registries (`corp_registry`, `wp_corp.py`) — query the register itself before any aggregator:**
+- `company "<name|number>" [--jurisdiction XX]` → GLEIF (LEI, registration-authority id, legal/HQ
+  address, direct/ultimate parent, direct children) + the national register for XX: UK Companies
+  House (profile, previous names, officers, registered-office history), France recherche-entreprises
+  (dirigeants), Norway Brreg (roller), Finland PRH (no officers published), SEC EDGAR (CIK, former
+  names, business/mailing address); OpenCorporates when `OPENCORPORATES_API_TOKEN` is set. VN routes
+  to `vn_corp`, CN to `cn_recon`.
+- `company-officers gb:00000000` → one company's officer list; `officer-appointments <CH officer
+  url|gb:<id>|oc:<n>>` → the same officer record's other appointments (the strongest
+  company-to-company pivot the register gives you).
+- `officer "Registrant Name" --corroborate birth=1980-01,postcode=EC1A 1AA,company=00000000` →
+  homonym CANDIDATES; `linked: true` only when a datum matches on the same record and none
+  contradicts.
+- Read carefully: every officer row is a **lead** (RULE 5). Nominee directors, formation-agent
+  secretaries and corporate officers are routine; a registered office or service address flagged
+  `address_flags` (formation agent / registered-office provider / c/o / PO box) is shared by
+  hundreds of unrelated companies — never cluster on it. A registered-office *change* away from
+  an agent address is often where the real operator address first appears.
+
 **PRC entities (`/cn-corp`) — anchor on the 中文 legal name or USCC, never an English trade name:**
 - **GSXT** (`gsxt.gov.cn`) for ground truth: registration no., legal rep, capital, status
 - Then aggregators (TianYanCha / QCC / Aiqicha) for shareholders, branches, related firms —

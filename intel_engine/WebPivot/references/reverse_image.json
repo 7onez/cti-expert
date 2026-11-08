@@ -1,0 +1,78 @@
+{
+  "_comment": "wp_revimg — reverse-image search for one image (URL or local file). Fingerprints the bytes (sha256, perceptual aHash/dHash when Pillow is installed, dimensions, embedded EXIF via wp_docmeta), builds the per-engine search links, and keyless-reads Yandex's 'sites containing this image' list. Every hit is a LEAD (RULE 5): reuse of an image is not identity. Endpoints, parser anchors, block markers and the face-engine notes live here (RULE 3) so an engine markup change is a data edit. Nothing here is case data — only public engine hostnames and generic page vocabulary.",
+
+  "settings": {
+    "_comment": "timeout_seconds = socket timeout per engine request; max_image_bytes caps a downloaded or local image (larger → fingerprint skipped, search links still built); max_hits caps the parsed 'sites' rows returned; phash_size is the aHash grid edge (8 → 64-bit hash; dHash uses size+1 x size); strip_query_params are tracking parameters the engine appends to result URLs and are removed so the hit URL is the page's own address.",
+    "timeout_seconds": 30,
+    "max_image_bytes": 15728640,
+    "max_hits": 50,
+    "phash_size": 8
+  },
+
+  "strip_query_params": {
+    "_comment": "Query parameters an engine appends to a result's page URL for its own attribution (Yandex adds utm_source=yandexsmartcamera). Dropped before the hit is reported so the wayback_hint and any later pivot use the page's real address.",
+    "values": ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]
+  },
+
+  "search_links": {
+    "_comment": "Search-by-URL link templates, one per engine; {url} is the URL-encoded image URL. These are only BUILT here, never fetched, except `yandex` which is also read keylessly via yandex_sites. bing uses the imgurl: query form of Visual Search; google_lens takes the image by URL; tineye supports sorting by oldest in its UI (provenance).",
+    "entries": {
+      "yandex": "https://yandex.com/images/search?rpt=imageview&url={url}",
+      "bing": "https://www.bing.com/images/search?view=detailv2&iss=sbi&form=SBIVSP&sbisrc=UrlPaste&q=imgurl:{url}",
+      "google_lens": "https://lens.google.com/uploadbyurl?url={url}",
+      "tineye": "https://tineye.com/search?url={url}"
+    }
+  },
+
+  "upload_pages": {
+    "_comment": "Manual upload pages for a LOCAL image — the analyst's by-hand route. Listed in the briefing so the analyst can choose an engine deliberately; this tool itself uploads only to Yandex and only with an explicit confirm.",
+    "entries": {
+      "yandex": "https://yandex.com/images/",
+      "bing": "https://www.bing.com/visualsearch",
+      "google_lens": "https://lens.google.com/",
+      "tineye": "https://tineye.com/"
+    }
+  },
+
+  "yandex": {
+    "_comment": "Yandex keyless endpoints. sites_by_url = the 'sites containing this image' page for an image URL ({url} URL-encoded); upload = the multipart endpoint the web form posts to (field upload_field), answering JSON whose blocks[0].params carries either a ready query string `url` (older form) or `cbirId` + `originalImageUrl` (current form, turned into a query string by params_from_cbir with {cbir_id}/{image_url} URL-encoded); sites_by_params = that query string + the sites tab. The redirect to /images/touch/ under an Android UA is normal.",
+    "sites_by_url": "https://yandex.com/images/search?rpt=imageview&url={url}&cbir_page=sites",
+    "upload": "https://yandex.com/images/search?rpt=imageview&format=json&request=%7B%22blocks%22%3A%5B%7B%22block%22%3A%22b-page_type_search-by-image__link%22%7D%5D%7D",
+    "upload_field": "upfile",
+    "params_from_cbir": "rpt=imageview&cbir_id={cbir_id}&url={image_url}",
+    "sites_by_params": "https://yandex.com/images/search?{params}&cbir_page=sites"
+  },
+
+  "yandex_blocked_markers": {
+    "_comment": "Substrings (case-insensitive) in the final URL or body that mean Yandex served a CAPTCHA / bot wall instead of results. A match is reported as status 'blocked' — never as 'no hits', because a wall says nothing about whether the image exists elsewhere.",
+    "values": ["showcaptcha", "checkcaptcha", "smartcaptcha", "captcha__image", "/captcha/"]
+  },
+
+  "yandex_sites_markers": {
+    "_comment": "Anchors the parser uses on the sites page. json_key = the key of the JSON array (inside the HTML-escaped data-state attribute) holding {title, description, url, domain, originalImage}; item_class / title_class / description_class are the HTML fallback when the embedded state is absent; empty_markers prove the page rendered and genuinely found no sites (status 'ok', zero hits) rather than a changed layout (status 'unparsed').",
+    "json_key": "\"sites\":[",
+    "item_class": "CbirSites-Item",
+    "title_class": "CbirSites-ItemTitle",
+    "description_class": "CbirSites-ItemDescription",
+    "empty_markers": ["CbirSitesPage", "cbir-sites", "CbirSection"]
+  },
+
+  "face_engines": {
+    "_comment": "Face-recognition engines — emitted ONLY as manual links with this note, never automated: they are paid and/or their terms forbid scripted use, and a face match is the weakest identity claim there is. A hit there is a lead that needs independent corroboration (same name + context on the matched page, not the face alone).",
+    "entries": {
+      "pimeyes": {"url": "https://pimeyes.com/en", "note": "Paid face search; ToS forbids automation. Manual use only, on an authorised subject; a face match is a lead, never identity."},
+      "facecheck_id": {"url": "https://facecheck.id/", "note": "Paid/credit face search; ToS forbids automation. Manual use only; scores are similarity, not identity — corroborate every match."}
+    }
+  },
+
+  "wayback": {
+    "_comment": "Template for each hit's wayback_hint ({url} = the hit page URL, not encoded): the Wayback calendar of every capture of that page, so the analyst can date when the image first appeared there.",
+    "hint": "https://web.archive.org/web/*/{url}"
+  },
+
+  "caveat": {
+    "_comment": "Text stamped on every hit and on the result. RULE 5: an image hit is a LEAD — never a KB edge, never an operator link.",
+    "hit": "Lead only: a visually similar or identical image on another page shows reuse of the image, not the identity of the person or operator. Faces need independent corroboration (name + context), never the image alone.",
+    "result": "Reverse-image hits are leads (rung 'lead'), not attribution. An empty or blocked engine says nothing about whether the image exists elsewhere — try the manual links."
+  }
+}
