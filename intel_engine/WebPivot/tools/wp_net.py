@@ -33,6 +33,7 @@ try:
 except Exception:
     api_usage = None
 from wp_refs import ref_path, load_ref  # noqa — endpoint templates are reference DATA (RULE 3)
+import wp_http  # noqa: E402 — the one transport
 
 def _floor_to(t):
     """Raise a per-call timeout to CALL_TIMEOUT (the ceiling). Used on the requests/Playwright paths
@@ -301,12 +302,17 @@ def flaresolverr_get(url: str, endpoint: str, timeout: int = 60, proxy: str = No
     payload = {"cmd": "request.get", "url": url, "maxTimeout": int(timeout * 1000)}
     if proxy:
         payload["proxy"] = {"url": proxy}
+    r = wp_http.request(api, data=json.dumps(payload).encode(),
+                        headers={"Content-Type": "application/json"}, method="POST",
+                        timeout=timeout + 10)
+    if r.status is None:
+        print(f"[!] flaresolverr error: {r.error}", file=sys.stderr)
+        return None, None, None
+    if not r.ok:
+        print(f"[!] flaresolverr error: {r.http_error}", file=sys.stderr)
+        return None, None, None
     try:
-        req = urllib.request.Request(
-            api, data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
-            data = json.loads(resp.read().decode("utf-8", "ignore"))
+        data = json.loads(r.body.decode("utf-8", "ignore"))
     except Exception as e:
         print(f"[!] flaresolverr error: {e}", file=sys.stderr)
         return None, None, None
@@ -445,19 +451,26 @@ def urlscan_intel(host: str, ua: str = DEFAULT_UA, limit: int = 20,
         api = f"https://urlscan.io/api/v1/search/?q=domain:{host}&size={size}"
         if search_after:
             api += f"&search_after={search_after}"
-        req_headers = {"User-Agent": ua}
+        req_headers = {}
         if _uk:
             req_headers["API-Key"] = _uk
         _rem = _lim = None
-        try:
-            req = urllib.request.Request(api, headers=req_headers)
-            with urllib.request.urlopen(req, timeout=30) as r:
-                if api_usage:
-                    _rem, _lim = api_usage.rl_headers(r)
-                data = json.load(r)
-        except Exception as e:
+        r = wp_http.request(api, headers=req_headers, ua=ua, timeout=30)
+        err = None
+        if r.status is None:
+            err = r.error
+        elif not r.ok:
+            err = r.http_error
+        else:
+            if api_usage:
+                _rem, _lim = api_usage.rl_headers(r)
+            try:
+                data = json.loads(r.body)
+            except Exception as e:
+                err = str(e)
+        if err is not None:
             if not out["all_scans"]:      # only the first page failing is an error
-                out["error"] = str(e)
+                out["error"] = err
             if api_usage:
                 api_usage.record("urlscan", "search", credits=0, query=f"domain:{host}", ok=False)
             break
@@ -526,13 +539,14 @@ def urlscan_quotas(ua: str = DEFAULT_UA, timeout: int = 20):
     key = _secret("URLSCAN_API_KEY")
     if not key:
         return None
+    r = wp_http.request(URLSCAN_BASE + URLSCAN_ENDPOINTS.get("quotas", "/api/v1/quotas/"),
+                        headers={"API-Key": key}, ua=ua, timeout=timeout)
+    if r.status is None:
+        return {"error": r.error, "tier": "unknown"}
+    if not r.ok:
+        return {"error": f"HTTP {r.status}", "tier": "unknown"}
     try:
-        req = urllib.request.Request(URLSCAN_BASE + URLSCAN_ENDPOINTS.get("quotas", "/api/v1/quotas/"),
-                                     headers={"User-Agent": ua, "API-Key": key})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.load(r)
-    except urllib.error.HTTPError as e:
-        return {"error": f"HTTP {e.code}", "tier": "unknown"}
+        d = json.loads(r.body)
     except Exception as e:  # noqa: BLE001
         return {"error": str(e), "tier": "unknown"}
     lim = d.get("limits") if isinstance(d, dict) and isinstance(d.get("limits"), dict) else {}
@@ -558,19 +572,23 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
     'result'} or None. Works on a normal key; a Pro key adds the engine verdicts (`verdicts.engines`
     — e.g. urlscan-ml score/100) and result `labels` (e.g. visual.brandai), which are evidence for the
     ledger at zero extra cost. NEVER raises."""
-    headers = {"User-Agent": ua}
+    headers = {}
     key = _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
-    try:
-        req = urllib.request.Request(f"https://urlscan.io/api/v1/result/{uuid}/", headers=headers)
-        _rem = _lim = None
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            if api_usage:
-                _rem, _lim = api_usage.rl_headers(r)
-            data = json.load(r) or {}
+    r = wp_http.request(f"https://urlscan.io/api/v1/result/{uuid}/", headers=headers, ua=ua,
+                        timeout=timeout)
+    _rem = _lim = None
+    v = None
+    if r.ok:
+        if api_usage:
+            _rem, _lim = api_usage.rl_headers(r)
+        try:
+            data = json.loads(r.body) or {}
             v = data.get("verdicts") or {}
-    except Exception:
+        except Exception:
+            v = None
+    if v is None:
         if api_usage:
             api_usage.record("urlscan", "result", credits=0, query=uuid, ok=False)
         return None
@@ -641,7 +659,7 @@ def urlscan_hostname(host: str, ua: str = DEFAULT_UA, timeout: int = 30, max_pag
     summary_days = set(cfg.get("summary_seen_on") or [])
     first_map = dict(cfg.get("first_seen_sources") or {})
     scan_prefix = cfg.get("scan_prefix") or "VIA-SCAN"
-    headers = {"User-Agent": ua, "API-Key": key}
+    headers = {"API-Key": key}
     out = {"host": host, "first_seen": None, "last_seen": None, "ct_first": None,
            "zonefile_first": None, "scan_first": None, "a_eras": [], "ns_eras": [], "mx": [],
            "soa": [], "scan_ips": [], "records": 0, "pages": 0, "truncated": False,
@@ -656,28 +674,33 @@ def urlscan_hostname(host: str, ua: str = DEFAULT_UA, timeout: int = 30, max_pag
                                                 page_state=quote(page_state, safe=""))
                     if page_state else eps["hostname"].format(host=quote(host), limit=page_limit))
             _rem = _lim = None
-            try:
-                req = urllib.request.Request(URLSCAN_BASE + path, headers=headers)
-                with urllib.request.urlopen(req, timeout=timeout) as r:
-                    if api_usage:
-                        _rem, _lim = api_usage.rl_headers(r)
-                    data = json.load(r)
-            except urllib.error.HTTPError as e:
+            r = wp_http.request(URLSCAN_BASE + path, headers=headers, ua=ua, timeout=timeout)
+            err = None
+            if r.status is None:
+                err = r.error
+            elif not r.ok:
                 if api_usage:
                     api_usage.record("urlscan", "hostname", credits=0, query=host, ok=False)
-                if e.code in (401, 402, 403):
+                if r.status in (401, 402, 403):
                     if out["pages"]:
                         break             # keep what earlier pages gave us
                     return {"skipped": "urlscan hostname index needs a Pro key", "host": host}
                 if out["pages"]:
                     break
-                return {"error": f"HTTP {e.code}", "host": host}
-            except Exception as e:  # noqa: BLE001 — transport fault: degrade, never raise
+                return {"error": f"HTTP {r.status}", "host": host}
+            else:
+                if api_usage:
+                    _rem, _lim = api_usage.rl_headers(r)
+                try:
+                    data = json.loads(r.body)
+                except Exception as e:  # noqa: BLE001 — a 2xx body that is not JSON
+                    err = str(e)
+            if err is not None:             # transport fault / bad JSON: degrade, never raise
                 if api_usage:
                     api_usage.record("urlscan", "hostname", credits=0, query=host, ok=False)
                 if out["pages"]:
                     break
-                return {"error": str(e), "host": host}
+                return {"error": err, "host": host}
             rows = (data.get("results") or []) if isinstance(data, dict) else []
             if api_usage:
                 api_usage.record("urlscan", "hostname", credits=1, query=host, results=len(rows),
@@ -873,7 +896,7 @@ def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only:
     (_decode_body, gzip-magic-sniffing fallback included) before UTF-8 — a bare `.decode()` of
     a gzip body is binary junk."""
     _uk = None if free_only else _secret("URLSCAN_API_KEY")
-    hdr = {"User-Agent": ua}
+    hdr = {}
     if _uk:
         hdr["API-Key"] = _uk
     gated, candidates = [], 0
@@ -888,14 +911,10 @@ def urlscan_dom(intel: dict, ua: str = DEFAULT_UA, timeout: int = 30, free_only:
         if reason:
             gated.append({"uuid": uid, "reason": reason})
             continue
-        try:
-            req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                raw = r.read()
-                enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
-            html = _decode_body(raw, enc).decode("utf-8", "ignore")
-        except Exception:
+        r = wp_http.request(f"https://urlscan.io/dom/{uid}/", headers=hdr, ua=ua, timeout=timeout)
+        if not r.ok:
             continue
+        html = r.body.decode("utf-8", "ignore")
         if html and len(html) > 200:
             reason = urlscan_dom_gated_reason(html)
             if reason:
@@ -932,7 +951,7 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
     if max_attempts is None:
         max_attempts = max_doms * 3 + 10
     _uk = None if free_only else _secret("URLSCAN_API_KEY")   # /dom/ is 403 without a key
-    hdr = {"User-Agent": ua}
+    hdr = {}
     if _uk:
         hdr["API-Key"] = _uk
     seen_hashes: set[str] = set()
@@ -951,16 +970,12 @@ def urlscan_dom_all(intel: dict, ua: str = DEFAULT_UA, timeout: int = 15,
         if not uid or urlscan_gated_reason(scan):
             continue
         attempts += 1
-        try:
-            req = urllib.request.Request(f"https://urlscan.io/dom/{uid}/", headers=hdr)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                if api_usage:
-                    _rem, _lim = api_usage.rl_headers(r)
-                raw = r.read()
-                enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
-            html = _decode_body(raw, enc).decode("utf-8", "ignore")
-        except Exception:
+        r = wp_http.request(f"https://urlscan.io/dom/{uid}/", headers=hdr, ua=ua, timeout=timeout)
+        if not r.ok:
             continue
+        if api_usage:
+            _rem, _lim = api_usage.rl_headers(r)
+        html = r.body.decode("utf-8", "ignore")
         if not html or len(html) < min_len or urlscan_dom_gated_reason(html):
             continue
         h = hashlib.sha256(html.encode("utf-8", "ignore")).hexdigest()
@@ -983,14 +998,16 @@ def urlscan_result_requests(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
     urlscan recorded during navigation; each response entry carries a sha256 `hash` urlscan
     stores verbatim at /responses/<hash>/. None on transport failure/bad JSON, else a list
     (possibly empty)."""
-    headers = {"User-Agent": ua}
+    headers = {}
     key = _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
+    r = wp_http.request(f"{URLSCAN_BASE}/api/v1/result/{uuid}/", headers=headers, ua=ua,
+                        timeout=timeout)
+    if not r.ok:
+        return None
     try:
-        req = urllib.request.Request(f"{URLSCAN_BASE}/api/v1/result/{uuid}/", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r) or {}
+        data = json.loads(r.body) or {}
         return (data.get("data") or {}).get("requests") or []
     except Exception:
         return None
@@ -1000,18 +1017,15 @@ def urlscan_response(sha256: str, ua: str = DEFAULT_UA, timeout: int = 20):
     """Fetch one stored HTTP response body by its urlscan sha256 (/responses/<hash>/), decoded
     per Content-Encoding (_decode_body, gzip-sniffing fallback included). '' on failure —
     never raises."""
-    headers = {"User-Agent": ua}
+    headers = {}
     key = _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
-    try:
-        req = urllib.request.Request(f"{URLSCAN_BASE}/responses/{sha256}/", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read()
-            enc = r.headers.get("Content-Encoding") if hasattr(r, "headers") else None
-        return _decode_body(raw, enc).decode("utf-8", "ignore")
-    except Exception:
+    r = wp_http.request(f"{URLSCAN_BASE}/responses/{sha256}/", headers=headers, ua=ua,
+                        timeout=timeout)
+    if not r.ok:
         return ""
+    return r.body.decode("utf-8", "ignore")
 
 
 def urlscan_dom_assets(uuid: str, ua: str = DEFAULT_UA, timeout: int = 20, free_only: bool = False):
@@ -1155,10 +1169,14 @@ def urlscan_submit(url: str, timeout: int = 30, visibility: str = None, country:
                               headers={"API-Key": key, "Content-Type": "application/json"})
             j = r.json()
         else:
-            req = urllib.request.Request("https://urlscan.io/api/v1/scan/", data=payload,
-                                         headers={"API-Key": key, "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                j = json.loads(resp.read().decode("utf-8", "ignore"))
+            r = wp_http.request("https://urlscan.io/api/v1/scan/", data=payload, method="POST",
+                                headers={"API-Key": key, "Content-Type": "application/json"},
+                                timeout=timeout)
+            if r.status is None:
+                return {"error": r.error}
+            if not r.ok:
+                return {"error": r.http_error}
+            j = json.loads(r.body.decode("utf-8", "ignore"))
         if j.get("uuid"):
             if api_usage:
                 api_usage.record("urlscan", "scan", credits=1, query=url,
