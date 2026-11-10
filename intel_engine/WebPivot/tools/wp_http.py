@@ -30,12 +30,15 @@ WHAT IT OWNS
   * User-Agent    the Android default from wp_ua unless the caller passes ua= or its own header
                   (the documented exceptions: fetch_profile.json -> ua_exceptions).
   * Decoding      Content-Encoding gzip/deflate, via wp_common._decode_body.
-  * Retry         a status in http_client.json -> retry_statuses, or a connection that was reset /
-                  refused / closed by the peer. Retry-After is honoured up to a cap. A TIMEOUT IS
-                  NEVER RETRIED: the per-call ceiling (CTI_CALL_TIMEOUT) would multiply into hours.
-                  A request that is not GET / HEAD is retried ONLY on 429 or a refused connection —
-                  the two cases where the service provably did not act — so a metered POST search
-                  is never charged twice because a gateway hiccuped after accepting it.
+  * Retry         OPT-IN: a call is sent once unless the client passes retries=N. Existing clients
+                  fail fast on purpose (a quota 429 is latched, a per-run counter is kept), and a
+                  silent default retry would turn one refused lookup into minutes of sleeping. With
+                  retries=N the shared policy applies (http_client.json): a status in
+                  retry_statuses, or a connection that was reset / refused / closed by the peer;
+                  Retry-After is honoured up to a cap. A TIMEOUT IS NEVER RETRIED: the per-call
+                  ceiling (CTI_CALL_TIMEOUT) would multiply into hours. A request that is not
+                  GET / HEAD is retried ONLY on 429 or a refused connection — the two cases where
+                  the service provably did not act — so a metered POST is never charged twice.
 
 WHAT IT DOES NOT OWN
 --------------------
@@ -43,9 +46,11 @@ Key handling, per-vendor status classification, per-run caps and the credit ledg
 (api_usage.record) stay in the client. There is no local usage cap here (project rule).
 
 `urllib.request.urlopen` is looked up at call time, never bound at import, so wp_common's timeout
-floor, the cti_proxy failover opener and a test's stub all apply. `wp_net.fetch` remains the
-TARGET-PAGE fetcher (browser header profile, redirect chain, per-call proxy); use it for a page a
-victim would load, and this for an API.
+floor, the cti_proxy failover opener and a test's stub all apply. A client with its own wall-clock
+budget (crt.sh, a fail-fast probe) passes bounded=True to have its timeout honoured exactly: that
+uses the unfloored urlopen — still the installed proxy opener — and a test stub as-is.
+`wp_net.fetch` remains the TARGET-PAGE fetcher (browser header profile, redirect chain, per-call
+proxy); use it for a page a victim would load, and this for an API.
 
 Stdlib only.
 """
@@ -73,8 +78,9 @@ from wp_ua import DEFAULT_UA  # noqa: E402
 
 __all__ = ["Response", "request", "get_json"]
 
-# RULE 3 — the conservative minimum when references/http_client.json is missing: no retry at all.
-_HTTP_FALLBACK = {"retries": {"value": 0}, "backoff_seconds": [], "retry_statuses": [429],
+# RULE 3 — the conservative minimum when references/http_client.json is missing: only a 429 is
+# worth repeating, with no wait of our own and a short Retry-After cap.
+_HTTP_FALLBACK = {"backoff_seconds": [], "retry_statuses": [429],
                   "retry_after_cap_seconds": {"value": 30}}
 _HTTP_REF = load_ref(ref_path(__file__, "http_client.json"), _HTTP_FALLBACK)
 
@@ -86,7 +92,6 @@ def _scalar(group, default):
         return default
 
 
-RETRIES = max(0, _scalar("retries", 0))
 BACKOFF_SECONDS = [float(s) for s in (_HTTP_REF.get("backoff_seconds") or [])]
 RETRY_STATUSES = frozenset(int(s) for s in (_HTTP_REF.get("retry_statuses") or [429]))
 RETRY_AFTER_CAP = max(0, _scalar("retry_after_cap_seconds", 30))
@@ -173,35 +178,39 @@ def _lower(headers) -> dict:
 
 
 def request(url: str, *, method: str = None, headers: dict = None, params=None, json_body=None,
-            data=None, timeout=None, ua: str = None, retries: int = None, max_body: int = None,
-            decode: bool = True) -> Response:
+            data=None, timeout=None, ua: str = None, retries: int = 0, max_body: int = None,
+            decode: bool = True, bounded: bool = False) -> Response:
     """Send one HTTP request and return a `Response`. Never raises.
 
     params     appended to the URL as a query string (dict or sequence of pairs; doseq)
     json_body  serialised as the request body, Content-Type: application/json
     data       raw request body (bytes or str); mutually exclusive with json_body
     method     defaults to POST when there is a body, else GET
-    timeout    seconds; None = the per-call ceiling. wp_common floors anything shorter
+    timeout    seconds; None = the per-call ceiling. wp_common floors anything shorter …
+    bounded    … unless bounded=True, which honours `timeout` exactly (the unfloored urlopen)
     ua         User-Agent for a documented exception; a caller header named User-Agent also wins
-    retries    override http_client.json -> retries for this call (0 = single attempt)
+    retries    how many times to retry after the first attempt (default 0 = send once)
     max_body   read at most this many bytes of the response body
     decode     False returns the body exactly as sent (a .gz file, a WARC range)
     """
-    if params:
-        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params, doseq=True)
-    hdrs = {"User-Agent": ua or DEFAULT_UA}
-    body = None
-    if json_body is not None:
-        body = json.dumps(json_body).encode("utf-8")
-        hdrs["Content-Type"] = "application/json"
-    elif data is not None:
-        body = data.encode("utf-8") if isinstance(data, str) else data
-    for name, value in (headers or {}).items():
-        for default in [k for k in hdrs if k.lower() == str(name).lower()]:
-            del hdrs[default]
-        hdrs[name] = value
-    verb = (method or ("POST" if body is not None else "GET")).upper()
-    budget = RETRIES if retries is None else max(0, int(retries))
+    try:
+        if params:
+            url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params, doseq=True)
+        hdrs = {"User-Agent": ua or DEFAULT_UA}
+        body = None
+        if json_body is not None:
+            body = json.dumps(json_body).encode("utf-8")
+            hdrs["Content-Type"] = "application/json"
+        elif data is not None:
+            body = data.encode("utf-8") if isinstance(data, str) else data
+        for name, value in (headers or {}).items():
+            for default in [k for k in hdrs if k.lower() == str(name).lower()]:
+                del hdrs[default]
+            hdrs[name] = value
+        verb = (method or ("POST" if body is not None else "GET")).upper()
+        budget = max(0, int(retries or 0))
+    except Exception as e:  # noqa: BLE001 — an unserialisable body or parameter: nothing was sent
+        return Response(None, {}, b"", url, _describe(e, url), 0)
     wait_s = timeout if isinstance(timeout, (int, float)) and timeout > 0 else CALL_TIMEOUT
 
     attempt = 0
@@ -210,7 +219,10 @@ def request(url: str, *, method: str = None, headers: dict = None, params=None, 
         resp_headers: dict = {}
         try:
             req = urllib.request.Request(url, data=body, headers=hdrs, method=verb)
-            with urllib.request.urlopen(req, timeout=wait_s) as r:  # looked up at call time
+            opener = urllib.request.urlopen                         # looked up at call time
+            if bounded:
+                opener = getattr(opener, "_cti_orig", opener)
+            with opener(req, timeout=wait_s) as r:
                 resp_headers = _lower(getattr(r, "headers", None) or {})
                 raw = r.read(max_body) if max_body else r.read()
                 status = getattr(r, "status", None) or (r.getcode() if hasattr(r, "getcode") else 200)

@@ -1,9 +1,5 @@
 {
-  "_comment": "wp_http.py retry policy — the one place a vendor or index API call is retried. NEVER a usage cap (project rule: no CTI-wide local caps; the vendor's own 402/429 is the limit): these values only bound how long ONE call keeps retrying a service that answered 'slow down' or dropped the connection. A timeout is never retried — the per-call ceiling (CTI_CALL_TIMEOUT) would turn that into hours. RULE 1: generic constants only.",
-  "retries": {
-    "_comment": "How many times one call is retried after the first attempt, when the answer is a status in retry_statuses or the connection was reset / refused / closed by the peer. 0 disables retrying. A caller that needs a different count passes retries= for that call.",
-    "value": 2
-  },
+  "_comment": "wp_http.py retry policy — applied only to a call whose client asks for it with retries=N; by default a call is sent once. NEVER a usage cap (project rule: no CTI-wide local caps; the vendor's own 402/429 is the limit): these values only bound how long ONE call keeps retrying a service that answered 'slow down' or dropped the connection. A timeout is never retried — the per-call ceiling (CTI_CALL_TIMEOUT) would turn that into hours. RULE 1: generic constants only.",
   "backoff_seconds": {
     "_comment": "Seconds to wait before retry 1, 2, … when the response carries no Retry-After header. The last entry is reused if a call is allowed more retries than the list is long.",
     "values": [2, 8]
