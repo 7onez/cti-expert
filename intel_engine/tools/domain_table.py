@@ -44,6 +44,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # reuse the WebPivot WHOIS client (WhoisXML) without duplicating it
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 try:
     from whois_enrich import (whois_current, whois_summary, whois_summary_keyless,  # type: ignore
                               is_privacy)
@@ -166,9 +167,7 @@ def _asn_for_ip(ip, cache, timeout=8):
         pass
     try:
         url = "http://ip-api.com/json/" + urllib.parse.quote(ip) + "?fields=as,org,countryCode"
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.load(r)
+        d = json.loads(wp_http.request(url, timeout=timeout).raise_for_status().body)
         asn = (d.get("as") or "").split()[0] if d.get("as") else ""      # 'AS47583'
         org = d.get("org") or (d.get("as") or "").split(" ", 1)[-1] or ""
         cc = d.get("countryCode") or ""
@@ -226,16 +225,13 @@ def _status_from_live(domain):
     ips = _resolve(domain)
     if not ips:
         return "dead/pulled", ""
-    try:
-        req = urllib.request.Request("https://" + domain + "/",
-                                     headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=12) as r:
-            body = r.read(20000).decode("utf-8", "ignore").lower()
-        if any(m in body for m in PARKED_MARKERS):
-            return "parked", ips[0]
-        return "live", ips[0]
-    except Exception:
+    r = wp_http.request("https://" + domain + "/", timeout=12, max_body=20000)
+    if not r.ok:
         return "resolves", ips[0]         # DNS resolves but no clean HTTP read
+    body = r.body.decode("utf-8", "ignore").lower()
+    if any(m in body for m in PARKED_MARKERS):
+        return "parked", ips[0]
+    return "live", ips[0]
 
 
 def _attribution(domain, registry_recs):

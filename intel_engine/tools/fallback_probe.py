@@ -45,6 +45,7 @@ sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 import wp_ct  # noqa: E402 — the one CT client
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 
 def _host(s: str) -> str:
@@ -55,10 +56,8 @@ def _host(s: str) -> str:
 
 
 def _get(url: str, timeout: int = None) -> str:
-    eff = _floor(timeout)
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=eff) as r:
-        return r.read().decode("utf-8", "ignore")
+    r = wp_http.request(url, timeout=_floor(timeout))
+    return r.raise_for_status().body.decode("utf-8", "ignore")   # raises, as before, on any failure
 
 
 # ------------------------------------------------------------------ 1. CT logs
