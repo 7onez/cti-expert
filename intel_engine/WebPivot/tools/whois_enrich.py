@@ -71,13 +71,12 @@ def _explain_403(url, raw=""):
     drs = None
     try:
         key = _key()
-        req = urllib.request.Request(
-            f"{BALANCE_URL}?{urlencode({'apiKey': key, 'output_format': 'JSON'})}",
-            headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            for row in (json.load(r).get("data") or []):
-                if (row.get("product") or {}).get("name") == "Domain Research Suite":
-                    drs = row.get("credits")
+        r = wp_http.request(f"{BALANCE_URL}?{urlencode({'apiKey': key, 'output_format': 'JSON'})}",
+                            timeout=15, ua=DEFAULT_UA)
+        r.raise_for_status()
+        for row in (json.loads(r.body).get("data") or []):
+            if (row.get("product") or {}).get("name") == "Domain Research Suite":
+                drs = row.get("credits")
     except Exception:  # noqa: BLE001
         pass
     if drs == 0:
@@ -120,6 +119,7 @@ try:
     import wp_common  # noqa: F401 — import side effect: populates os.environ from the .env chain
 except Exception:  # noqa: BLE001
     pass
+import wp_http  # noqa: E402 — the one transport (imported after the .env loaders above, keeping their order)
 
 
 def _key():
@@ -192,10 +192,9 @@ def _wx_action(url, mode=None):
 
 
 def _get_json(url, params, timeout=30):
-    full = url + "?" + urlencode(params)
-    req = urllib.request.Request(full, headers={"User-Agent": DEFAULT_UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.load(r)
+    r = wp_http.request(url + "?" + urlencode(params), timeout=timeout, ua=DEFAULT_UA)
+    r.raise_for_status()
+    out = json.loads(r.body)
     if api_usage:
         api_usage.record("whoisxml", _wx_action(url, params.get("mode")), credits=1,
                          query=params.get("domainName") or params.get("terms") or params.get("q"))
@@ -203,12 +202,9 @@ def _get_json(url, params, timeout=30):
 
 
 def _post_json(url, payload, timeout=30):
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"User-Agent": DEFAULT_UA,
-                                          "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.load(r)
+    r = wp_http.request(url, json_body=payload, timeout=timeout, ua=DEFAULT_UA)
+    r.raise_for_status()
+    out = json.loads(r.body)
     if api_usage:
         api_usage.record("whoisxml", _wx_action(url, payload.get("mode")), credits=1)
     return out
@@ -788,11 +784,10 @@ _RDAP_UA = "WebPivot-whois/1.0 (RDAP; +authorized-osint)"
 
 def _rdap_fetch(domain, timeout=25):
     """GET the RDAP domain object via the bootstrap redirector. Keyless, credits=0."""
-    req = urllib.request.Request(
-        _RDAP_BOOTSTRAP + domain,
-        headers={"User-Agent": _RDAP_UA, "Accept": "application/rdap+json, application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:   # urllib follows the 302 to the registry
-        data = json.load(r)
+    r = wp_http.request(_RDAP_BOOTSTRAP + domain, timeout=timeout, ua=_RDAP_UA,   # follows the 302 to the registry
+                        headers={"Accept": "application/rdap+json, application/json"})
+    r.raise_for_status()
+    data = json.loads(r.body)
     if api_usage:
         api_usage.record("rdap", "domain", credits=0, query=domain)   # free/keyless — cost visibility only
     return data

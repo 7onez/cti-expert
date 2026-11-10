@@ -30,10 +30,12 @@ import urllib.request
 import urllib.error
 from wp_common import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
+import wp_http  # noqa: E402 — the one transport
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
     api_usage = None
+
 
 def fofa_search(query: str, size: int = 100,
                 fields: str = "host,ip,domain,title", timeout: int = 30,
@@ -67,13 +69,16 @@ def fofa_search(query: str, size: int = 100,
     if email:
         params["email"] = email
     url = "https://fofa.info/api/v1/search/all?" + urlencode(params)
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except Exception as e:
+    r = wp_http.request(url, timeout=timeout)
+    err = r.failure
+    if err is None:
+        try:
+            data = json.loads(r.body)
+        except Exception as e:
+            err = str(e)
+    if err is not None:
         # the key/email ride in the query string; never let them survive into a persisted error field
-        msg = re.sub(r"([?&](key|email)=)[^&\s]+", r"\1***", str(e))
+        msg = re.sub(r"([?&](key|email)=)[^&\s]+", r"\1***", err)
         return {"query": query, "error": msg}
     if data.get("error"):
         if api_usage:
@@ -214,7 +219,7 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
             return dict(_hit, query=query)
     except Exception:  # noqa: BLE001
         pass
-    headers = {"User-Agent": DEFAULT_UA}
+    headers = {}
     key = None if free_only else _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
@@ -228,18 +233,21 @@ def urlscan_search(query: str, limit: int = 100, timeout: int = 30, max_results:
         api = f"https://urlscan.io/api/v1/search/?q={quote(query)}&size={size}"
         if search_after:
             api += f"&search_after={quote(search_after)}"
-        try:
-            req = urllib.request.Request(api, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+        r = wp_http.request(api, headers=headers, timeout=timeout)
+        err = r.failure
+        if err is None:
+            try:
                 if api_usage:
                     rem, lim = api_usage.rl_headers(r)
-                data = json.load(r)
-        except Exception as e:
+                data = json.loads(r.body)
+            except Exception as e:
+                err = str(e)
+        if err is not None:
             if doms:
                 break                       # keep the partial page(s) already gathered
             if api_usage:
                 api_usage.record("urlscan", "search", credits=pages - 1 or 0, query=query, ok=bool(doms))
-            return {"query": query, "error": str(e)}
+            return {"query": query, "error": err}
         results = data.get("results", []) or []
         if not results:
             break
@@ -303,19 +311,22 @@ def urlscan_count(query: str, timeout: int = 30, free_only: bool = False):
     q = str(query or "").strip()
     if not q:
         return None
-    headers = {"User-Agent": DEFAULT_UA}
+    headers = {}
     key = None if free_only else _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
     api = f"https://urlscan.io/api/v1/search/?q={quote(q)}&size=1"
     rem = lim = None
-    try:
-        req = urllib.request.Request(api, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+    r = wp_http.request(api, headers=headers, timeout=timeout)
+    ok = r.ok
+    if ok:
+        try:
             if api_usage:
                 rem, lim = api_usage.rl_headers(r)
-            data = json.load(r)
-    except Exception:  # noqa: BLE001 — count probe must never raise
+            data = json.loads(r.body)
+        except Exception:  # noqa: BLE001 — count probe must never raise
+            ok = False
+    if not ok:
         if api_usage:
             api_usage.record("urlscan", "count", credits=0, query=q, ok=False)
         return None
@@ -344,28 +355,34 @@ def urlscan_similar(host: str, timeout: int = 30, limit: int = 60, free_only: bo
     key = _secret("URLSCAN_API_KEY")
     if not key:
         return {"skipped": "no URLSCAN_API_KEY"}
-    headers = {"User-Agent": DEFAULT_UA, "API-Key": key}
+    headers = {"API-Key": key}
     # 1) most-recent scan uuid for the host
-    try:
-        api = f"https://urlscan.io/api/v1/search/?q=page.domain:{quote(host)}&size=1"
-        with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=timeout) as r:
-            hits = (json.load(r).get("results") or [])
-    except Exception as e:
-        return {"error": str(e)}
+    api = f"https://urlscan.io/api/v1/search/?q=page.domain:{quote(host)}&size=1"
+    r = wp_http.request(api, headers=headers, timeout=timeout)
+    err = r.failure
+    if err is None:
+        try:
+            hits = (json.loads(r.body).get("results") or [])
+        except Exception as e:
+            err = str(e)
+    if err is not None:
+        return {"error": err}
     if api_usage:
         api_usage.record("urlscan", "search", credits=1, query=f"page.domain:{host}")
     uuid = (hits[0].get("_id") if hits else None)
     if not uuid:
         return {"skipped": "no prior urlscan scan for host"}
     # 2) structurally-similar pages (Pro-only endpoint)
-    try:
-        api = f"https://urlscan.io/api/v1/pro/result/{uuid}/similar/"
-        with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=timeout) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 402, 403):
+    api = f"https://urlscan.io/api/v1/pro/result/{uuid}/similar/"
+    r = wp_http.request(api, headers=headers, timeout=timeout)
+    if r.status is None:
+        return {"error": r.error, "uuid": uuid}
+    if not r.ok:
+        if r.status in (401, 402, 403):
             return {"skipped": "urlscan similarity needs a Pro key", "uuid": uuid}
-        return {"error": f"HTTP {e.code}", "uuid": uuid}
+        return {"error": f"HTTP {r.status}", "uuid": uuid}
+    try:
+        data = json.loads(r.body)
     except Exception as e:
         return {"error": str(e), "uuid": uuid}
     doms = []
@@ -562,12 +579,11 @@ def passivedns_search(domain: str, timeout: int = 25):
     if not q_host:
         return {"query": domain, "error": "empty host"}
     api = "https://api.hackertarget.com/hostsearch/?" + urlencode({"q": q_host})
-    try:
-        req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read().decode("utf-8", "ignore").strip()
-    except Exception as e:
-        return {"query": q_host, "error": str(e)}
+    r = wp_http.request(api, timeout=timeout)
+    err = r.failure
+    if err is not None:
+        return {"query": q_host, "error": err}
+    body = r.body.decode("utf-8", "ignore").strip()
     if not body or "," not in body or "error" in body.lower() or "no results" in body.lower():
         return {"query": q_host, "error": body[:120] or "no results"}
     hosts, ips = [], set()
@@ -591,12 +607,11 @@ def reverseip_search(ip: str, timeout: int = 25):
     if not q:
         return {"query": ip, "error": "empty ip"}
     api = "https://api.hackertarget.com/reverseiplookup/?" + urlencode({"q": q})
-    try:
-        req = urllib.request.Request(api, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read().decode("utf-8", "ignore").strip()
-    except Exception as e:
-        return {"query": q, "error": str(e)}
+    r = wp_http.request(api, timeout=timeout)
+    err = r.failure
+    if err is not None:
+        return {"query": q, "error": err}
+    body = r.body.decode("utf-8", "ignore").strip()
     lines = [ln.strip().lower().rstrip(".") for ln in body.splitlines() if ln.strip()]
     names = [ln for ln in lines if "." in ln and " " not in ln and ln != q]
     if not names:
@@ -623,16 +638,13 @@ def pdns_search(query: str, timeout: int = 25):
     base = (_secret("PDNS_URL") or "https://www.circl.lu/pdns/query").rstrip("/")
     url = f"{base}/{quote(query)}"
     auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
-    req = urllib.request.Request(url, headers={
-        "User-Agent": DEFAULT_UA, "Accept": "application/json",
-        "Authorization": "Basic " + auth})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read().decode("utf-8", "ignore").strip()
-    except urllib.error.HTTPError as e:
-        return {"query": query, "error": f"HTTP {e.code} {e.reason}"}
-    except Exception as e:
-        return {"query": query, "error": str(e)}
+    r = wp_http.request(url, headers={"Accept": "application/json",
+                                      "Authorization": "Basic " + auth}, timeout=timeout)
+    if r.status is None:
+        return {"query": query, "error": r.error}
+    if not r.ok:
+        return {"query": query, "error": f"HTTP {r.status} {r.reason}"}
+    body = r.body.decode("utf-8", "ignore").strip()
     if not body:
         return {"query": query, "total": 0, "records": [], "ips": [], "domains": []}
     # COF is usually newline-delimited JSON; tolerate a single JSON array too.

@@ -30,6 +30,7 @@ from urllib.parse import urlencode
 from wp_common import *      # noqa  — DEFAULT_UA, _secret, uniq, strip_www, _registrable
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 from wp_recon import fofa_search, scan_misconfig, reverseip_search, pdns_search
+import wp_http  # noqa: E402 — the one transport
 from wp_analyze import classify_ip
 from wp_censys import censys_host, censys_configured, censys_queries, attach_censys_queries
 from wp_intelx import attach_intelx_queries  # IntelX selector builder (keyless — no key needed)
@@ -131,15 +132,17 @@ def ipinfo_lookup(ip: str, timeout: int = 15, keyless: bool = False) -> dict:
     if token:
         url += "?" + urlencode({"token": token})
     out = {"ip": ip}
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA,
-                                                   "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except Exception as e:
+    r = wp_http.request(url, headers={"Accept": "application/json"}, timeout=timeout)
+    err = r.failure
+    if err is None:
+        try:
+            data = json.loads(r.body)
+        except Exception as e:
+            err = str(e)
+    if err is not None:
         if api_usage:
             api_usage.record("ipinfo", "lookup", credits=0, query=ip, ok=False)
-        return {"ip": ip, "error": str(e)}
+        return {"ip": ip, "error": err}
     if api_usage:
         api_usage.record("ipinfo", "lookup", credits=1 if token else 0, query=ip)
     out["raw"] = data
@@ -323,14 +326,17 @@ def shodan_host(ip: str, timeout: int = 20) -> dict:
     if not key:
         return None
     url = f"https://api.shodan.io/shodan/host/{ip}?" + urlencode({"key": key})
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except Exception as e:
+    r = wp_http.request(url, timeout=timeout)
+    err = r.failure
+    if err is None:
+        try:
+            data = json.loads(r.body)
+        except Exception as e:
+            err = str(e)
+    if err is not None:
         if api_usage:
             api_usage.record("shodan", "host", credits=0, query=ip, ok=False)
-        return {"error": str(e)}
+        return {"error": err}
     if api_usage:
         api_usage.record("shodan", "host", credits=1, query=ip)
     services = uniq([d.get("product") for d in data.get("data", []) if d.get("product")])
@@ -362,23 +368,22 @@ def shodan_search(query: str, limit: int = 100, timeout: int = 25):
     if not q:
         return {"error": "empty query"}
     url = "https://api.shodan.io/shodan/host/search?" + urlencode({"key": key, "query": q, "minify": "true"})
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8", "replace")[:300]
-        except Exception:  # noqa: BLE001
-            pass
+    r = wp_http.request(url, timeout=timeout)
+    if r.status is None:
+        if api_usage:
+            api_usage.record("shodan", "search", credits=0, query=q, ok=False)
+        return {"error": r.error, "query": q}
+    if not r.ok:
+        body = r.body.decode("utf-8", "replace")[:300]
         low = body.lower()
         if api_usage:
             api_usage.record("shodan", "search", credits=0, query=q, ok=False)
-        if e.code in (401, 402, 403) or "membership" in low or "upgrade" in low or "credits" in low:
-            return {"skipped": f"Shodan search needs a Membership/paid key or query credits (HTTP {e.code})",
-                    "query": q, "http": e.code}
-        return {"error": f"HTTP {e.code}", "query": q}
+        if r.status in (401, 402, 403) or "membership" in low or "upgrade" in low or "credits" in low:
+            return {"skipped": f"Shodan search needs a Membership/paid key or query credits (HTTP {r.status})",
+                    "query": q, "http": r.status}
+        return {"error": f"HTTP {r.status}", "query": q}
+    try:
+        data = json.loads(r.body)
     except Exception as e:  # noqa: BLE001
         if api_usage:
             api_usage.record("shodan", "search", credits=0, query=q, ok=False)
