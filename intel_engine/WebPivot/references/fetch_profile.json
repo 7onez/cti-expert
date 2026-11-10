@@ -13,7 +13,7 @@
     "values": [
       {"service": "archive.org (index, playback, Save Page Now)", "owner": "WebPivot/tools/wp_wayback_guard.py <- references/wayback_guard.json -> archive_user_agent", "reason": "archive.org rate-limits a browser User-Agent sent by a script client"},
       {"service": "SEC EDGAR", "owner": "WebPivot/tools/wp_corp.py <- references/corp_registry.json -> sec_user_agent_default / env SEC_EDGAR_USER_AGENT", "reason": "SEC requires a contact User-Agent"},
-      {"service": "RDAP registries", "owner": "WebPivot/tools/whois_enrich.py (_RDAP_UA)", "reason": "owner decision: the WHOIS path keeps its honest client string"},
+      {"service": "WHOIS lookups: RDAP registries and the WhoisXML API", "owner": "WebPivot/tools/whois_enrich.py (_RDAP_UA for RDAP, DEFAULT_UA for WhoisXML balance / lookup / reverse)", "reason": "owner decision: the attribution-critical WHOIS path keeps its honest client strings"},
       {"service": "the analyst's MISP instance", "owner": "IntelShare/tools/sh_misp.py (USER_AGENT, env MISP_USER_AGENT)", "reason": "a self-hosted instance may allowlist its API clients"},
       {"service": "Microsoft Autodiscover", "owner": "scripts/osint/msft_recon.py", "reason": "the protocol's client string"},
       {"service": "desktop installer download (--ua desktop)", "owner": "BinaryPivot/tools/analyze_artifact.py <- references/binary_indicators.json -> desktop_user_agent", "reason": "explicit analyst opt-in to fetch the payload a desktop victim receives; the default stays Android"}
