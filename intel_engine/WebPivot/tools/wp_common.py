@@ -52,21 +52,18 @@ def _install_cti_proxy():
         _b = _p
 _install_cti_proxy()
 
-# DATA: how we present ourselves when fetching, and the public-suffix table. Both go stale on a
-# schedule nobody controls (browser releases; new ccTLD second levels), so both are tunable.
-_FP_FALLBACK = {"ua_pool": ["Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                            "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"],
-                "cloudflare_body_markers": ["just a moment", "cf_chl_", "attention required"]}
+# DATA: how a refusing page is recognised, and the public-suffix table. Both go stale on a
+# schedule nobody controls (Cloudflare rewording; new ccTLD second levels), so both are tunable.
+_FP_FALLBACK = {"cloudflare_body_markers": ["just a moment", "cf_chl_", "attention required"]}
 _FP_REF = load_ref(ref_path(__file__, "fetch_profile.json"), _FP_FALLBACK)
 _GLC_FALLBACK = {"multi_part_tlds": ["co.uk", "com.au", "com.br", "com.vn", "com.cn"]}
 _GLC_REF = load_ref(ref_path(__file__, "generic_labels.json"), _GLC_FALLBACK)
 
 
-# Android Chrome (project decision — see /apikeys skill notes): fetch/screenshot/archive
-# requests present as an Android device by default, not a desktop OS.
-DEFAULT_UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) "
-              "AppleWebKit/537.36 (KHTML, like Gecko) "
-              "Chrome/140.0.0.0 Mobile Safari/537.36")
+# Android Chrome (project decision): every request presents as an Android device, not a desktop
+# OS. The strings live in references/fetch_profile.json -> ua_pool and are loaded by wp_ua, the
+# one side-effect-free source; they are re-exported here for `from wp_common import *` callers.
+from wp_ua import DEFAULT_UA, UA_POOL  # noqa: E402,F401
 
 # Per-call ceiling for every DATA-FETCHING / API / collector / subprocess call in the engine.
 # ONE resolver (wp_timeouts): process env CTI_CALL_TIMEOUT → skill-root/engine .env → the RULE 3
@@ -108,9 +105,6 @@ _install_urlopen_floor()
 # Set by --decode-qr in main(): when true, extract_qr fetches candidate QR images and
 # decodes them from pixels (needs pyzbar+PIL or OpenCV). Off by default — the zero-dep
 # generator-param decode always runs regardless.
-
-# DATA: references/fetch_profile.json -> ua_pool
-UA_POOL = list(_FP_REF["ua_pool"])
 
 
 # Headers common to every real browser regardless of engine. Bare User-Agent alone trips

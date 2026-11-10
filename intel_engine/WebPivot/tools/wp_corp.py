@@ -67,11 +67,6 @@ from wp_common import *  # noqa — installs the process-global egress proxy (Fa
 from wp_common import _secret  # noqa: E402 — env first, then the gitignored .env files
 from wp_refs import ref_path, load_ref  # noqa: E402
 try:
-    from wp_net import DEFAULT_UA as _ANDROID_UA  # noqa: E402 — the repo's Android UA
-except Exception:  # noqa: BLE001 — parsers stay usable offline even if the net layer cannot import
-    _ANDROID_UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
-try:
     import api_usage  # noqa: E402
 except Exception:  # noqa: BLE001
     api_usage = None
@@ -123,7 +118,7 @@ ADDR_CHANGE_RES = [re.compile(p, re.I | re.S) for p in (_REFS.get("address_chang
 AGENT_RES = [(p, re.compile(p, re.I)) for p in (_REFS.get("formation_agent_patterns") or [])]
 CAVEATS = {**_FALLBACK["caveats"], **(_REFS.get("caveats") or {})}
 TIMEOUT = int(SETTINGS["timeout_seconds"])
-UA = _ANDROID_UA
+UA = DEFAULT_UA  # Android Chrome, re-exported by wp_common from the one source (wp_ua)
 MODES = ("company", "officer", "company-officers", "officer-appointments")
 
 

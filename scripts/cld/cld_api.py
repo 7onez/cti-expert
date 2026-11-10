@@ -100,7 +100,10 @@ _install_cti_proxy()
 HERE = os.path.dirname(os.path.abspath(__file__))
 FEEDS = "https://feeds.chongluadao.vn"
 TI = "https://api-ti.chongluadao.vn"
-UA = "cti-expert-cld/1.1"
+_WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 DEFAULT_TIMEOUT = 5000          # ~83-min ceiling per call (harness all the data)
 STEP_TIMEOUT = 180              # per HTTP round-trip inside an async poll loop
 POLL_INTERVAL = 5               # seconds between async polls

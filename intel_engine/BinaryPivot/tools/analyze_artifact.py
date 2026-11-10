@@ -78,6 +78,14 @@ except Exception:  # noqa: BLE001
         c = c if c > 0 else 5000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
+# User-Agent: inside the repo the Android default comes from the one source, WebPivot's wp_ua
+# (WebPivot/tools is on sys.path from the block above). A standalone BinaryPivot uses its own
+# android_user_agent value below.
+try:
+    from wp_ua import DEFAULT_UA as _REPO_UA  # noqa: E402
+except Exception:  # noqa: BLE001 — standalone BinaryPivot copy
+    _REPO_UA = None
+
 # ---------------------------------------------------------------- reference data (RULE 3)
 # The host-token denylists and the packer/installer/protector signature tables are DATA, in
 # references/binary_indicators.json — they change far faster than the code that matches them,
@@ -94,8 +102,8 @@ _BP_FALLBACK = {
                              "InstallShield": ["InstallShield"]},
     "android_protectors": {"Bangcle / SecNeo": [r"libsecexe\.so$", r"libsecmain\.so$"],
                            "Qihoo 360 Jiagu": [r"libjiagu.*\.so$"]},
-    "android_user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+    "android_user_agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
     "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "apple_signing_identity_prefixes": ["Developer ID Application"],
@@ -104,7 +112,7 @@ _BP_FALLBACK = {
 }
 _BP_REF = bp_refs.load_ref(bp_refs.ref_path(__file__, "binary_indicators.json"), _BP_FALLBACK)
 
-ANDROID_UA = _BP_REF["android_user_agent"]
+ANDROID_UA = _REPO_UA or _BP_REF["android_user_agent"]
 DESKTOP_UA = _BP_REF["desktop_user_agent"]
 APPLE_IDENTITY_PREFIXES = [str(p) for p in _BP_REF["apple_signing_identity_prefixes"] if p]
 # What a binary target looks like by name: /cti routing (binary_auto.is_binary_target), the kept

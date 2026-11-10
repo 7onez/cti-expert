@@ -66,7 +66,10 @@ REGISTRY = os.path.join(HERE, "registry.json")
 # skill root = ../../ from scripts/apikeys/ ; same target the webpivot tools resolve.
 ENV_PATH = os.environ.get("CTI_API_KEYS_ENV") or os.path.normpath(
     os.path.join(HERE, "..", "..", ".env"))
-UA = "cti-expert-apikeys/1.0"
+_WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 
 # ───────────────────────────────────────────────────────────── registry + store

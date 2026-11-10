@@ -56,6 +56,10 @@
     "crawl_register_hops": 1,
     "fetch_timeout_s": 20
   },
+  "fetch": {
+    "_comment": "en_forms' page fetch. user_agent is used ONLY by a standalone Engage copy; inside the repo the User-Agent comes from the one source, WebPivot's wp_ua (fetch_profile.json -> ua_pool), and this value is ignored. Keep it identical to that pool's first entry — Android Chrome (project decision).",
+    "user_agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  },
 
   "engagement_policy": {
     "_comment": "THE ENGAGEMENT GATE. Creating an account is NOT reading a page: it reaches out and touches the operator's own infrastructure from your egress, tells them a new member appeared at a known time, and cannot be undone — deleting the account later un-notifies nobody and the operator may have already logged the registration IP, fingerprint and email. So en_engage NEVER acts without explicit per-engagement confirmation, uses a SYNTHETIC identity only, and refuses to auto-solve a CAPTCHA or OTP. `require_explicit_confirmation` and `synthetic_identity_only` are ALSO enforced in code (the function signature), so a stale copy of this file cannot loosen them — editing here can only make the policy STRICTER. This is the same shape as BinaryPivot's ANY.RUN submission_policy.",

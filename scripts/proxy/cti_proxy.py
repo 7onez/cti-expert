@@ -694,7 +694,18 @@ def test_proxy(proxy, url=None, timeout=15):
         ph = (urllib.request.ProxyHandler({"http": proxy, "https": proxy})
               if proxy else urllib.request.ProxyHandler({}))
         opener = urllib.request.build_opener(ph)
-        req = urllib.request.Request(url, headers={"User-Agent": "cti-expert-proxy/1.0"})
+        headers = {}
+        try:
+            # Android Chrome (project decision), read lazily so the egress layer has no
+            # import-time dependency on the engine tree; without it, urllib's default applies.
+            _wp = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+            if _wp not in sys.path:
+                sys.path.append(_wp)
+            from wp_ua import DEFAULT_UA
+            headers["User-Agent"] = DEFAULT_UA
+        except Exception:
+            pass
+        req = urllib.request.Request(url, headers=headers)
         with opener.open(req, timeout=timeout) as r:
             body = r.read(400).decode("utf-8", "replace").strip()
         return True, body

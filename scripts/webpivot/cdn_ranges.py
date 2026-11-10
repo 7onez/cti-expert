@@ -60,7 +60,10 @@ _install_cti_proxy()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cdn_ranges.json")
-UA = "Mozilla/5.0 (cdn-ranges OSINT tooling)"
+_WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # --- published range sources. Each returns list[(cidr, provider, kind)]. ---------
 

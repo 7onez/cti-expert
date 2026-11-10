@@ -27,15 +27,19 @@ Usage:
 # ///
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-# Android Chrome (project decision: web requests present as an Android device).
-UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
+# Android Chrome (project decision: every request presents as an Android device).
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source
 
 # Parameters that carry the SHARER's identity rather than the content's.
 SHARER_PARAMS = {

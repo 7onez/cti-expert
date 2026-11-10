@@ -1,8 +1,7 @@
 {
   "_comment": "wp_vncorp — keyless Vietnamese business-registry lookup (tax code / MST, or a company name) against public mirrors. Every endpoint URL template, the fetch profile, and the Vietnamese-label -> canonical-field map live here (RULE 3) so a mirror going stale or a new label variant is a data edit, not a code change. `{query}` is URL-encoded by the caller before substitution. Nothing here is case data — these are public mirror hostnames and generic Vietnamese business-registry vocabulary.",
   "settings": {
-    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests over a desktop one); timeout_seconds is the socket timeout per mirror fetch.",
-    "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    "_comment": "The User-Agent is the shared Android default (wp_ua <- fetch_profile.json -> ua_pool); add a `ua` key here only to override it for this tool. timeout_seconds is the socket timeout per mirror fetch.",
     "timeout_seconds": 15
   },
   "sources": {

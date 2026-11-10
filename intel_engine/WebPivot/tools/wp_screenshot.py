@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # import wp_net 
 # Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 5000s).
 # Applied to the Playwright page.goto timeout below.
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 try:
     from wp_refs import load_ref, ref_path                       # shared RULE 3 loader
@@ -52,14 +53,14 @@ except Exception:                                                # noqa: BLE001 
                                              "references", name))
 
 _FALLBACK = {
-    "capture": {"timeout_seconds": 45,
-                "user_agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                               "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")},
+    "capture": {"timeout_seconds": 45},
     "layout": {"dir": "screenshots", "manifest_filename": "manifest.json"},
 }
 _REFS = load_ref(ref_path(__file__, "screenshot.json"), _FALLBACK)
 CAP = _REFS["capture"]
 LAYOUT = _REFS["layout"]
+# The browser UA sent to the target: the shared Android default unless screenshot.json overrides it.
+CAPTURE_UA = CAP.get("user_agent") or DEFAULT_UA
 
 
 def _utc_stamp() -> str:
@@ -131,7 +132,7 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     actions: list[str] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(**wp_browser.chromium_launch_kwargs(proxy))
-        ctx = browser.new_context(user_agent=ua or CAP["user_agent"],
+        ctx = browser.new_context(user_agent=ua or CAPTURE_UA,
                                   viewport={"width": 1280, "height": 800})
         page = ctx.new_page()
         try:
@@ -144,7 +145,7 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
             # A certificate that does not match the hostname is itself evidence (a shared or
             # mis-provisioned cert). Render anyway and SAY so in the manifest, never silently.
             ctx.close()
-            ctx = browser.new_context(user_agent=ua or CAP["user_agent"],
+            ctx = browser.new_context(user_agent=ua or CAPTURE_UA,
                                       viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
             page = ctx.new_page()
             page.goto(url, timeout=to_ms, wait_until="networkidle")

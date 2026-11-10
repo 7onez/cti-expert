@@ -25,13 +25,19 @@ Usage:
 # ///
 import argparse
 import json
+import os
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "Mozilla/5.0 (compatible; cti-expert/cn_recon)"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+
 SERIAL = re.compile(r"([一-鿿]{0,3})ICP[备备]?\s*(\d{6,10})号?(?:-(\d+))?", re.I)
 
 

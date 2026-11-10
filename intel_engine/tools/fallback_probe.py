@@ -37,7 +37,6 @@ import sys
 import urllib.parse
 import urllib.request
 
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Per-call ceiling — ONE resolver (WebPivot/tools/wp_timeouts: env CTI_CALL_TIMEOUT → .env →
@@ -45,6 +44,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 import wp_ct  # noqa: E402 — the one CT client
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 
 def _host(s: str) -> str:

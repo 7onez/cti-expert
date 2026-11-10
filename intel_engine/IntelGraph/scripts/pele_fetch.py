@@ -30,10 +30,9 @@ from ig_refs import load_ref, ref_path  # noqa: E402
 
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "WebPivot", "tools"))
-    from wp_common import DEFAULT_UA as _UA  # noqa: E402
-except Exception:  # noqa: BLE001 — standalone IntelGraph copy
-    _UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-           "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
+    from wp_ua import DEFAULT_UA as _UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+except Exception:  # noqa: BLE001 — standalone IntelGraph copy: no header is forced
+    _UA = None
 
 # Conservative fallback: no pin. A broken pele.json must refuse to download, never fetch an
 # unverified "latest".
@@ -72,7 +71,7 @@ def ensure(timeout=60):
         raise RuntimeError("references/pele.json carries no usable pin — refusing to download")
     if installed_version() == version:
         return MODULE
-    req = urllib.request.Request(RELEASE["tarball"], headers={"User-Agent": _UA})
+    req = urllib.request.Request(RELEASE["tarball"], headers={"User-Agent": _UA} if _UA else {})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — pinned https URL
         blob = resp.read()
     _verify(blob, RELEASE["integrity"])

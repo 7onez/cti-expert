@@ -62,7 +62,11 @@ def _install_cti_proxy():
         _b = _p
 _install_cti_proxy()
 
-DEFAULT_UA = "cti-expert/1.0"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # API keys: environment first, then the unified skill-root .env managed by
 # /apikeys (../../ from scripts/webpivot/), overridable via CTI_API_KEYS_ENV.

@@ -84,6 +84,8 @@ import unicodedata
 import urllib.error
 import urllib.request
 
+from wp_ua import DEFAULT_UA  # the one User-Agent source (Android Chrome; project decision)
+
 TIMEOUT = 8
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,7 +257,7 @@ def local_parts(first, middle, last, username=None):
 # Verification — keyless, and never against the target's mail server
 # ─────────────────────────────────────────────────────────────────────────────
 def _get(url, expect_json=False):
-    req = urllib.request.Request(url, headers={"User-Agent": "cti-expert/email_permute"})
+    req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             body = r.read()

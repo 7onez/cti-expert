@@ -34,6 +34,7 @@ Exit codes: 0 = REPORT_READY (data or empty), 2 = still GENERATING_REPORT after 
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
+import os
 import sys
 import re
 import json
@@ -70,7 +71,11 @@ def _install_cti_proxy():
 _install_cti_proxy()
 
 API_BASE = "https://api.lunarcyber.com/domain-exposure"  # canonical — the ONLY place this lives
-USER_AGENT = "cti-expert/lunar-domain-exposure (+https://github.com/7onez/cti-expert)"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as USER_AGENT  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # Login-URL service classes that are attack-surface leads, not just exposure counts.
 ATTACK_SURFACE_HINTS = (

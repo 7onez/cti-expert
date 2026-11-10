@@ -70,6 +70,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wp_refs import load_ref, ref_path  # noqa: E402
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 try:                                                # optional: shared fetch honours --proxy
     from wp_net import fetch as _wp_fetch           # noqa: E402
@@ -370,7 +371,7 @@ def probe(target: str, *, timeout: int = None, proxy: str = None,
                 import urllib.error
                 import urllib.request
                 req = urllib.request.Request(candidate,
-                                             headers={"User-Agent": "Mozilla/5.0 (compatible)"})
+                                             headers={"User-Agent": DEFAULT_UA})
                 try:
                     with urllib.request.urlopen(req, timeout=timeout) as resp:
                         final_url, status = resp.geturl(), resp.status

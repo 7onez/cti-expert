@@ -34,11 +34,7 @@ try:
 except Exception:  # noqa: BLE001
     WB = None
 
-try:
-    from wp_common import DEFAULT_UA  # noqa: E402
-except Exception:  # noqa: BLE001
-    DEFAULT_UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 _FALLBACK = {
     "collection_search": {

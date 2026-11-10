@@ -288,6 +288,6 @@
     "values": [".apk", ".aab", ".xapk", ".apks", ".ipa", ".exe", ".msi", ".dll", ".dmg", ".pkg",
                ".jar", ".zip", ".deb", ".rpm", ".appimage", ".asar", ".so", ".elf", ".bin"]
   },
-  "android_user_agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+  "android_user_agent": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
   "desktop_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }

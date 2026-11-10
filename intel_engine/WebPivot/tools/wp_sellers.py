@@ -37,19 +37,17 @@ from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in
 import api_usage  # noqa: E402
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — the public URL, the
-#     default cache location, a one-week TTL and the Android UA (project decision).
+#     default cache location and a one-week TTL. The User-Agent is the shared Android default.
 _SELLERS_FALLBACK = {
     "settings": {"url": "https://storage.googleapis.com/adx-rtb-dictionaries/sellers.json",
                  "cache_path": "cache/sellers.json",
-                 "ttl_days": 7,
-                 "ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"},
+                 "ttl_days": 7},
 }
 _REFS = load_ref(ref_path(__file__, "sellers_lookup.json"), _SELLERS_FALLBACK)
 SETTINGS = _REFS["settings"]
 _FB = _SELLERS_FALLBACK["settings"]
 URL = SETTINGS.get("url") or _FB["url"]
-UA = SETTINGS.get("ua") or _FB["ua"]
+UA = SETTINGS.get("ua") or DEFAULT_UA   # Android Chrome from the one source unless overridden
 TTL_DAYS = float(SETTINGS.get("ttl_days") or _FB["ttl_days"])
 TIMEOUT = int(SETTINGS.get("timeout_seconds") or 120)
 _cp = SETTINGS.get("cache_path") or _FB["cache_path"]

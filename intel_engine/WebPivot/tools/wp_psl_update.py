@@ -56,8 +56,9 @@ def main() -> int:
         text = open(a.src, encoding="utf-8").read()
     else:
         sys.path.insert(0, HERE)
-        import wp_common  # noqa: F401,E402 — proxy policy + timeout floor for the fetch
-        with urllib.request.urlopen(SOURCE, timeout=60) as r:
+        import wp_common  # noqa: E402 — proxy policy + timeout floor for the fetch
+        req = urllib.request.Request(SOURCE, headers={"User-Agent": wp_common.DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=60) as r:
             text = r.read().decode("utf-8")
     icann, private = parse(text)
     if len(icann) < 5000 or len(private) < 2000:

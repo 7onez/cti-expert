@@ -124,7 +124,21 @@ except Exception:
         except Exception:
             api_usage = None
 
-DEFAULT_UA = "Mozilla/5.0 (compatible; BinaryPivot/1.0)"
+# User-Agent: Android Chrome (project decision). Inside the repo it comes from the one source,
+# WebPivot's wp_ua. A standalone BinaryPivot reads its own reference value instead
+# (references/binary_indicators.json -> android_user_agent); with neither, no header is forced.
+try:
+    _wp_tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              os.pardir, os.pardir, "WebPivot", "tools"))
+    if os.path.isdir(_wp_tools) and _wp_tools not in sys.path:
+        sys.path.append(_wp_tools)
+    from wp_ua import DEFAULT_UA
+except Exception:  # noqa: BLE001 — standalone BinaryPivot copy
+    try:
+        with open(bp_refs.ref_path(__file__, "binary_indicators.json"), encoding="utf-8") as _fh:
+            DEFAULT_UA = str(json.load(_fh).get("android_user_agent") or "") or None
+    except Exception:  # noqa: BLE001
+        DEFAULT_UA = None
 
 # --- reference DATA (RULE 3). The fallback is the minimum that keeps the KEYLESS query builder
 #     correct if the JSON goes missing — load_ref warns loudly when it does.
@@ -267,7 +281,9 @@ def public_standing_authorized() -> bool:
 
 
 def _headers():
-    h = {"User-Agent": DEFAULT_UA, "Accept": "application/json"}
+    h = {"Accept": "application/json"}
+    if DEFAULT_UA:
+        h["User-Agent"] = DEFAULT_UA
     key = anyrun_key()
     if key:
         # ANY.RUN expects `API-KEY <key>`; analysts paste the bare key as often as the prefixed

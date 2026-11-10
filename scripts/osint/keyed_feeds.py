@@ -26,7 +26,10 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.normpath(os.path.join(HERE, "..", ".."))
-UA = "cti-expert/keyed-feeds (OSINT research)"
+_WP = os.path.join(SKILL, "intel_engine", "WebPivot", "tools")
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 _LOADED = False
 _REDACT = {"password", "pass", "passwd", "pwd", "cookie", "cookies",

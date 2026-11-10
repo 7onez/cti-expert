@@ -98,14 +98,23 @@ CAPTCHA = [t.lower() for t in _REF["captcha_markers"]]
 TERMS = [t.lower() for t in _REF["terms_tokens"]]
 TH = _REF["thresholds"]
 
-DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# User-Agent: Android Chrome (project decision). Inside the repo it comes from the one source,
+# WebPivot's wp_ua; Engage also ships standalone, where references/engage.json -> fetch.user_agent
+# stands in. With neither, no header is forced rather than inventing a string here.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "WebPivot", "tools"))
+    from wp_ua import DEFAULT_UA  # noqa: E402
+except Exception:  # noqa: BLE001 — standalone Engage copy
+    DEFAULT_UA = (_REF.get("fetch") or {}).get("user_agent") or None
 
 
 # --- fetch (stdlib; requests if present) --------------------------------------------------------
 def _fetch(url: str, timeout: int, proxy: str = None):
     """Return (final_url, status, html_text). GET only. Never raises — returns ('', 0, '') on error."""
-    headers = {"User-Agent": DEFAULT_UA, "Accept": "text/html,application/xhtml+xml"}
+    headers = {"Accept": "text/html,application/xhtml+xml"}
+    if DEFAULT_UA:
+        headers["User-Agent"] = DEFAULT_UA
     try:
         import requests  # type: ignore
         proxies = {"http": proxy, "https": proxy} if proxy else None

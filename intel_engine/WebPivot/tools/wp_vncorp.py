@@ -18,7 +18,8 @@ mirror's markup happens to answer. Every field is TRI-STATE: present with its ow
 `source_url` when found, `None` when it was not — never guessed, never a placeholder ("N/A" is a
 mirror's own text, not this tool's).
 
-Egress: an Android UA (project decision; `references/vncorp.json -> settings.ua`) through the
+Egress: the shared Android UA (project decision; `wp_ua`, overridable per tool with
+`references/vncorp.json -> settings.ua`) through the
 shared `wp_net.fetch` (browser header profile, `--proxy` honoured, plus the process-global proxy
 `wp_common` installs at import). A Cloudflare interstitial, an HTTP error, or a redirect off the
 mirror's own host is reported per source as an error — never parsed as a record.
@@ -67,9 +68,7 @@ except Exception:  # noqa: BLE001 — the parsers stay usable offline even if th
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — one source, the label
 #     map's core fields — so the tool still answers something if the JSON goes missing.
 _VNCORP_FALLBACK = {
-    "settings": {"ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 15},
+    "settings": {"timeout_seconds": 15},
     "sources": {"masothue": {"label": "masothue.com",
                              "mst_url": "https://masothue.com/Search/?q={query}&type=auto"}},
     "label_map": {"tax_code": ["mã số thuế", "ma so thue", "mst"],
@@ -91,7 +90,7 @@ _VNCORP_FALLBACK = {
 }
 _REFS = load_ref(ref_path(__file__, "vncorp.json"), _VNCORP_FALLBACK)
 _SETTINGS = _REFS["settings"]
-UA = _SETTINGS.get("ua") or _VNCORP_FALLBACK["settings"]["ua"]
+UA = _SETTINGS.get("ua") or DEFAULT_UA   # Android Chrome from the one source unless overridden
 DEFAULT_TIMEOUT = int(_SETTINGS.get("timeout_seconds") or 15)
 SOURCES = _REFS["sources"]
 LABEL_MAP = _REFS["label_map"]

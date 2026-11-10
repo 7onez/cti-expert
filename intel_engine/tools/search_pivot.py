@@ -340,7 +340,8 @@ def _ddg_fetch(url: str, timeout: int = 20):
     except ImportError:
         import urllib.request
         import urllib.error
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14)"})
+        from wp_ua import DEFAULT_UA                             # noqa: E402 — on sys.path via _WP
+        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 status, body = r.status, r.read()

@@ -195,19 +195,15 @@ _ARCHIVE_UA_CACHE: str | None = None
 
 def _archive_ua() -> str:
     """Android-Chrome User-Agent for third-party archive fetches (urlscan, archive.today) — read
-    from the SAME reference data wp_common/wp_net use (references/fetch_profile.json -> ua_pool,
+    from the one source every collector uses (wp_ua <- references/fetch_profile.json -> ua_pool,
     project decision), never a hardcoded literal here. archive.org itself gets wp_wayback_guard's
-    honest client UA instead (see _http_get). Falls back to wp_common's own conservative fallback
-    string only if the module cannot be imported (never raises)."""
+    honest client UA instead (see _http_get)."""
     global _ARCHIVE_UA_CACHE
     if _ARCHIVE_UA_CACHE is None:
-        try:
+        if WP_TOOLS not in sys.path:
             sys.path.insert(0, WP_TOOLS)
-            import wp_common  # noqa: E402
-            _ARCHIVE_UA_CACHE = wp_common.UA_POOL[0]
-        except Exception:  # noqa: BLE001 — never let a UA lookup break an archive fetch
-            _ARCHIVE_UA_CACHE = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                                "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
+        from wp_ua import DEFAULT_UA  # noqa: E402 — stdlib-only, carries its own fallback
+        _ARCHIVE_UA_CACHE = DEFAULT_UA
     return _ARCHIVE_UA_CACHE
 
 

@@ -69,7 +69,11 @@ def _install_cti_proxy():
         _b = _p
 _install_cti_proxy()
 
-_UA = "cti-expert/1.0 (+cert-pivot)"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as _UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # --------------------------------------------------------------- shared key store
 _CUSTOMIZATION_ENV = (os.environ.get("CTI_API_KEYS_ENV")

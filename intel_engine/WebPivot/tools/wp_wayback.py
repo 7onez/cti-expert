@@ -52,12 +52,12 @@ try:
 except Exception:  # noqa: BLE001
     ref_path = load_ref = None
 
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+
 try:
-    from wp_common import DEFAULT_UA, _decode_body  # noqa: E402  (Android UA; gzip/deflate decoder)
+    from wp_common import _decode_body  # noqa: E402  (gzip/deflate decoder)
 except Exception:  # noqa: BLE001
     import gzip as _gzip
-    DEFAULT_UA = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36")
 
     def _decode_body(raw, content_encoding):
         try:

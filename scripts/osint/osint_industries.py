@@ -50,13 +50,14 @@ SKILL = os.path.normpath(os.path.join(HERE, "..", ".."))
 WP = os.path.join(SKILL, "intel_engine", "WebPivot", "tools")
 sys.path.insert(0, HERE)
 import keyed_feeds  # noqa: E402 — .env loader, secret lookup, key scrubbing, api_usage ledger
+if WP not in sys.path:
+    sys.path.append(WP)
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — the documented
 #     endpoints and defaults, the five documented types and the caveat line.
 _OI_FALLBACK = {
-    "settings": {"ua": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 60, "timeout_min": 25, "timeout_max": 80,
+    "settings": {"timeout_seconds": 60, "timeout_min": 25, "timeout_max": 80,
                  "socket_grace_seconds": 40, "max_modules": 60},
     "endpoints": {"base": "https://api.osint.industries", "request": "/v2/request",
                   "credits": "/misc/credits"},
@@ -84,7 +85,7 @@ ENDPOINTS = _REFS["endpoints"]
 TYPES = list(_REFS["types"])
 STATUS_REASONS = {str(k): v for k, v in (_REFS.get("status_reasons") or {}).items()}
 CAVEAT = str((_REFS.get("caveat") or {}).get("text") or _OI_FALLBACK["caveat"]["text"])
-UA = SETTINGS.get("ua") or _OI_FALLBACK["settings"]["ua"]
+UA = SETTINGS.get("ua") or DEFAULT_UA   # Android Chrome from the one source unless overridden
 MAX_MODULES = int(SETTINGS.get("max_modules") or 60)
 _MAX_BODY = 16 * 1024 * 1024        # a name search returns ~100 KB; never truncate valid JSON
 

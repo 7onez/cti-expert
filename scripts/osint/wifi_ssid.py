@@ -26,7 +26,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = "cti-expert/wifi_ssid (OSINT research)"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 API = "https://api.wigle.net/api/v2/network/search"
 
 

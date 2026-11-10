@@ -1,8 +1,7 @@
 {
   "_comment": "OSINT Industries v2 API (docs.osint.industries/reference/search-1). Reference DATA for scripts/osint/osint_industries.py — endpoints, request defaults, the selector types the API accepts, and the caveat every result carries. Auth is the `api-key` header (OSINT_INDUSTRIES_API_KEY). Billing: 1 credit per lookup, +3 when a premium module applies (premium=true); the credit lookup is free.",
   "settings": {
-    "_comment": "ua is an Android Chrome string (project decision: prefer an Android UA for web requests). timeout_seconds is the module deadline sent to the API (docs: recommended 60, min 25, max 80). socket_grace_seconds is added to it for the HTTP read. max_modules caps the module rows a compact summary returns.",
-    "ua": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+    "_comment": "The User-Agent is the shared Android default (wp_ua <- fetch_profile.json -> ua_pool); add a `ua` key here only to override it for this tool. timeout_seconds is the module deadline sent to the API (docs: recommended 60, min 25, max 80). socket_grace_seconds is added to it for the HTTP read. max_modules caps the module rows a compact summary returns.",
     "timeout_seconds": 60,
     "timeout_min": 25,
     "timeout_max": 80,

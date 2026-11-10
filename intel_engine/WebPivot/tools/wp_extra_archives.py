@@ -26,8 +26,7 @@ import sys
 import urllib.request
 import urllib.parse
 
-DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+from wp_ua import DEFAULT_UA  # the one User-Agent source (Android Chrome; project decision)
 
 CC_COLLINFO = "https://index.commoncrawl.org/collinfo.json"
 CC_DATA = "https://data.commoncrawl.org/"

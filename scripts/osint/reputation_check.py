@@ -39,7 +39,11 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import keyed_feeds  # noqa: E402 — sibling; attaches Auth-Key when ABUSE_CH_API_KEY is set
 
-UA = "cti-expert/reputation_check (OSINT research)"
+_WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                    "intel_engine", "WebPivot", "tools"))
+if _WP not in sys.path:
+    sys.path.append(_WP)
+from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 IPV4 = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 HASH = re.compile(r"^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{40}$|^[0-9a-fA-F]{64}$")
 

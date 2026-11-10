@@ -48,13 +48,12 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 from wp_common import _registrable  # noqa: E402 — also installs the process-global egress proxy
 from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in references/*.json
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — the two lookups that
 #     answer "who is the developer" (no other-apps fan-out), the English labels, the store hosts.
 _APPDEV_FALLBACK = {
-    "settings": {"ua": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 20, "max_other_apps": 50, "country": "us", "about_block_max": 8,
+    "settings": {"timeout_seconds": 20, "max_other_apps": 50, "country": "us", "about_block_max": 8,
                  "lookup_countries": ["us"], "eu_storefronts": ["ie"]},
     "endpoints": {"play_details": "https://play.google.com/store/apps/details?id={id}&hl=en&gl=US",
                   "itunes_lookup_id": "https://itunes.apple.com/lookup?id={id}&country={country}"},
@@ -66,7 +65,7 @@ _APPDEV_FALLBACK = {
 }
 _REFS = load_ref(ref_path(__file__, "appdev.json"), _APPDEV_FALLBACK)
 _SETTINGS = _REFS["settings"]
-UA = _SETTINGS.get("ua") or _APPDEV_FALLBACK["settings"]["ua"]
+UA = _SETTINGS.get("ua") or DEFAULT_UA   # Android Chrome from the one source unless overridden
 DEFAULT_TIMEOUT = int(_SETTINGS.get("timeout_seconds") or 20)
 MAX_OTHER_APPS = int(_SETTINGS.get("max_other_apps") or 50)
 COUNTRY = str(_SETTINGS.get("country") or "us")

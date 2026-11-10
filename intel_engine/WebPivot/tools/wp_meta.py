@@ -62,9 +62,7 @@ from wp_common import _decode_body  # noqa: E402
 from wp_refs import ref_path, load_ref  # noqa: E402
 
 _FALLBACK = {
-    "settings": {"ua": "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-                 "timeout_seconds": 30, "attempts": 2, "backoff_seconds": 5,
+    "settings": {"timeout_seconds": 30, "attempts": 2, "backoff_seconds": 5,
                  "max_retry_after_seconds": 60, "country": "ALL",
                  "max_related_pages": 20, "max_ads_sampled": 20},
     "endpoints": {
@@ -86,7 +84,7 @@ _FALLBACK = {
 }
 _REFS = load_ref(ref_path(__file__, "meta_transparency.json"), _FALLBACK)
 _S = _REFS["settings"]
-UA = _S.get("ua") or _FALLBACK["settings"]["ua"]
+UA = _S.get("ua") or wp_common.DEFAULT_UA   # Android Chrome from the one source unless overridden
 TIMEOUT = int(_S.get("timeout_seconds") or 30)
 ATTEMPTS = max(1, int(_S.get("attempts") or 1))
 BACKOFF = max(0.0, float(_S.get("backoff_seconds") or 0))

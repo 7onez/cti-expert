@@ -43,6 +43,7 @@ import argparse, glob, json, os, socket, sys, urllib.parse, urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # reuse the WebPivot WHOIS client (WhoisXML) without duplicating it
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
+from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 try:
     from whois_enrich import (whois_current, whois_summary, whois_summary_keyless,  # type: ignore
                               is_privacy)
@@ -165,7 +166,8 @@ def _asn_for_ip(ip, cache, timeout=8):
         pass
     try:
         url = "http://ip-api.com/json/" + urllib.parse.quote(ip) + "?fields=as,org,countryCode"
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.load(r)
         asn = (d.get("as") or "").split()[0] if d.get("as") else ""      # 'AS47583'
         org = d.get("org") or (d.get("as") or "").split(" ", 1)[-1] or ""
@@ -226,7 +228,7 @@ def _status_from_live(domain):
         return "dead/pulled", ""
     try:
         req = urllib.request.Request("https://" + domain + "/",
-                                     headers={"User-Agent": "Mozilla/5.0"})
+                                     headers={"User-Agent": DEFAULT_UA})
         with urllib.request.urlopen(req, timeout=12) as r:
             body = r.read(20000).decode("utf-8", "ignore").lower()
         if any(m in body for m in PARKED_MARKERS):
