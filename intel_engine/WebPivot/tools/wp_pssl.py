@@ -65,6 +65,7 @@ import urllib.request
 
 from wp_common import *  # noqa — DEFAULT_UA, _secret, uniq
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 
 try:
     import api_usage                      # licensed-API call ledger
@@ -154,29 +155,29 @@ def _get(path: str, action: str, query: str):
     global _REQUESTS_THIS_RUN
     url = ENDPOINTS.get("base_url", "").rstrip("/") + path
     user, pwd = _secret("PDNS_USERNAME"), _secret("PDNS_PASSWORD")
-    req = urllib.request.Request(url)
-    req.add_header("Authorization",
-                   "Basic " + base64.b64encode(f"{user}:{pwd}".encode()).decode())
-    req.add_header("User-Agent", DEFAULT_UA)
-    req.add_header("Accept", "application/json")
+    headers = {"Authorization": "Basic " + base64.b64encode(f"{user}:{pwd}".encode()).decode(),
+               "Accept": "application/json"}
     _REQUESTS_THIS_RUN += 1
-    try:
-        with urllib.request.urlopen(req, timeout=int(ENDPOINTS.get("timeout_s", 25))) as r:
-            payload = json.loads(r.read().decode("utf-8", "replace") or "{}")
+    r = wp_http.request(url, headers=headers, timeout=int(ENDPOINTS.get("timeout_s", 25)))
+    if r.status is None:                      # no answer: network / timeout
         if api_usage:
-            api_usage.record("circl_pssl", action, credits=0, query=query, ok=True)
-        return payload, None
-    except urllib.error.HTTPError as e:
+            api_usage.record("circl_pssl", action, credits=0, query=query, ok=False)
+        return None, (r.error or "")[:200]
+    if not r.ok:
         # 404 is CIRCL's "nothing on file", which is a RESULT, not a failure.
-        err = f"HTTP {e.code}"
         if api_usage:
             api_usage.record("circl_pssl", action, credits=0, query=query,
-                             ok=(e.code == 404))
-        return ({} if e.code == 404 else None), err
-    except Exception as e:  # noqa: BLE001
+                             ok=(r.status == 404))
+        return ({} if r.status == 404 else None), f"HTTP {r.status}"
+    try:
+        payload = json.loads(r.text or "{}")
+    except Exception as e:  # noqa: BLE001 — a 2xx body that is not JSON
         if api_usage:
             api_usage.record("circl_pssl", action, credits=0, query=query, ok=False)
         return None, str(e)[:200]
+    if api_usage:
+        api_usage.record("circl_pssl", action, credits=0, query=query, ok=True)
+    return payload, None
 
 
 # --------------------------------------------------------------------------- readers

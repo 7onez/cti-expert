@@ -41,6 +41,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared .env loader + UA + proxy install
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 
 try:                                        # reference-file loader (optional; degrade to fallback)
     from wp_refs import load_ref, ref_path  # noqa: E402
@@ -170,20 +171,17 @@ def _get(path, params, timeout=25):
     q = dict(params)
     q["apikey"] = dnslytics_key()
     url = BASE + path + "?" + urllib.parse.urlencode(q)
-    headers = {"User-Agent": DEFAULT_UA, "Accept": "application/json"}
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = json.load(r)
-    except urllib.error.HTTPError as e:
-        try:
-            body = json.loads(e.read().decode("utf-8", "replace"))
-        except Exception:                    # noqa: BLE001 — non-JSON error body
-            return None, {"error": "HTTP %d" % e.code}
+    r = wp_http.request(url, headers={"Accept": "application/json"}, timeout=timeout)
+    if r.status is None:                      # no answer: network / timeout
+        return None, {"error": r.error}
+    if not r.ok:
+        body = r.json()                       # None when the error body is not JSON
         if isinstance(body, dict) and body.get("status") == "error":
-            return None, _classify(body.get("data") or "unknown error", e.code)
-        return None, {"error": "HTTP %d" % e.code}
-    except Exception as e:                    # noqa: BLE001 — network/timeout/parse
+            return None, _classify(body.get("data") or "unknown error", r.status)
+        return None, {"error": "HTTP %d" % r.status}
+    try:
+        body = json.loads(r.body)
+    except Exception as e:                    # noqa: BLE001 — a 2xx body that is not JSON
         return None, {"error": str(e)}
     if isinstance(body, dict) and body.get("status") == "error":
         return None, _classify(body.get("data") or "unknown error", 200)

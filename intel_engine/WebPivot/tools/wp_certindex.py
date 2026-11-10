@@ -20,6 +20,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import DEFAULT_UA, _secret  # noqa: E402
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 from wp_refs import ref_path, load_ref  # noqa: E402
 
 try:
@@ -42,20 +43,21 @@ def certindex_configured():
 
 def _get(path, params=None):
     """GET → (status, json|text). Never raises."""
-    url = CFG["base_url"] + path + ("?" + urllib.parse.urlencode(params) if params else "")
-    req = urllib.request.Request(url, headers={"X-API-Key": certindex_key() or "",
-                                               "User-Agent": DEFAULT_UA, "Accept": "application/json"})
-    opener = getattr(urllib.request.urlopen, "_cti_orig", urllib.request.urlopen)
-    try:
-        with opener(req, timeout=CFG["request_timeout_seconds"]) as r:
-            return r.status, json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        body = e.read()[:400].decode("utf-8", "replace")
+    # bounded: this optional backup keeps its own short timeout instead of the per-call ceiling
+    r = wp_http.request(CFG["base_url"] + path, params=params,
+                        headers={"X-API-Key": certindex_key() or "", "Accept": "application/json"},
+                        timeout=CFG["request_timeout_seconds"], bounded=True)
+    if r.status is None:
+        return None, (r.error or "")[:160]
+    if not r.ok:
+        body = r.body[:400].decode("utf-8", "replace")
         try:
-            return e.code, json.loads(body)
+            return r.status, json.loads(body)
         except ValueError:
-            return e.code, body
-    except Exception as e:  # noqa: BLE001
+            return r.status, body
+    try:
+        return r.status, json.loads(r.body or b"{}")
+    except ValueError as e:
         return None, f"{type(e).__name__}: {e}"[:160]
 
 

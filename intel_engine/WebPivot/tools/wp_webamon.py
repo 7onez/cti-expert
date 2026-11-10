@@ -34,6 +34,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared .env loader + UA + proxy install
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 
 try:                                        # reference-file loader (optional; degrade to fallback)
     from wp_refs import load_ref, ref_path  # noqa: E402
@@ -118,29 +119,27 @@ def _get(path, params=None, *, timeout=None):
     if _QUOTA_HIT:
         return None, {"skipped": "quota — Webamon returned 429 earlier in this run"}
     url = BASE + path + (("?" + urllib.parse.urlencode(params)) if params else "")
-    try:
-        req = urllib.request.Request(url, headers=_headers())
-        with urllib.request.urlopen(req, timeout=timeout or _TIMEOUT) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
+    r = wp_http.request(url, headers=_headers(), timeout=timeout or _TIMEOUT)
+    if r.status is None:                      # no answer: network / timeout
+        return None, {"error": r.error}
+    if not r.ok:
         detail = ""
-        try:
-            body = json.loads(e.read().decode("utf-8", "replace"))
-            if isinstance(body, dict):
-                # `message` carries the specifics ("…(current: starter)"); `error` is the bare
-                # status word ("Forbidden"). Keep both, specifics first — plan() parses this.
-                detail = " / ".join(str(body[k]) for k in ("message", "error") if body.get(k))[:240]
-        except Exception:                    # noqa: BLE001
-            pass
-        if e.code == 429:
+        body = r.json()
+        if isinstance(body, dict):
+            # `message` carries the specifics ("…(current: starter)"); `error` is the bare
+            # status word ("Forbidden"). Keep both, specifics first — plan() parses this.
+            detail = " / ".join(str(body[k]) for k in ("message", "error") if body.get(k))[:240]
+        if r.status == 429:
             with _LOCK:
                 _QUOTA_HIT = True
-        reason = _STATUS_REASON.get(e.code)
-        msg = "HTTP %d%s%s" % (e.code, (" — %s" % reason) if reason else "", (": %s" % detail) if detail else "")
+        reason = _STATUS_REASON.get(r.status)
+        msg = "HTTP %d%s%s" % (r.status, (" — %s" % reason) if reason else "", (": %s" % detail) if detail else "")
         # A 400 is a query the server refused (bad Lucene, missing range) — our fault, reported as
         # an error so a template regression is visible instead of reading as "not in the corpus".
-        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
-    except Exception as e:                    # noqa: BLE001 — network/timeout/parse
+        return None, ({"skipped": msg} if r.status in _STATUS_REASON else {"error": msg})
+    try:
+        return json.loads(r.body), None
+    except Exception as e:                    # noqa: BLE001 — a 2xx body that is not JSON
         return None, {"error": str(e)}
 
 

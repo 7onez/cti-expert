@@ -27,6 +27,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared .env loader + UA + proxy install
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 
 try:                                        # reference-file loader (optional; degrade to fallback)
     from wp_refs import load_ref, ref_path  # noqa: E402
@@ -220,21 +221,17 @@ def _get(path, *, timeout=25, body=None):
     directly, bypassing the per-run cap that _allow enforces for the typed lookups."""
     if not validin_configured():
         return None, {"skipped": "no VALIDIN_API_KEY configured"}
-    url = BASE + path
-    data = json.dumps(body).encode() if body is not None else None
-    headers = _headers()
-    if data:
-        headers["Content-Type"] = "application/json"
+    r = wp_http.request(BASE + path, json_body=body, headers=_headers(), timeout=timeout,
+                        method="POST" if body is not None else "GET")
+    if r.status is None:                      # no answer: network / timeout
+        return None, {"error": r.error}
+    if not r.ok:
+        reason = _STATUS_REASON.get(r.status)
+        msg = "HTTP %d%s" % (r.status, (" — %s" % reason) if reason else "")
+        return None, ({"skipped": msg} if r.status in _STATUS_REASON else {"error": msg})
     try:
-        req = urllib.request.Request(url, data=data, headers=headers,
-                                     method="POST" if body is not None else "GET")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
-        msg = "HTTP %d%s" % (e.code, (" — %s" % reason) if reason else "")
-        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
-    except Exception as e:                    # noqa: BLE001 — network/timeout/parse
+        return json.loads(r.body), None
+    except Exception as e:                    # noqa: BLE001 — a 2xx body that is not JSON
         return None, {"error": str(e)}
 
 

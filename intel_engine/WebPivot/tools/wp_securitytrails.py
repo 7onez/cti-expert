@@ -44,6 +44,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared .env loader + UA + proxy install
+import wp_http  # noqa: E402 — the one transport: never raises, an HTTP error status is an answer
 
 try:
     import api_usage                         # licensed-API credit ledger (optional)
@@ -150,24 +151,27 @@ def _allow(note=""):
         return True
 
 
+def _result(r):
+    """wp_http Response -> (data, error_dict): the tri-state mapping both transports share."""
+    if r.status is None:                      # no answer: network / timeout
+        return None, {"error": r.error}
+    if not r.ok:
+        reason = _STATUS_REASON.get(r.status)
+        msg = "HTTP %d%s" % (r.status, (" — %s" % reason) if reason else "")
+        return None, ({"skipped": msg} if r.status in _STATUS_REASON else {"error": msg})
+    try:
+        return json.loads(r.body), None
+    except Exception as e:                    # noqa: BLE001 — a 2xx body that is not JSON
+        return None, {"error": str(e)}
+
+
 def _get_raw(path, *, params=None, timeout=25):
     """One API call -> (data, error_dict). Never raises. usage() calls this directly, bypassing
     the per-run cap _allow() enforces for the typed lookups."""
     if not securitytrails_configured():
         return None, {"skipped": "no SECURITYTRAILS_API_KEY configured"}
-    url = BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    try:
-        req = urllib.request.Request(url, headers=_headers(), method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
-        msg = "HTTP %d%s" % (e.code, (" — %s" % reason) if reason else "")
-        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
-    except Exception as e:                    # noqa: BLE001 — network/timeout/parse
-        return None, {"error": str(e)}
+    return _result(wp_http.request(BASE + path, params=params, headers=_headers(),
+                                   timeout=timeout, method="GET"))
 
 
 def _get(path, *, params=None, timeout=25):
@@ -251,17 +255,8 @@ def dns_history(domain, record_type="a", timeout=25):
 def _post_raw(path, body, *, timeout=25):
     """POST transport sibling of _get_raw: same headers, same tri-state error mapping, JSON body.
     Never raises; builds no custom opener (wp_common's process-wide proxy install applies)."""
-    try:
-        req = urllib.request.Request(BASE + path, data=json.dumps(body).encode("utf-8"),
-                                     headers=dict(_headers(), **{"Content-Type": "application/json"}), method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
-        msg = "HTTP %d%s" % (e.code, (" — %s" % reason) if reason else "")
-        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
-    except Exception as e:                    # noqa: BLE001
-        return None, {"error": str(e)}
+    return _result(wp_http.request(BASE + path, json_body=body, headers=_headers(),
+                                   timeout=timeout, method="POST"))
 
 
 def _post(path, body, *, timeout=25):
