@@ -72,6 +72,7 @@ import urllib.parse
 import urllib.request
 
 from wp_common import *  # noqa — DEFAULT_UA, _secret, uniq
+import wp_http  # noqa: E402 — the one transport
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 import wp_plans as _plans               # per-case on-disk entitlement store (the search is the probe)
 
@@ -173,29 +174,26 @@ def _call(path: str, *, method: str = "GET", body: dict = None, timeout: int = 3
     expected to survive, and `{"error": ...}` for anything genuinely unexpected."""
     if not censys_configured():
         return None, {"skipped": "no CENSYS_PAT configured"}
-    url = API_BASE + path
-    data = json.dumps(body).encode() if body is not None else None
-    headers = _headers()
-    if data:
-        headers["Content-Type"] = "application/json"
-    try:
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
+    r = wp_http.request(API_BASE + path, method=method, json_body=body, headers=_headers(),
+                        timeout=timeout)
+    if r.status is None:                                # network/timeout
+        return None, {"error": r.error}
+    if not r.ok:
+        reason = _STATUS_REASON.get(r.status)
         detail = ""
         try:
-            detail = (json.loads(e.read().decode()).get("error") or {}).get("message") or ""
+            detail = (json.loads(r.body.decode()).get("error") or {}).get("message") or ""
         except Exception:
             pass
-        msg = f"HTTP {e.code}" + (f" — {reason}" if reason else "") + (f" ({detail})" if detail else "")
+        msg = f"HTTP {r.status}" + (f" — {reason}" if reason else "") + (f" ({detail})" if detail else "")
         # 404 is a fact about the target, not a failure of ours; the rest are conditions the
         # caller degrades around. Only a 5xx/unknown code is an actual error.
-        if e.code in _STATUS_REASON:
-            return None, {"skipped": msg, "http": e.code}
-        return None, {"error": msg, "http": e.code}
-    except Exception as e:                              # network/timeout/parse
+        if r.status in _STATUS_REASON:
+            return None, {"skipped": msg, "http": r.status}
+        return None, {"error": msg, "http": r.status}
+    try:
+        return json.loads(r.body), None
+    except Exception as e:                              # a 2xx body that is not JSON
         return None, {"error": str(e)}
 
 

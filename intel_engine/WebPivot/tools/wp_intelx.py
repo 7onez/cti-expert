@@ -114,6 +114,7 @@ import urllib.request
 
 from wp_common import *  # noqa — DEFAULT_UA, _secret, uniq, strip_www
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
+import wp_http  # noqa: E402 — the one transport
 
 try:
     import api_usage                      # licensed-API credit ledger
@@ -248,28 +249,22 @@ def _call(path: str, *, method: str = "GET", params: dict = None, body: dict = N
     url = api_root() + path
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
-    data = json.dumps(body).encode() if body is not None else None
-    headers = _headers()
-    if data:
-        headers["Content-Type"] = "application/json"
-    try:
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw_body = r.read().decode("utf-8", "replace")
-            if raw:
-                return raw_body, None
-            try:
-                return json.loads(raw_body), None
-            except ValueError:
-                return {"raw": raw_body}, None
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
-        msg = f"HTTP {e.code}" + (f" — {reason}" if reason else "")
-        if e.code in _STATUS_REASON:
+    r = wp_http.request(url, method=method, json_body=body, headers=_headers(), timeout=timeout)
+    if r.status is None:                                # network/timeout
+        return None, {"error": r.error}
+    if not r.ok:
+        reason = _STATUS_REASON.get(r.status)
+        msg = f"HTTP {r.status}" + (f" — {reason}" if reason else "")
+        if r.status in _STATUS_REASON:
             return None, {"skipped": msg}
         return None, {"error": msg}
-    except Exception as e:                              # network/timeout
-        return None, {"error": str(e)}
+    raw_body = r.text
+    if raw:
+        return raw_body, None
+    try:
+        return json.loads(raw_body), None
+    except ValueError:
+        return {"raw": raw_body}, None
 
 
 def _record(action: str, credits: int, query: str, results=None, ok: bool = True):

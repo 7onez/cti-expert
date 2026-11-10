@@ -21,6 +21,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402
+import wp_http  # noqa: E402 — the one transport
 
 try:
     from wp_refs import load_ref, ref_path  # noqa: E402
@@ -97,26 +98,20 @@ def search(query: str, timeout: int = None, max_rows: int = None):
     url = f"{BASE}{path_q}/?{urllib.parse.urlencode({'export': EXPORT, 'key': key})}"
     to = int(timeout if timeout is not None else TIMEOUT)
     cap = int(max_rows if max_rows is not None else MAX_ROWS)
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA, "Accept": "text/csv,*/*"})
-        with urllib.request.urlopen(req, timeout=to) as r:
-            raw = r.read()
-            status = getattr(r, "status", 200) or 200
-    except urllib.error.HTTPError as e:
-        body = ""
-        try:
-            body = e.read().decode("utf-8", "replace")[:300]
-        except Exception:  # noqa: BLE001
-            pass
+    r = wp_http.request(url, headers={"Accept": "text/csv,*/*"}, timeout=to)
+    if r.status is None:
         _record("search", 0, q, ok=False)
-        if e.code in (401, 403):
-            return {"skipped": f"PublicWWW rejected the key (HTTP {e.code})", "query": q}
-        if e.code == 429:
+        return {"error": r.error, "query": q}
+    if not r.ok:
+        body = r.body.decode("utf-8", "replace")[:300]
+        _record("search", 0, q, ok=False)
+        if r.status in (401, 403):
+            return {"skipped": f"PublicWWW rejected the key (HTTP {r.status})", "query": q}
+        if r.status == 429:
             return {"skipped": "PublicWWW quota reached", "query": q}
-        return {"error": f"HTTP {e.code}: {body or e.reason}", "query": q}
-    except Exception as e:  # noqa: BLE001
-        _record("search", 0, q, ok=False)
-        return {"error": str(e), "query": q}
+        return {"error": f"HTTP {r.status}: {body or r.reason}", "query": q}
+    raw = r.body
+    status = r.status
 
     text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
     # CSVU: url, rank, snip — or sometimes just bare URLs.

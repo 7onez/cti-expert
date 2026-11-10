@@ -30,6 +30,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared .env loader + UA + proxy install
+import wp_http  # noqa: E402 — the one transport
 
 try:                                        # reference-file loader (optional; degrade to fallback)
     from wp_refs import load_ref, ref_path  # noqa: E402
@@ -105,17 +106,15 @@ def _allow():
 
 def _post(path, body, timeout=25):
     """One API call -> (parsed-JSON, error_dict). Never raises."""
-    url = BASE + path
-    data = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST", headers={
-        "User-Agent": DEFAULT_UA, "Accept": "application/json",
-        "Content-Type": "application/json", "API-KEY": zoomeye_key() or ""})
+    r = wp_http.request(BASE + path, method="POST", json_body=body, headers={
+        "Accept": "application/json", "API-KEY": zoomeye_key() or ""}, timeout=timeout)
+    if r.status is None:
+        return None, {"error": r.error}
+    if not r.ok:
+        return None, {"error": "ZoomEye HTTP %d" % r.status}
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — proxy-safe global opener
-            return json.loads(resp.read().decode("utf-8", "replace")), None
-    except urllib.error.HTTPError as e:
-        return None, {"error": "ZoomEye HTTP %d" % e.code}
-    except Exception as e:                   # noqa: BLE001
+        return json.loads(r.text), None
+    except Exception as e:                   # noqa: BLE001 — a 2xx body that is not JSON
         return None, {"error": str(e)}
 
 

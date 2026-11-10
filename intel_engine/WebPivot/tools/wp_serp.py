@@ -94,6 +94,7 @@ import urllib.parse
 import urllib.request
 
 from wp_common import _secret, DEFAULT_UA, uniq, strip_www  # noqa
+import wp_http  # noqa: E402 — the one transport
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 
 try:
@@ -433,23 +434,24 @@ def _call(engine_key: str, params: dict, action: str, cost: int = None, timeout:
     q["api_key"] = serpapi_key()
     url = ENDPOINTS["search"] + "?" + urllib.parse.urlencode(q)
     shown = urllib.parse.urlencode({k: v for k, v in q.items() if k != "api_key"})
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA,
-                                                   "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        reason = _STATUS_REASON.get(e.code)
+    r = wp_http.request(url, headers={"Accept": "application/json"}, timeout=timeout)
+    if r.status is None:
+        _record(action, 0, shown, ok=False)
+        return None, {"error": r.error}
+    if not r.ok:
+        reason = _STATUS_REASON.get(r.status)
         detail = ""
         try:
-            detail = (json.loads(e.read().decode()) or {}).get("error") or ""
+            detail = (json.loads(r.body.decode()) or {}).get("error") or ""
         except Exception:
             pass
-        msg = f"HTTP {e.code}" + (f" — {reason}" if reason else "") + (f" ({detail})" if detail else "")
+        msg = f"HTTP {r.status}" + (f" — {reason}" if reason else "") + (f" ({detail})" if detail else "")
         # SerpApi does not bill a failed search, so nothing is recorded as spent.
         _record(action, 0, shown, ok=False)
-        return None, ({"skipped": msg} if e.code in _STATUS_REASON else {"error": msg})
-    except Exception as e:
+        return None, ({"skipped": msg} if r.status in _STATUS_REASON else {"error": msg})
+    try:
+        data = json.loads(r.body)
+    except Exception as e:                          # a 2xx body that is not JSON
         _record(action, 0, shown, ok=False)
         return None, {"error": str(e)}
     if isinstance(data, dict) and data.get("error"):
@@ -491,11 +493,13 @@ def account_status(timeout: int = 20):
         return None, {"skipped": "no SERPAPI_KEY configured"}
     base = ENDPOINTS.get("account") or "https://serpapi.com/account.json"
     url = base + "?" + urllib.parse.urlencode({"api_key": key})
+    r = wp_http.request(url, headers={"Accept": "application/json"}, timeout=timeout)
+    if r.status is None:
+        return None, {"error": r.error}
+    if not r.ok:                                    # str(HTTPError), as before
+        return None, {"error": r.http_error}
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA,
-                                                   "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
+        data = json.loads(r.body)
     except Exception as e:
         return None, {"error": str(e)}
     return {k: data.get(k) for k in ("plan_name", "searches_per_month", "plan_searches_left",

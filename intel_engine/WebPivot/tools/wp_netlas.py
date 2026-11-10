@@ -37,6 +37,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402
+import wp_http  # noqa: E402 — the one transport
 
 try:
     import api_usage
@@ -72,17 +73,19 @@ def _record(action, query, results, ok=True, credits=1):
 def _get(path, params=None, timeout=45, retries=2):
     """GET with Bearer auth + browser UA; honours 429 Retry-After once. (status, json|text)."""
     url = BASE + path + (("?" + urllib.parse.urlencode(params, doseq=True)) if params else "")
-    hdr = {"Authorization": "Bearer " + (netlas_key() or ""), "User-Agent": DEFAULT_UA, "Accept": "application/json"}
+    hdr = {"Authorization": "Bearer " + (netlas_key() or ""), "Accept": "application/json"}
     for attempt in range(retries + 1):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=hdr), timeout=timeout) as r:
-                return r.status, json.loads(r.read() or b"{}")
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries:
-                time.sleep(min(int(e.headers.get("Retry-After") or "5"), 30))
+        r = wp_http.request(url, headers=hdr, timeout=timeout)
+        if r.status is None:
+            return None, (r.error or "")[:160]
+        if not r.ok:
+            if r.status == 429 and attempt < retries:
+                time.sleep(min(int(r.headers.get("retry-after") or "5"), 30))
                 continue
-            return e.code, e.read()[:300].decode("utf-8", "replace")
-        except Exception as e:  # noqa: BLE001
+            return r.status, r.body[:300].decode("utf-8", "replace")
+        try:
+            return r.status, json.loads(r.body or b"{}")
+        except Exception as e:  # noqa: BLE001 — a 2xx body that is not JSON
             return None, str(e)[:160]
     return None, "retries exhausted"
 

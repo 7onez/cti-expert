@@ -33,6 +33,7 @@ import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA  # noqa: E402 — shared skill-root .env loader + UA
+import wp_http  # noqa: E402 — the one transport
 
 try:
     import api_usage                        # licensed-API credit ledger (optional)
@@ -146,15 +147,16 @@ def search(query, page=1, page_size=10, days=180, fields="ip,port,domain", timeo
         params = urllib.parse.urlencode({
             "api-key": hunterhow_key(), "query": q64, "page": page, "page_size": page_size,
             "fields": fields, "start_time": out["window"][0], "end_time": out["window"][1]})
-        try:
-            req = urllib.request.Request(API_URL + "?" + params,
-                                         headers={"User-Agent": DEFAULT_UA,
-                                                  "Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                body = json.load(r)
-        except urllib.error.HTTPError as e:
-            out["error"] = f"HTTP {e.code}"
+        r = wp_http.request(API_URL + "?" + params, headers={"Accept": "application/json"},
+                            timeout=timeout)
+        if r.status is None:
+            out["error"] = r.error
             return out
+        if not r.ok:
+            out["error"] = f"HTTP {r.status}"
+            return out
+        try:
+            body = json.loads(r.body)
         except Exception as e:
             out["error"] = str(e)
             return out

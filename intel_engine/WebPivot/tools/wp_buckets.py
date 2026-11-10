@@ -53,6 +53,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from wp_common import _secret, DEFAULT_UA, _registrable  # noqa: E402 — shared skill-root .env loader + UA
+import wp_http  # noqa: E402 — the one transport
 from wp_refs import ref_path, load_ref                   # noqa: E402 — reference DATA (RULE 3)
 
 try:
@@ -133,23 +134,24 @@ def _call(service, path, params=None, timeout=None):
         url += "?" + urllib.parse.urlencode(q)
     tries = 1 + max(0, int(_lim("retry_429")))
     for attempt in range(tries):
-        try:
-            with _SLOTS:
-                req = urllib.request.Request(url, headers={
-                    "User-Agent": DEFAULT_UA, "Accept": "application/json",
-                    "Authorization": f"Bearer {ghw_key()}"})
-                with urllib.request.urlopen(req, timeout=timeout or _lim("timeout")) as r:
-                    return json.load(r), None
-        except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt + 1 < tries:
+        with _SLOTS:
+            r = wp_http.request(url, headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {ghw_key()}"}, timeout=timeout or _lim("timeout"))
+        if r.status is None:  # contract: never raise
+            return None, {"error": r.error}
+        if not r.ok:
+            if r.status == 429 and attempt + 1 < tries:
                 time.sleep(float(_lim("retry_sleep")) * (attempt + 1))
                 continue
-            if e.code == 401:
+            if r.status == 401:
                 return None, {"error": "HTTP 401 — GrayHatWarfare rejected the key"}
-            if e.code == 429:
+            if r.status == 429:
                 return None, {"error": "HTTP 429 — GrayHatWarfare parallel-request cap"}
-            return None, {"error": f"HTTP {e.code}"}
-        except Exception as e:  # noqa: BLE001 — contract: never raise
+            return None, {"error": f"HTTP {r.status}"}
+        try:
+            return json.loads(r.body), None
+        except Exception as e:  # noqa: BLE001 — a 2xx body that is not JSON
             return None, {"error": str(e)}
     return None, {"error": "HTTP 429 — GrayHatWarfare parallel-request cap"}
 
