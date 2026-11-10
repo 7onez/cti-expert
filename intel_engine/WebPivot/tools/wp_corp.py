@@ -66,6 +66,7 @@ if HERE not in sys.path:
 from wp_common import *  # noqa — installs the process-global egress proxy (FailoverOpener) at import
 from wp_common import _secret  # noqa: E402 — env first, then the gitignored .env files
 from wp_refs import ref_path, load_ref  # noqa: E402
+import wp_http  # noqa: E402 — the one transport
 try:
     import api_usage  # noqa: E402
 except Exception:  # noqa: BLE001
@@ -218,11 +219,10 @@ def _is_number_like(q) -> bool:
 def _http(url, accept="application/json", ua=None, auth_user=None, timeout=None):
     """GET -> (status|None, text|None, error|None). Never raises. urllib (not requests) so the
     cti-proxy FailoverOpener and its vendor-host direct fallback apply."""
-    headers = {"User-Agent": ua or UA, "Accept": accept, "Accept-Language": "en-GB,en;q=0.8"}
+    headers = {"Accept": accept, "Accept-Language": "en-GB,en;q=0.8"}
     if auth_user:
         headers["Authorization"] = "Basic " + base64.b64encode(
             (auth_user + ":").encode()).decode()
-    req = urllib.request.Request(url, headers=headers)
 
     def _decode(raw, ctype):
         if raw[:2] == b"\x1f\x8b":
@@ -235,16 +235,18 @@ def _http(url, accept="application/json", ua=None, auth_user=None, timeout=None)
             return raw.decode(m.group(1) if m else "utf-8", "replace")
         except LookupError:
             return raw.decode("utf-8", "replace")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout or TIMEOUT) as r:
-            return r.status, _decode(r.read(), r.headers.get("content-type")), None
-    except urllib.error.HTTPError as e:
+    r = wp_http.request(url, headers=headers, ua=ua or UA, timeout=timeout or TIMEOUT)
+    if r.status is None:                      # DNS/timeout/proxy: tri-state, never raise
+        return None, None, r.error
+    if not r.ok:
         try:
-            body = _decode(e.read(), (e.headers or {}).get("content-type"))
+            body = _decode(r.body, r.headers.get("content-type"))
         except Exception:  # noqa: BLE001
             body = None
-        return e.code, body, f"HTTP {e.code}"
-    except Exception as e:  # noqa: BLE001 — DNS/timeout/proxy: tri-state, never raise
+        return r.status, body, f"HTTP {r.status}"
+    try:
+        return r.status, _decode(r.body, r.headers.get("content-type")), None
+    except Exception as e:  # noqa: BLE001 — an undecodable 2xx body: tri-state, never raise
         return None, None, f"{type(e).__name__}: {e}"
 
 

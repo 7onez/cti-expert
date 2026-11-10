@@ -85,6 +85,7 @@ import urllib.error
 import urllib.request
 
 from wp_ua import DEFAULT_UA  # the one User-Agent source (Android Chrome; project decision)
+import wp_http  # noqa: E402 — the one transport
 
 TIMEOUT = 8
 
@@ -257,13 +258,13 @@ def local_parts(first, middle, last, username=None):
 # Verification — keyless, and never against the target's mail server
 # ─────────────────────────────────────────────────────────────────────────────
 def _get(url, expect_json=False):
-    req = urllib.request.Request(url, headers={"User-Agent": DEFAULT_UA})
+    r = wp_http.request(url, timeout=TIMEOUT, bounded=True)
+    if r.status is None:
+        return None, None
+    if not r.ok:
+        return r.status, None
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            body = r.read()
-            return r.status, (json.loads(body.decode("utf-8", "replace")) if expect_json else body)
-    except urllib.error.HTTPError as e:
-        return e.code, None
+        return r.status, (json.loads(r.body.decode("utf-8", "replace")) if expect_json else r.body)
     except Exception:
         return None, None
 

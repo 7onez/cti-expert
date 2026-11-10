@@ -55,6 +55,7 @@ from wp_common import DEFAULT_UA, _browser_headers, _decode_body  # noqa: E402 �
 from wp_net import fetch  # noqa: E402
 from wp_refs import load_ref, ref_path  # noqa: E402
 import wp_docmeta  # noqa: E402 — the repo's stdlib EXIF/XMP/PNG-text reader
+import wp_http  # noqa: E402 — the one transport
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — Yandex only, no tracking
 #     strip beyond utm_source, the RULE 5 caveat text.
@@ -362,13 +363,10 @@ def _post_multipart(url: str, field: str, filename: str, raw: bytes, timeout: in
             f"filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").encode() \
         + raw + f"\r\n--{boundary}--\r\n".encode()
     hdrs["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-    req = urllib.request.Request(url, data=body, headers=hdrs, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.geturl(), _decode_body(
-                resp.read(), resp.headers.get("Content-Encoding"))
-    except urllib.error.HTTPError as e:
-        return e.code, url, _decode_body(e.read(), (e.headers or {}).get("Content-Encoding"))
+    r = wp_http.request(url, method="POST", data=body, headers=hdrs, timeout=timeout)
+    if r.status is None:  # no HTTP answer: raised, as before, for yandex_upload to report
+        r.raise_for_status()
+    return r.status, r.url, r.body
 
 
 def yandex_upload(raw: bytes, filename: str, timeout: int = TIMEOUT) -> dict:

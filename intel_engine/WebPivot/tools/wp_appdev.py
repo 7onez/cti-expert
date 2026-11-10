@@ -32,6 +32,7 @@ CLI:
   python3 wp_appdev.py com.example.app --store appstore      # an iOS bundle id
 """
 import argparse
+import email.message
 import glob
 import html.parser
 import json
@@ -49,6 +50,7 @@ if HERE not in sys.path:
 from wp_common import _registrable  # noqa: E402 — also installs the process-global egress proxy
 from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA lives in references/*.json
 from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — the two lookups that
 #     answer "who is the developer" (no other-apps fan-out), the English labels, the store hosts.
@@ -123,20 +125,22 @@ def _clean(text):
 def _fetch(url, timeout=None, accept="text/html,application/xhtml+xml"):
     """One GET -> (text, error, http_status). Never raises; routed through the process-global proxy
     `wp_common` installs at import (same `urllib.request.urlopen` every keyless collector uses)."""
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept,
-                                               "Accept-Language": "en-US,en;q=0.8"})
+    r = wp_http.request(url, headers={"Accept": accept, "Accept-Language": "en-US,en;q=0.8"},
+                        ua=UA, timeout=timeout or DEFAULT_TIMEOUT)
+    if r.status is None:  # network/timeout/DNS: never raise out of a lookup
+        return None, r.error, None
+    if not r.ok:
+        return None, f"HTTP {r.status}", r.status
     try:
-        with urllib.request.urlopen(req, timeout=timeout or DEFAULT_TIMEOUT) as r:
-            raw = r.read()
-            enc = "utf-8"
-            try:
-                enc = r.headers.get_content_charset() or "utf-8"
-            except Exception:  # noqa: BLE001
-                pass
-            return raw.decode(enc, "replace"), None, getattr(r, "status", 200)
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}", e.code
-    except Exception as e:  # noqa: BLE001 — network/timeout/DNS: never raise out of a lookup
+        enc = "utf-8"
+        try:
+            msg = email.message.Message()
+            msg["content-type"] = r.headers.get("content-type") or ""
+            enc = msg.get_content_charset() or "utf-8"
+        except Exception:  # noqa: BLE001
+            pass
+        return r.body.decode(enc, "replace"), None, r.status
+    except Exception as e:  # noqa: BLE001 — an unknown charset: never raise out of a lookup
         return None, f"{type(e).__name__}: {e}", None
 
 

@@ -27,6 +27,7 @@ import urllib.request
 import urllib.parse
 
 from wp_ua import DEFAULT_UA  # the one User-Agent source (Android Chrome; project decision)
+import wp_http  # noqa: E402 — the one transport
 
 CC_COLLINFO = "https://index.commoncrawl.org/collinfo.json"
 CC_DATA = "https://data.commoncrawl.org/"
@@ -35,9 +36,8 @@ AT_MIRRORS = ("archive.ph", "archive.today", "archive.is", "archive.li", "archiv
 
 
 def _get(url, ua=DEFAULT_UA, timeout=45, raw=False):
-    req = urllib.request.Request(url, headers={"User-Agent": ua})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read()
+    r = wp_http.request(url, ua=ua, timeout=timeout, decode=not raw)
+    data = r.raise_for_status().body       # callers rely on _get raising on failure
     return data if raw else data.decode("utf-8", "ignore")
 
 
@@ -113,11 +113,11 @@ def commoncrawl_fetch(rec, ua=DEFAULT_UA, timeout=40):
     try:
         off = int(off)
         length = int(length)
-        req = urllib.request.Request(
-            CC_DATA + fn,
-            headers={"User-Agent": ua, "Range": f"bytes={off}-{off + length - 1}"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            comp = r.read()
+        r = wp_http.request(CC_DATA + fn, ua=ua, timeout=timeout, decode=False,
+                            headers={"Range": f"bytes={off}-{off + length - 1}"})
+        if not r.ok:
+            return ""
+        comp = r.body
         warc = gzip.GzipFile(fileobj=io.BytesIO(comp)).read().decode("utf-8", "ignore")
     except Exception:
         return ""
