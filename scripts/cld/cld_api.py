@@ -104,6 +104,7 @@ _WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot"
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 DEFAULT_TIMEOUT = 5000          # ~83-min ceiling per call (harness all the data)
 STEP_TIMEOUT = 180              # per HTTP round-trip inside an async poll loop
 POLL_INTERVAL = 5               # seconds between async polls
@@ -308,26 +309,20 @@ def _http(method, base, path, api_key, params, body, timeout):
         clean = {k: v for k, v in params.items() if v is not None}
         if clean:
             url += "?" + urllib.parse.urlencode(clean)
-    headers = {"User-Agent": UA, "Accept": "application/json", "X-API-Key": api_key}
+    headers = {"Accept": "application/json", "X-API-Key": api_key}
     data = None
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            _TLS.headers = {k.lower(): v for k, v in r.headers.items()}
-            raw, status = r.read(), r.getcode()
-    except urllib.error.HTTPError as e:
-        _TLS.headers = {k.lower(): v for k, v in (e.headers or {}).items()}
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", "replace")[:300]
-        except Exception:
-            pass
-        return e.code, None, f"HTTP {e.code}{': ' + detail if detail else ''}"
-    except Exception as e:  # network/timeout — never includes the key
-        return None, None, f"{type(e).__name__}: {e}"
+    r = wp_http.request(url, method=method, data=data, headers=headers, timeout=timeout,
+                        bounded=True)
+    if r.status is None:                   # network/timeout — never includes the key
+        return None, None, r.error
+    _TLS.headers = r.headers               # already lower-cased (X-Next, X-RateLimit-*)
+    if not r.ok:
+        detail = r.body.decode("utf-8", "replace")[:300]
+        return r.status, None, f"HTTP {r.status}{': ' + detail if detail else ''}"
+    raw, status = r.body, r.status
     if not raw:
         return status, None, None          # 204 (webhook delete)
     text = raw.decode("utf-8", "replace")

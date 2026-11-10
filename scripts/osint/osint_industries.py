@@ -53,6 +53,7 @@ import keyed_feeds  # noqa: E402 — .env loader, secret lookup, key scrubbing, 
 if WP not in sys.path:
     sys.path.append(WP)
 from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # --- reference DATA (RULE 3): the fallback is the conservative minimum — the documented
 #     endpoints and defaults, the five documented types and the caveat line.
@@ -140,26 +141,22 @@ def _clamp_timeout(t):
 def _http(method, path, key, body=None, timeout=60):
     """(status, data | None, error | None). Never raises; the key is scrubbed from any error."""
     url = ENDPOINTS["base"].rstrip("/") + path
-    headers = {"api-key": key, "accept": "application/json", "User-Agent": UA}
+    headers = {"api-key": key, "accept": "application/json"}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            status, raw = r.getcode(), r.read(_MAX_BODY)
-    except urllib.error.HTTPError as e:
-        try:
-            raw = e.read(4000)
-        except Exception:  # noqa: BLE001
-            raw = b""
-        reason = STATUS_REASONS.get(str(e.code)) or ""
+    r = wp_http.request(url, method=method, data=data, headers=headers, timeout=timeout, ua=UA,
+                        max_body=_MAX_BODY, bounded=True)
+    if r.status is None:                      # network / timeout
+        return 0, None, keyed_feeds._scrub(r.error, key)
+    if not r.ok:
+        raw = r.body[:4000]
+        reason = STATUS_REASONS.get(str(r.status)) or ""
         detail = keyed_feeds._scrub(raw.decode("utf-8", "replace"), key)[:200]
-        return e.code, None, f"HTTP {e.code}" + (f" — {reason}" if reason else "") + (
+        return r.status, None, f"HTTP {r.status}" + (f" — {reason}" if reason else "") + (
             f": {detail}" if detail and not reason else "")
-    except Exception as e:  # noqa: BLE001 — network / timeout
-        return 0, None, type(e).__name__ + ": " + keyed_feeds._scrub(e, key)
+    status, raw = r.status, r.body
     try:
         return status, json.loads(raw.decode("utf-8", "replace") or "null"), None
     except ValueError:

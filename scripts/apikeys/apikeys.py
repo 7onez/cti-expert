@@ -70,6 +70,7 @@ _WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot"
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 
 # ───────────────────────────────────────────────────────────── registry + store
@@ -197,7 +198,7 @@ def probe(svc, key, file_env=None):
         return s
 
     url = fill(spec["url"])
-    headers = {"User-Agent": UA}
+    headers = {}
     for hk, hv in (spec.get("header") or {}).items():
         headers[hk] = fill(hv)
     missing = [v for v in (svc.get("extra") or []) if "{" + v + "}" in url + "".join(headers.values())]
@@ -205,17 +206,14 @@ def probe(svc, key, file_env=None):
         return "no-test", f"set {', '.join(missing)} to probe"
     if spec.get("bearer"):
         headers["Authorization"] = f"Bearer {key}"
-    try:
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            status = r.getcode()
-            body = r.read(20000)
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            return "invalid", f"HTTP {e.code} (unauthorized — key rejected)"
-        return "error", f"HTTP {e.code}"
-    except Exception as e:  # noqa
-        return "error", str(e)
+    r = wp_http.request(url, headers=headers, timeout=20, max_body=20000, bounded=True)
+    if r.status is None:
+        return "error", r.error
+    if not r.ok:
+        if r.status in (401, 403):
+            return "invalid", f"HTTP {r.status} (unauthorized — key rejected)"
+        return "error", f"HTTP {r.status}"
+    status, body = r.status, r.body
     if "expect_json" in spec:
         try:
             data = json.loads(body.decode("utf-8", "replace"))

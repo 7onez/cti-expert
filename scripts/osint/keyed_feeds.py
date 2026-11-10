@@ -30,6 +30,7 @@ _WP = os.path.join(SKILL, "intel_engine", "WebPivot", "tools")
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 _LOADED = False
 _REDACT = {"password", "pass", "passwd", "pwd", "cookie", "cookies",
@@ -97,21 +98,12 @@ def redact(obj):
     return obj
 
 
-def _open(req, timeout, secret_value):
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read(200000)
-            code = r.getcode()
-    except urllib.error.HTTPError as e:
-        raw = b""
-        try:
-            raw = e.read(4000)
-        except Exception:  # noqa: BLE001
-            pass
-        return code_body(e.code, raw, secret_value)
-    except Exception as e:  # noqa: BLE001
-        return None, {"error": type(e).__name__ + ": " + _scrub(e, secret_value)}
-    return code_body(code, raw, secret_value)
+def _open(url, data, headers, timeout, secret_value):
+    r = wp_http.request(url, data=data, headers=headers, timeout=timeout, max_body=200000,
+                        bounded=True)
+    if r.status is None:                      # no answer: network / timeout
+        return None, {"error": _scrub(r.error, secret_value)}
+    return code_body(r.status, r.body if r.ok else r.body[:4000], secret_value)
 
 
 def code_body(code, raw, secret_value):
@@ -129,13 +121,13 @@ def code_body(code, raw, secret_value):
 
 
 def _get(url, headers, timeout, secret_value):
-    h = {"User-Agent": UA, "Accept": "application/json"}
+    h = {"Accept": "application/json"}
     h.update(headers or {})
-    return _open(urllib.request.Request(url, headers=h), timeout, secret_value)
+    return _open(url, None, h, timeout, secret_value)
 
 
 def _post(url, body, headers, timeout, secret_value, form=False):
-    h = {"User-Agent": UA, "Accept": "application/json"}
+    h = {"Accept": "application/json"}
     h.update(headers or {})
     if form:
         data = urllib.parse.urlencode(body).encode()
@@ -143,7 +135,7 @@ def _post(url, body, headers, timeout, secret_value, form=False):
     else:
         data = json.dumps(body).encode()
         h["Content-Type"] = "application/json"
-    return _open(urllib.request.Request(url, data=data, headers=h), timeout, secret_value)
+    return _open(url, data, h, timeout, secret_value)
 
 
 def abusech_key():

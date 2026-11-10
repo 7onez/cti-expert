@@ -76,6 +76,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as USER_AGENT  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # Login-URL service classes that are attack-surface leads, not just exposure counts.
 ATTACK_SURFACE_HINTS = (
@@ -99,9 +100,9 @@ def _is_domain(d: str) -> bool:
 
 def fetch(domain: str, req_timeout: int) -> dict:
     url = API_BASE + "?" + urllib.parse.urlencode({"domain": domain})
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-        body = resp.read().decode("utf-8", "replace")
+    r = wp_http.request(url, headers={"Accept": "application/json"}, timeout=req_timeout, bounded=True)
+    r.raise_for_status()                      # URLError is transient for poll()/main(); they branch on HTTPError.code
+    body = r.body.decode("utf-8", "replace")
     return json.loads(body)
 
 
@@ -116,7 +117,7 @@ def _reason(err) -> str:
 def _retry_after(err, default: int) -> int:
     """Honor an integer Retry-After header (429/503); else fall back to default."""
     try:
-        ra = err.headers.get("Retry-After")
+        ra = err.headers.get("retry-after")
         if ra and ra.strip().isdigit():
             return max(1, int(ra.strip()))
     except Exception:
