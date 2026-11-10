@@ -67,6 +67,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # API keys: environment first, then the unified skill-root .env managed by
 # /apikeys (../../ from scripts/webpivot/), overridable via CTI_API_KEYS_ENV.
@@ -263,36 +264,24 @@ def resolve_hint(hint, address=""):
 # ---------------------------------------------------------------------------
 def _request(url, params=None, json_body=None, headers=None, timeout=None):
     to = timeout or _timeout()
-    hdrs = {"User-Agent": DEFAULT_UA}
-    if headers:
-        hdrs.update(headers)
     if params:
         url = url + "?" + urlencode(params)
-    data = None
-    if json_body is not None:
-        data = json.dumps(json_body).encode("utf-8")
-        hdrs.setdefault("Content-Type", "application/json")
-    try:
-        req = urllib.request.Request(url, data=data, headers=hdrs,
-                                     method="POST" if data is not None else "GET")
-        with urllib.request.urlopen(req, timeout=to) as r:
-            raw = r.read()
-            status = getattr(r, "status", None) or r.getcode() or 200
-            try:
-                return status, json.loads(raw.decode("utf-8", "ignore")), None
-            except ValueError as exc:
-                return status, None, f"parse_error: {exc}"
-    except urllib.error.HTTPError as exc:
+    r = wp_http.request(url, json_body=json_body, headers=headers, timeout=to, bounded=True)
+    if r.status is None:
+        return 0, None, f"request_failed: {r.error}"
+    if not r.ok:
         # Surface the status code (err stays None) so provider code can branch
         # on 402/404/429 the way the source read resp.status_code.
         body = None
         try:
-            body = json.loads(exc.read().decode("utf-8", "ignore"))
+            body = json.loads(r.body.decode("utf-8", "ignore"))
         except Exception:
             body = None
-        return exc.code, body, None
-    except Exception as exc:
-        return 0, None, f"request_failed: {exc}"
+        return r.status, body, None
+    try:
+        return r.status, json.loads(r.body.decode("utf-8", "ignore")), None
+    except ValueError as exc:
+        return r.status, None, f"parse_error: {exc}"
 
 
 def get_prices(coingecko_ids):

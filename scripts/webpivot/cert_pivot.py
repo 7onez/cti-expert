@@ -74,6 +74,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as _UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # --------------------------------------------------------------- shared key store
 _CUSTOMIZATION_ENV = (os.environ.get("CTI_API_KEYS_ENV")
@@ -141,19 +142,18 @@ def _get(url, timeout=_CALL_TIMEOUT, headers=None, retries=4, backoff=3):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        try:
-            req = Request(url, headers={"User-Agent": _UA, **(headers or {})})
-            with urlopen(req, timeout=remaining) as r:
-                text = r.read().decode("utf-8", "replace")
-            if not text.strip():
-                raise ValueError("empty response")  # overloaded — worth retrying
-            return text, None
-        except HTTPError as e:  # noqa: BLE001
-            last = f"HTTPError: {e.code} {e.reason}"
-            if e.code not in (429, 500, 502, 503, 504):
+        r = wp_http.request(url, headers=headers, timeout=remaining, bounded=True)
+        if r.status is None:
+            last = r.error
+        elif not r.ok:
+            last = f"HTTPError: {r.status} {r.reason}"
+            if r.status not in (429, 500, 502, 503, 504):
                 return None, last  # 4xx (other than 429) won't recover on retry
-        except Exception as e:  # noqa: BLE001
-            last = f"{type(e).__name__}: {e}"
+        else:
+            text = r.body.decode("utf-8", "replace")
+            if text.strip():
+                return text, None
+            last = "ValueError: empty response"  # overloaded — worth retrying
         if attempt < retries - 1:
             nap = min(backoff * (attempt + 1), max(0.0, deadline - time.monotonic()))
             if nap <= 0:

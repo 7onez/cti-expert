@@ -82,6 +82,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # ── optional burner/disposable API key: env first, then the unified skill-root
 # .env managed by /apikeys (../../ from scripts/webpivot/), overridable via
@@ -181,11 +182,12 @@ def _check_burner_api(domain, api_key, timeout=10):
     The key is sent only in the X-API-KEY header and is NEVER logged/printed —
     exceptions are swallowed to avoid surfacing a Request repr that includes it.
     """
+    q = BURNER_API_URL + "?" + urlencode({"q": domain})
+    r = wp_http.request(q, headers={"X-API-KEY": api_key}, timeout=timeout, bounded=True)
+    if not r.ok:
+        return None
     try:
-        q = BURNER_API_URL + "?" + urlencode({"q": domain})
-        req = urllib.request.Request(q, headers={"User-Agent": UA, "X-API-KEY": api_key})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.load(r)
+        data = json.loads(r.body)
         return bool(data.get("is_burner_email", False))
     except Exception:
         return None
@@ -225,16 +227,17 @@ def mx_lookup(domain, timeout=8):
     None  -> transient/unknown (both DoH providers unreachable or SERVFAIL)
     """
     providers = (
-        ("https://dns.google/resolve", {"User-Agent": UA}),
+        ("https://dns.google/resolve", None),
         ("https://cloudflare-dns.com/dns-query",
-         {"User-Agent": UA, "Accept": "application/dns-json"}),
+         {"Accept": "application/dns-json"}),
     )
     for base, headers in providers:
+        q = base + "?" + urlencode({"name": domain, "type": "MX"})
+        r = wp_http.request(q, headers=headers, timeout=timeout, bounded=True)
+        if not r.ok:
+            continue  # transient for this provider — try the next one
         try:
-            q = base + "?" + urlencode({"name": domain, "type": "MX"})
-            req = urllib.request.Request(q, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.load(r)
+            data = json.loads(r.body)
         except Exception:
             continue  # transient for this provider — try the next one
         status = data.get("Status")

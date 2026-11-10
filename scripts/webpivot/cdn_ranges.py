@@ -64,6 +64,7 @@ _WP = os.path.normpath(os.path.join(HERE, "..", "..", "intel_engine", "WebPivot"
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # --- published range sources. Each returns list[(cidr, provider, kind)]. ---------
 
@@ -88,9 +89,8 @@ _CALL_TIMEOUT = _ceiling()
 
 
 def _get(url, timeout=_CALL_TIMEOUT):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+    r = wp_http.request(url, timeout=timeout, bounded=True)
+    return r.raise_for_status().body.decode("utf-8", "replace")   # sources catch and skip
 
 
 def src_cloudflare():
