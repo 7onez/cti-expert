@@ -90,6 +90,22 @@ dropped `--submit`/`--archive-missing` means evidence was NOT archived; never si
 If you add a flag to one layer's collector, you do not need to touch the other — but do check the
 filter still lets it through.
 
+### HTTP and User-Agent
+
+A new API client calls `wp_http.request(...)` (`intel_engine/WebPivot/tools/wp_http.py`) and maps
+the returned `Response` onto its own tri-state result; it does not build a `Request` or call
+`urlopen`. A page a victim would load goes through `wp_net.fetch`. The User-Agent is
+`wp_ua.DEFAULT_UA`; never write a User-Agent string into a module. `scripts/audit.sh` §3b enforces
+both from each file's syntax tree. A call site the shared transport cannot serve (a stream, a
+per-call proxy, a cookie jar, a test seam, a component that ships standalone) is listed in
+`scripts/references/http_allowlist.json` with that reason; a User-Agent exception is also listed
+in `WebPivot/references/fetch_profile.json → ua_exceptions`.
+
+`wp_http.py` has no permanent test (owner decision: no new test files). Before committing a
+change to it, re-prove the contract against a loopback `http.server`: 2xx, gzip, 4xx with a body,
+429 with `Retry-After`, a refused connection, a timeout (never retried), a non-GET (retried only
+on 429 or a refused connection), and `urllib.request.urlopen` replaced after import.
+
 ---
 
 ## RULE 5 — Indicator classification changes need a test

@@ -40,8 +40,6 @@ import base64
 import argparse
 from pathlib import Path
 from urllib.parse import quote
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 
 for _s in (sys.stdout, sys.stderr):
     try:

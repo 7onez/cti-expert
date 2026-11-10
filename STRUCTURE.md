@@ -19,8 +19,10 @@ the map, and the rules that keep the two from drifting.
 - `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
   indicator classification + the shared collector core (`collect_core`). **Local-only:** gitignored,
   never pushed (same for `intel_engine/tests/`, `intel_engine/tools/eval/` and every `test_*.py`)
-- `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports,
-  `@tool` count matches CLAUDE.md, compile, tests, every registered hook resolves);
+- `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports and
+  match the table below, collection HTTP goes through `wp_http` / `wp_ua` with exceptions listed in
+  `scripts/references/http_allowlist.json`, `@tool` count matches CLAUDE.md, compile, tests, every
+  registered hook resolves);
   `scripts/install-hooks.sh` wires `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via
   `.github/workflows/audit.yml`
 - `hooks/` + `.claude-plugin/plugin.json` — the **Claude Code harness layer**. `plugin.json`
@@ -59,6 +61,7 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
 - `intel_engine/tools/masked_hint.py` (masked recovery-hint correlation), `report_sections.py` (analyst report block + sources-checked), `house_report_sections.py` (house-report renderers for the report block), `tools/kb/references/masked_hint.json`, `report_sections.json`
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
 - `intel_engine/WebPivot/tools/wp_ua.py` — the one User-Agent source (`DEFAULT_UA`, `UA_POOL` from `WebPivot/references/fetch_profile.json → ua_pool`; side-effect free, re-exported by `wp_common`); the service-required exceptions are listed in `fetch_profile.json → ua_exceptions`
+- `intel_engine/WebPivot/tools/wp_http.py` — the one transport for API calls (`request()` → `Response`, never raises; opt-in retry policy in `WebPivot/references/http_client.json`). `wp_net.fetch` stays the target-page fetcher
 - `intel_engine/WebPivot/tools/wp_pgp.py` (keyless PGP keyserver pivot), `wp_container.py` (public container-registry OSINT), `wp_takedown.py` (RDAP hold / DNS sinkhole + successor leads), `WebPivot/references/pgp.json`, `container_registry.json`, `takedown.json`
 - `intel_engine/WebPivot/tools/wp_corp.py` (global company/officer registry pivot), `wp_google.py` (GHunt wrapper: Google-account leads), `wp_telegram.py` (Telegram phone/username lookup, confirm-gated), `wp_revimg.py` (reverse-image search); `WebPivot/references/corp_registry.json`, `google_account.json`, `telegram.json`, `reverse_image.json`
 - `intel_engine/BinaryPivot/tools/bp_git.py` (embedded .git + module identifiers in leaked archives/dirs), `bp_archive_time.py` (archive timestamp forensics, packer UTC offset), `bp_keys.py` (keys/certs deduped by SPKI SHA-256), `intel_engine/BinaryPivot/references/leak_forensics.json`

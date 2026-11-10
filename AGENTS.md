@@ -137,6 +137,14 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 - **Tri-state, never raise.** Vendor clients return `dict | None | {"error"|"skipped": …}`; wrappers
   in `enrich_live` catch everything (`fu.result()` re-raises inside the executor). Ledger every
   metered call through `api_usage.record`.
+- **One transport, one User-Agent.** An API call goes through `wp_http.request(...)`, which never
+  raises: an HTTP status is an answer the client classifies (`r.status`, `r.json()`), `r.error` is
+  set only when there was no answer. A page a victim would load goes through `wp_net.fetch`. Retry
+  is opt-in (`retries=N`); `bounded=True` honours a short timeout exactly. The User-Agent is
+  `wp_ua.DEFAULT_UA` (Android Chrome, from `fetch_profile.json → ua_pool`); the service-required
+  exceptions are listed in `fetch_profile.json → ua_exceptions`. `audit.sh` §3b fails on a new
+  `urlopen` / `build_opener` reference or a hard-coded User-Agent outside
+  `scripts/references/http_allowlist.json`.
 - **Naming.** `wp_<vendor>.py`, `<x>_configured()` gates, `render_*` composers, `cmd_*` CLI
   handlers, `_<x>_cached` / `_<X>_CACHE` memos, `_write_<artifact>` persisters in `intel.py`.
 - **Attribution rails (SKILL.md RULE 5 — never name an innocent party).** New live-result blocks join `_HOST_YIELDING_SOURCES` only if
@@ -168,6 +176,8 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 | `intel_engine/tools/pivot_routes.py` | corpus route dispatch (`corpus-search`); urlscan/Wayback/FOFA/PublicWWW |
 | `intel_engine/harness/proposal.py` | digest-bound `proposal.json`; `harness approve` / `case_approve` / TTY gate |
 | `intel_engine/WebPivot/tools/wp_analyze.py` | `enrich_live` `have_*` gate block and per-pivot branches |
+| `intel_engine/WebPivot/tools/wp_http.py`, `wp_ua.py` | the one API transport (`request` → `Response`) and the one User-Agent source; policy in `references/http_client.json`, `fetch_profile.json` |
+| `scripts/references/http_allowlist.json` | the files allowed to open their own connection or hold a User-Agent string, each with its reason (`audit.sh` §3b) |
 | `intel_engine/WebPivot/tools/wp_refs.py` | `ref_path` / `load_ref` (also vendored as `kb_refs.py`, `ig_refs.py`) |
 | `intel_engine/tools/kb/noise_filters.py` | the single shared-infrastructure denylist (frontier and ingest both read it) |
 | `intel_engine/harness/tools.py`, `mcp_server.py`, `case_scope.py` | `@tool` registry (MCP auto-discovers), posture → `free_only`/hostile |

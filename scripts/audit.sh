@@ -118,6 +118,89 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
+echo "== 3b. collection HTTP goes through wp_http, the User-Agent through wp_ua =="
+# A new client that opens its own connection gets its own answer to the questions wp_http exists to
+# answer once (which User-Agent, what an HTTP error means, what a dropped connection means), and a
+# hard-coded User-Agent goes stale on its own schedule. Both are read from each file's SYNTAX TREE,
+# so a mention in a comment or docstring never counts. The exceptions are data, each with a reason:
+# scripts/references/http_allowlist.json. An entry that no longer matches fails too.
+python3 - <<'PY' || fail=1
+import ast, json, re, subprocess, sys
+ALLOW = "scripts/references/http_allowlist.json"
+UA_NAME = re.compile(r"^(UA|_UA|USER_AGENT|DEFAULT_UA|_[A-Z]+_UA|[A-Z]+_UA)$")
+OPENERS = ("urlopen", "build_opener")
+
+def scan(path):
+    """-> (transport_lines, ua_lines). Transport = any reference to urllib's urlopen /
+    build_opener (a call, an alias, an import by name). UA = a hard-coded User-Agent string."""
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read(), path)
+    except SyntaxError as e:
+        return [f"syntax error: {e}"], []
+    doc = {id(n.value) for n in ast.walk(tree)
+           if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+    def s(n):
+        return n.value if isinstance(n, ast.Constant) and isinstance(n.value, str) else None
+    transport, ua = set(), set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute) and n.attr in OPENERS:
+            transport.add(n.lineno)
+        elif isinstance(n, ast.Name) and n.id in OPENERS:
+            transport.add(n.lineno)
+        elif isinstance(n, ast.ImportFrom) and any(a.name in OPENERS for a in n.names):
+            transport.add(n.lineno)
+        elif isinstance(n, ast.Call):
+            f = n.func
+            if (isinstance(f, ast.Attribute) and f.attr == "add_header" and len(n.args) == 2
+                    and (s(n.args[0]) or "").lower() == "user-agent" and s(n.args[1]) is not None):
+                ua.add(n.lineno)
+        elif isinstance(n, ast.Dict):
+            for k, v in zip(n.keys, n.values):
+                if k is not None and (s(k) or "").lower() == "user-agent" and s(v) is not None:
+                    ua.add(v.lineno)
+        elif isinstance(n, ast.Assign) and s(n.value) is not None:
+            if any(isinstance(t, ast.Name) and UA_NAME.match(t.id) for t in n.targets):
+                ua.add(n.lineno)
+        elif (isinstance(n, ast.Constant) and isinstance(n.value, str)
+              and "Mozilla/5.0" in n.value and id(n) not in doc):
+            ua.add(n.lineno)
+    return sorted(transport), sorted(ua)
+
+try:
+    allow = json.load(open(ALLOW, encoding="utf-8"))
+except Exception as e:
+    print(f"  FAIL: {ALLOW} unreadable ({e})")
+    sys.exit(1)
+ok_t = {k: v for k, v in (allow.get("direct_transport") or {}).items() if not k.startswith("_")}
+ok_u = {k: v for k, v in (allow.get("ua_literal") or {}).items() if not k.startswith("_")}
+files = subprocess.run(["git", "ls-files", "*.py"], capture_output=True, text=True).stdout.split()
+bad, seen_t, seen_u = [], set(), set()
+for path in files:
+    t, u = scan(path)
+    if t:
+        seen_t.add(path)
+        if path not in ok_t:
+            bad.append(f"{path}:{t[0]} opens its own connection — use wp_http.request (an API) or "
+                       f"wp_net.fetch (a page), or list it in {ALLOW} with the reason")
+    if u:
+        seen_u.add(path)
+        if path not in ok_u:
+            bad.append(f"{path}:{u[0]} hard-codes a User-Agent — read wp_ua.DEFAULT_UA, or list it "
+                       f"in {ALLOW} and in fetch_profile.json -> ua_exceptions")
+for kind, listed, seen in (("direct_transport", ok_t, seen_t), ("ua_literal", ok_u, seen_u)):
+    for path, reason in sorted(listed.items()):
+        if not str(reason).strip():
+            bad.append(f"{ALLOW}: {kind} entry {path} has no reason")
+        if path not in seen:
+            bad.append(f"{ALLOW}: {kind} entry {path} no longer applies — remove it")
+for b in bad:
+    print("  FAIL:", b)
+if not bad:
+    print(f"  {len(files)} files: {len(seen_t)} documented direct-transport, "
+          f"{len(seen_u)} documented User-Agent exceptions; everything else uses wp_http / wp_ua")
+sys.exit(1 if bad else 0)
+PY
+
 echo "== 4. @tool count matches CLAUDE.md RULE 3 =="
 n="$(grep -cE '^@tool\(' intel_engine/harness/tools.py)"
 doc="$(grep -oE 'every .@tool. \(([0-9]+) today' CLAUDE.md | grep -oE '[0-9]+' | head -1)"

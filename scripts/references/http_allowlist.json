@@ -1,0 +1,42 @@
+{
+  "_comment": "The audit's transport gate (scripts/audit.sh §3b). Collection HTTP goes through intel_engine/WebPivot/tools/wp_http.py (an API) or wp_net.fetch (a page a victim would load), and the User-Agent comes from wp_ua.py. A tracked *.py file that references urllib's urlopen / build_opener, or holds a hard-coded User-Agent string, must be listed here WITH THE REASON it cannot use the shared path. The audit fails on an unlisted file and on a listed file that no longer needs its entry, so this list cannot rot. To add an entry: say what the shared transport cannot do for that call site (stream, per-call proxy, cookie jar, test seam, standalone component). 'It was easier' is not a reason.",
+  "direct_transport": {
+    "_comment": "Files allowed to reference urllib.request.urlopen or build_opener.",
+    "intel_engine/WebPivot/tools/wp_http.py": "the shared client itself",
+    "intel_engine/WebPivot/tools/wp_common.py": "installs the per-call timeout floor around urlopen",
+    "intel_engine/WebPivot/tools/wp_net.py": "fetch() and _cors_options() are the target-page fetcher (per-call proxy, redirect recorder); wayback_save() sends a Request the Wayback guard re-scopes on every redirect hop",
+    "intel_engine/WebPivot/tools/wp_ct.py": "_urlopen() is a seam tests replace, inside crt.sh's wall-clock budget and breaker",
+    "intel_engine/WebPivot/tools/wp_wayback.py": "the Wayback client: bounded attempts before failover, guard-scoped User-Agent",
+    "intel_engine/WebPivot/tools/wp_wayback_exhaust.py": "exhaustive archive job: per-exit openers and unfloored urlscan paging",
+    "intel_engine/WebPivot/tools/wp_wayback_search.py": "the fallback path wraps its Request with wp_wayback_guard.scope_ua",
+    "intel_engine/WebPivot/tools/wp_exits.py": "builds the per-exit openers (direct, HTTP proxy, SOCKS)",
+    "intel_engine/WebPivot/tools/wp_sellers.py": "streams a ~110 MB download to disk in chunks",
+    "intel_engine/WebPivot/tools/wp_container.py": "open_blob() hands back the live response as a stream for layer reads",
+    "intel_engine/WebPivot/tools/wp_buckets.py": "_RAW_OPENER refuses any redirect to a host off the raw-file allowlist",
+    "intel_engine/WebPivot/tools/wp_certkit.py": "cookie-jar session opener for the login flow",
+    "intel_engine/WebPivot/tools/wp_meta.py": "cookie-jar session holding the anonymous edge challenge cookie",
+    "intel_engine/WebPivot/tools/wp_quarry.py": "MCP session with an injectable opener",
+    "intel_engine/WebPivot/tools/wp_serp.py": "_default_fetch() loads a landing page as a click would (per-call proxy, referrer headers): a target page, not an API",
+    "intel_engine/WebPivot/tools/wp_liveness.py": "standalone fallback used only when wp_net cannot be imported",
+    "intel_engine/WebPivot/tools/wp_psl_update.py": "one-shot maintenance download of the public-suffix list",
+    "intel_engine/tools/house_report_captures.py": "archive image fetch with a per-call proxy and a guard-scoped User-Agent",
+    "intel_engine/tools/search_pivot.py": "fallback used only when wp_net cannot be imported",
+    "intel_engine/tools/kb/push_workingbase.py": "pushes case findings to the analyst's own working-base server",
+    "intel_engine/harness/openai_backend.py": "LLM backend transport, not collection egress",
+    "intel_engine/BinaryPivot/tools/bp_anyrun.py": "BinaryPivot ships standalone, without WebPivot",
+    "intel_engine/BinaryPivot/tools/analyze_artifact.py": "streamed binary download with a byte cap; BinaryPivot ships standalone",
+    "intel_engine/Engage/tools/en_forms.py": "Engage ships standalone; its fetch takes a per-call proxy",
+    "intel_engine/IntelGraph/scripts/pele_fetch.py": "installer download of a pinned, integrity-checked tarball; IntelGraph ships standalone",
+    "intel_engine/IntelShare/tools/sh_misp.py": "the analyst's MISP instance: its own TLS-verify toggle and client string",
+    "scripts/osint/sharelink_resolve.py": "no-redirect opener: each hop of a share link is read without being followed",
+    "scripts/proxy/cti_proxy.py": "the egress layer itself: the failover opener and the proxy self-test"
+  },
+  "ua_literal": {
+    "_comment": "Files allowed to hold a hard-coded User-Agent string. Each is listed in WebPivot/references/fetch_profile.json -> ua_exceptions, or is the fallback for the default.",
+    "intel_engine/WebPivot/tools/wp_ua.py": "the one conservative fallback for the Android default",
+    "intel_engine/BinaryPivot/tools/analyze_artifact.py": "the standalone-fallback Android default and the --ua desktop opt-in",
+    "intel_engine/WebPivot/tools/whois_enrich.py": "the WHOIS client strings (RDAP and WhoisXML): owner decision",
+    "intel_engine/IntelShare/tools/sh_misp.py": "the MISP API client string (env MISP_USER_AGENT overrides it)",
+    "scripts/osint/msft_recon.py": "the Autodiscover protocol client string"
+  }
+}
