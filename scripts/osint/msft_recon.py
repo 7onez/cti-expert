@@ -31,16 +31,18 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 AUTOD = "https://autodiscover-s.outlook.com/autodiscover/autodiscover.svc"
 
 
 def _get_json(url, timeout=20):
+    r = wp_http.request(url, timeout=timeout, bounded=True)
+    if r.status is None:
+        return None, r.error.split(":", 1)[0]
+    if not r.ok:
+        return None, f"HTTP {r.status}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
+        return json.loads(r.body), None
     except Exception as e:  # noqa: BLE001
         return None, type(e).__name__
 
@@ -92,16 +94,16 @@ def tenant_domains(domain, timeout=25):
 <Request><Domain>{domain}</Domain></Request>
 </GetFederationInformationRequestMessage>
 </soap:Body></soap:Envelope>"""
-    try:
-        req = urllib.request.Request(
-            AUTOD, data=body.encode(),
-            headers={"Content-Type": "text/xml; charset=utf-8", "User-Agent": "AutodiscoverClient",
-                     "SOAPAction": '"http://schemas.microsoft.com/exchange/2010/Autodiscover/'
-                                   'Autodiscover/GetFederationInformation"'})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            xml = r.read().decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001
-        return {"error": type(e).__name__, "domains": []}
+    r = wp_http.request(
+        AUTOD, data=body.encode(), timeout=timeout, bounded=True,
+        headers={"Content-Type": "text/xml; charset=utf-8", "User-Agent": "AutodiscoverClient",
+                 "SOAPAction": '"http://schemas.microsoft.com/exchange/2010/Autodiscover/'
+                               'Autodiscover/GetFederationInformation"'})
+    if r.status is None:
+        return {"error": r.error.split(":", 1)[0], "domains": []}
+    if not r.ok:
+        return {"error": "HTTPError", "domains": []}
+    xml = r.body.decode("utf-8", "replace")
     doms = re.findall(r"<Domain>([^<]+)</Domain>", xml)
     seen, out = set(), []
     for d in doms:

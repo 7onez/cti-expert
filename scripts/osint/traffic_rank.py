@@ -33,15 +33,17 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 
 def _get(url, timeout=20):
+    r = wp_http.request(url, timeout=timeout, bounded=True)
+    if r.status is None:
+        return None, r.error.split(":", 1)[0]
+    if not r.ok:
+        return None, f"HTTP {r.status}"
     try:
-        with urllib.request.urlopen(
-                urllib.request.Request(url, headers={"User-Agent": UA}), timeout=timeout) as r:
-            return json.load(r), None
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
+        return json.loads(r.body), None
     except Exception as e:  # noqa: BLE001
         return None, type(e).__name__
 

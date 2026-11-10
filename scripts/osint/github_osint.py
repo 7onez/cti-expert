@@ -38,10 +38,11 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 
 def _h():
-    h = {"User-Agent": UA, "Accept": "application/vnd.github+json"}
+    h = {"Accept": "application/vnd.github+json"}
     tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if tok:
         h["Authorization"] = f"Bearer {tok}"
@@ -50,11 +51,13 @@ def _h():
 
 def _get(path, timeout=20):
     url = path if path.startswith("http") else API + path
+    r = wp_http.request(url, headers=_h(), timeout=timeout, bounded=True)
+    if r.status is None:
+        return None, r.error.split(":", 1)[0], {}
+    if not r.ok:
+        return None, f"HTTP {r.status}", dict(r.headers)
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=_h()), timeout=timeout) as r:
-            return json.load(r), None, dict(r.headers)
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}", dict(e.headers or {})
+        return json.loads(r.body), None, dict(r.headers)
     except Exception as e:  # noqa: BLE001
         return None, type(e).__name__, {}
 

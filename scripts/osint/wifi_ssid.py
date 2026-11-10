@@ -31,6 +31,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 API = "https://api.wigle.net/api/v2/network/search"
 
 
@@ -70,16 +71,18 @@ def main():
         return 0
 
     auth = base64.b64encode(f"{name}:{token}".encode()).decode()
-    try:
-        req = urllib.request.Request(f"{API}?{q}",
-                                     headers={"User-Agent": UA, "Authorization": f"Basic {auth}"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            d = json.load(r)
-    except urllib.error.HTTPError as e:
-        out["status"] = f"unavailable (HTTP {e.code})"
-        if e.code == 401:
+    r = wp_http.request(f"{API}?{q}", headers={"Authorization": f"Basic {auth}"},
+                        timeout=30, bounded=True)
+    if r.status is None:
+        out["status"] = f"unavailable ({r.error.split(':', 1)[0]})"
+        print(json.dumps(out)); return 0
+    if not r.ok:
+        out["status"] = f"unavailable (HTTP {r.status})"
+        if r.status == 401:
             out["hint"] = "WiGLE credentials rejected — check the name/token pair"
         print(json.dumps(out)); return 0
+    try:
+        d = json.loads(r.body)
     except Exception as e:  # noqa: BLE001
         out["status"] = f"unavailable ({type(e).__name__})"
         print(json.dumps(out)); return 0

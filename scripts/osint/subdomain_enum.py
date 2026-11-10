@@ -37,6 +37,7 @@ _WP = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_http  # noqa: E402 — the one transport
 
 # Leftmost labels that mark an operator-facing host. `kef` / `ador` are CJK back-office
 # conventions (客服 = customer service) seen across SEA/PRC scam estates.
@@ -47,13 +48,14 @@ SENSITIVE = {"admin", "adm", "administrator", "panel", "cp", "cpanel", "manage",
 
 
 def _get(url, timeout=25, as_json=True):
+    r = wp_http.request(url, headers={"Accept": "*/*"}, timeout=timeout, bounded=True)
+    if r.status is None:
+        return None, r.error.split(":", 1)[0]
+    if not r.ok:
+        return None, f"HTTP {r.status}"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8", "replace")
+        raw = r.body.decode("utf-8", "replace")
         return (json.loads(raw) if as_json else raw), None
-    except urllib.error.HTTPError as e:
-        return None, f"HTTP {e.code}"
     except Exception as e:  # noqa: BLE001
         return None, type(e).__name__
 
