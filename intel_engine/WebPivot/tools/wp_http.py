@@ -59,6 +59,7 @@ from __future__ import annotations
 import collections
 import email.utils
 import http.client
+import io
 import json
 import os
 import socket
@@ -115,6 +116,24 @@ class Response(collections.namedtuple("Response", "status headers body url error
     def text(self) -> str:
         return (self.body or b"").decode("utf-8", "replace")
 
+    @property
+    def reason(self) -> str:
+        """The standard reason phrase for the status ('Not Found'); '' when there is none."""
+        return http.client.responses.get(self.status, "") if self.status is not None else ""
+
+    @property
+    def http_error(self) -> str:
+        """What str() of urllib's HTTPError read for this status: 'HTTP Error 404: Not Found'."""
+        return "HTTP Error %d: %s" % (self.status, self.reason)
+
+    @property
+    def failure(self):
+        """None on a 2xx; otherwise the one-line reason a client reports: the transport error
+        when no answer came back, else `http_error`."""
+        if self.status is None:
+            return self.error
+        return None if self.ok else self.http_error
+
     def json(self):
         """The body parsed as JSON at ANY status (services put error detail in a JSON body), or
         None when there is no body or it is not JSON."""
@@ -122,6 +141,18 @@ class Response(collections.namedtuple("Response", "status headers body url error
             return json.loads(self.text) if self.body else None
         except ValueError:
             return None
+
+    def raise_for_status(self):
+        """For a helper whose own CONTRACT is to raise: raise what urllib raised before —
+        URLError when there was no answer; for a non-2xx status an HTTPError with the same
+        `.code` and `.headers`, a readable body (`e.read()`, `json.load(e)`) and
+        'HTTP Error 404: Not Found' as its text. Returns self on 2xx."""
+        if self.status is None:
+            raise urllib.error.URLError(self.error or "no response")
+        if not self.ok:
+            raise urllib.error.HTTPError(self.url, self.status, self.reason, self.headers,
+                                         io.BytesIO(self.body or b""))
+        return self
 
 
 def _retry_after(headers: dict):
