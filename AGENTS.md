@@ -72,8 +72,8 @@ seeds ──► collect_core.collect_many() ─► WebPivot/tools/pivot_extract.
 |---|---|
 |`SKILL.md`, `commands/*.md`|analyst workflow, registered slash commands (`scripts/register.sh` → Claude Code, `scripts/register_agents.py` → every other agent)|
 | `scripts/` | report generators (PEP 723), `redact.py`, `build_report_data.py`, `audit.sh`, installers, `backend/intel.py` dispatcher |
-| `scripts/webpivot/*.py` | **re-export shims** onto the canonical engine collectors — never edit or fork |
-| `intel_engine/WebPivot/tools/` | canonical collector: `pivot_extract.py`, `wp_*.py` vendor clients, `wp_analyze.py` (enrich_live), `whois_enrich.py`, `evidence_report.py` |
+| `scripts/webpivot/*.py` | mixed: 6 **re-export shims** onto engine collectors (never edit), 3 canonical collectors whose shim is in the engine, 8 single-layer collectors — the `STRUCTURE.md` shim table says which is which |
+| `intel_engine/WebPivot/tools/` | engine collector: `pivot_extract.py`, `wp_*.py` vendor clients, `wp_analyze.py` (enrich_live), `whois_enrich.py`, `evidence_report.py`; `cdn_ranges.py`, `graph_build.py`, `wayback_ga.py` here are shims |
 | `intel_engine/WebPivot/references/*.json` | reference DATA (thresholds, denylists, endpoint maps, key registry `api_keys.json`) |
 | `intel_engine/tools/` | pipeline `intel.py`, `case_state.py` (frontier + `propose`), `selector_types.py`, `pivot_routes.py` (`corpus-search`), `collect_core.py`, `domain_table.py`, `house_report*.py`, `case_index.py` + `case_abstract.py` (recall: prior cases → `cases/<id>/abstract.json`) |
 | `intel_engine/tools/kb/` | `knowledge_base.py` (sighting history, `cases` provenance + `forget_case`, validity windows + `as_of`), `kb_reconcile.py` (single-valued slots: supersede/dispute by authority + date), `ingest_*.py` (+ `ingest_typed.py`), `noise_filters.py`, `convergence.py`, `reference.py`, `references/rungs.json` (owner/kit/neighbour), `references/kb_memory.json` (memory-model tunables) |
@@ -131,8 +131,9 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   loaded via `load_ref(ref_path(__file__, "x.json"), _X_FALLBACK)` where `_X_FALLBACK` is the
   *conservative minimum*. Every new constant gets a parity row in `tests/test_references.py`.
   Example: `wp_net.URLSCAN_STRUCTURAL_LABELS` ← `urlscan_endpoints.json → verdict.structural_labels`.
-- **Canonical + shim (CLAUDE.md Rule 4).** Edit `intel_engine/WebPivot/tools/*`; `scripts/webpivot/*` stay
-  importlib re-exports. `audit.sh` §3 fails on a second implementation.
+- **Canonical + shim (CLAUDE.md Rule 4).** Edit whichever side the `STRUCTURE.md` shim table marks
+  canonical; the other side stays an importlib re-export. `audit.sh` §3 fails on a second
+  implementation and on a table that disagrees with the files.
 - **Tri-state, never raise.** Vendor clients return `dict | None | {"error"|"skipped": …}`; wrappers
   in `enrich_live` catch everything (`fu.result()` re-raises inside the executor). Ledger every
   metered call through `api_usage.record`.

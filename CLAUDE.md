@@ -78,8 +78,9 @@ new capability reachable only as a raw `python3 …` bash line.
 
 ## RULE 4 — Wrapper/collector drift must stay self-healing
 
-`STRUCTURE.md` is authoritative on layout. Five collectors exist in both layers; each has **one
-canonical file plus a re-export shim**. Never turn a shim back into a copy — edit the canonical.
+`STRUCTURE.md` is authoritative on layout. Nine collectors exist in both layers; each has **one
+canonical file plus a re-export shim**, and which layer holds the canonical differs per collector
+(see the table in `STRUCTURE.md`). Never turn a shim back into a copy — edit the canonical.
 
 The harness wrapper probes each collector's `--help` and filters unsupported flags
 (`_supported_flags` / `_filter_args` in `harness/tools.py`), so the two layers can diverge without

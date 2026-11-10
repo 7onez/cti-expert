@@ -72,14 +72,21 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
 
 ## Anti-drift rule — single source per collector (do NOT create a second copy)
 
-Five collectors exist in both layers historically. Each now has **one canonical file** and, where
-both import paths must keep working, a **9-line re-export shim** (Windows-safe; no symlinks). Never
-turn a shim back into a real copy — edit the canonical:
+Nine collectors exist in both layers. Each has **one canonical file** and, because both import
+paths must keep working, a **short re-export shim** (Windows-safe; no symlinks). Never turn a shim
+back into a real copy — edit the canonical. `scripts/audit.sh` §3 derives the pair list from the
+two directories and fails when this table disagrees with the files:
 
+<!-- shim-table:begin -->
 | collector | canonical (edit here) | shim (do not edit) |
 |---|---|---|
-| `pivot_extract`, `cdn_ranges`, `graph_build`, `wayback_ga` | `scripts/webpivot/` | `intel_engine/WebPivot/tools/` |
-| `whois_enrich` | `intel_engine/WebPivot/tools/` | `scripts/webpivot/` |
+| `pivot_extract`, `whois_enrich`, `wp_appdev`, `wp_github`, `wp_sellers`, `wp_subenum` | `intel_engine/WebPivot/tools/` | `scripts/webpivot/` |
+| `cdn_ranges`, `graph_build`, `wayback_ga` | `scripts/webpivot/` | `intel_engine/WebPivot/tools/` |
+<!-- shim-table:end -->
+
+Single-layer collectors — real code in `scripts/webpivot/` only, no engine twin, edit in place:
+`cert_pivot`, `crypto_balance`, `email_hygiene`, `pivot_suggest`, `rank_relations`,
+`sensitive_paths`, `wayback_fetch`, `wayback_harvest`.
 
 A shim is: `importlib.util.spec_from_file_location(__name__, <canonical>)` → exec → `sys.modules`
 swap. If you move a directory, fix the shims' relative depth.
@@ -88,8 +95,9 @@ swap. If you move a directory, fix the shims' relative depth.
 
 `scripts/backend/backend.py` resolves the backend to **SELF** — `intel_engine/` in this repo (via
 `in-repo (self-contained)`). An explicit `$INTEL_HOME` still overrides for a shared external KB.
-The pipeline (`intel_engine/tools/intel.py`) drives cti-expert's own
-`scripts/webpivot/pivot_extract.py` collector (resolved one level up from `intel_engine/`).
+The pipeline (`intel_engine/tools/intel.py`) imports `pivot_extract` through the
+`scripts/webpivot/pivot_extract.py` shim (resolved one level up from `intel_engine/`); the
+canonical collector is `intel_engine/WebPivot/tools/pivot_extract.py`.
 
 ## Re-syncing from the upstream engine
 

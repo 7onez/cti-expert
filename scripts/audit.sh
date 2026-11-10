@@ -60,31 +60,63 @@ for o, s in miss:
 sys.exit(1 if miss else 0)
 PY
 
-echo "== 3. each of the 7 collectors is ONE canonical + ONE shim (RULE 4) =="
+echo "== 3. every dual-layer collector is ONE canonical + ONE shim, and STRUCTURE.md says which (RULE 4) =="
 # Checked as a PAIR, not as a fixed list of which-side-is-the-shim: whichever layer holds the
 # canonical is an implementation detail that legitimately changes (pivot_extract's facade has to
 # sit beside the wp_* siblings it imports by bare name, so its shim is the scripts/ copy, while
-# whois_enrich's is the other way round). What must NEVER change is the invariant — exactly one
+# cdn_ranges' is the other way round). What must NEVER change is the invariant — exactly one
 # real implementation and one re-export. Two copies is the drift RULE 4 exists to stop; two shims
 # means the import chain has no implementation at all. Pinning the direction instead of the
 # invariant makes this check fail on a correct refactor and stay silent on a real regression.
-for name in pivot_extract cdn_ranges graph_build wayback_ga whois_enrich wp_github wp_subenum; do
-  a="intel_engine/WebPivot/tools/$name.py"; b="scripts/webpivot/$name.py"
-  if [ ! -f "$a" ] || [ ! -f "$b" ]; then bad "$name: expected a copy in BOTH layers"; continue; fi
-  n_shim=0; canon=""
-  for s in "$a" "$b"; do
-    if [ "$(wc -l < "$s")" -lt 25 ] && grep -q spec_from_file_location "$s"; then
-      n_shim=$((n_shim + 1))
-    else
-      canon="$s"
-    fi
-  done
-  case "$n_shim" in
-    1) note "shim ok: $name (canonical: $canon)" ;;
-    0) bad "$name: BOTH layers are copies — the shim was turned back into a duplicate" ;;
-    *) bad "$name: BOTH layers are shims — no implementation behind the re-export" ;;
-  esac
-done
+#
+# The pair list is DERIVED — every basename present in both layers — because a hand-kept list
+# went stale (it named 7 of 9). The STRUCTURE.md table between the shim-table markers is then
+# compared with what is on disk, so the document contributors are told to trust cannot drift.
+python3 - <<'PY' || fail=1
+import os, re, sys
+ENG, SCR = "intel_engine/WebPivot/tools", "scripts/webpivot"
+def stems(d):
+    return {f[:-3] for f in os.listdir(d) if f.endswith(".py")}
+def is_shim(p):
+    with open(p, encoding="utf-8") as fh:
+        src = fh.read()
+    return src.count("\n") < 25 and "spec_from_file_location" in src
+bad, canon = [], {}
+for name in sorted(stems(ENG) & stems(SCR)):
+    sides = {d: is_shim(f"{d}/{name}.py") for d in (ENG, SCR)}
+    n_shim = sum(sides.values())
+    if n_shim == 1:
+        canon[name] = next(d for d, shim in sides.items() if not shim)
+        print(f"  shim ok: {name} (canonical: {canon[name]}/{name}.py)")
+    elif n_shim == 0:
+        bad.append(f"{name}: BOTH layers are copies — the shim was turned back into a duplicate")
+    else:
+        bad.append(f"{name}: BOTH layers are shims — no implementation behind the re-export")
+doc = {}
+m = re.search(r"<!-- shim-table:begin -->(.*?)<!-- shim-table:end -->",
+              open("STRUCTURE.md", encoding="utf-8").read(), re.S)
+if not m:
+    bad.append("STRUCTURE.md: shim-table markers missing — the layout table cannot be checked")
+else:
+    for row in m.group(1).splitlines():
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if len(cells) != 3 or not cells[1].startswith("`"):
+            continue                                    # header / separator rows
+        for name in re.findall(r"`([a-z_]+)`", cells[0]):
+            doc[name] = cells[1].strip("`").rstrip("/")
+    for name in sorted(set(canon) - set(doc)):
+        bad.append(f"{name}: dual-layer collector missing from the STRUCTURE.md shim table")
+    for name in sorted(set(doc) - set(canon)):
+        bad.append(f"{name}: listed in the STRUCTURE.md shim table but is not a canonical+shim pair on disk")
+    for name in sorted(set(doc) & set(canon)):
+        if doc[name] != canon[name]:
+            bad.append(f"{name}: STRUCTURE.md says canonical is {doc[name]}/, the files say {canon[name]}/")
+    if not bad:
+        print(f"  STRUCTURE.md shim table matches the files ({len(canon)} pairs)")
+for b in bad:
+    print("  FAIL:", b)
+sys.exit(1 if bad else 0)
+PY
 
 echo "== 4. @tool count matches CLAUDE.md RULE 3 =="
 n="$(grep -cE '^@tool\(' intel_engine/harness/tools.py)"
