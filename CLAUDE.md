@@ -245,8 +245,9 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
   case into the code.
 - Ran `uv pip install`? Update `requirements.txt`.
 - **The vendored engine's own tests run wherever they exist locally** — `audit.sh` §9 runs the
-  stdlib-only ones; §10 runs the ones that import `claude_agent_sdk` and SKIPS LOUDLY when it is
-  absent. A checkout without the local-only suites (CI, a fresh clone) skips §6/§9/§10 loudly.
+  stdlib-only ones; §10 runs the ones that import `claude_agent_sdk` under the first Python that
+  has it (`$INTEL_PY`, the skill `.venv`, the engine venv, then `python3`) and SKIPS LOUDLY only
+  when none does. A checkout without the local-only suites (CI, a fresh clone) skips §6/§9/§10 loudly.
   Until 2026-08-28 `intel_engine/tests/` ran nowhere, which is how 15 `@tool`s sat outside the
   context governor for two commits while the audit stayed green. If you add an engine test, add
   it to §9 or §10 and run `bash scripts/audit.sh` locally before pushing.

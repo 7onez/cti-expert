@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # audit.sh — structural drift + leak gate for cti-expert.
 #
-# Stdlib/grep only (no claude_agent_sdk, no venv), so it runs in plain CI and locally in seconds.
+# Stdlib/grep only (no claude_agent_sdk, no venv needed), so it runs in plain CI and locally in
+# seconds. The one exception is §10: where a Python with claude_agent_sdk exists (the skill venv),
+# the SDK-dependent engine tests run under it; without one they are skipped loudly.
 # Catches the failure modes CLAUDE.md's rules exist to prevent: leaked case data (RULE 1), a
 # collector shim silently turned back into a copy (RULE 4), a DISPATCH op with no script behind it,
 # a doc count that drifted from reality (RULE 3), and a regression in the shared collector core.
@@ -361,22 +363,31 @@ fi
 
 echo "== 10. vendored-engine tests needing claude_agent_sdk =="
 # test_context_budget.py is the one that catches an @tool escaping the context governor, and
-# test_tool_gate.py guards the egress rails — both import the SDK, which the fast path does not
-# have. They are RUN when the SDK is importable and SKIPPED LOUDLY when it is not. A skip is
+# test_tool_gate.py guards the egress rails — both import the SDK, which system python3 usually
+# does not have. So this section looks for a Python that DOES have it, in the same order the MCP
+# launch shim uses ($INTEL_PY, the skill venv, the engine's WebPivot venv, then python3), and runs
+# the tests under that. They are SKIPPED LOUDLY only when no such Python exists. A skip is
 # reported, never silent: a silently-skipped guard is the same as no guard.
+sdk_py=""
+for cand in "${INTEL_PY:-}" .venv/bin/python3 .venv/bin/python \
+            intel_engine/WebPivot/.venv/bin/python3 python3; do
+  [ -n "$cand" ] || continue
+  if "$cand" -c "import claude_agent_sdk" >/dev/null 2>&1; then sdk_py="$cand"; break; fi
+done
 if [ "$has_engine_tests" = 0 ]; then
   note "SKIPPED (intel_engine/tests/ is local-only and absent from this checkout)"
-elif python3 -c "import claude_agent_sdk" >/dev/null 2>&1; then
+elif [ -n "$sdk_py" ]; then
+  note "running under $sdk_py"
   for t in intel_engine/tests/test_context_budget.py intel_engine/tests/test_tool_gate.py \
            intel_engine/tests/test_references.py intel_engine/tests/test_case_scope.py \
            intel_engine/tests/test_openai_backend.py intel_engine/tests/test_spend_rails.py \
            intel_engine/tests/test_cross_type_loop.py intel_engine/tests/test_mcp_protocol.py; do
     if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
-    if python3 "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
+    if "$sdk_py" "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
   done
 else
-  note "SKIPPED (claude_agent_sdk not importable) — 8 tests incl. the context-governor check."
-  note "  Run them with the venv: .venv/bin/python intel_engine/tests/test_context_budget.py"
+  note "SKIPPED (no Python with claude_agent_sdk found) — 8 tests incl. the context-governor check."
+  note "  Create the skill venv (scripts/install.sh) or export INTEL_PY=<python with the SDK>."
 fi
 
 echo
