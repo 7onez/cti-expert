@@ -44,6 +44,8 @@ def _group(node, default):
         return {k: v for k, v in node.items() if not k.startswith("_")}
     if isinstance(node, list):
         return list(node)
+    if isinstance(node, (str, int, float, bool)) and not isinstance(default, (list, dict)):
+        return node                            # a bare scalar setting
     return copy.deepcopy(default)
 
 

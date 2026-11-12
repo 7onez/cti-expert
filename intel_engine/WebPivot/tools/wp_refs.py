@@ -20,7 +20,9 @@ Every other key is a GROUP, in one of three shapes:
     "group": {"_comment": "...", "entries": { ... }}       -> loaded as a dict (order preserved)
     "group": {"_comment": "...", "min": 7, "max": 15}      -> loaded as a dict of scalars
 
-A bare list or object is accepted too, so an older file without the wrapper still loads.
+A bare list or object is accepted too, so an older file without the wrapper still loads. A bare
+string / number / boolean is a scalar setting and loads as itself — unless the fallback for that
+group is a list or object, in which case the value is malformed and the fallback is kept.
 
 FAILURE MODE — NEVER SILENT
 ---------------------------
@@ -71,6 +73,8 @@ def _group(node, default):
         return {k: v for k, v in node.items() if not k.startswith("_")}
     if isinstance(node, list):
         return list(node)
+    if isinstance(node, (str, int, float, bool)) and not isinstance(default, (list, dict)):
+        return node                            # a bare scalar setting
     return copy.deepcopy(default)
 
 
