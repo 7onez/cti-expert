@@ -1,5 +1,5 @@
 {
-  "_comment": "Hostnames of the VENDOR / index APIs the skill queries (never the investigated target). The egress pool exists to keep the analyst's IP away from the TARGET; a vendor API sees only a licensed key. When every exit in the pool refuses the CONNECT tunnel to one of these hosts (a per-destination block at the proxy provider — observed: every exit answers 'Tunnel connection failed: 500' for fofa.info while serving every other host), the FailoverOpener falls back to a DIRECT request for that host only, and the refusal is not charged against the exits' health (it is not the exit that is broken). Targets are never given this fallback: for them CTI_PROXY_ALLOW_DIRECT governs, and its default is off. Add a host here only if it is an API you hold credentials for. Archive/Wayback hosts are deliberately EXCLUDED: fetching an archived page reveals the analyst IP and the target URL to archive.org, which is what the pool protects on a hostile case — those never take the direct fallback.",
+  "_comment": "Hostnames of the VENDOR / index APIs the skill queries (never the investigated target). The egress pool exists to keep the analyst's IP away from the TARGET; a vendor API sees only a licensed key. When every exit in the pool refuses the CONNECT tunnel to one of these hosts (a per-destination block at the proxy provider — observed: every exit answers 'Tunnel connection failed: 500' for fofa.info while serving every other host), the FailoverOpener falls back to a DIRECT request for that host only, and the refusal is not charged against the exits' health (it is not the exit that is broken). Targets are never given this fallback: for them CTI_PROXY_ALLOW_DIRECT governs, and its default is off. Add a host here only if it is an API you hold credentials for, or a keyless public lookup API the owner has explicitly accepted (the last block below, owner decision 2026-11-12): on the direct fallback such a service sees the analyst's IP together with the domain or indicator being looked up. Archive/Wayback hosts are deliberately EXCLUDED: fetching an archived page reveals the analyst IP and the target URL to archive.org, which is what the pool protects on a hostile case — those never take the direct fallback.",
   "direct_fallback_hosts": [
     "fofa.info",
     "en.fofa.info",
@@ -41,6 +41,22 @@
     "avoindata.prh.fi",
     "www.sec.gov",
     "data.sec.gov",
-    "efts.sec.gov"
+    "efts.sec.gov",
+    "urlhaus-api.abuse.ch",
+    "mb-api.abuse.ch",
+    "threatfox-api.abuse.ch",
+    "api.hudsonrock.com",
+    "zonecruncher.com",
+    "api.spamhaus.org",
+    "api.osint.industries",
+    "api.abuseipdb.com",
+    "api.wigle.net",
+    "cve.circl.lu",
+    "services.nvd.nist.gov",
+    "tranco-list.eu",
+    "api.ransomware.live",
+    "login.microsoftonline.com",
+    "autodiscover-s.outlook.com",
+    "api.vvhan.com"
   ]
 }
