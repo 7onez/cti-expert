@@ -185,10 +185,11 @@
       "round_cap": 2
     },
     "telegram.resolve": {
-      "_comment": "IDENTITY (free, read-only): resolve a @handle / t.me link with the analyst's Telethon research session (wp_telegram mode resolve). Offered only when Telethon + a session exist (offline check, no network). Rows: the account's other usernames (telegram.account, kit) and its numeric id (telegram.account_id, fact-only). round_cap bounds flood-limit exposure per round.",
+      "_comment": "IDENTITY (free, read-only, confirm-gated): resolve a @handle / t.me link with the analyst's Telethon research session (wp_telegram mode resolve). Offered only when Telethon + a session exist (offline check, no network). Rows: the account's other usernames (telegram.account, kit) and its numeric id (telegram.account_id, fact-only) whose evidence carries the creation date (created_estimate from the id for a user/bot, created = Telegram's date for a channel). round_cap bounds flood-limit exposure per round. GATED (analyst confirm): approval: always puts every pending handle in the round's proposal so the analyst confirms them as ONE batch (case_approve / harness approve); pivot_routes runs the resolve only for an approved, unused item for this exact query.",
       "types": ["telegram"],
       "metered": false,
       "count_probe": "single",
+      "approval": "always",
       "round_cap": 10
     },
     "telegram.phone": {

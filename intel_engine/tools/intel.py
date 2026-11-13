@@ -506,14 +506,14 @@ def cmd_open(a):
 
 
 def _run_enrichment(case, free_only=False, passive=False, defer_metered=False,
-                    reopen_legacy=False, leak_only=False):
+                    reopen_legacy=False, leak_only=False, approve=()):
     _load_env()   # CLI/MCP enrich path never enters cmd_open/cmd_loop; without this the root
                   # .env keys (the /apikeys setup) are invisible and every keyed lead reads unavailable
     os.environ["INTEL_CASE"] = case   # (#23) standalone `enrich <case>` never calls _export_run_env
     import enrichment_run
     enrichment_run.run_case(case, free_only=free_only, passive=passive,
                             defer_metered=defer_metered, reopen_legacy=reopen_legacy,
-                            leak_only=leak_only)
+                            leak_only=leak_only, approve=approve)
 
 def _enrichment_rows(case_dir):
     """Read the runner's case-local evidence index; never re-query a provider."""
@@ -2222,10 +2222,14 @@ def main():
     e.add_argument("--leak-only", action="store_true",
                    help="run only the leak/stealer fan-out on confirmed selectors "
                         "(the harness's round-1 step); writes enrichment/leak_coverage.json")
+    e.add_argument("--approve", action="append", choices=("telegram",), default=[],
+                   help="run the held leads of this approval class — only after the analyst "
+                        "confirmed the listed batch (telegram = @handle → id + creation date "
+                        "on the research account)")
     e.set_defaults(func=lambda a: _run_enrichment(a.case, free_only=a.free_only,
                                                   passive=a.passive,
                                                   reopen_legacy=a.reopen_legacy,
-                                                  leak_only=a.leak_only))
+                                                  leak_only=a.leak_only, approve=a.approve))
 
 
     lp = sub.add_parser("loop", help="resumable convergence feedback loop (collect→assess→chase gaps)")

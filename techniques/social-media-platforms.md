@@ -531,8 +531,8 @@ Phone (OUTBOUND, confirm two-step):
   python3 wp_telegram.py phone +447700900000 --confirm-import  # import → read → DeleteContacts (finally)
 
 Public entity (no import, no confirm):
-  python3 wp_telegram.py resolve @example_channel
-  python3 wp_telegram.py resolve https://t.me/+AbCdEfGhIjKl   # invite PREVIEW; never joins
+  python3 wp_telegram.py resolve @example_channel --confirm   # without --confirm: briefing only
+  python3 wp_telegram.py resolve https://t.me/+AbCdEfGhIjKl --confirm   # invite PREVIEW; never joins
 ```
 
 What a hit returns: numeric user id (persistent across username changes — the identifier to

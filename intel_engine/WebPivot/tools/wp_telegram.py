@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """wp_telegram — phone number / username / link → Telegram account LEAD (MTProto via Telethon).
 
-Four subcommands, all run from the ANALYST's research account:
+Five subcommands, all run from the ANALYST's research account (except `age` on a numeric id):
 
   login     Interactive, in the analyst's own terminal. Default: Telethon's login flow prompts for
             the research account's phone, the login code and any 2FA password. `--qr`: scan a
@@ -17,7 +17,13 @@ Four subcommands, all run from the ANALYST's research account:
             OUTBOUND + attributable: without --confirm-import it returns a BRIEFING and sends nothing.
             FloodWait stops the run and returns the partial result.
   resolve   @username | t.me link | t.me/+invite | -100<id> → public entity metadata (users,
-            channels, supergroups, invite previews) without importing anything; no --confirm-import.
+            channels, supergroups, invite previews) without importing anything. OUTBOUND from the
+            research account: without --confirm it returns a BRIEFING and sends nothing.
+  age       @username | t.me link | numeric user id → user id + ESTIMATED account creation date.
+            A numeric id is dated offline (no Telegram call, no session, no confirm); a
+            @username/link is resolved first — briefing only until --confirm. Channels/groups
+            report Telegram's own `date` instead. Every user/bot row from `resolve` and `phone`
+            also carries `created_estimate`.
 
 Attribution rail (SKILL.md RULE 5): every row is `rung: "lead"` with a `caveat`. A phone→account
 match proves the number is registered to that Telegram account — not who the person is; names,
@@ -49,11 +55,15 @@ CLI:
   python3 wp_telegram.py status [--sessions]
   python3 wp_telegram.py phone +447700900000                 # briefing only, nothing sent
   python3 wp_telegram.py phone +447700900000 --confirm-import [--save-photo DIR] [--case CASE-0001]
-  python3 wp_telegram.py resolve @example_channel
-  python3 wp_telegram.py resolve https://t.me/+AbCdEfGhIjKl
+  python3 wp_telegram.py resolve @example_channel            # briefing only, nothing sent
+  python3 wp_telegram.py resolve @example_channel --confirm
+  python3 wp_telegram.py resolve https://t.me/+AbCdEfGhIjKl --confirm
+  python3 wp_telegram.py age 7000000001                       # offline, no confirm needed
+  python3 wp_telegram.py age @example_user t.me/example_user --confirm [--case CASE-0001]
 """
 import argparse
 import asyncio
+import bisect
 import datetime
 import getpass
 import hashlib
@@ -84,7 +94,9 @@ _FALLBACK = {
                  "max_phones_per_run": 5, "import_delay_seconds": 5, "flood_sleep_threshold": 0,
                  "connect_timeout_seconds": 20, "photo_max_bytes": 5242880,
                  "default_profile": "desktop", "desktop_system": "windows",
-                 "qr_wait_seconds": 120, "qr_max_recreate": 10, "qr_png_prefix": "cti-tgqr-"},
+                 "qr_wait_seconds": 120, "qr_max_recreate": 10, "qr_png_prefix": "cti-tgqr-",
+                 "max_resolve_per_run": 5, "age_neighbours": 12, "age_error_percentile": 0.8,
+                 "age_tail_fit_days": 365, "age_confidence_days": {"high": 30, "medium": 90}},
     "profiles": {"desktop": "TelegramDesktop", "android": "TelegramAndroid", "ios": "TelegramIOS"},
     "stealer_log_markers": ["Passwords.txt", "All Passwords.txt", "Autofills", "Cookies", "Wallets",
                             "System.txt", "UserInformation.txt", "Information.txt", "Browsers"],
@@ -99,11 +111,21 @@ _FALLBACK = {
                          "account, not who the person is.",
                 "not_found": "No account returned; privacy settings can hide a registered number.",
                 "resolve": "LEAD only: public entity metadata.",
-                "names": "Names, usernames, bios and photos are self-set."},
+                "names": "Names, usernames, bios and photos are self-set.",
+                "age": "ESTIMATE from public user-id → creation-date anchors; Telegram never "
+                       "publishes a registration date. Read the range, not the day."},
     "briefing": ["Sends contacts.ImportContacts for {n} number(s) from {account}; re-run with "
                  "--confirm-import to send."],
+    "resolve_briefing": ["Sends one username/link resolve per target ({n}: {targets}) from the "
+                         "research account {account}; re-run with --confirm to send."],
     "setup": ["pip install telethon (or opentele2); set TELEGRAM_API_ID / TELEGRAM_API_HASH unless "
               "using opentele2; run wp_telegram.py login [--qr] in your terminal."],
+    # conservative minimum: a coarse curve whose error band is wide — the reference file carries
+    # the full anchor set (references/telegram.json → id_date_anchors)
+    "id_date_anchors": [[0, "2013-08-14"], [101260938, "2015-03-06"], [352940995, "2017-02-24"],
+                        [1974255900, "2021-10-12"], [5070164216, "2022-01-19"],
+                        [6271031786, "2023-02-12"], [7224009547, "2024-08-02"],
+                        [8559682245, "2025-11-11"]],
 }
 REF = load_ref(ref_path(__file__, "telegram.json"), _FALLBACK)
 SET = REF["settings"]
@@ -480,7 +502,9 @@ def _user_row(user):
             "restriction_reason": _restrictions(user),
             "lang_code": getattr(user, "lang_code", None),
             "status": _status(user),
-            "has_photo": getattr(user, "photo", None) is not None}
+            "has_photo": getattr(user, "photo", None) is not None,
+            "created_estimate": (estimate_creation(user.id) if getattr(user, "id", None) is not None
+                                 else None)}
 
 
 async def _photo(client, ent, save_dir):
@@ -517,6 +541,136 @@ def _flood(tl, exc):
     if pf is not None and isinstance(exc, pf):
         return {"error": "PeerFlood", "seconds": None}
     return None
+
+
+# --------------------------------------------------------------------------- creation estimate
+# Telegram never publishes when an account was registered, but user ids come from one growing
+# counter, so a curve through public (id, known creation date) anchors dates any user id. Offline,
+# deterministic, no session: this is the only Telegram fact here that needs no research account.
+_DAY = 86400.0
+_CURVE = None
+
+
+def _anchor_ts(d):
+    return datetime.datetime.strptime(str(d)[:10], "%Y-%m-%d").replace(
+        tzinfo=datetime.timezone.utc).timestamp()
+
+
+def _day(ts):
+    return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
+
+
+def _isotonic(points):
+    """Non-decreasing fit of time over id (pool adjacent violators); each pooled block becomes one
+    knot at its mean (id, time). Ids since 2022 come from parallel ranges, so raw anchor-to-anchor
+    interpolation zig-zags back in time; the pooled curve never does."""
+    blocks = []
+    for uid, t in points:
+        blocks.append([uid, t, 1])
+        while len(blocks) > 1 and blocks[-2][1] * blocks[-1][2] > blocks[-1][1] * blocks[-2][2]:
+            sid, st, n = blocks.pop()
+            blocks[-1][0] += sid
+            blocks[-1][1] += st
+            blocks[-1][2] += n
+    return [(b[0] / b[2], b[1] / b[2]) for b in blocks]
+
+
+def _tail_slope(knots, days):
+    """Seconds per id over the last `days` of the fitted curve (extrapolation past the newest
+    anchor); None when the curve has no usable tail."""
+    if len(knots) < 2:
+        return None
+    x2, y2 = knots[-1]
+    for x1, y1 in knots:
+        if y2 - y1 <= days * _DAY and x2 > x1 and y2 > y1:
+            return (y2 - y1) / (x2 - x1)
+    x1, y1 = knots[-2]
+    return (y2 - y1) / (x2 - x1) if x2 > x1 and y2 > y1 else None
+
+
+def _fit_at(knots, xs, uid, slope):
+    j = bisect.bisect_right(xs, uid)
+    if j == 0:
+        return knots[0][1]
+    if j >= len(knots):
+        return knots[-1][1] + (uid - knots[-1][0]) * (slope or 0.0)
+    (x1, y1), (x2, y2) = knots[j - 1], knots[j]
+    return y1 + (y2 - y1) * (uid - x1) / (x2 - x1)
+
+
+def _build_curve(anchors, tail_days):
+    pts = []
+    for a in anchors or []:
+        try:
+            pts.append((int(a[0]), _anchor_ts(a[1])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    pts.sort()
+    if len(pts) < 3:
+        return None
+    knots = _isotonic(pts)
+    xs = [k[0] for k in knots]
+    slope = _tail_slope(knots, tail_days)
+    # leave-one-out error of every anchor: how far a KNOWN account would land had it not been in
+    # the data — the honest per-range error (in-sample residuals understate it)
+    loo = []
+    for i, (uid, t) in enumerate(pts):
+        k = _isotonic(pts[:i] + pts[i + 1:])
+        loo.append(abs(_fit_at(k, [p[0] for p in k], uid, _tail_slope(k, tail_days)) - t) / _DAY)
+    return {"points": pts, "knots": knots, "xs": xs, "slope": slope, "loo": loo,
+            "max_id": pts[-1][0], "newest": max(t for _, t in pts), "oldest": min(t for _, t in pts)}
+
+
+def _curve():
+    global _CURVE
+    if _CURVE is None:
+        _CURVE = _build_curve(REF.get("id_date_anchors"), float(SET.get("age_tail_fit_days", 365))) or {}
+    return _CURVE or None
+
+
+def _age_text(created, now):
+    a = datetime.datetime.fromtimestamp(created, datetime.timezone.utc)
+    b = datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
+    months = max(0, (b.year - a.year) * 12 + b.month - a.month - (b.day < a.day))
+    return f"{months // 12}y {months % 12}m"
+
+
+def estimate_creation(user_id, now=None):
+    """User/bot id → estimated creation date, error band and age. Never raises; a non-user id
+    (≤ 0, i.e. a chat or -100… channel) returns {"error": …}."""
+    try:
+        uid = int(str(user_id).strip())
+    except (TypeError, ValueError):
+        return {"error": "not a numeric Telegram user id"}
+    if uid <= 0:
+        return {"error": "negative / -100… ids are groups or channels: they use a separate counter "
+                         "and are dated by `resolve` (entity.date), not by this curve"}
+    c = _curve()
+    if not c:
+        return {"error": "no usable id_date_anchors in references/telegram.json"}
+    now = float(now if now is not None else time.time())
+    t = min(_fit_at(c["knots"], c["xs"], uid, c["slope"]), now)
+    k = max(3, int(SET.get("age_neighbours", 12)))
+    near = sorted(range(len(c["points"])), key=lambda i: abs(c["points"][i][0] - uid))[:k]
+    errs = sorted(c["loo"][i] for i in near)
+    pct = min(1.0, max(0.0, float(SET.get("age_error_percentile", 0.8))))
+    err = errs[round(pct * (len(errs) - 1))]
+    extrapolated = uid > c["max_id"]
+    lo, hi = max(t - err * _DAY, c["oldest"]), min(t + err * _DAY, now)
+    if extrapolated:
+        hi = now                      # past the newest anchor the curve only bounds from below
+    conf_days = SET.get("age_confidence_days") or {}
+    conf = ("low" if extrapolated else "high" if err <= float(conf_days.get("high", 30))
+            else "medium" if err <= float(conf_days.get("medium", 90)) else "low")
+    est = _day(t)
+    return {"user_id": uid, "estimate": est, "month": est[:7],
+            "range": {"from": _day(lo), "to": _day(hi)}, "error_days": int(round(err)),
+            "age": _age_text(t, now), "age_days": int((now - t) // _DAY),
+            "confidence": conf, "extrapolated": extrapolated,
+            "method": (f"isotonic id→date curve over {len(c['points'])} public anchors (newest "
+                       f"{_day(c['newest'])}); error = p{int(pct * 100)} leave-one-out error of "
+                       f"the {len(near)} id-nearest anchors"),
+            "caveat": CAV.get("age", "")}
 
 
 # --------------------------------------------------------------------------- phone
@@ -754,6 +908,8 @@ async def _resolve_async(make_client, tl, target, save_dir=None):
             if kind in ("peer_id", "private_channel") and not fl:
                 row["hint"] = ("a bare numeric id resolves only if the research account has already "
                                "seen that entity; resolve its @username or link instead")
+                if kind == "peer_id" and not val.startswith("-"):
+                    row["created_estimate"] = estimate_creation(val)
         return row
     finally:
         try:
@@ -762,11 +918,29 @@ async def _resolve_async(make_client, tl, target, save_dir=None):
             pass
 
 
-def resolve(target, save_photo=None, _client_override=None, _tl_override=None):
+def resolve_briefing(targets, mode="resolve"):
+    """What a resolve would send, from which account — offline, nothing is contacted."""
+    sess = session_path()
+    acct = _account_label(_read_meta(sess))
+    fill = {"n": len(targets), "targets": ", ".join(targets), "account": acct, "session": sess}
+    lines = []
+    for t in REF["resolve_briefing"]:
+        try:
+            lines.append(t.format(**fill))
+        except (KeyError, IndexError, ValueError):
+            lines.append(t)
+    return {"tool": TOOL, "mode": mode, "confirm_required": True, "sent": False,
+            "targets": list(targets), "research_account": acct, "session": sess,
+            "session_present": os.path.isfile(sess), "briefing": lines}
+
+
+def resolve(target, save_photo=None, confirm=False, _client_override=None, _tl_override=None):
     if save_photo:
         bad = _unsafe_repo_path(save_photo)
         if bad:
             return {"tool": TOOL, "mode": "resolve", "error": bad}
+    if not confirm:
+        return resolve_briefing([target])
     if _client_override is not None:
         tl, make = _tl_override, (lambda: _client_override)
     else:
@@ -783,6 +957,97 @@ def resolve(target, save_photo=None, _client_override=None, _tl_override=None):
         return _skip(row["skipped"], mode="resolve")
     return {"tool": TOOL, "mode": "resolve", "rung": "lead", "caveat": _caveat("resolve"),
             "generated": _now(), "results": [row]}
+
+
+# --------------------------------------------------------------------------- age
+def _age_summary(row):
+    who = row.get("target")
+    if row.get("skipped"):
+        return f"{who}: not resolved ({row['skipped']})"
+    idp = f" → id {row['id']}" if row.get("id") is not None and row.get("kind") != "user_id" else ""
+    est = row.get("created_estimate") or {}
+    if est.get("estimate"):
+        return (f"{who}{idp}: created ≈ {est['month']} ({est['range']['from']} … "
+                f"{est['range']['to']}, ±{est['error_days']} d, {est['confidence']} confidence"
+                f"{', extrapolated' if est.get('extrapolated') else ''}); age {est['age']}")
+    if (row.get("created") or {}).get("date"):
+        return f"{who}{idp}: {row.get('type')} dated {row['created']['date']} by Telegram"
+    return f"{who}{idp}: {row.get('error') or est.get('error') or 'no date available'}"
+
+
+def _age_row(target, kind, res):
+    """One `age` row from a resolve() payload: the id plus the creation date — estimated from the
+    id for a user/bot, Telegram's own `date` for a channel/group."""
+    row = {"target": target, "kind": kind, "rung": "lead"}
+    if res.get("skipped") or res.get("error"):
+        row.update({k: res[k] for k in ("skipped", "error") if res.get(k)})
+        row["summary"] = _age_summary(row)
+        return row
+    r = (res.get("results") or [{}])[0]
+    row.update({k: r[k] for k in ("error", "seconds", "hint", "created_estimate") if r.get(k) is not None})
+    ent = r.get("entity") or {}
+    if ent:
+        name = " ".join(x for x in (ent.get("first_name"), ent.get("last_name")) if x)
+        row.update(source="resolve (research account)", type=ent.get("type"), id=ent.get("id"),
+                   usernames=[u.get("username") for u in ent.get("usernames") or []
+                              if isinstance(u, dict) and u.get("username")],
+                   name=name or ent.get("title"))
+        if ent.get("peer_id") is not None:
+            row["peer_id"] = ent["peer_id"]
+        if ent.get("type") in ("user", "bot") and ent.get("id") is not None:
+            row["created_estimate"] = ent.get("created_estimate") or estimate_creation(ent["id"])
+        elif ent.get("date"):
+            row["created"] = {"date": ent["date"], "source": "telegram", "note": ent.get("date_note")}
+    row["summary"] = _age_summary(row)
+    return row
+
+
+def age(targets, confirm=False, _client_override=None, _tl_override=None):
+    """@username / t.me link / numeric user id → id + creation date. A positive numeric id is dated
+    offline; anything else is resolved first (one ResolveUsername each, capped per call) and only
+    with `confirm` — without it those targets get a briefing and nothing is sent."""
+    targets = [str(t).strip() for t in targets or [] if t and str(t).strip()]
+    kinds = [classify_target(t) for t in targets]
+    online = sum(1 for k, v in kinds if k is not None and not (k == "peer_id" and not v.startswith("-")))
+    cap = int(SET.get("max_resolve_per_run", 10))
+    if online > cap:
+        return {"tool": TOOL, "mode": "age",
+                "error": f"{online} targets need a Telegram resolve; at most {cap} per call "
+                         f"(settings.max_resolve_per_run) — split the batch"}
+    results = []
+    for t, (kind, val) in zip(targets, kinds):
+        if kind == "peer_id" and not val.startswith("-"):
+            row = {"target": t, "kind": "user_id", "rung": "lead", "id": int(val),
+                   "source": "offline (id → date curve; no Telegram call)",
+                   "created_estimate": estimate_creation(val)}
+            row["summary"] = _age_summary(row)
+        elif kind is None:
+            row = {"target": t, "kind": None, "rung": "lead",
+                   "error": "not a recognisable @username, t.me link, invite link or numeric id"}
+            row["summary"] = _age_summary(row)
+        elif not confirm:
+            row = {"target": t, "kind": kind, "rung": "lead", "awaiting_confirm": True,
+                   "summary": f"{t}: not sent — resolving it runs on the research account; "
+                              f"re-run with --confirm after the analyst approves"}
+        else:
+            row = _age_row(t, kind, resolve(t, confirm=True, _client_override=_client_override,
+                                            _tl_override=_tl_override))
+        results.append(row)
+    out = {"tool": TOOL, "mode": "age", "rung": "lead",
+           "caveat": f"{_caveat('resolve')} {CAV.get('age', '')}".strip(),
+           "generated": _now(), "results": results}
+    pending = [r["target"] for r in results if r.get("awaiting_confirm")]
+    if pending:
+        out.update({k: v for k, v in resolve_briefing(pending, mode="age").items()
+                    if k in ("confirm_required", "sent", "research_account", "session",
+                             "session_present", "briefing")})
+    skipped = [r for r in results if r.get("skipped")]
+    if skipped:
+        out["setup"] = list(REF["setup"])
+        if len(skipped) == len(results):
+            out["skipped"] = skipped[0]["skipped"]
+    return out
+
 
 
 # --------------------------------------------------------------------------- status / login
@@ -1192,8 +1457,14 @@ def main(argv=None):
     p.add_argument("--case")
     r = sub.add_parser("resolve", help="@username | t.me link | invite | -100id → public metadata")
     r.add_argument("target")
+    r.add_argument("--confirm", action="store_true", help="actually send the resolve (else: briefing)")
     r.add_argument("--save-photo", metavar="DIR")
     r.add_argument("--case")
+    ag = sub.add_parser("age", help="@username | t.me link | user id → id + estimated creation date")
+    ag.add_argument("targets", nargs="+")
+    ag.add_argument("--confirm", action="store_true",
+                    help="actually resolve @usernames/links (else: briefing; numeric ids are offline)")
+    ag.add_argument("--case")
     a = ap.parse_args(argv)
     if a.cmd == "login":
         out = login(qr=a.qr, profile=a.profile, tdata=a.tdata, own_account=a.own_account,
@@ -1203,8 +1474,10 @@ def main(argv=None):
         out = status(sessions=a.sessions)
     elif a.cmd == "phone":
         out = phone_lookup(a.phones, confirm=a.confirm_import, save_photo=a.save_photo)
+    elif a.cmd == "age":
+        out = age(a.targets, confirm=a.confirm)
     else:
-        out = resolve(a.target, save_photo=a.save_photo)
+        out = resolve(a.target, save_photo=a.save_photo, confirm=a.confirm)
     if getattr(a, "case", None) and out.get("results"):
         saved = _save_case(a.case, out)
         if saved:

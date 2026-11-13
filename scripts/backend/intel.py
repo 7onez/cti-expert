@@ -208,7 +208,7 @@ DISPATCH = {
                                                                # block + sources checked (zero hits kept)
     "corp":          ("WebPivot/tools/wp_corp.py",       []),  # global company/officer registries (leads)
     "google-account":("WebPivot/tools/wp_google.py",     []),  # GHunt wrapper: Gmail/Gaia → Google-account leads
-    "telegram":      ("WebPivot/tools/wp_telegram.py",   []),  # phone (confirm-gated) / @user → Telegram account
+    "telegram":      ("WebPivot/tools/wp_telegram.py",   []),  # phone (confirm-gated) / @user → account / age (id + creation date)
     "reverse-image": ("WebPivot/tools/wp_revimg.py",     []),  # fingerprint + engine links + Yandex sites (leads)
     # Aliases surfaced by a recount: these commands only ever appear WITH arguments in
     # SKILL.md, so the old bare-backtick regex never saw them and they were never triaged.
@@ -385,7 +385,7 @@ BLURB = {
     "report-sections": "a case's merged analyst report block (KQ/OQ, roles, timeline, ATT&CK, scenarios, P1-P3, counting rules) or its sources-checked rows, zero hits kept",
     "corp": "global company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, FR/NO/FI registries, SEC; VN → vn-corp) — officers are homonym candidates unless corroborated",
     "google-account": "e-mail / Gaia ID → Google-account leads via an existing GHunt login (profile, Maps contributions, services); --dry-run checks setup",
-    "telegram": "Telegram: `phone <E164> [--confirm-import]` (contact import on the research account, briefing first) · `resolve <@user|t.me link>` · `status` · `login` (interactive)",
+    "telegram": "Telegram: `phone <E164> [--confirm-import]` (contact import on the research account, briefing first) · `resolve <@user|t.me link> [--confirm]` · `age <@user|t.me link|user id> … [--confirm]` (id + estimated creation date; briefing until --confirm, numeric ids offline) · `status` · `login` (interactive)",
     "reverse-image": "image URL / local file → sha256 + aHash/dHash + EXIF, Yandex/Bing/Lens/TinEye links, Yandex 'sites containing this image'; local upload needs --confirm-upload; hits are leads",
     "ransomware-check": "reputation check incl. ransomware victim records (= scam-check)",
     "techstack": "CMS/framework/version fingerprint (pivot_extract's tech layer)",

@@ -1353,6 +1353,14 @@ def _enrichment_leads_from_raw(obj, leads):
                         "key": f"cld-telegram:{handle}", "cost": "free",
                         "run": [{"op": "cld", "argv": ["route", f"t.me/{handle}"]}],
                         "why": f"Shield Telegram posts for handle {handle} — not a domain lookup"}
+                    leads[("tg-age", handle)] = {
+                        "tool": "intel.py telegram age", "value": f"@{handle}",
+                        "key": f"tg-age:{handle}", "cost": "free", "approval": "telegram",
+                        "run": [{"op": "telegram", "argv": ["age", f"@{handle}", "--confirm"]}],
+                        "why": (f"@{handle} → numeric Telegram id + creation date (estimated from "
+                                f"the id for a user/bot, Telegram's own date for a channel/group); "
+                                f"read-only resolve on the research account, no contact import — "
+                                f"held until the analyst approves the batch (enrich --approve telegram)")}
             elif kind in ("username", "dev_username") and piv.get("confidence") == "high":
                 handle = val.lower()
                 leads[("cld-actor", handle)] = {

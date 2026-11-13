@@ -40,8 +40,8 @@
         "flag_required": ["\"start\": true"]
       },
       "telegram_lookup": {
-        "why": "mode=phone imports the number as a contact on the analyst's Telegram research account (contacts.ImportContacts, then DeleteContacts). The owner is not notified, but the import is logged against the research account, counts toward its per-day import limit, and a burst gets the account flood-limited or banned. If the owner ever saves the research account's number the two see each other as contacts.",
-        "before": "Confirm the analyst approved THIS lookup, that the session is the research account (never a personal one), and that the batch is small. resolve/status are not gated.",
+        "why": "mode=phone imports the number as a contact on the analyst's Telegram research account (contacts.ImportContacts, then DeleteContacts). The owner is not notified, but the import is logged against the research account, counts toward its per-day import limit, and a burst gets the account flood-limited or banned. If the owner ever saves the research account's number the two see each other as contacts. mode=resolve / mode=age with confirm=true resolve @usernames / links from the same research account (ResolveUsername + full profile + photo): read-only and unseen by the target, but logged and rate-limited against the account.",
+        "before": "Confirm the analyst approved THIS lookup (show the briefing the confirm=false call returned), that the session is the research account (never a personal one), and that the batch is small. status and offline numeric-id dating are not gated.",
         "flag_required": ["\"confirm\": true", "\"confirm\": \"true\""]
       },
       "reverse_image": {

@@ -1060,15 +1060,25 @@ def _telegram_rows(entity, route, source_q, cls):
                              evidence={"query": source_q, "type": entity.get("type"),
                                        "active": u.get("active") if isinstance(u, dict) else None}))
     if entity.get("id") is not None:
-        rows.append(_row("string", f"tg:{entity['id']}", "telegram.account_id", route,
-                         evidence={"query": source_q, "type": entity.get("type"),
-                                   "title": entity.get("title")}))
+        ev = {"query": source_q, "type": entity.get("type"), "title": entity.get("title")}
+        est = entity.get("created_estimate") or {}
+        if est.get("estimate"):                 # user/bot: estimated from the id (a range)
+            ev["created_estimate"] = {k: est.get(k) for k in ("estimate", "range", "error_days",
+                                                              "confidence", "extrapolated", "age")}
+        elif entity.get("date"):                # channel/group: Telegram's own date field
+            ev["created"] = entity["date"]
+        rows.append(_row("string", f"tg:{entity['id']}", "telegram.account_id", route, evidence=ev))
     return rows
 
 
-def _run_telegram_resolve(query):
+def _run_telegram_resolve(query, *, case=""):
     import wp_telegram as WT
-    res = WT.resolve(query)
+    if not _consume_approval(case, "telegram.resolve", query):
+        # resolves on the analyst's research account → only as an APPROVED proposal item; the
+        # per-round proposal lists every pending handle so the analyst confirms them as one batch
+        return {"skipped": "telegram.resolve runs on the research account only as an APPROVED "
+                           "proposal item (case_approve) — nothing was sent"}
+    res = WT.resolve(query, confirm=True)   # the approved proposal item IS the confirm
     if not isinstance(res, dict):
         return {"error": "empty result"}
     if res.get("skipped") or res.get("error"):
@@ -1286,7 +1296,7 @@ def run(route: str, query: str, *, case="", free_only: bool = False, hostile: bo
         if r in ("corp.registry", "corp.opencorporates"):
             return _run_corp(r, q, case=case, free_only=free_only)
         if r == "telegram.resolve":
-            return _run_telegram_resolve(q)
+            return _run_telegram_resolve(q, case=case)
         if r == "telegram.phone":
             return _run_telegram_phone(q, case=case)
         if r == "google.account":

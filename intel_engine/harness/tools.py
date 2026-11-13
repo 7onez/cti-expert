@@ -885,9 +885,18 @@ async def reverse_image(args: dict[str, Any]) -> dict[str, Any]:
     "call with confirm=false to get the BRIEFING (what is sent, from which account; the owner is "
     "not notified but the import is logged on the research account; per-account rate limits), show "
     "it, and only call with confirm=true after explicit approval. FloodWait stops the run with a "
-    "partial result — do not retry in a loop. mode='resolve': @username / t.me link / invite link "
+    "partial result — do not retry in a loop. mode='resolve' and mode='age' on a @username / link "
+    "are OUTBOUND from the research account too: **ASK THE USER FIRST** — call with confirm=false to "
+    "get the BRIEFING (which lookups, from which account), show it, and only call with confirm=true "
+    "after explicit approval; a numeric user id in mode='age' is dated offline and needs no confirm. "
+    "mode='resolve': @username / t.me link / invite link "
     "/ -100id → public metadata (id, title, usernames incl. collectible, participants, flags, "
-    "restriction reasons, about); no import, no confirm; invites are previewed, never joined. "
+    "restriction reasons, about); no import; invites are previewed, never joined. "
+    "mode='age': @username / t.me link / numeric user id (several, comma/space-separated, ≤ 10 "
+    "resolves) → numeric id + account CREATION DATE — estimated from the id for a user/bot (date, "
+    "range, error_days, confidence; a numeric id is dated offline with no session), Telegram's own "
+    "date for a channel/group. An estimate is a range, never a registration record; resolve/phone "
+    "rows carry the same created_estimate. "
     "mode='status' reports session readiness. RULE 5: every row is a LEAD — a phone→account match "
     "proves the number is registered to that account, not who the person is; names, bios, "
     "usernames and photos are self-set; never a KB edge or operator link. 'not found' may be a "
@@ -902,8 +911,8 @@ async def reverse_image(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def telegram_lookup(args: dict[str, Any]) -> dict[str, Any]:
     mode = str(args.get("mode") or "resolve").strip().lower()
-    if mode not in ("phone", "resolve", "status"):
-        return _err("telegram_lookup mode must be phone, resolve or status")
+    if mode not in ("phone", "resolve", "status", "age"):
+        return _err("telegram_lookup mode must be phone, resolve, age or status")
     target = str(args.get("target") or "").strip()
     cmd = [PY, os.path.join("WebPivot", "tools", "wp_telegram.py"), mode]
     if mode == "phone":
@@ -917,9 +926,16 @@ async def telegram_lookup(args: dict[str, Any]) -> dict[str, Any]:
         if not target:
             return _err("telegram_lookup mode=resolve needs target=<@user | t.me link | -100id>")
         cmd.append(target)
+    elif mode == "age":
+        targets = target.replace(",", " ").split()
+        if not targets:
+            return _err("telegram_lookup mode=age needs target=<@user | t.me link | user id>[, …]")
+        cmd += targets
+    if mode in ("resolve", "age") and _flag(args, "confirm"):
+        cmd.append("--confirm")
     if mode == "status" and _flag(args, "sessions"):
         cmd.append("--sessions")
-    if str(args.get("save_photo") or "").strip():
+    if mode in ("phone", "resolve") and str(args.get("save_photo") or "").strip():
         cmd += ["--save-photo", os.path.abspath(str(args["save_photo"]).strip())]
     if str(args.get("case") or "").strip():
         cmd += ["--case", str(args["case"]).strip()]
@@ -1885,8 +1901,11 @@ async def case_loop(args: dict[str, Any]) -> dict[str, Any]:
     "not fetch the target or re-collect hosts. It SPENDS credits on metered legs unless free_only "
     "or the case's scope is no_spend (then only keyless CLD runs and metered vendors read "
     "not_consulted); passive is an egress posture and does NOT hold spend. leak_only=true runs "
-    "just the leak fan-out (the harness runs it after round-1 collection, before frontier pivots).",
-    {"case": str},  # free_only, passive, reopen_legacy, leak_only: bool optional (tool_params.json)
+    "just the leak fan-out (the harness runs it after round-1 collection, before frontier pivots). "
+    "Telegram handle leads (tg-age: @handle → id + creation date on the research account) are HELD "
+    "awaiting approval: the output lists the pending batch — ASK THE ANALYST to confirm it, and only "
+    "after an explicit yes re-run with approve_telegram=true.",
+    {"case": str},  # free_only, passive, reopen_legacy, leak_only, approve_telegram: bool optional (tool_params.json)
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
@@ -1899,6 +1918,8 @@ async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
         cmd.append("--reopen-legacy")
     if _flag(args, "leak_only"):
         cmd.append("--leak-only")
+    if _flag(args, "approve_telegram"):
+        cmd += ["--approve", "telegram"]
     r = _run(cmd, timeout=1800)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}

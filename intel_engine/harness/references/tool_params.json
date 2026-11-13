@@ -535,6 +535,10 @@
         "leak_only": {
           "type": "boolean",
           "description": "Run only the leak/stealer fan-out (CLD, IntelX, Hudson Rock, deep_profile) on the case's confirmed selectors and rewrite enrichment/leak_coverage.json. Same spend gate as a full run."
+        },
+        "approve_telegram": {
+          "type": "boolean",
+          "description": "Run the HELD Telegram handle leads (@handle → numeric id + creation date, read-only resolve on the research account). Set true ONLY after showing the analyst the pending batch the previous run listed and getting an explicit yes. Off by default: the leads stay held and open."
         }
       },
       "case_reopen": {
@@ -1476,9 +1480,9 @@
         "timeout": {"type": "integer", "description": "Per-request timeout in seconds (default 30)."}
       },
       "telegram_lookup": {
-        "target": {"type": "string", "description": "mode=phone: E.164 number(s), comma/space-separated; mode=resolve: @username, t.me link, invite link or -100id. Omit for status."},
-        "mode": {"type": "string", "enum": ["phone", "resolve", "status"], "description": "phone = E.164 → account via contact import (confirm-gated); resolve (default) = public entity metadata; status = session readiness."},
-        "confirm": {"type": "boolean", "description": "mode=phone only: send the contact import. Omit/false first to get the briefing; true only after the analyst approves THIS lookup."},
+        "target": {"type": "string", "description": "mode=phone: E.164 number(s), comma/space-separated; mode=resolve: @username, t.me link, invite link or -100id; mode=age: @username(s), t.me link(s) or numeric user id(s), comma/space-separated. Omit for status."},
+        "mode": {"type": "string", "enum": ["phone", "resolve", "age", "status"], "description": "phone = E.164 → account via contact import (confirm-gated); resolve (default) = public entity metadata; age = numeric id + account creation date (estimated from the id for users/bots — offline for a numeric id; Telegram's own date for channels/groups); status = session readiness."},
+        "confirm": {"type": "boolean", "description": "phone: send the contact import; resolve / age: send the @username / link resolves (numeric user ids in age are offline and need none). Omit/false first to get the briefing; true only after the analyst approves THIS lookup."},
         "save_photo": {"type": "string", "description": "Directory outside the repo to write the profile photo; default reports only sha256 + dimensions."},
         "case": {"type": "string", "description": "Case ID; saves the JSON under cases/<case>/telegram/."},
         "sessions": {"type": "boolean", "description": "mode=status only: also list the research account's active sessions (device, app, ip, country, last active) and run opentele2's consistency checks. Read-only; never terminates a session."}

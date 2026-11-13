@@ -34,8 +34,15 @@ SCRIPTS = {
     "vncorp": os.path.join(ROOT, "WebPivot", "tools", "wp_vncorp.py"),
     "email-hygiene": os.path.join(ROOT, "..", "scripts", "webpivot", "email_hygiene.py"),
     "username-hints": os.path.join(ROOT, "..", "scripts", "osint", "username_enum.py"),
+    # @handle → numeric id + creation date (read-only resolve on the research session; a numeric
+    # id is dated offline). Free; no session → `unavailable`, the lead stays open.
+    "telegram": os.path.join(ROOT, "WebPivot", "tools", "wp_telegram.py"),
 }
 METERED = {"email-deep", "intelx", "hudsonrock"}   # spend-gated legs held under free-only/no_spend/defer.
+# Lead classes that act from the analyst's own account: never run on discovery. The runner holds
+# them (`held`, policy awaiting_approval, lead stays open) until a run names the class in
+# `approve` — the analyst confirms the whole pending batch at once (`enrich --approve telegram`).
+APPROVAL_CLASSES = ("telegram",)
 # ChongLuaDao is NOT here: it charges no per-call credit (keys are rate-limited only), so CLD legs run
 # under free-only and no_spend like a free source. The api_usage ledger still LOGS every CLD
 # request — a usage log never caps — but it is not a spend gate.
@@ -450,6 +457,8 @@ def _judge(op, result, memo=None, argv=None):
         rows = data.get("result") or {}
         count = _row_count(rows, ("items", "data", "results", "victims"))
         return ("ran" if count else "empty"), _cld_summary(data), memo
+    if op == "telegram":
+        return _judge_telegram(data) + (memo,)
     if data.get("error") or data.get("skipped"):
         reason = data.get("error") or data.get("skipped")
         return "retry", _short(reason), memo
@@ -481,6 +490,73 @@ def _judge(op, result, memo=None, argv=None):
         n = len(data.get("numeric_suffix_hints") or [])
         return ("ran" if n else "empty"), f"numeric-suffix hints={n} (hypotheses)", memo
     return "ran", f"{op} completed", memo
+
+
+_TG_ABSENT = ("UsernameNotOccupied", "UsernameInvalid", "No user has", "Nobody is using")
+
+
+def _judge_telegram(data):
+    """`telegram age` → (outcome, summary). No session is `unavailable` (lead stays open); a
+    username nobody holds is `empty`; FloodWait or any other failure is `retry`."""
+    rows = [r for r in data.get("results") or [] if isinstance(r, dict)]
+    if data.get("skipped") or (rows and all(r.get("skipped") for r in rows)):
+        why = data.get("skipped") or rows[0].get("skipped")
+        return "unavailable", _short(f"telegram: {why} — @username → id needs the research session")
+    if data.get("error") or not rows:
+        return "retry", _short(data.get("error") or "telegram age returned no rows")
+    summary = _short("; ".join(str(r.get("summary") or "") for r in rows), 400)
+    if any(r.get("id") is not None for r in rows):
+        return "ran", summary
+    if all(any(m in str(r.get("error") or "") for m in _TG_ABSENT) for r in rows):
+        return "empty", summary
+    return "retry", summary
+
+
+TG_COLLECTOR = "enrichment_run/telegram_age"
+
+
+def _telegram_facts(case_dir, key, data, kb_root=None):
+    """KB facts for a resolved handle: its numeric id and its creation date (estimate or
+    Telegram's own). add_fact only — an id or an account age is never a same-operator edge."""
+    kb_dir = os.path.join(HERE, "kb")
+    if kb_dir not in sys.path:
+        sys.path.insert(0, kb_dir)
+    try:
+        from knowledge_base import KB
+        from selector_types import kb_key
+        kb = KB(kb_root or os.path.join(ROOT, os.environ.get("HARNESS_KB", "knowledge")),
+                case=case_dir)
+    except Exception as exc:  # noqa: BLE001 — the enrichment artifact is the record; KB best-effort
+        print(f"   enrichment {key}: KB facts not written ({type(exc).__name__}: {exc})")
+        return 0
+    when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    case = os.path.basename(os.path.normpath(case_dir))
+    ref = "/".join(("cases", case, "enrichment", os.path.basename(_artifact(case_dir, key))))
+    n = 0
+    for r in (data or {}).get("results") or []:
+        if not isinstance(r, dict) or r.get("id") is None:
+            continue
+        et, ev = kb_key("telegram", str(r.get("target") or ""))
+        kb.add_fact(et, ev, "telegram_account",
+                    {"id": r["id"], "peer_id": r.get("peer_id"), "type": r.get("type"),
+                     "usernames": r.get("usernames"), "case": case},
+                    "telegram", TG_COLLECTOR, when, "high", ref)
+        est = r.get("created_estimate") or {}
+        if est.get("estimate"):
+            kb.add_fact(et, ev, "telegram_created",
+                        {"date": est["estimate"], "range": est.get("range"),
+                         "error_days": est.get("error_days"), "confidence": est.get("confidence"),
+                         "extrapolated": est.get("extrapolated"), "basis": "id_estimate",
+                         "case": case},
+                        "telegram", TG_COLLECTOR, when,
+                        "medium" if est.get("confidence") == "high" else "low", ref)
+        elif (r.get("created") or {}).get("date"):
+            kb.add_fact(et, ev, "telegram_created",
+                        {"date": r["created"]["date"], "basis": "telegram_date",
+                         "note": r["created"].get("note"), "case": case},
+                        "telegram", TG_COLLECTOR, when, "high", ref)
+        n += 1
+    return n
 
 
 #: lead outcome -> execution-outcome status (wp_exhaust vocabulary). `retry` is a FAILED step —
@@ -611,6 +687,8 @@ def _run_step(invoke, case_dir, record, step):
         response = _invoke(invoke, op, argv, case_dir)
         outcome, summary, _ = _judge(op, response, argv=argv)
         record["steps"][step_key] = {"outcome": outcome, "summary": summary, **response}
+        if op == "telegram" and outcome == "ran":
+            _telegram_facts(case_dir, record["key"], response.get("data"))
     _save(_artifact(case_dir, record["key"]), record)
     credits = (record["steps"].get(step_key) or {}).get("credits") or []
     if credits:
@@ -748,13 +826,14 @@ def _print_coverage(doc):
 
 
 def run_case(case, free_only=False, passive=False, call=None, defer_metered=False, reopen_legacy=False,
-             leak_only=False):
+             leak_only=False, approve=()):
     """Run eligible leads once; checkpoint results and close only accounted-for legs.
 
     `passive` is an egress posture flag and does not block third-party enrichment. Non-executable
     dork/secret query leads remain open for the slash-command agent to execute and review.
     `leak_only` runs just the leak fan-out leads (the harness's round-1 step). Every run ends by
-    writing the per-selector leak coverage table (enrichment/leak_coverage.json).
+    writing the per-selector leak coverage table (enrichment/leak_coverage.json). Leads carrying
+    an `approval` class run only when that class is in `approve` (the analyst's batch confirm).
     """
     case_dir = case_state._case_dir(case)
     constraints = _scope(case_dir)
@@ -768,6 +847,8 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
               "cannot be distinguished from manual analyst closure; pass --reopen-legacy to reopen")
     invoke = call or _call
     results = []
+    approve = set(approve or ())
+    awaiting = {}
     for lead in case_state.frontier(case).get("enrichment_leads", []):
         if leak_only and not lead.get("leak"):
             continue
@@ -777,7 +858,12 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
         key = lead["key"]
         ops = _lead_ops(lead)
         policy, rc, t0 = "", None, time.monotonic()
-        if defer_metered and any(op in METERED for op in ops):
+        if lead.get("approval") and lead["approval"] not in approve:
+            reason, policy = "held", "awaiting_approval"
+            summary = (f"held: awaiting analyst approval — runs on the research account only after "
+                       f"`enrich <case> --approve {lead['approval']}`")
+            awaiting.setdefault(lead["approval"], []).append(lead.get("value") or key)
+        elif defer_metered and any(op in METERED for op in ops):
             reason, policy = "held", "defer_metered"
             summary = "held: default loop defers metered enrichment; rerun full/keyed collection"
         elif hold and any(op in METERED for op in ops):
@@ -815,6 +901,9 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
     remaining = len(case_state.frontier(case).get("enrichment_leads", []))
     print(f"   enrichment: {len(results)} handled; {remaining} lead(s) still open "
           "(query-only, held, unavailable, and retryable leads require later review/run)")
+    for cls, values in awaiting.items():
+        print(f"   enrichment: {len(values)} {cls} lead(s) AWAITING APPROVAL — {', '.join(values)}. "
+              f"Ask the analyst; on yes run: intel.py enrich {case} --approve {cls}")
     try:
         _print_coverage(leak_coverage(case, case_dir))
     except Exception as exc:  # noqa: BLE001 — the table is a report; a failure never fails the run
@@ -832,11 +921,13 @@ def main():
                     help="reopen old skipped/unavailable state rows that lack runner index evidence")
     ap.add_argument("--leak-only", action="store_true",
                     help="run only the leak/stealer fan-out leads on confirmed selectors")
+    ap.add_argument("--approve", action="append", choices=APPROVAL_CLASSES, default=[],
+                    help="run the held approval leads of this class (the analyst confirmed the batch)")
     a = ap.parse_args()
     import intel  # noqa: E402 — the pipeline's env resolver is the one key store
     intel._load_env()
     run_case(a.case, free_only=a.free_only, passive=a.passive,
-             reopen_legacy=a.reopen_legacy, leak_only=a.leak_only)
+             reopen_legacy=a.reopen_legacy, leak_only=a.leak_only, approve=a.approve)
 
 if __name__ == "__main__":
     main()
