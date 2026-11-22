@@ -71,41 +71,10 @@ FIGURE_MAX_NODES = 14   # above this the main figure is a representative subset;
 INK, MUTED, GRID = "#1f1d1a", "#6f6a61", "#d9d3c7"
 STEEL, SLATE, OCHRE, BRICK, PAPER = "#3b5566", "#22333f", "#b0790f", "#8c2d2d", "#ffffff"
 
-# Rule 12: internal working / data-vendor names -> public source CLASS. Case evidence is never touched.
-# _V(): a bare vendor word that must not rewrite an indicator VALUE (Rule 12a) — no match inside a
-# host/e-mail label (`otx.example`, `ops-netlas.example`, `subfinder@example.com`).
-def _V(word: str) -> str:
-    return rf"(?<![\w.@-]){word}(?![\w@-]|\.[A-Za-z0-9])"
-
-
-PUBLIC_CLASS = [
-    (r"\bwhoisxmlapi\.com\b|\brdap\.org\b", "registration-data service"),
-    (r"\bintelx\.io\b", "leak-corpus search"),
-    (r"\bcrt\.sh\b", "certificate transparency"),
-    (r"\bWhoisXML\b", "registration-data service"),
-    (r"\bIntelX\b|\bIntelligence X\b", "leak-corpus search"),
-    (r"\bCLD\b|\bChongLuaDao\b|\bChống Lừa Đảo\b", "anti-scam verdict service"),
-    (r"\bHudsonRock(-class)?\b", "infostealer-corpus"),
-    (r"\bFOFA\b|\burlscan(\.io)?\b|\bCensys\b|\bShodan\b|\bValidin\b|\bSecurityTrails\b|\bDNSLytics\b|\bQuake\b|\bZoomEye\b|\bHunter\.how\b|\bWebamon\b",
-     "web-scan index"),
-    (_V("Netlas"), "web-scan index"),
-    (_V(r"(?:ANY\.RUN|AnyRun)"), "malware sandbox"),
-    (_V("VirusTotal"), "multi-engine reputation service"),
-    (_V("(?:Spamhaus|AbuseIPDB|OTX)"), "reputation feed"),
-    (_V("HackerTarget"), "passive DNS"),
-    (_V("CIRCL"), "passive DNS / certificate archive"),
-    (_V("subfinder"), "subdomain enumeration"),
-    (r"\bmaigret\b|\bsherlock\b", "username enumeration"),
-    (r"\bWayback\b", "web-archive"),
-    (r"\bCDX\b", "archive-index"),
-    (r"\bIPinfo\b", "IP/ASN data"),
-    (r"(?-i:\bMoli\b)", "headless renderer"),   # case-sensitive: `moli` is an ordinary word elsewhere
-    (r"\bpivot_extract\b|\bpipeline open\b|\bcase-store\b|\bkb_ingest\b|\bintel\.py\b|\breference ledger\b|\boperators ledger\b|\bthe KB\b|\bknowledge base\b",
-     "the case record"),
-]
-# "registration-data service lookup via registration-data service" -> one mention of the class
-_DUP_CLASS_RES = [re.compile(rf"({re.escape(cls)})((?:\s+[\w-]+)?)\s+(?:via|from|at)\s+{re.escape(cls)}\b", re.I)
-                  for cls in dict.fromkeys(c for _, c in PUBLIC_CLASS)]
+# Rule 12 vendor/tool -> public source CLASS table and the Rule 21 citation primitives live in
+# report_citations.py, shared with the per-round assessment snapshots so both apply ONE scrub.
+from report_citations import scrub_vendors, strip_secrets, _URL_RE, _URL_SLOT_RE, _is_public_url, cite_urls  # noqa: E402
+import report_citations as _rc  # noqa: E402
 # case_timeline source keys (IntelGraph references/evidence_sources.json `source_grading`) -> public class
 TIMELINE_SOURCE_CLASS = {
     "rdap": "registration data (RDAP)", "whois_registry": "registry WHOIS",
@@ -144,13 +113,14 @@ import house_report_dossier as hrd  # noqa: E402
 import house_report_charts as hrg  # noqa: E402
 import house_report_sections as hrs  # noqa: E402
 import report_sections  # noqa: E402
+import house_report_exposure_charts as hrxc  # noqa: E402
 try:  # registrar/privacy-proxy classifier for the Registrant-eras table (best-effort)
     sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
     from whois_enrich import is_privacy as _is_privacy  # noqa: E402
 except Exception:  # pragma: no cover — the table still renders, class falls back to "named"
     _is_privacy = None
 # Per-call ceiling for every figure/renderer subprocess (env CTI_CALL_TIMEOUT → .env →
-# references/timeouts.json → 5000s). _run() floors a caller's shorter bound to it.
+# references/timeouts.json → 18000s / 5 h). _run() floors a caller's shorter bound to it.
 from wp_timeouts import floor as _floor  # noqa: E402
 # WHOIS-history era splitter (whois_eras.py) — the ONLY module allowed to turn history into
 # owner-link values; a previous owner's contact/name from an earlier registration era must never
@@ -424,69 +394,20 @@ def _escape_angles(text: str, gt: bool = False) -> str:
     return "".join(out)
 
 
-def scrub_vendors(line: str) -> str:
-    """Rule 12 vendor/tool names -> public source class; indicator values are never rewritten."""
-    for pat, repl in PUBLIC_CLASS:
-        line = re.sub(pat, repl, line, flags=re.I)
-    for rx in _DUP_CLASS_RES:
-        line = rx.sub(r"\1\2", line)
-    return line
-
-
 # --------------------------------------------------------------------------- evidence links
 # IntelReport Rule 21: a claim is cited to a link a reader can re-open. Every public http(s) URL in
 # the composed report becomes a numbered hyperlinked citation `[n]` and a row in the References
-# section. URLs are shielded from scrub() so the vendor/path rewrites never mangle a link; a
-# loopback / private-address URL is internal working (Rule 12) and is never cited.
-_URL_RE = re.compile(r"https?://[^\s<>\"'`|\[\]()]+[^\s<>\"'`|\[\]().,;:!?]")
-_URL_SLOT_RE = re.compile("\x00URL(\\d+)\x00")
-# spans the citation pass must leave alone: code spans, markdown links/images, <autolinks>
-_CITE_SKIP_RE = re.compile(r"(`+)(?:(?!\1).)+?\1|!?\[[^\]\n]*\]\([^)\n]*\)|<https?://[^>\s]+>", re.S)
-_ARCHIVE_HOSTS = ("archive.org", "archive.today", "archive.ph", "archive.is", "archive.li", "archive.md",
-                  "archive.vn", "ghostarchive.org", "webcitation.org")
-_SCAN_HOSTS = ("urlscan.io",)
-
-
-def _url_host(url: str) -> str:
-    m = re.match(r"https?://(?:[^@/]*@)?([^/:?#]+)", url, re.I)
-    host = (m.group(1) if m else "").lower().rstrip(".")
-    return host[4:] if host.startswith("www.") else host
-
-
-def _is_public_url(url: str) -> bool:
-    host = _url_host(url)
-    if not host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
-        return False
-    try:
-        return ipaddress.ip_address(host).is_global
-    except ValueError:
-        return "." in host
-
-
+# section (report_citations.cite_urls). URLs are shielded from scrub() so the vendor/path rewrites
+# never mangle a link; a loopback / private-address URL is internal working (Rule 12) and is never
+# cited. The estate defaults to this case's own hosts.
 def url_class(url: str, estate=None) -> str:
     """The public source CLASS of a cited link (Rule 12 wording for the Source column)."""
-    host = _url_host(url)
-    if any(host == a or host.endswith("." + a) for a in _ARCHIVE_HOSTS):
-        return "web archive capture"
-    if any(host == s or host.endswith("." + s) for s in _SCAN_HOSTS):
-        return "public web-scan capture"
-    estate = _HOSTS if estate is None else estate
-    if any(host == d or host.endswith("." + d) for d in estate):
-        return "live operator page"
-    if url.lower().split("?", 1)[0].split("#", 1)[0].endswith(".pdf"):
-        return "published document"
-    return "published web page"
+    return _rc.url_class(url, _HOSTS if estate is None else estate)
 
 
 def url_label(url: str, estate=None) -> str:
     """A reader-facing label for a citation: source class, publisher host, capture date when known."""
-    cls = url_class(url, estate)
-    if cls == "web archive capture":
-        m = re.search(r"/web/(\d{4})(\d{2})(\d{2})\d*", url)
-        archived = re.sub(r"^https?://web\.archive\.org/web/\d+[a-z_]*/", "", url)
-        orig = _url_host(archived) if archived != url else ""
-        return cls + (f" of {orig}" if orig else "") + (f", {m.group(1)}-{m.group(2)}-{m.group(3)}" if m else "")
-    return f"{cls}, {_url_host(url)}"
+    return _rc.url_label(url, _HOSTS if estate is None else estate)
 
 
 def strip_urls(text: str) -> str:
@@ -512,36 +433,8 @@ def cited(claim: str, urls) -> str:
     return claim + " Source: " + "; ".join(f"{_md_escape(url_label(u))} {u}" for u in urls) + "."
 
 
-def _md_link_target(url: str) -> str:
-    return url.replace("(", "%28").replace(")", "%29").replace(" ", "%20")
-
-
-def cite_urls(md: str, refs: dict) -> str:
-    """Every bare public URL outside code spans / existing links -> a hyperlinked `[n]`, registered
-    in `refs` (url -> n, first-seen order). A non-public URL is internal working: dropped."""
-    def one(m):
-        url = m.group(0)
-        if not _is_public_url(url):
-            return "the case record"
-        n = refs.setdefault(url, len(refs) + 1)
-        return f"[\\[{n}\\]]({_md_link_target(url)})"
-
-    out, pos = [], 0
-    for m in _CITE_SKIP_RE.finditer(md):
-        out.append(_URL_RE.sub(one, md[pos:m.start()]))
-        out.append(m.group(0))
-        pos = m.end()
-    out.append(_URL_RE.sub(one, md[pos:]))
-    return "".join(out)
-
-
 def references_md(refs: dict) -> str:
-    lines = ["Each bracketed number in the text links to the public location below; open it to "
-             "re-check the claim it supports. Archive captures are frozen copies and stay valid "
-             "after the live page changes.", ""]
-    for url, n in sorted(refs.items(), key=lambda kv: kv[1]):
-        lines.append(f"- \\[{n}\\] {_md_escape(url_label(url))}: <{_md_link_target(url)}>")
-    return "\n".join(lines)
+    return _rc.references_md(refs, lambda url: _md_escape(url_label(url)))
 
 
 def scrub(text: str, escape: bool = True) -> str:
@@ -987,9 +880,12 @@ def artifact_register(c: dict) -> str:
 
 
 def evidence_ledger(c: dict) -> str:
-    """Rule 21: every row carries its link (cited `[n]` by the composer's citation pass); a row with
-    no public link says so instead of borrowing a neighbour's."""
+    """Rule 21: every row carries its link (cited `[n]` by the composer's citation pass). A row whose
+    text holds no public URL cites the public pages that re-check it, rebuilt from the selectors it
+    names (`report_citations.source_links`: crt.sh, RDAP, urlscan, the web archive, the page itself);
+    a row with neither says "no public link" instead of borrowing a neighbour's."""
     ev = c["assessment"].get("evidence") or []
+    estate = _rc.case_estate(c.get("dir") or "", c.get("hosts") or [])
     rows = ["| # | Evidence | Grade | Source (public class) | Link |",
             "|:-:|:----------------------|:--:|:----------|:--|"]
     for i, e in enumerate(ev, 1):
@@ -999,8 +895,10 @@ def evidence_ledger(c: dict) -> str:
         urls = [u for u in dict.fromkeys(_URL_RE.findall(e)) if _is_public_url(u)]
         body = strip_urls(re.sub(r"^E\d+\s*\[[^\]]*\]\s*", "", e))
         claim, src = (body.rsplit(" — ", 1) + [""])[:2] if " — " in body else (body, "")
-        src = scrub(src) or "; ".join(dict.fromkeys(url_class(u) for u in urls)) or "case evidence"
-        link = " ".join(urls) if urls else "no public link"
+        rebuilt = [] if urls else _rc.source_links(strip_secrets(claim), estate)
+        src = (scrub(src) or "; ".join(dict.fromkeys(url_class(u) for u in urls))
+               or "; ".join(dict.fromkeys(cls for _u, cls in rebuilt)) or "case evidence")
+        link = " ".join(urls or [u for u, _cls in rebuilt]) or "no public link"
         rows.append(f"| {i} | {_md_escape(scrub(claim))} | {grade.group(1) if grade else '—'} | "
                     f"{_md_escape(src)} | {link} |")
     return "\n".join(rows) if ev else "_No evidence ledger in the assessment._"
@@ -1334,6 +1232,11 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += [rs["key_questions"], ""]
     if rs["identity_card"]:
         L += [rs["identity_card"], ""]
+    if hrg.card_map_md(figs.get("card_maps"), "person", observed):
+        L += [hrg.card_map_md(figs.get("card_maps"), "person", observed), ""]
+    for key in ("risk_overall", "key_findings"):
+        if rs[key]:
+            L += [rs[key], ""]
 
     # II — Methodology
     L += ["# Methodology", "", "## Approach", "", METHOD_MD, "",
@@ -1347,6 +1250,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += [rs["counting_rules"], ""]
     if rs["key_counts"]:
         L += [rs["key_counts"], ""]
+    if rs["rating_scales"]:
+        L += [rs["rating_scales"], ""]
     if rs["client_details"]:
         L += [rs["client_details"], ""]
     if eng:
@@ -1376,6 +1281,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
 
     # IV — Findings (analyst narrative, scrubbed)
     L += ["# Findings", ""]
+    if hrg.card_map_md(figs.get("card_maps"), "threats", observed):
+        L += [hrg.card_map_md(figs.get("card_maps"), "threats", observed), ""]
     if judgments:
         for i, j in enumerate(judgments, 1):
             L += [f"## {j['title']}", "", j["body"], ""]
@@ -1391,6 +1298,20 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
         L += ["## Evidence detail", "", demote_headings(scrub(ev_table)), ""]
     if rs["findings_boundaries"]:
         L += [rs["findings_boundaries"], ""]
+    if rs["affiliate_exposure"]:
+        L += [rs["affiliate_exposure"], ""]
+        if hrxc.charts_md(figs.get("exposure_charts"), observed):
+            L += [hrxc.charts_md(figs.get("exposure_charts"), observed), ""]
+    elif (figs.get("exposure_charts") or {}).get("_source") == "triage" \
+            and hrxc.charts_md(figs.get("exposure_charts"), observed):
+        # no affiliate rows: the stealer-log triage charts get their own heading instead of vanishing
+        L += [hrs.EXPOSURE_TRIAGE_HEADING, "", hrs.EXPOSURE_TRIAGE_NOTE, "",
+              hrxc.charts_md(figs.get("exposure_charts"), observed), ""]
+    for key in ("leak_claims", "email_services", "threat_events"):
+        if rs[key]:
+            L += [rs[key], ""]
+    if rs["actor_profile"]:          # the actor threat-profile chapter (report block), after Findings
+        L += [rs["actor_profile"], ""]
 
     # V — The cluster
     L += ["# The cluster", ""]
@@ -1442,6 +1363,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
 
     # VI — Infrastructure lifecycle
     L += ["# Infrastructure and lifecycle", ""]
+    if hrg.card_map_md(figs.get("card_maps"), "suppliers", observed):
+        L += [hrg.card_map_md(figs.get("card_maps"), "suppliers", observed), ""]
     if figs.get("timeline"):
         L += [f"![Temporal view — registrations, hosting windows and certificate validity per domain. Observed {observed}.]({os.path.basename(figs['timeline'])})", ""]
     if hrg.heatmaps_md(charts, observed):
@@ -1533,6 +1456,8 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     L += ["# Recommendations", ""]
     if rs["roadmap"]:
         L += [rs["roadmap"], ""]
+    if rs["usernames_to_reserve"]:
+        L += [rs["usernames_to_reserve"], ""]
     rec = find_section(secs, "recommendation")
     if rec:
         L += [demote_headings(scrub(rec)), ""]
@@ -1549,14 +1474,16 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
                                   created_of=lambda h: era_start_of(c, figs, h))
     if caps:
         L += ["## Captured pages", "", caps, ""]
-    if rs["sources_checked"]:
-        L += ["# Sources checked", "", rs["sources_checked"], ""]
+    if rs["sources_checked"] or rs["nothing_found"]:
+        L += ["# Sources checked", ""] + [x for k in ("sources_checked", "nothing_found") if rs[k] for x in (rs[k], "")]
     if rs["qa_warnings"]:
         L += ["# QA warnings", "", rs["qa_warnings"], ""]
     L += [
           "# Domain and infrastructure profiles", "", domain_profiles(c), "",
           "# Cluster enumeration", "", cluster_enumeration(c), ""]
-    body = "\n".join(L)
+    # A deliverable never carries a credential: every URL loses its key/token/apikey… parameters
+    # (report_citations.json secret_query_keys) before it is cited or listed in References.
+    body = strip_secrets("\n".join(L))
     # Rule 21: every public URL anywhere in the report -> hyperlinked [n] + a References section
     # closing the body, so a reader can open each source without the case store.
     refs: dict = {}
@@ -1652,9 +1579,18 @@ def build(case_arg: str, stem: str | None, classification: str, audience: str,
         figs["charts"] = hrg.build_figures(case_dir, rep_dir)
         for k, why in (figs["charts"].get("_notes") or {}).items():
             sys.stderr.write(f"analytic figure {k}: {why}\n")
+        # Relationship card maps (person / threats / suppliers) — only when the case has the data.
+        figs["card_maps"] = hrg.build_card_maps(c, rep_dir, observed, lambda s: scrub(s, escape=False))
+        for k, why in figs["card_maps"]["_notes"].items():
+            sys.stderr.write(f"card map {k}: {why}\n")
+        figs["exposure_charts"] = hrxc.build_charts(case_dir, rep_dir, c.get("report_sections"))
+        for k, why in (figs["exposure_charts"].get("_notes") or {}).items():
+            sys.stderr.write(f"exposure chart {k}: {why}\n")
     else:
         figs["charts"] = {n: (os.path.join(rep_dir, n + ".png") if os.path.exists(os.path.join(rep_dir, n + ".png")) else None)
                           for n in hrg.FIGURES}
+        figs["card_maps"] = hrg.existing_card_maps(rep_dir)
+        figs["exposure_charts"] = hrxc.existing(case_dir, rep_dir, c.get("report_sections"))
 
     md = compose(c, figs, classification, observed)
     md = normalize_dashes(md)

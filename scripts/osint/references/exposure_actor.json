@@ -1,0 +1,135 @@
+{
+  "_comment": "THREAT ACTOR scoring model for scripts/osint/exposure_score.py (--model actor), documented in analysis/weight-engine.md §9. Adapted from the Threat Actor Scoring Model in [PK Packt ACTIH companion repo, 2026, chapter-01/Threat Actor Scoring Model.md] (MIT). ANALYST-RATED, never automatic: intent, capability, sectoral_reach and org_exposure are each set by the analyst on a 0.0-1.0 scale in fixed steps. The Threat Score is an analyst judgement for ONE organisation and a lead, never attribution and never a same-operator edge. Vocabulary and thresholds only, never case data (RULE 1).",
+  "settings": {
+    "_comment": "step: the only legal rating increments (0.0, 0.25, ... 1.0). decimals: rounding of opportunity and threat_score (half-up); the band is read from the ROUNDED published score so a reader can re-derive it. floor_value: an intent rating equal to this forces the Threat Score to 0 (the Intent floor rule). evidence_required_intent: intent at or above this must cite evidence matching evidence_pattern (a URL or a case reference). drift_warn_shift: a re-score that moves the Threat Score by MORE than this without a written reason is warned (upstream score-stability guidance: most actors move no more than 0.10 a quarter).",
+    "rating_min": 0.0,
+    "rating_max": 1.0,
+    "step": 0.25,
+    "decimals": 2,
+    "floor_value": 0.0,
+    "evidence_required_intent": 0.75,
+    "evidence_pattern": "https?://\\S+|\\bCASE-[A-Za-z0-9_-]+|\\bcases/\\S+",
+    "drift_warn_shift": 0.10
+  },
+  "weights": {
+    "_comment": "Threat Score = intent x 0.5 + capability x 0.25 + opportunity x 0.25 (weights sum to 1.0). Intent carries half because a capable actor with no interest in the organisation is not a threat to it.",
+    "entries": {"intent": 0.5, "capability": 0.25, "opportunity": 0.25}
+  },
+  "opportunity_weights": {
+    "_comment": "Opportunity = sectoral_reach x 0.6 + org_exposure x 0.4. Reach is the steadier signal (it moves when the actor's behaviour moves); org_exposure moves with our own environment and is partly in our control.",
+    "entries": {"sectoral_reach": 0.6, "org_exposure": 0.4}
+  },
+  "dimensions": {
+    "_comment": "id -> {name, question, scale}. All four are required for a score. The scale anchors are rephrased guidance for the 0.25 steps, printed by --list and mirrored in analysis/weight-engine.md §9.",
+    "entries": {
+      "intent": {
+        "name": "Intent",
+        "question": "does the actor want to hit this organisation, its sector or its geography?",
+        "scale": {
+          "0.0": "no observable interest in the sector, geography or kind of organisation",
+          "0.25": "only indirect signs; observed targeting sits next to us but not on us",
+          "0.5": "has gone after our sector or geography before, but sporadically or not lately",
+          "0.75": "steady, recent targeting of our sector and geography",
+          "1.0": "has targeted us, or openly targets organisations directly comparable to us, with recent confirmed activity"
+        }
+      },
+      "capability": {
+        "name": "Capability",
+        "question": "could the actor carry out an operation against us if it chose to?",
+        "scale": {
+          "0.0": "no shown offensive ability; reconsider whether the actor should be tracked at all",
+          "0.25": "off-the-shelf tools, weak operational discipline, opportunistic",
+          "0.5": "competent: some bespoke tooling, settled habits, unremarkable tradecraft",
+          "0.75": "bespoke tooling, disciplined tradecraft, sustained tempo, success against hardened targets",
+          "1.0": "top tier: unpatched-vulnerability access, low-level implants, multi-year operations against high-value targets"
+        }
+      },
+      "sectoral_reach": {
+        "name": "Opportunity: sectoral reach",
+        "question": "does the actor operate against organisations like ours, in general?",
+        "scale": {
+          "0.0": "no meaningful reach to organisations like ours",
+          "0.25": "works in neighbouring sectors or regions only",
+          "0.5": "has hit organisations adjacent to our sector or in our region, not direct peers",
+          "0.75": "has hit direct peers, competitors or organisations on a similar technology stack",
+          "1.0": "recently hit direct peers and has shown access to the same kinds of systems we run"
+        }
+      },
+      "org_exposure": {
+        "name": "Opportunity: organisational exposure",
+        "question": "given our current environment, can the actor actually reach us?",
+        "scale": {
+          "0.0": "none of the actor's known techniques apply to us and our detection covers its tradecraft",
+          "0.25": "little technical overlap, strong compensating controls, good detection",
+          "0.5": "real technical overlap with partial controls and partial visibility",
+          "0.75": "wide technical overlap, material control gaps, thin detection against its techniques",
+          "1.0": "our estate matches its tooling, controls have significant gaps, and we are blind to its techniques"
+        }
+      }
+    }
+  },
+  "bands": {
+    "_comment": "Band -> {min (inclusive lower bound on the rounded Threat Score), review_cadence, review_cadence_days (null = no fixed cadence; reviewed only on an out-of-cycle trigger), posture[]}. Evaluated highest min first. Posture is the standing work the team keeps up against the actor, rephrased from upstream.",
+    "entries": {
+      "Critical": {
+        "min": 0.85, "review_cadence": "monthly", "review_cadence_days": 30,
+        "posture": [
+          "keep a dedicated profile and re-rate every dimension monthly",
+          "run standing hunts against the actor's techniques, not one-off sweeps",
+          "test detection coverage against the actor's known tooling on a schedule",
+          "keep sharing-group and peer engagement focused on the actor",
+          "send any fresh reporting on the actor straight to intake",
+          "brief security leadership on the actor at least quarterly"
+        ]
+      },
+      "High": {
+        "min": 0.60, "review_cadence": "quarterly", "review_cadence_days": 90,
+        "posture": [
+          "re-rate each dimension at the quarterly review",
+          "hunt against the actor's techniques periodically",
+          "fold the actor's tooling into routine detection-engineering planning",
+          "route new reporting to intake at normal priority",
+          "include the actor in the yearly top-threat briefing"
+        ]
+      },
+      "Medium": {
+        "min": 0.35, "review_cadence": "quarterly", "review_cadence_days": 90,
+        "posture": [
+          "review the profile quarterly",
+          "cover the actor's techniques through ordinary detection work, with no dedicated stream",
+          "route new reporting to intake at standard priority",
+          "hunt only opportunistically"
+        ]
+      },
+      "Low": {
+        "min": 0.10, "review_cadence": "out-of-cycle triggers only", "review_cadence_days": null,
+        "posture": [
+          "keep the profile, reviewed only when an out-of-cycle trigger fires",
+          "read new reporting at intake; it normally ends as a tracking note",
+          "rely on general controls; no dedicated detection or hunting"
+        ]
+      },
+      "Negligible": {
+        "min": 0.0, "review_cadence": "out-of-cycle triggers only", "review_cadence_days": null,
+        "posture": [
+          "catalogue only, with the written rationale stored beside the score",
+          "the rationale is the deliverable: a later analyst must see why the actor sits this low, above all when the Intent floor rule set it",
+          "no active work; re-score only on a material change"
+        ]
+      }
+    }
+  },
+  "axis1_map": {
+    "_comment": "Actor band -> Severity Tier Matrix Axis 1 (threat severity), see severity_tiers.json. Negligible has no Axis 1 row and maps to Low with a note: the grid never closes an item, so the floor is P4 (tracked).",
+    "entries": {"Critical": "Critical", "High": "High", "Medium": "Medium", "Low": "Low", "Negligible": "Low"}
+  },
+  "review_triggers": {
+    "_comment": "Out-of-cycle re-score triggers, rephrased from upstream. Any of these re-opens the actor whatever its cadence.",
+    "values": [
+      "new attribution work or a significant intelligence update on the actor",
+      "the actor is named in a peer incident relevant to our sector",
+      "a geopolitical shift between the actor's sponsor and our country",
+      "a major change on our side: acquisition, divestiture, new platform"
+    ]
+  }
+}

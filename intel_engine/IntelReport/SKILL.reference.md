@@ -507,13 +507,15 @@ against; state the pairing in the purpose statement and again in Methodology (Ru
 Every report carries a handling caveat on the cover and on **every** page. It tells the reader what
 they may do with the document, so it is the author's decision, not a default. When the user asks to
 "produce / output / render a report" **without stating the marking, ASK before rendering** — use
-`AskUserQuestion` (FIRST TLP 2.0; offer `TLP:AMBER+STRICT` via "Other"):
+`AskUserQuestion` (FIRST TLP 2.0; offer `TLP:AMBER+STRICT` via "Other"). The retired TLP 1.0
+label WHITE is always written `TLP:CLEAR`:
 
 | Marking | Reader may share it with | Use for |
 |---|---|---|
 | **TLP:CLEAR** | anyone, publicly | blog posts, LinkedIn/social, published research, awareness material |
 | **TLP:GREEN** | their community / peer network, not publicly | industry or trust-group circulation |
 | **TLP:AMBER** | their own organisation and clients, need-to-know | the default for a live case assessment naming victims or an active operator |
+| **TLP:AMBER+STRICT** | their own organisation only, need-to-know, not clients | material the source will not let leave the recipient organisation |
 | **TLP:RED** | named recipients only, no onward sharing | pre-takedown, pre-arrest, or single-recipient briefings |
 
 Do NOT silently accept the tool's `UNCLASSIFIED` fallback, and do not inherit a marking from a

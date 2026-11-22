@@ -20,6 +20,7 @@ generator (see scripts/sample-cti-report-data.json and SKILL.md §8).
 
 Author: Hieu Ngo - chongluadao.vn
 """
+import base64
 import html as H
 import sys
 import os
@@ -93,9 +94,13 @@ def build_archify_html(data):
     try:
         with open(ir_path, "w", encoding="utf-8") as f:
             json.dump(ir, f, ensure_ascii=False)
+        # The vendored renderer only fetches brand marks when ARCHIFY_BRAND_REMOTE=1
+        # (local change, see vendor/archify/VENDOR.md); pin it off so an inherited
+        # environment can never make a report build touch the network.
+        env = dict(os.environ, ARCHIFY_BRAND_REMOTE="0")
         proc = subprocess.run(
             [node, ARCHIFY_BIN, "render", "architecture", ir_path, out_path],
-            capture_output=True, text=True, timeout=CALL_TIMEOUT)
+            capture_output=True, text=True, timeout=CALL_TIMEOUT, env=env)
         if proc.returncode != 0 or not os.path.isfile(out_path):
             # Archify prints a stack trace, then "Error: <summary>" followed by the
             # diagnostic lines ("- [gate] ..." or an indented schema path).
@@ -146,16 +151,74 @@ def build_cloud_arch(data):
 
 
 def _house_table(data, key, note=""):
-    """One analyst report-block section as a card with an escaped table; '' when absent."""
-    rows = RS.rows(data, key)
+    """One analyst report-block section as a card with an escaped table; '' when absent. The note
+    defaults to the section's own intro sentence (cti_report_sections.section_note)."""
+    rows = RS.display_rows(data, key)
     if not rows:
         return ""
     title, cols = RS.SECTION[key]
+    note = note or RS.section_note(data, key)
     out = ['<div class="card" style="margin-top:16px"><h3>%s (%d)</h3>' % (H.escape(title), len(rows))]
     if note:
         out.append('<div class="empty" style="text-align:left">%s</div>' % H.escape(note))
     out.append('<div style="overflow-x:auto">' + _table_html(cols, rows) + "</div></div>")
     return "".join(out)
+
+
+def _note_html(text):
+    return '<div class="empty" style="text-align:left">%s</div>' % H.escape(text) if text else ""
+
+
+def _figures_html(data, group, base, names=None):
+    """Card maps / exposure charts in `report_figures` that pass RS.figures (contained PNG under the size
+    cap; a rejected one is named on stderr), inlined as data URIs from the bytes RS.figures validated —
+    the path is never reopened."""
+    out = []
+    for name, png, caption in RS.figures(data, group, base):
+        if names and name not in names:
+            continue
+        uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        out.append('<figure class="card" style="margin-top:16px"><img src="%s" alt="%s" style="max-width:100%%">'
+                   '<figcaption class="empty" style="text-align:left">%s</figcaption></figure>'
+                   % (uri, H.escape(caption), H.escape(caption)))
+    return "".join(out)
+
+
+def _risk_html(data):
+    """Overall risk: the score sentence + the domain table, highest score first."""
+    ov = RS.risk_overall(data)
+    if not ov:
+        return ""
+    line, warning, unrated = ov
+    rows = RS.display_rows(data, "risk_assessment")
+    title, cols = RS.SECTION["risk_assessment"]
+    return ('<div class="card" style="margin-top:16px"><h3>%s</h3>%s%s<div style="overflow-x:auto">%s</div>%s</div>'
+            % (H.escape(title), _note_html(line), _note_html(warning), _table_html(cols, rows), _note_html(unrated)))
+
+
+def _rating_html(data):
+    bands, prio = RS.rating_scales(data)
+    if not (bands or prio):
+        return ""
+    tables = ""
+    if bands:
+        tables += _table_html([(0, "Risk level"), (1, "Score range")], [dict(enumerate(b)) for b in bands])
+    if prio:
+        tables += _table_html([(0, "Priority"), (1, "Act within")], [dict(enumerate(p)) for p in prio])
+    return '<div class="card" style="margin-top:16px"><h3>%s</h3>%s</div>' % (
+        H.escape(RS.SECTION["rating_scales"][0]), tables)
+
+
+def _nothing_found_html(data):
+    negatives, zero = RS.nothing_found(data)
+    if not (negatives or zero):
+        return ""
+    title, cols = RS.SECTION["negative_checks"]
+    return ('<div class="card" style="margin-top:16px"><h3>%s</h3>%s%s%s</div>'
+            % (H.escape(title), _note_html(RS.NOTHING_FOUND_NOTE),
+               '<div style="overflow-x:auto">%s</div>' % _table_html(cols, negatives) if negatives else "",
+               '<ul class="ulist gap">%s</ul>' % "".join("<li><span>%s</span></li>" % H.escape(z) for z in zero)
+               if zero else ""))
 
 
 def _table_html(cols, rows):
@@ -185,16 +248,53 @@ def build_identity_html(data):
                        % (H.escape(ent), _table_html(RS.IDENTITY_COLS, rows)) for ent, rows in cards)))
 
 
-def build_house_html(data):
-    """(key-questions html, analysis-view html) from the analyst report block, house-report order:
-    Client-provided details, Counting rules (+ metric warnings), Roles, Incident timeline, ATT&CK
-    mapping, Scenarios, Recommendations P1/P2/P3, Open questions, QA warnings, Sources checked.
-    Values escaped, never masked (sensitive client values arrive already withheld)."""
-    kq = _house_table(data, "key_questions")
+def _actor_html(data):
+    """The Actor Profile chapter (cti_report_sections.actor_blocks) as one card; '' when absent."""
+    blocks = RS.actor_blocks(data)
+    if not blocks:
+        return ""
+    out = ['<div class="card" style="margin-top:16px"><h3>%s</h3>' % H.escape(RS.ACTOR_TITLE)]
+    for title, items in blocks:
+        out.append('<h4 style="margin:12px 0 6px">%s</h4>' % H.escape(title))
+        for item in items:
+            if item[0] == "p":
+                out.append(_note_html(item[1]))
+            elif item[0] == "bullets":
+                out.append('<ul class="ulist gap">%s</ul>' % "".join("<li><span>%s</span></li>" % H.escape(x)
+                                                                     for x in item[1]))
+            else:
+                out.append('<div style="overflow-x:auto">%s</div>' % _table_html(item[1], item[2]))
+    return "".join(out) + "</div>"
+
+
+def build_house_html(data, base=None):
+    """(key-questions html, analysis-view html) from the analyst report block, house-report order.
+    Overview: Key questions, the subject card map, Overall risk, Key findings. Analysis: Client-provided
+    details, Counting rules (+ metric warnings), Rating scales; findings — the threat card map, Affiliate
+    exposure (+ charts; with no affiliate rows, the stealer-log triage charts under their own heading),
+    Dark-web and Telegram claims, Services registered by e-mail, Events that raise
+    the threat, the Actor Profile chapter; Roles, the supplier card map, Incident timeline, ATT&CK mapping, Scenarios,
+    Recommendations P1/P2/P3, Usernames to reserve, Open questions, QA warnings, Sources checked,
+    Checked — nothing found. Values escaped, never masked (sensitive client values and e-mail
+    addresses arrive already withheld). `base` resolves relative `report_figures` paths."""
+    kq = "".join([_house_table(data, "key_questions"), _figures_html(data, "card_maps", base, ("person",)),
+                  _risk_html(data), _house_table(data, "key_findings")])
     parts = [_house_table(data, "client_seeds", RS.CLIENT_NOTE),
              _house_table(data, "counting_rules", RS.COUNTING_NOTE),
-             _warn_card("Metric warnings", [w for w in data.get("metric_warnings") or [] if w])]
-    parts += [_house_table(data, "roles", RS.ROLES_NOTE), _house_table(data, "incident_timeline"),
+             _warn_card("Metric warnings", [w for w in data.get("metric_warnings") or [] if w]),
+             _rating_html(data)]
+    parts += [_figures_html(data, "card_maps", base, ("threats",)), _house_table(data, "affiliate_exposure")]
+    if RS.rows(data, "affiliate_exposure"):
+        parts.append(_figures_html(data, "exposure_charts", base))
+    elif RS.triage_exposure(data):   # stealer-log triage charts, no affiliate rows: their own section
+        charts = _figures_html(data, "exposure_charts", base)
+        if charts:
+            parts.append('<div class="card" style="margin-top:16px"><h3>%s</h3>%s%s</div>' % (
+                H.escape(RS.EXPOSURE_TRIAGE_TITLE), _note_html(RS.EXPOSURE_TRIAGE_NOTE), charts))
+    parts += [_house_table(data, "leak_claims"), _house_table(data, "email_services"),
+              _house_table(data, "threat_events"), _actor_html(data)]
+    parts += [_house_table(data, "roles", RS.ROLES_NOTE), _figures_html(data, "card_maps", base, ("suppliers",)),
+              _house_table(data, "incident_timeline"),
               _house_table(data, "attack_mapping"), _house_table(data, "scenarios")]
     groups = RS.roadmap_groups(data)
     if groups:
@@ -203,9 +303,9 @@ def build_house_html(data):
             H.escape(RS.SECTION["roadmap"][0]),
             "".join('<h4 style="margin:12px 0 6px">%s (%d)</h4>%s' % (H.escape(h), len(rows), _table_html(cols, rows))
                     for h, rows in groups)))
-    parts += [_house_table(data, "open_questions"),
+    parts += [_house_table(data, "usernames_to_reserve"), _house_table(data, "open_questions"),
               _warn_card(RS.SECTION["qa_warnings"][0], [w for w in data.get("qa_warnings") or [] if w], RS.QA_NOTE),
-              _house_table(data, "sources_checked", RS.SOURCES_CHECKED_NOTE)]
+              _house_table(data, "sources_checked", RS.SOURCES_CHECKED_NOTE), _nothing_found_html(data)]
     body = "".join(p for p in parts if p)
     if body:
         body = '<div class="section-h"><h2>Analysis</h2></div>' + body
@@ -240,7 +340,8 @@ def main(argv):
         return 1
 
     norm = RS.prepare(normalize_obj(data), "generate-cti-html")
-    house_kq, house_body = build_house_html(norm)
+    house_kq, house_body = build_house_html(norm, os.path.dirname(os.path.abspath(case_path)))
+    norm.pop("report_figures", None)   # local file paths: inlined above, never shipped in the HTML data
     house_id = build_identity_html(norm)
     if house_id:
         norm["house_identity_html"] = house_id

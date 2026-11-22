@@ -1,0 +1,36 @@
+{
+  "_comment": "Synthetic C2 card-map spec for scripts/card_map.py — every person, organisation, place, date and domain is invented (example TLDs). Render: card_map.py references/card_map_example.json -o out.svg --png out.png. Keys beginning with _ are ignored by the renderer.",
+  "title": "Connections of Morgan Sample",
+  "subtitle": "Public sources, compiled to 2026-11-15",
+  "hub": {"_comment": "The dark subject card at the top of the trunk.", "name": "Morgan Sample", "lines": ["Logistics operations manager"], "cc": "PT", "icon": "person"},
+  "trunk_labels": [{"text": "manager since 03/2024", "grade": "B1"}],
+  "panels": [
+    {"title": "Employers", "side": "left", "cards": [
+      {"name": "Harbor Cargo Example", "lines": ["Shift planner, 2013 to 2016"], "cc": "ES", "relation": "employed", "grade": "A2", "icon": "building"},
+      {"name": "Harbor Cargo Training Unit", "lines": ["In-house forklift certification course"], "relation": "trained", "grade": "B3", "icon": "chip", "indent": true},
+      {"name": "Example Port Authority", "lines": ["Named once in a conference attendee list"], "relation": "visited (claimed)", "grade": "F6", "icon": "organisation", "indent": true, "confirmed": false},
+      {"name": "Casey Placeholder", "lines": ["Former team lead; shared posts 2014 to 2015"], "relation": "colleague", "grade": "C4", "initials": "CP"}
+    ]},
+    {"title": "Current employer", "side": "center", "cards": [
+      {"name": "Northwind Freight Example", "lines": ["Regional distribution company"], "cc": "PT", "icon": "organisation"}
+    ]},
+    {"title": "Associations", "side": "right", "cards": [
+      {"name": "Example Rowing Club", "lines": ["Treasurer in a 2021 club newsletter"], "cc": "PT", "relation": "member", "grade": "A3", "icon": "group"},
+      {"name": "Example Supply Chain Society <North & South>", "lines": ["Panel speaker, spring 2022"], "cc": "IE", "relation": "speaker", "grade": "B2", "icon": "globe"},
+      {"name": "Example Logistics Forum", "lines": ["Forum signature claims a moderator role"], "relation": "moderator (claimed)", "grade": "E5", "icon": "lightning", "confirmed": false}
+    ]},
+    {"title": "Side business", "side": "left", "cards": [
+      {"name": "Sample Courier Services Lda", "lines": ["Two-person courier partnership, registered 2023"], "cc": "PT", "relation": "co-owner, 50%", "grade": "A1", "icon": "organisation"}
+    ]},
+    {"title": "Locations", "side": "right", "cards": [
+      {"name": "Example Coastal City", "lines": ["Current address, per the club roster"], "cc": "PT", "grade": "A2", "icon": "location"},
+      {"name": "Example Inland Town", "lines": ["Earlier address, 2009 to 2012"], "cc": "ES", "grade": "D4", "icon": "location"}
+    ]},
+    {"title": "Domains and accounts", "side": "full", "cards": [
+      {"name": "m.sample", "lines": ["Handle on a photo-sharing site"], "relation": "account", "grade": "B2", "icon": "globe"},
+      {"name": "sample-logistics.example", "lines": ["Personal blog, registered 2020"], "relation": "owner", "grade": "A1", "icon": "globe"},
+      {"name": "Example Freight Chat", "lines": ["Messaging-group member list"], "relation": "member (claimed)", "grade": "E5", "icon": "group", "confirmed": false}
+    ]}
+  ],
+  "legend": true
+}

@@ -2,9 +2,12 @@
 
 The loop runs FREE (or quota-backed) pivots whose hit count is known and within
 `pivot_map.auto_max_hits` on its own. Everything else — a metered pivot, an oversized or
-unknown-size hit set — is written here as an item with a stable id, and the round stops at
-`awaiting-approval`. The analyst approves ids (`harness approve`, the `case_approve` tool, or the
-TTY prompt); `--continue` runs exactly those ids.
+unknown-size hit set — is written here as an item with a stable id. In REVIEW mode (`--review`)
+the round stops at `awaiting-approval` and the analyst approves ids (`harness approve`, the
+`case_approve` tool, or the TTY prompt); `--continue` runs exactly those ids. In AUTO mode (the
+/cti default — audit.resolve_approval_mode) the orchestrator approves every non-gated item itself
+through the SAME path (`approve(..., by="auto")`: approved_by, a timestamp and the digest are kept
+in `auto_log`) and runs them in-run; nothing stops at `awaiting-approval`.
 
 An approval is bound to the case state it was made against. `digest` hashes the inputs that mean
 "the case moved on" — the collected raw files, the dispatched pivot ids and the typed node
@@ -87,6 +90,15 @@ def split(cands, *, no_spend: bool, auto_max: int):
     return auto, needs, dropped
 
 
+def split_gated(items, is_gated) -> tuple[list, list]:
+    """(approvable, held) — pure. `is_gated(item)` names the items auto mode must never approve
+    (audit.gated_item: the route names engage_account / webamon_scan / misp_publish / misp_push)."""
+    approvable, held = [], []
+    for c in items:
+        (held if is_gated(c) else approvable).append(c)
+    return approvable, held
+
+
 # --------------------------------------------------------------------------- digest
 def digest(root: str, case: str) -> str:
     """sha256 over what makes a proposal stale: the sorted collected raw file names, the sorted
@@ -127,16 +139,19 @@ def _save(root: str, case: str, data: dict) -> None:
     os.replace(tmp, p)
 
 
-def write(root: str, case: str, *, round_no: int, items, dropped=()) -> dict:
-    """Write a fresh PENDING proposal for this round (replaces any previous one)."""
+def write(root: str, case: str, *, round_no: int, items, dropped=(), mode: str = "review") -> dict:
+    """Write a fresh PENDING proposal for this round (replaces any previous one). The auto-mode
+    approval log (`auto_log`) is carried across rounds — it is the case's audit trail."""
     prev = load(root, case) or {}
     data = {"case": str(case), "round": int(round_no), "created": _now(),
-            "digest": digest(root, case), "status": "pending",
+            "digest": digest(root, case), "status": "pending", "mode": str(mode),
             "loop_active": bool(prev.get("loop_active")),
             "loop_lease_until": prev.get("loop_lease_until"),
             "items": [_as_dict(c) for c in items],
             "dropped_no_spend": [_as_dict(c) for c in dropped],
             "approved": [], "rejected": [], "used": []}
+    if prev.get("auto_log"):
+        data["auto_log"] = list(prev["auto_log"])
     _save(root, case, data)
     return data
 
@@ -155,7 +170,8 @@ def loop_active(data: dict | None) -> bool:
     return bool(data and data.get("loop_active") and _live(data.get("loop_lease_until")))
 
 
-def approve(root: str, case: str, *, only=None, reject=None, approve_all: bool = False) -> dict:
+def approve(root: str, case: str, *, only=None, reject=None, approve_all: bool = False,
+            by: str = "analyst") -> dict:
     """Record the analyst's decision. Returns the updated proposal, or {"error": ...} when there
     is nothing pending, an id is unknown, or the digest is stale (caller must re-propose).
 
@@ -182,6 +198,17 @@ def approve(root: str, case: str, *, only=None, reject=None, approve_all: bool =
     data["used"] = []
     data["status"] = "approved"
     data["decided"] = _now()
+    data["approved_by"] = str(by)
+    keep = set(data["approved"])
+    for it in data["items"]:
+        if it.get("id") in keep:
+            it["approved_by"], it["approved_at"] = str(by), data["decided"]
+    if by == "auto":
+        data.setdefault("auto_log", []).append(
+            {"round": data.get("round"), "approved_at": data["decided"], "approved_by": "auto",
+             "digest": data.get("digest"), "approved": list(data["approved"]),
+             "items": [{"id": i.get("id"), "tool": i.get("tool"), "selector": i.get("selector")}
+                       for i in data["items"] if i.get("id") in keep]})
     _save(root, case, data)
     return data
 

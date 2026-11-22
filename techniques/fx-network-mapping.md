@@ -87,7 +87,7 @@ Betweenness: @exec_name ranks highest — single bridge between
 - Cross-platform identity resolution is heuristic; false merges are possible
 - Large graphs (>10K nodes) require layout algorithm tuning to remain readable
 - Social graph is a time-frozen snapshot; relationships change faster than collection cycles
-- Infrastructure maps reflect DNS TTL state; short TTLs may show stale data
+- Infrastructure maps are a DNS snapshot: short-TTL / round-robin records rotate, so one lookup under-counts the answer set; long TTLs and cached history are what go stale (read passive-DNS history per `fx-dns-cert-history.md` §2.6–2.7)
 
 ## Related Techniques
 - [fx-social-topology.md](fx-social-topology.md) — deeper graph metrics and community detection

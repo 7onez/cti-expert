@@ -194,18 +194,26 @@ Flag: `rate < 0.001` AND `followers > 500` → purchased followers.
 
 ## Confidence Stacking
 
-When multiple patterns fire for the same subject, confidence compounds:
+When multiple patterns fire for the same subject, confidence compounds — but only across
+**independent** observations. Patterns that read the same artifact (U-01/U-02/U-03 on one
+handle; E-02 on an email local part built from that handle) form one group and contribute
+their strongest score once.
 
 ```python
-def combined_confidence(scores):
-    # Independent evidence model: 1 - product of (1 - p_i)
+def combined_confidence(groups):
+    # Noisy-OR over independent evidence groups: 1 - product of (1 - max(group))
     complement = 1.0
-    for s in scores:
-        complement *= (1.0 - s)
+    for group in groups:
+        complement *= (1.0 - max(group))
     return round(1.0 - complement, 3)
 
-# Example: U-01(0.72) + E-01(0.90) + BA-01(0.78) → combined 0.985
+# Example: [[U-01 0.72, U-02 0.65], [E-01 0.90], [BA-01 0.78]] → combined 0.994
+# (treating U-02 as independent would overstate it as 0.998)
 ```
+
+The result scores how strongly the subject shows these traits. It is not an identity link:
+whether two accounts share a controller or a person is graded on the claim ladder in
+`techniques/username-osint.md` §7.1.
 
 ---
 

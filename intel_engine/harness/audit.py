@@ -39,8 +39,11 @@ WHAT IT DENIES (everything else is allowed, and still logged)
   * hostile posture + an OUTBOUND tool with no passive/proxy argument
   * an APPROVAL-REQUIRED tool (sandbox submission) without its env var set — EXCEPT its offline
     briefing branch (see references/tool_policy.json → approval_briefing), so the risk briefing
-    the two-step gate depends on stays reachable to show the analyst before a confirmed submit
-  * a METERED call once the run's credit-spend budget is exhausted
+    the two-step gate depends on stays reachable to show the analyst before a confirmed submit.
+    AUTO mode (case state.json approval_mode=auto, the /cti default) approves an auto_submit tool
+    (anyrun_submit, PUBLIC only) and ledgers it with approved_by=auto and its briefing
+  * AUTO mode: a gated tool (auto_mode.gated_tools) called for real from a harness phase
+  * a METERED call once an opt-in credit-spend budget is exhausted (review mode only)
 The lists, the budget and the env-var map are DATA — see references/tool_policy.json — so an
 analyst re-classifies a tool without editing this file. A denial is returned to the MODEL as
 text, so it can adapt (re-call with passive=true / free_only=true) rather than dying.
@@ -110,6 +113,11 @@ _POLICY_FALLBACK = {
     # Metered tools whose handler honours free_only (a keyless mode). Every OTHER metered tool
     # refuses free_only rather than spend (tools._free_only_refusal). Conservative = empty.
     "free_only_capable_tools": [],
+    # AUTO MODE (the /cti default). Conservative minimum = REVIEW mode with nothing auto-submitted:
+    # an unreadable data file never turns auto-approval on. The gated list stays complete.
+    "auto_mode": {"default": False,
+                  "gated_tools": ["engage_account", "webamon_scan", "misp_publish", "misp_push"],
+                  "auto_submit": {}, "briefings": {}},
 }
 
 _P = load_ref(ref_path(__file__, "tool_policy.json"), _POLICY_FALLBACK)
@@ -132,6 +140,13 @@ ROUTE_METERED = dict(_P.get("route_metered_tools") or {})
 ARG_METERED = dict(_P.get("arg_metered_tools") or {})
 OPERATOR_ONLY = set(_P.get("operator_only_tools") or [])
 FREE_ONLY_CAPABLE = set(_P.get("free_only_capable_tools") or [])
+_AUTO = dict(_P.get("auto_mode") or {})
+AUTO_DEFAULT = bool(_AUTO.get("default", False))
+AUTO_GATED = set(_AUTO.get("gated_tools") or [])
+# approval-required tools auto mode may run without their env var → the args the call must carry
+AUTO_SUBMIT = {t: dict(v) for t, v in dict(_AUTO.get("auto_submit") or {}).items()
+               if isinstance(v, dict) and t not in AUTO_GATED}
+AUTO_BRIEFING = {t: str(v) for t, v in dict(_AUTO.get("briefings") or {}).items()}
 
 _TOOLS_DIR = os.path.join(ROOT, "tools")
 
@@ -152,6 +167,75 @@ def _route_metered(route: str) -> bool:
 # opts in with HARNESS_METERED_BUDGET=<n> (0/unset = never deny on count).
 MAX_METERED = int(os.environ.get("HARNESS_METERED_BUDGET") or 0)
 MAX_ARG_CHARS = int(BUDGET.get("max_arg_chars", 200))
+
+
+# ------------------------------------------------------------------ approval mode (auto | review)
+def _read_json(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            got = json.load(fh)
+        return got if isinstance(got, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def approval_mode(case: str | None, root: str | None = None) -> str:
+    """The mode a run RECORDED for this case (state.json `approval_mode`): "auto", "review", or ""
+    when nothing was recorded. Never raises; only a recorded "auto" ever relaxes a gate."""
+    if not case:
+        return ""
+    st = _read_json(os.path.join(root or ROOT, "cases", str(case), "state.json"))
+    mode = str(st.get("approval_mode") or "")
+    return mode if mode in ("auto", "review") else ""
+
+
+def auto_mode(case: str | None, root: str | None = None) -> bool:
+    return approval_mode(case, root) == "auto"
+
+
+def resolve_approval_mode(case: str, *, review: bool = False, resume: bool = False,
+                          root: str | None = None) -> tuple[str, str]:
+    """(mode, source). `--review` (CLI flag; the MCP cti tool's review=true arrives as the same
+    flag) → a seedless resume inherits the mode state.json recorded → scope.json `auto_approve`
+    → tool_policy.json auto_mode.default. Never raises."""
+    if review:
+        return "review", "--review"
+    if resume:
+        recorded = approval_mode(case, root)
+        if recorded:
+            return recorded, "state.json (resumed run)"
+    scope = _read_json(os.path.join(root or ROOT, "cases", str(case), "scope.json"))
+    if isinstance(scope.get("auto_approve"), bool):
+        return ("auto" if scope["auto_approve"] else "review"), "scope.json auto_approve"
+    return ("auto" if AUTO_DEFAULT else "review"), "tool_policy.json auto_mode.default"
+
+
+def gated_item(item) -> bool:
+    """A proposal item auto mode must never approve: its route names a gated tool
+    (`engage_account`, or the dotted route form `engage.account`)."""
+    tool = item.get("tool") if isinstance(item, dict) else getattr(item, "tool", "")
+    return str(tool or "").replace(".", "_").replace("-", "_") in AUTO_GATED
+
+
+def _auto_submit_ok(tool: str, args: dict) -> tuple[bool, str]:
+    """Do this call's arguments carry what auto mode requires for an approval-required tool
+    (anyrun_submit: privacy=public + allow_public)? (ok, reason-if-not)."""
+    need = AUTO_SUBMIT.get(tool)
+    if need is None:
+        return False, ""
+    bad = []
+    for k, v in need.items():
+        got = (args or {}).get(k)
+        if isinstance(v, bool):
+            if bool(v) != _truthy(args, {k}):
+                bad.append(f"{k}={str(v).lower()}")
+        elif str(got or "").strip().lower() != str(v).strip().lower():
+            bad.append(f"{k}={v}")
+    if bad:
+        return False, (f"{tool} in AUTO mode runs only as {' + '.join(f'{k}={v}' for k, v in need.items())} "
+                       f"(auto-approved submissions are PUBLIC tasks, never private). Re-call with "
+                       f"{', '.join(bad)} — or relaunch the case with --review to decide per call.")
+    return True, ""
 
 # Same floor as tools.POLICY: an env-set hostile posture applies even to a front-end that has no
 # phase loop to flip it (the stdio MCP server, an ad-hoc shim run).
@@ -227,8 +311,10 @@ def classify(tool_name: str, args: dict) -> list[str]:
 
 def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
            case: str | None = None, phase: str | None = None) -> tuple[bool, str, list]:
-    """(allow, reason, classes). No logging, no counter mutation, so it is testable. The one read
-    it does is cases/<case>/proposal.json, for the cross-type loop's per-round approval gate."""
+    """(allow, reason, classes). No logging, no counter mutation, so it is testable. The reads it
+    does are cases/<case>/proposal.json (the cross-type loop's per-round approval gate) and
+    cases/<case>/state.json `approval_mode` (auto mode, the /cti default). An auto-approved
+    approval-required call carries the extra class `auto-approved` (gate() ledgers it)."""
     t = bare(tool_name)
     args = args or {}
     classes = classify(tool_name, args)
@@ -243,9 +329,22 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
                 f"{t} is the ANALYST's consent step and cannot be called from a harness phase "
                 f"({ph}). Stop and hand the proposal back; the analyst approves it with "
                 f"`harness approve` or this tool in an interactive session.", classes)
+    _case = case or (_CTX.get() or {}).get("case")
+    auto = auto_mode(_case)
+    env_on = bool(APPROVAL_REQUIRED.get(t)) and \
+        os.environ.get(APPROVAL_REQUIRED[t], "").strip().lower() in ("1", "true", "yes", "on")
+
+    # AUTO MODE never approves a gated tool: a harness phase may compose its briefing, never the
+    # real action (an analyst who set the tool's own env var still decides it — that is a human).
+    if auto and t in AUTO_GATED and ph not in (None, "", "interactive") and not env_on:
+        if _truthy(args, APPROVAL_BRIEFING.get(t) or {"confirm"}):
+            return (False,
+                    f"{t} is GATED even in auto mode — it is never auto-approved (account creation, "
+                    f"public sandbox scan or sharing to MISP stays an analyst decision). It is listed "
+                    f"for the analyst in the hand-back; do not retry.", classes)
 
     env = APPROVAL_REQUIRED.get(t)
-    if env and os.environ.get(env, "").strip().lower() not in ("1", "true", "yes", "on"):
+    if env and not env_on:
         # The read-only briefing branch stays reachable without approval: with every exempt arg
         # falsy the call composes the briefing offline and does nothing outbound or irreversible,
         # so the analyst can actually SEE it before saying yes. Any exempt arg set → the real
@@ -253,12 +352,22 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
         exempt = APPROVAL_BRIEFING.get(t)
         is_briefing = exempt is not None and not _truthy(args, exempt)
         if not is_briefing:
-            return (False,
-                    f"{t} is attributable and IRREVERSIBLE — once it has happened nothing can recall "
-                    f"it (a sandbox detonation tells the operator they are being analysed; a "
-                    f"published MISP event syncs to every peer server). It requires an explicit "
-                    f"human approval this run does not have. Ask the analyst; if they agree, the run "
-                    f"must be re-launched with {env}=1. Do not retry.", classes)
+            # AUTO MODE: an auto_submit tool (anyrun_submit) is approved when the call carries the
+            # required arguments (PUBLIC task) — recorded with its briefing by gate(). Never a
+            # gated tool; hostile egress below still applies.
+            if auto and t in AUTO_SUBMIT:
+                ok_, why = _auto_submit_ok(t, args)
+                if not ok_:
+                    return False, why, classes
+                classes = classes + ["auto-approved"]
+            else:
+                return (False,
+                        f"{t} is attributable and IRREVERSIBLE — once it has happened nothing can "
+                        f"recall it (a sandbox detonation tells the operator they are being "
+                        f"analysed; a published MISP event syncs to every peer server). It requires "
+                        f"an explicit human approval this run does not have. Ask the analyst; if "
+                        f"they agree, the run must be re-launched with {env}=1. Do not retry.",
+                        classes)
 
     if hostile and "outbound" in classes:
         return (False,
@@ -273,7 +382,6 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
         if HERE not in sys.path:
             sys.path.append(HERE)
         import proposal as _proposal  # noqa: E402 — harness/proposal.py, stdlib only
-        _case = case or (_CTX.get() or {}).get("case")
         if _case and _proposal._no_spend(ROOT, _case):
             return (False,
                     f"{t} would spend metered credits and case {_case}'s scope is no_spend — the "
@@ -281,7 +389,7 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
                     f"Do not retry unchanged.", classes)
         with _LOCK:
             spent = _COUNTS["metered"]
-        if MAX_METERED and spent >= MAX_METERED:
+        if MAX_METERED and spent >= MAX_METERED and not auto:   # auto mode: never a count cap
             return (False,
                     f"metered-call budget exhausted for this run ({spent}/{MAX_METERED} "
                     f"credit-spending calls). Third-party credits are per-account and do not roll "
@@ -297,7 +405,7 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
                                            gated=PROPOSAL_GATED)
             if not ok:
                 return False, why, classes
-        elif (_case and _proposal.loop_active(_proposal.load(ROOT, _case))
+        elif (not auto and _case and _proposal.loop_active(_proposal.load(ROOT, _case))
               and not (t == "pivot_extract"
                        and _proposal.is_seed_host(ROOT, _case, (args or {}).get("url")))):
             # Any OTHER metered call while the case's cross-type loop is active (a collect/judge
@@ -415,7 +523,7 @@ def _ledger_line(rec: dict) -> str:
 
 def record(tool_name: str, args: dict, *, allowed: bool, reason: str, classes: list,
            case: str | None = None, phase: str | None = None,
-           backend: str | None = None) -> None:
+           backend: str | None = None, extra: dict | None = None) -> None:
     """Append one line to the ledger. Never raises: an unwritable ledger must not kill a case —
     it warns once to stderr and the run continues (the alternative, a run that dies at round 4
     because cases/ went read-only, loses far more evidence than it protects)."""
@@ -431,6 +539,8 @@ def record(tool_name: str, args: dict, *, allowed: bool, reason: str, classes: l
     }
     if reason:
         rec["reason"] = reason
+    for k, v in (extra or {}).items():      # the gate's own audit fields (never call arguments)
+        rec.setdefault(str(k), v)
     path = _ledger_path(case)
     try:
         line = _ledger_line(rec)
@@ -461,9 +571,30 @@ def gate(tool_name: str, args: dict, *, case: str | None = None, phase: str | No
                     _COUNTS[c] += 1
         else:
             _DENIALS.append(f"{bare(tool_name)}: {reason.split('.')[0]}")
+    extra = None
+    if allowed and "auto-approved" in classes:
+        extra = {"approved_by": "auto", "approved_at": datetime.datetime.now(datetime.timezone.utc)
+                 .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "briefing": AUTO_BRIEFING.get(bare(tool_name), "")}
     record(tool_name, args, allowed=allowed, reason=reason, classes=classes,
-           case=case, phase=phase, backend=backend)
+           case=case, phase=phase, backend=backend, extra=extra)
     return allowed, reason
+
+
+def record_auto_approvals(case: str, items, *, digest: str, round_no: int,
+                          phase: str = "xtype-auto") -> None:
+    """One ledger line per proposal item auto mode approved: approved_by 'auto', the timestamp,
+    the item id and the proposal digest the approval is bound to. Never raises (record() never
+    does); counters are untouched — the pivot's own gated call is counted when it runs."""
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for it in items or ():
+        d = it if isinstance(it, dict) else {}
+        record("auto_approve", {"id": d.get("id"), "route": d.get("tool"),
+                                "selector": d.get("selector"), "query": d.get("query")},
+               allowed=True, reason="", phase=phase,
+               classes=["auto-approved"] + (["metered"] if d.get("metered") else []),
+               case=case, extra={"approved_by": "auto", "approved_at": now, "digest": digest,
+                                 "round": int(round_no)})
 
 
 def counts() -> dict:

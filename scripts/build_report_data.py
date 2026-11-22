@@ -36,7 +36,18 @@ LLM involvement and zero egress — reading only what the pipeline already wrote
                        validate_metrics (anti-inflation: warns, never changes a number);
                        subject_profile / client_seeds (sensitive values "provided by client —
                        withheld" unless --show-sensitive) / engagement (cover analyst) and
-                       `qa_warnings` from report_sections.lint
+                       `qa_warnings` from report_sections.lint; the organisation-risk, threat and
+                       person sections (risk_assessment — else exposure_organisation.json —,
+                       key_findings, affiliate_exposure counts only, leak_claims + leak_claims_tally,
+                       threat_events, usernames_to_reserve, negative_checks, email_services with the
+                       address "(withheld)@domain" unless --show-sensitive); the actor threat-profile
+                       sections (actor_profile object with its threat_score, claim_confidence,
+                       pivot_opportunities, playbook in tactic order, hunt_hypotheses,
+                       telemetry_priorities) plus the derived attack_coverage index
+  report/card_map_*.png, fig_exposure_*.png   relationship card maps + affiliate-exposure charts
+                       (house_report_charts / house_report_exposure_charts) -> `report_figures`;
+                       drawn into report/report-data/ unless --no-figures; paths are relative to
+                       the output JSON directory (including with --out)
 
 It degrades gracefully: a case missing any of these still yields a valid report JSON from
 whatever is present. §2.5 discipline is preserved mechanically — shared/CDN infrastructure,
@@ -57,14 +68,15 @@ import ipaddress
 import json
 import os
 import re
+import stat
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling helpers
-from cti_case_meta import case_classification, expansion_anchor, raw_name_index  # noqa: E402
+from cti_case_meta import case_classification, case_markings, expansion_anchor, raw_name_index  # noqa: E402
 from cti_case_evidence import build_layer, intake_seed  # noqa: E402
 from cti_refs import malicious_verdict  # noqa: E402
 from cti_text_normalize import normalize_obj  # noqa: E402
-from cti_report_sections import gap_strings, validate_metrics  # noqa: E402,F401 — re-exported
+from cti_report_sections import gap_strings, resolve_figure, validate_metrics  # noqa: E402,F401 — re-exported
 import cti_report_sections as RSX  # noqa: E402
 
 
@@ -88,7 +100,201 @@ def _ct_and_related(raw_objs):
 # intel_engine/tools/report_sections.load); `metrics` is optional and only checked, never changed.
 _REPORT_KEYS = ("key_questions", "open_questions", "roles", "scenarios", "roadmap",
                 "incident_timeline", "attack_mapping", "counting_rules", "metrics",
-                "subject_profile", "client_seeds")
+                "subject_profile", "client_seeds",
+                "key_findings", "affiliate_exposure", "leak_claims", "threat_events",
+                "usernames_to_reserve", "negative_checks", "email_services",
+                "claim_confidence", "pivot_opportunities", "playbook", "hunt_hypotheses",
+                "telemetry_priorities")
+# the organisation risk object (report block, else cases/<id>/exposure_organisation.json): only these keys
+_RISK_KEYS = ("model", "domains", "overall", "coverage", "bands", "priorities", "import_record")
+FIGURE_DIR = os.path.join("report", "report-data")     # this builder's own figures; never the house report's
+
+
+def _card_clean():
+    """The house report's own card-text clean (house_report.scrub, escape=False: the Rule 12
+    vendor/tool-name scrub + third-party masking), so both report paths print the same card text;
+    str() with a stderr note when the house composer cannot be imported."""
+    try:
+        import house_report  # noqa: PLC0415 — the engine tools dir is on sys.path (_report_sections)
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: house_report.scrub unavailable ({exc}); card text not scrubbed.\n")
+        return str
+    return lambda s: house_report.scrub(str(s), escape=False)
+
+
+_COPY_SUFFIX_MAX = 1000   # figures/<stem>-1 … -N before a copy is given up
+
+
+def _figures_dir(base):
+    """figures/ beneath `base` (already a realpath): created with mkdir, or an existing entry accepted
+    only when lstat shows a real directory (never a symlink) whose realpath is still inside `base`.
+    (path, None), or (None, reason) — the caller then records no copied figures."""
+    path = os.path.join(base, "figures")
+    try:
+        os.mkdir(path, 0o755)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        return None, f"mkdir failed: {exc.__class__.__name__}"
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        return None, f"lstat failed: {exc.__class__.__name__}"
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        return None, "exists and is not a real directory"
+    if os.path.commonpath((os.path.realpath(path), base)) != base:
+        return None, "resolves outside the output directory"
+    return path, None
+
+
+def _holds_exactly(path, data):
+    """True when `path` is itself a regular file (opened O_NOFOLLOW, so a symlink fails, and
+    O_NONBLOCK, so a FIFO cannot hang) whose fstat size and bytes equal `data`; the read is bounded
+    by len(data) + 1. False on any doubt."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size != len(data):
+            return False
+        got, want = bytearray(), len(data) + 1
+        while len(got) < want:
+            chunk = os.read(fd, want - len(got))
+            if not chunk:
+                break
+            got += chunk
+        return got == data
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def _write_new(fig_dir, name, data):
+    """Write `data` to a NEW file in `fig_dir` — O_CREAT|O_EXCL|O_NOFOLLOW, so an existing file or
+    symlink is never followed or overwritten. A taken name is reused only when it is a regular file
+    already holding exactly `data` (a rebuild); otherwise -1, -2, … go before its extension.
+    Returns the path written or reused, or None when every candidate is taken or a write fails."""
+    stem, ext = os.path.splitext(name)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    for n in range(_COPY_SUFFIX_MAX + 1):
+        dest = os.path.join(fig_dir, f"{stem}-{n}{ext}" if n else name)
+        try:
+            fd = os.open(dest, flags, 0o644)
+        except FileExistsError:
+            if _holds_exactly(dest, data):
+                return dest
+            continue
+        except OSError:
+            return None
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+        except OSError:
+            os.close(fd)
+            try:
+                os.unlink(dest)
+            except OSError:
+                pass
+            return None
+        os.close(fd)
+        return dest
+    return None
+
+
+def _rel_figures(paths, out_dir, kind, report_dir):
+    """Record relative paths beneath the JSON's directory. Figures outside it are copied into
+    figures/ next to the JSON, so a relocated deliverable needs neither the case tree nor an inferred
+    INTEL_HOME. Copy the resolver's validated bytes, not a second open of its source pathname, into a
+    new file only (never through a symlink, never over an existing file); record the path written."""
+    out = {}
+    base = os.path.realpath(out_dir)
+    fig_dir = refused = None
+    for k, v in paths.items():
+        try:
+            source = os.path.realpath(v)
+            if os.path.commonpath((source, base)) != base:
+                # `source` is absolute: a relative figure path (a relative case dir) must not be
+                # refused as "no report directory to resolve against" when it is in fact inside it.
+                png, why = resolve_figure(source, [os.path.realpath(report_dir)])
+                if png is None:
+                    sys.stderr.write(f"build_report_data: {kind} {k} not copied ({why}).\n")
+                    continue
+                if fig_dir is None and refused is None:
+                    fig_dir, refused = _figures_dir(base)
+                    if refused:
+                        sys.stderr.write(f"build_report_data: figures/ refused ({refused}); "
+                                         f"{kind}s outside the output directory are not copied.\n")
+                if refused:
+                    continue
+                source = _write_new(fig_dir, os.path.basename(v), png)
+                if source is None:
+                    sys.stderr.write(f"build_report_data: {kind} {k} not copied (no new file could be written).\n")
+                    continue
+            out[k] = os.path.relpath(source, base).replace(os.sep, "/")
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"build_report_data: {kind} {k} not recorded ({exc.__class__.__name__}).\n")
+    return out
+
+
+def _report_figures(case_dir, sections, subject, scope, show_sensitive, draw=True, out_dir=None):
+    """{"card_maps": {name: png}, "exposure_charts": {name: png}, "exposure_source"} — the house report's
+    relationship card maps and affiliate-exposure charts for this case ({} when it has none).
+
+    Card maps are drawn fresh (IntelGraph card_map, in-process) into report/report-data/ so they match
+    this build's data and --show-sensitive; with --no-figures, or when drawing fails, the house report's
+    report/card_map_*.png is reused — the person map only when no sensitive client seed could be on it.
+    Exposure charts (counts only): report/fig_exposure_*.png when present, else drawn (matplotlib
+    subprocess). A figure that cannot be drawn is named on stderr, never silently dropped. Paths are
+    relative to `out_dir` (the output JSON's directory; default the case dir, where report-data.json goes)."""
+    try:   # the engine tools dir is on sys.path (_report_sections)
+        import house_report_charts as hrg  # noqa: PLC0415
+        import house_report_exposure_charts as hrxc  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: report figures unavailable ({exc}).\n")
+        return {}
+    rep_dir, own_dir = os.path.join(case_dir, "report"), os.path.join(case_dir, FIGURE_DIR)
+    sensitive = any(isinstance(s, dict) and s.get("sensitive") for s in sections.get("client_seeds") or [])
+    cards = {}
+    if draw:
+        c = {"report_sections": sections, "scope": {"brand": (scope or {}).get("brand")}, "seed": subject,
+             "dir": case_dir, "show_sensitive": bool(show_sensitive)}
+        try:
+            if hrg.card_map_specs(c, _today(), str):
+                drawn = hrg.build_card_maps(c, own_dir, _today(), _card_clean())
+                for k, why in (drawn.get("_notes") or {}).items():
+                    sys.stderr.write(f"build_report_data: card map {k}: {why}\n")
+                cards = {k: v for k, v in drawn.items() if k in hrg.CARD_MAPS and v}
+        except Exception as exc:  # noqa: BLE001 — a figure never blocks the report JSON
+            sys.stderr.write(f"build_report_data: card maps not drawn ({exc}).\n")
+    if not cards:
+        cards = {k: v for k, v in hrg.existing_card_maps(rep_dir).items()
+                 if k in hrg.CARD_MAPS and v and not (k == "person" and sensitive and not show_sensitive)}
+    out = {}
+    if cards:
+        out["card_maps"] = _rel_figures(cards, out_dir or case_dir, "card map", rep_dir)
+    try:
+        exp = hrxc.existing(case_dir, rep_dir, sections)
+        if exp and not any(exp.get(n) for n in hrxc.FIGURES):
+            exp = hrxc.existing(case_dir, own_dir, sections)
+        if exp and not any(exp.get(n) for n in hrxc.FIGURES) and draw:
+            os.makedirs(own_dir, exist_ok=True)
+            exp = hrxc.build_charts(case_dir, own_dir, sections)
+            for k, why in (exp.get("_notes") or {}).items():
+                sys.stderr.write(f"build_report_data: exposure chart {k}: {why}\n")
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: exposure charts not drawn ({exc}).\n")
+        exp = {}
+    charts = _rel_figures({n: exp[n] for n in hrxc.FIGURES if (exp or {}).get(n)},
+                          out_dir or case_dir, "exposure chart", rep_dir)
+    if charts:
+        out["exposure_charts"] = charts
+        out["exposure_source"] = exp.get("_source")
+    return out
 
 
 def _report_sections(case_dir):
@@ -531,7 +737,8 @@ def _cld_denylisted(cld_block):
     return bool(result and str(result).lower() in ("malicious", "suspicious", "phishing", "scam"))
 
 
-def build(case_dir, kb_dir, classification=None, show_sensitive=False):
+def build(case_dir, kb_dir, classification=None, show_sensitive=False, figures=True, out_dir=None):
+    """Build the flat report; figure paths are relative to out_dir (default: case_dir)."""
     case_id = os.path.basename(os.path.abspath(case_dir).rstrip("/"))
     raws = dict(_iter_raw(case_dir))
     hosts = sorted(raws)
@@ -743,6 +950,11 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
                          "collected_at": (op_rec or {}).get("added") or _today(),
                          "confidence": int(conf), "tags": tags})
 
+    def next_fid():
+        # past the highest id in use: FND-001..003 are conditional, so a count would reuse a taken id
+        used = [int(m.group(1)) for f in findings for m in [re.match(r"FND-(\d+)$", f["id"])] if m]
+        return f"FND-{max(used, default=0) + 1:03d}"
+
     if reg_email and reg.get("registrant_email"):
         # the seed's CURRENT WHOIS carries the identity — the registrant-triple claim is earned
         add_finding("FND-001", "SUB-001", "identity", "HIGH",
@@ -806,7 +1018,7 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     if ip_excl:
         fp_bits.append("shared/CDN origins " + ", ".join(ip_excl))
     if fp_bits:
-        add_finding(f"FND-{len(findings)+1:03d}", sub_by_host.get(seed, "SUB-001"),
+        add_finding(next_fid(), sub_by_host.get(seed, "SUB-001"),
                     "infrastructure", "INFO",
                     "Rejected as operator-level links (commodity or multi-tenant): "
                     + "; ".join(fp_bits) + ".",
@@ -815,7 +1027,7 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     # ---- opportunistic evidence sidecars (known filenames; skipped if absent) -
     leak = _load_json(os.path.join(case_dir, "evidence", "leak-sweep.json"))
     if leak and isinstance(leak.get("verdict"), str):
-        add_finding(f"FND-{len(findings)+1:03d}",
+        add_finding(next_fid(),
                     "SUB-001" if operator_exists else sub_by_host.get(seed, "SUB-002"),
                     "exposure", "INFO",
                     "Breach / infostealer sweep: " + leak["verdict"][:600], None, 90,
@@ -823,7 +1035,7 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     sweep = _load_json(os.path.join(case_dir, "evidence", "estate-seo-sweep.json"))
     if sweep and sweep.get("verdict"):
         confirmed = list((sweep.get("operator_era_doorway_confirmed") or {}))
-        add_finding(f"FND-{len(findings)+1:03d}", sub_by_host.get(seed, "SUB-001"),
+        add_finding(next_fid(), sub_by_host.get(seed, "SUB-001"),
                     "behavioral", "HIGH", sweep["verdict"][:600]
                     + (f" Confirmed apexes: {', '.join(confirmed)}." if confirmed else ""),
                     None, 93, ["campaign", "doorway", "seo-spam"])
@@ -1003,6 +1215,35 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     eng = sections.get("engagement")
     if isinstance(eng, dict) and eng:
         house["engagement"] = eng
+    ra = sections.get("risk_assessment")
+    if isinstance(ra, dict) and [d for d in ra.get("domains") or [] if isinstance(d, dict)]:
+        house["risk_assessment"] = mask_obj({k: ra[k] for k in _RISK_KEYS if k in ra}, keep=keep,
+                                            hosts=set(estate) | {seed}, extra=extra, current_case=case_id)
+    if house.get("key_findings"):   # 'P1 (7 days)' / 'P4 (track only — no deadline)', as every renderer prints it
+        house["key_findings"] = RSX.display_rows(house, "key_findings")
+    ap = sections.get("actor_profile")
+    if isinstance(ap, dict) and ap:
+        house["actor_profile"] = mask_obj(ap, keep=keep, hosts=set(estate) | {seed}, extra=extra,
+                                          current_case=case_id)
+    coverage = RSX.display_rows(sections, "attack_coverage")    # derived from playbook + hunt_hypotheses
+    if coverage:
+        house["attack_coverage"] = coverage
+    resolve = RSX._engine_attr("telemetry_baseline_setting")   # baseline_ref -> its Windows audit setting
+    for i, r in enumerate(house.get("telemetry_priorities") or []):
+        st = resolve(r.get("baseline_ref")) if resolve else None
+        if st:      # baseline_setting right after baseline_ref; no ref / unresolved -> row unchanged
+            row = {}
+            for k, v in r.items():
+                row[k] = v
+                if k == "baseline_ref":
+                    row["baseline_setting"] = st
+            house["telemetry_priorities"][i] = row
+    if house.get("leak_claims"):
+        n_claims, n_proven = RSX.claim_tally(house["leak_claims"])
+        house["leak_claims_tally"] = {"claims": n_claims, "proven": n_proven}
+    figs = _report_figures(case_dir, sections, seed, scope, show_sensitive, draw=figures, out_dir=out_dir)
+    if figs:
+        house["report_figures"] = figs
     # QA lint over the unwithheld sections (it compares client seeds with confirmed rows); any
     # sensitive client value it quotes is scrubbed below unless --show-sensitive
     qa = RSX.qa_lint(sections, findings, "build_report_data")
@@ -1025,6 +1266,7 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
             "id": case_id,
             "label": (op_rec or {}).get("label") or f"{case_id} — {seed}",
             "classification": classification or case_classification(case_dir) or "UNCLASSIFIED//FOR OFFICIAL USE ONLY",
+            **case_markings(case_dir),
             "analyst": "AI-Assisted CTI Analyst",
             "date": _today(),
             "subject": seed,
@@ -1057,9 +1299,13 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
         ],
     }
     report.update(house)
+    # withhold_client also turns every email_services address — and its mention in a QA warning —
+    # into "(withheld)@domain"; scrub_withheld then removes the sensitive client values
+    report["qa_warnings"] = qa
     RSX.withhold_client(report, show_sensitive)
+    RSX.counts_only(report)
     RSX.apply_engagement(report)
-    report["qa_warnings"] = RSX.scrub_withheld(qa, report, raw_sensitive)
+    report["qa_warnings"] = RSX.scrub_withheld(report["qa_warnings"], report, raw_sensitive)
     for w in report["qa_warnings"]:
         sys.stderr.write(f"build_report_data: QA WARNING — {w}\n")
     if checked:
@@ -1068,28 +1314,118 @@ def build(case_dir, kb_dir, classification=None, show_sensitive=False):
     for w in warns:
         sys.stderr.write(f"build_report_data: METRIC WARNING — {w}\n")
     report["metric_warnings"] = warns
-    return report
+    return _strip_credentials(report)
+
+
+def _strip_credentials(obj):
+    """Every URL in every string of the report loses its credential parameters (key, token,
+    apikey … — report_citations.json secret_query_keys, the same rule as the house report): raw
+    evidence URLs reach evidence/source_url/sources fields verbatim, and a deliverable never
+    carries a credential. The engine's report_citations is required; without it the report is
+    returned with a loud warning rather than silently."""
+    home = os.environ.get("INTEL_HOME") or os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "intel_engine"))
+    tools = os.path.join(home, "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        from report_citations import strip_secrets  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"build_report_data: report_citations unavailable ({exc}); URL credentials "
+                         "NOT stripped — review before sharing.\n")
+        return obj
+
+    def walk(v):
+        if isinstance(v, str):
+            return strip_secrets(v) if "://" in v else v
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, tuple):
+            return tuple(walk(x) for x in v)
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        return v
+    return walk(obj)
 
 
 def _today():
     return datetime.date.today().isoformat()
 
 
+CSV_COLUMNS = ("kind", "id", "type", "value", "subject_id", "role", "category", "confidence", "weight",
+               "collected_at", "description", "source_url", "tags")
+_NUMBER_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+
+
+def _csv_cell(v):
+    """One CSV cell: lists joined with '; ', None empty. A text cell a spreadsheet would run as a
+    formula (leading = + - @ tab CR — page titles and descriptions come from hostile pages) gets a
+    leading apostrophe; a plain signed number (a favicon hash such as -123456789) is left as is."""
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        v = "; ".join(str(x) for x in v if x is not None)
+    s = str(v)
+    if s[:1] in ("=", "+", "-", "@", "\t", "\r") and not _NUMBER_RE.match(s):
+        s = "'" + s
+    return s
+
+
+def write_csv(report, path):
+    """The base bundle's CSV (SKILL.md Step A row 3): every finding, then every indicator, one row
+    each with a `kind` column, under a credit + handling-caveat comment line. Written from the
+    finished report, so it carries the same withholding and credential stripping as the JSON."""
+    import csv  # noqa: PLC0415
+    rows = [("finding", f) for f in report.get("findings") or [] if isinstance(f, dict)]
+    rows += [("indicator", i) for i in report.get("indicators") or [] if isinstance(i, dict)]
+    caveat = (report.get("case") or {}).get("classification") or ""
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(f"# Generated by {GENERATOR}" + (f" · {caveat}" if caveat else "") + "\n")
+        w = csv.writer(fh)
+        w.writerow(CSV_COLUMNS)
+        for kind, r in rows:
+            w.writerow([kind] + [_csv_cell(r.get(c)) for c in CSV_COLUMNS[1:]])
+    return len(rows)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="case dir -> flat report JSON (SKILL.md §8)")
-    ap.add_argument("case_dir")
+    ap = argparse.ArgumentParser(description="case dir -> flat report JSON (SKILL.md §8); or, with "
+                                 "--from-report, a finalized REPORT.json -> the bundle CSV")
+    ap.add_argument("case_dir", nargs="?")
     ap.add_argument("-o", "--out", default=None, help="output path (default: <case>/report-data.json)")
     ap.add_argument("--kb", default=None, help="knowledge dir (default: engine knowledge/)")
     ap.add_argument("--print", action="store_true", dest="show", help="also print the JSON")
     ap.add_argument("--classification", default=None, help="handling caveat for the cover/header (default: the case's TLP marking, else UNCLASSIFIED//FOUO)")
     ap.add_argument("--show-sensitive", action="store_true", help="print client-provided values marked "
-                    "sensitive (default: 'provided by client — withheld')")
+                    "sensitive (default: 'provided by client — withheld'; email_services addresses '(withheld)@domain')")
+    ap.add_argument("--no-figures", action="store_true", help="draw no card map / exposure chart; record "
+                    "only the figures already in <case>/report/")
+    ap.add_argument("--csv", default=None, metavar="PATH", help="also write the base bundle's CSV: "
+                    "findings + indicators, one row each with a `kind` column")
+    ap.add_argument("--from-report", default=None, metavar="REPORT.json",
+                    help="no build: write --csv from this FINALIZED report JSON (after the Step 0 import "
+                         "merged analyst findings/indicators), so the CSV carries every row the JSON does")
     a = ap.parse_args()
+    if a.from_report:
+        if a.case_dir or not a.csv:
+            ap.error("--from-report takes no case_dir and needs --csv PATH")
+        try:
+            report = json.load(open(a.from_report, encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            sys.exit(f"cannot read report JSON {a.from_report!r}: {exc}")
+        if not isinstance(report, dict):
+            sys.exit(f"not a report JSON object: {a.from_report}")
+        # imported rows never passed through build(): strip URL credentials here as well
+        print(f"wrote {a.csv} ({write_csv(_strip_credentials(report), a.csv)} rows)")
+        return
+    if not a.case_dir:
+        ap.error("case_dir is required (or use --from-report REPORT.json --csv PATH)")
     if not os.path.isdir(a.case_dir):
         sys.exit(f"not a case directory: {a.case_dir}")
     kb = a.kb or os.path.normpath(os.path.join(a.case_dir, "..", "..", "knowledge"))
-    report = normalize_obj(build(a.case_dir, kb, a.classification, a.show_sensitive))
     out = a.out or os.path.join(a.case_dir, "report-data.json")
+    report = normalize_obj(build(a.case_dir, kb, a.classification, a.show_sensitive, not a.no_figures,
+                                 out_dir=os.path.dirname(os.path.abspath(out))))
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
@@ -1098,6 +1434,8 @@ def main():
     print(f"  subjects={len(c['subjects'])} findings={len(c['findings'])} "
           f"connections={len(c['connections'])} timeline={len(c['timeline'])} "
           f"indicators={len(c['indicators'])} ioc_exclude={len(c['ioc_exclude'])}")
+    if a.csv:
+        print(f"wrote {a.csv} ({write_csv(report, a.csv)} rows)")
     if a.show:
         print(json.dumps(report, ensure_ascii=False, indent=2))
 

@@ -116,8 +116,7 @@ def secret_queries(target):
         "github_code_search": [f'"{t}" AND (password OR passwd OR secret)',
                                f'"{t}" filename:.env', f'"{t}" filename:config.json',
                                f'"{t}" AWS_SECRET_ACCESS_KEY', f'org:{t} filename:.npmrc _auth'],
-        "external": [f'https://grep.app/search?q={urllib.parse.quote(t)}',
-                     f'https://search.marcia.dev/?q={urllib.parse.quote(t)}'],
+        "external": [f'https://grep.app/search?q={urllib.parse.quote(t)}'],
         "local_tools": [f"trufflehog github --org={t}", f"gitleaks detect --source ."],
         "note": ("GitHub code search requires authentication, so these are NOT run here. Running "
                  "them signs in as you — that is an attributable action, which is why the tool "

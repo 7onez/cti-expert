@@ -1,0 +1,68 @@
+{
+  "_comment": "SEVERITY TIER MATRIX for scripts/osint/exposure_score.py (--model tier, and --model actor with exposure_level), documented in analysis/weight-engine.md §10 and handbook/severity-tiers.md. Adapted from the CTI Severity Tier Matrix in [PK Packt ACTIH companion repo, 2026, chapter-01/CTI Severity Tier Matrix.md] (MIT). Two analyst-rated axes read off a fixed grid; a tier is a response priority, never attribution evidence. Vocabulary and thresholds only, never case data (RULE 1).",
+  "severities": {
+    "_comment": "Axis 1, threat severity, highest first. Rated from the threat itself before looking at our environment; per-trigger patterns are in handbook/severity-tiers.md.",
+    "values": ["Critical", "High", "Medium", "Low"]
+  },
+  "exposures": {
+    "_comment": "Axis 2, exposure level, lowest first (the grid column order). 'Negligible' is accepted as an alias of None.",
+    "values": ["None", "Limited", "Significant", "Extensive"]
+  },
+  "grid": {
+    "_comment": "severity row -> [tier at exposure None, Limited, Significant, Extensive]. Design rules checked on load: P1 needs severity >= rules.p1_min_severity AND exposure >= rules.p1_min_exposure; every cell is a tier listed under `tiers` (nothing closes automatically).",
+    "entries": {
+      "Critical": ["P3", "P2", "P1", "P1"],
+      "High": ["P4", "P3", "P2", "P1"],
+      "Medium": ["P4", "P3", "P3", "P2"],
+      "Low": ["P4", "P4", "P4", "P3"]
+    }
+  },
+  "rules": {
+    "_comment": "p1_min_severity / p1_min_exposure: the lowest row and column where P1 may appear. auto_close false: no cell means 'ignore'.",
+    "p1_min_severity": "High",
+    "p1_min_exposure": "Significant",
+    "auto_close": false
+  },
+  "tiers": {
+    "_comment": "tier -> {name, deadline, report_priority, meaning}. P1-P3 deadlines equal the house report's risk_assessment.priorities (exposure_organisation.json); report_priority is the value a key_findings row carries (P1-P4) and, for P1-P3 only, a roadmap row. P4 is track only: no deadline; it may appear as key_findings.priority (rendered 'P4 (track only — no deadline)') but never as a roadmap row.",
+    "entries": {
+      "P1": {"name": "Flash", "deadline": "7 days", "report_priority": "P1",
+             "meaning": "act now; advisory to leadership and owners, hunt package, daily tracking"},
+      "P2": {"name": "Priority", "deadline": "30 days", "report_priority": "P2",
+             "meaning": "planned response inside the month; advisory normally issued"},
+      "P3": {"name": "Standard", "deadline": "90 days", "report_priority": "P3",
+             "meaning": "handled in normal work and reviewed for re-tiering"},
+      "P4": {"name": "Informational", "deadline": null, "report_priority": "P4",
+             "meaning": "track only, no deadline; recorded, not closed"}
+    }
+  },
+  "axis2_dimensions": {
+    "_comment": "The five exposure dimensions the analyst combines into ONE Axis 2 level. Guides only; the combination is analyst judgement and the rationale must say which dimension drove it.",
+    "entries": {
+      "technical": "do we run the affected technology, how much of it, and in which critical domains?",
+      "targeting": "are we inside the sector, region or organisation type the threat goes after?",
+      "tradecraft": "do our controls cover the techniques involved, or do they land on a gap?",
+      "relational": "are we tied to victims through a vendor, shared infrastructure, peering or partnership?",
+      "detection": "would we see this activity class if it were happening here?"
+    }
+  },
+  "retier_triggers": {
+    "_comment": "id -> {axis, direction, text}. A re-tier recorded with --case must name one of these ids. Rephrased from upstream; actor_rescored is an adaptation for the actor model.",
+    "entries": {
+      "exploitation_confirmed": {"axis": "severity", "direction": "up",
+                                 "text": "in-the-wild exploitation or live campaign use is confirmed"},
+      "new_exposure": {"axis": "exposure", "direction": "up",
+                       "text": "new exposure surfaces: missed inventory, a new deployment, a newly found vendor tie, a control gap"},
+      "mitigation_threshold": {"axis": "exposure", "direction": "down",
+                               "text": "mitigation reaches its threshold: patched, detections live and validated, controls tightened, vendor fixed"},
+      "actor_adopts": {"axis": "severity", "direction": "up",
+                       "text": "an actor of concern takes up the technique or vulnerability, whatever the patch state"},
+      "sector_shift": {"axis": "severity", "direction": "up",
+                       "text": "an actor or campaign moves its targeting into our sector"},
+      "attribution_downgrade": {"axis": "severity", "direction": "down",
+                                "text": "the attacker is reassessed as less capable (for example commodity rather than state-aligned)"},
+      "actor_rescored": {"axis": "severity", "direction": "either",
+                         "text": "(adaptation) the actor's Threat Score crossed a band boundary at a re-score"}
+    }
+  }
+}

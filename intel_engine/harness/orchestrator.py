@@ -60,6 +60,7 @@ try:
 except Exception:  # noqa: BLE001 — degrade to the old bare rule if the KB toolkit isn't importable
     _conv = None
 import case_abstract  # noqa: E402 — tools/case_abstract.py: abstract.json follows every head write
+import report_citations as _rc  # noqa: E402 — tools/report_citations.py: credentials out of snapshot URLs
 
 
 @dataclass(frozen=True)
@@ -253,20 +254,50 @@ def _gate_hook(case, phase, hostile):
     return _cb
 
 
-# Wall-clock ceiling per phase. The CLI backends already stop a phase at HARNESS_CLI_TIMEOUT; the
-# SDK path only had max_turns, so one hung tool call could stall a round (and a loop that pauses
-# for approvals) forever. One ceiling, same default, both paths.
-PHASE_TIMEOUT = int(os.environ.get("HARNESS_PHASE_TIMEOUT")
-                    or os.environ.get("HARNESS_CLI_TIMEOUT") or 1800)
+# Wall-clock budget per phase — ONE value for both front-ends (wp_timeouts.resolve_phase_timeout:
+# HARNESS_PHASE_TIMEOUT, else HARNESS_CLI_TIMEOUT, each from the env then the skill-root .env, else
+# references/timeouts.json phase_timeout = 18000 s). While a phase runs its deadline is bound
+# (wp_timeouts.set_phase_deadline, a ContextVar, so concurrent phases keep their own): every tool
+# call clamps to it, the CLI backend kills its process group at it and exports it to the MCP server.
+import wp_timeouts  # noqa: E402 — on sys.path via tools.py → collect_core
+
+PHASE_TIMEOUT = wp_timeouts.resolve_phase_timeout()
+
+
+class PhaseTimeout(RuntimeError):
+    """A phase ran out of its wall-clock budget. Not a failed round: the caller salvages what the
+    phase already wrote (raw/, KB) and records the phase as `partial`."""
+
+    def __init__(self, label: str, seconds: int):
+        super().__init__(f"phase {label} timed out after {seconds}s (phase budget)")
+        self.label, self.seconds = label, seconds
+
+
+# Phases salvaged as `partial` this round, per case: [{"phase", "reason"}]. run_case drains it into
+# rounds.jsonl / state.json at the round boundary.
+_PARTIAL: dict[str, list[dict]] = {}
+
+
+def _note_partial(case, label: str, reason: str) -> None:
+    _log(f"  ◐ {label} · partial — {reason}; salvaging what it already wrote")
+    _PARTIAL.setdefault(case or "", []).append({"phase": label, "reason": reason})
 
 
 async def _phase(prompt, *, label, **kw):
-    """Run one phase under PHASE_TIMEOUT; a timeout is a FAILED phase (never a silent pass)."""
+    """Run one phase under PHASE_TIMEOUT with its deadline bound; a timeout raises PhaseTimeout
+    (never a silent pass — the caller salvages and records it as partial)."""
+    token = wp_timeouts.set_phase_deadline(time.time() + PHASE_TIMEOUT)
     try:
         return await asyncio.wait_for(_phase_run(prompt, label=label, **kw), timeout=PHASE_TIMEOUT)
     except asyncio.TimeoutError:
-        _log(f"  ✗ {label} · timed out after {PHASE_TIMEOUT}s (HARNESS_PHASE_TIMEOUT)")
-        raise RuntimeError(f"phase {label} timed out after {PHASE_TIMEOUT}s") from None
+        _log(f"  ✗ {label} · timed out after {PHASE_TIMEOUT}s (phase budget)")
+        raise PhaseTimeout(label, PHASE_TIMEOUT) from None
+    except RuntimeError as e:     # the CLI backend killed the phase at the deadline itself
+        if "phase timed out after" in str(e) and not isinstance(e, PhaseTimeout):
+            raise PhaseTimeout(label, PHASE_TIMEOUT) from None
+        raise
+    finally:
+        wp_timeouts.reset_phase_deadline(token)
 
 
 async def _phase_run(prompt, *, label, system, tools, servers, resume=None,
@@ -349,25 +380,29 @@ async def collect_fanout(seeds: list[str], case: str, *, hostile: bool = False,
     async def _one(seed: str) -> tuple[str, object]:
         host = T._host(seed)
         async with sem:
-            r = await _phase(
-                _prompt(
-                    "collect_one",
-                    scope=case_scope.collect_directives(_scope(case)),
+            try:
+                r = await _phase(
+                    _prompt(
+                        "collect_one",
+                        scope=case_scope.collect_directives(_scope(case)),
+                        case=case,
+                        prior=_prior_knowledge([seed]),
+                        seed_lines=f"- {seed}",
+                        hostile_note=("Target is HOSTILE — pass passive=true or a proxy on pivot_extract.\n"
+                                      if hostile else ""),
+                    ),
+                    label=f"collect:{host}",
+                    system=_skill("WebPivot"),
+                    tools=T.COLLECT_TOOLS,
+                    servers={"collect": T.COLLECT_SERVER},
+                    model=COLLECT.model,
+                    effort=COLLECT.effort,
+                    hostile=hostile,
                     case=case,
-                    prior=_prior_knowledge([seed]),
-                    seed_lines=f"- {seed}",
-                    hostile_note=("Target is HOSTILE — pass passive=true or a proxy on pivot_extract.\n"
-                                  if hostile else ""),
-                ),
-                label=f"collect:{host}",
-                system=_skill("WebPivot"),
-                tools=T.COLLECT_TOOLS,
-                servers={"collect": T.COLLECT_SERVER},
-                model=COLLECT.model,
-                effort=COLLECT.effort,
-                hostile=hostile,
-                case=case,
-            )
+                )
+            except PhaseTimeout as e:   # the other seeds' collectors keep running; caller ingests
+                _note_partial(case, f"collect:{host}", str(e))
+                r = None
             return host, r
 
     return dict(await asyncio.gather(*[_one(s) for s in seeds]))
@@ -391,25 +426,33 @@ async def investigate(seeds: list[str], case: str, hostile: bool = False,
         ok, msg = T.ingest(case)
         _log(f"  ingest · {'ok' if ok else 'FAILED'} · {msg.splitlines()[0] if msg else ''}")
     else:
-        p1 = await _phase(
-            _prompt(
-                "collect",
-                scope=case_scope.collect_directives(_scope(case)),
+        try:
+            p1 = await _phase(
+                _prompt(
+                    "collect",
+                    scope=case_scope.collect_directives(_scope(case)),
+                    case=case,
+                    prior=prior,
+                    seed_lines=seed_lines,
+                    hostile_note=("Targets are HOSTILE — pass passive=true or a proxy on pivot_extract.\n"
+                                  if hostile else ""),
+                ),
+                label="collect",
+                system=_skill("WebPivot"),
+                tools=T.COLLECT_TOOLS,
+                servers={"collect": T.COLLECT_SERVER},
+                model=COLLECT.model,
+                effort=COLLECT.effort,
+                hostile=hostile,
                 case=case,
-                prior=prior,
-                seed_lines=seed_lines,
-                hostile_note=("Targets are HOSTILE — pass passive=true or a proxy on pivot_extract.\n"
-                              if hostile else ""),
-            ),
-            label="collect",
-            system=_skill("WebPivot"),
-            tools=T.COLLECT_TOOLS,
-            servers={"collect": T.COLLECT_SERVER},
-            model=COLLECT.model,
-            effort=COLLECT.effort,
-            hostile=hostile,
-            case=case,
-        )
+            )
+        except PhaseTimeout as e:
+            # SALVAGE: the collect agent ingests as it goes, but its last raw/ files may not be in
+            # the KB yet — ingest whatever it wrote, then judge on that.
+            _note_partial(case, "collect", str(e))
+            ok, msg = T.ingest(case)
+            _log(f"  salvage ingest · {'ok' if ok else 'FAILED'} · {msg.splitlines()[0] if msg else ''}")
+            p1 = None
         collect_phases = {"collect": p1}
     # We do NOT resume the collect session into judgment. The facts now live in the KB,
     # which the judgment phases read via tools — carrying the (large) collect transcript
@@ -452,33 +495,45 @@ async def _judge(domains: list[str], case: str,
     discovered siblings."""
     seed_csv = ", ".join(domains)
     # PHASE 2 — CORRELATE  (IntelAnalysis brain, judge model). Fresh session, reads the KB.
-    p2 = await _phase(
-        _prompt("correlate", scope=case_scope.judgment_directives(_scope(case)),
-                case=case, seed_csv=seed_csv)
-        + (_SCOPE_NOTE.format(members=seed_csv) if members_only else ""),
-        label="correlate",
-        system=_skill("IntelAnalysis"),
-        tools=T.ANALYZE_TOOLS,
-        servers={"analyze": T.ANALYZE_SERVER},
-        model=JUDGE.model,
-        effort=JUDGE.effort,
-        case=case,
-    )
+    correlate_prompt = (_prompt("correlate", scope=case_scope.judgment_directives(_scope(case)),
+                                case=case, seed_csv=seed_csv)
+                        + (_SCOPE_NOTE.format(members=seed_csv) if members_only else ""))
+    salvaged = False
+    try:
+        p2 = await _phase(
+            correlate_prompt,
+            label="correlate",
+            system=_skill("IntelAnalysis"),
+            tools=T.ANALYZE_TOOLS,
+            servers={"analyze": T.ANALYZE_SERVER},
+            model=JUDGE.model,
+            effort=JUDGE.effort,
+            case=case,
+        )
+    except PhaseTimeout as e:
+        # SALVAGE: its session is gone, but the KB it read is intact — assess runs in a fresh
+        # session that carries the correlate brief itself.
+        _note_partial(case, "correlate", str(e))
+        p2, salvaged = None, True
     session = p2.session_id if p2 else None
-    if not session:
+    if not session and not salvaged:
         return None, {"correlate": p2}
     phases = {"correlate": p2}
 
     # PHASE 2.5 — ADVERSARIAL VERIFY  (resume CORRELATE; refute each same-operator link before it's
     # committed). Runs in the correlate session so it attacks the very cluster it just drew; ASSESS
     # then resumes THIS session, so the structured output reflects only the surviving links.
-    if VERIFY_ON:
-        pv = await _phase(
-            _prompt("verify", scope=case_scope.judgment_directives(_scope(case)),
-                    case=case, seed_csv=seed_csv),
-            label="verify", system=_skill("IntelAnalysis"), tools=T.ANALYZE_TOOLS,
-            servers={"analyze": T.ANALYZE_SERVER}, resume=session,
-            model=VERIFY.model, effort=VERIFY.effort, case=case)
+    if VERIFY_ON and session:
+        try:
+            pv = await _phase(
+                _prompt("verify", scope=case_scope.judgment_directives(_scope(case)),
+                        case=case, seed_csv=seed_csv),
+                label="verify", system=_skill("IntelAnalysis"), tools=T.ANALYZE_TOOLS,
+                servers={"analyze": T.ANALYZE_SERVER}, resume=session,
+                model=VERIFY.model, effort=VERIFY.effort, case=case)
+        except PhaseTimeout as e:      # assess resumes the correlate session instead
+            _note_partial(case, "verify", str(e))
+            pv = None
         phases["verify"] = pv
         if pv and pv.session_id:
             session = pv.session_id      # ASSESS resumes the adversarial session, not raw correlate
@@ -487,10 +542,17 @@ async def _judge(domains: list[str], case: str,
     assess_prompt = _prompt("assess", scope=case_scope.judgment_directives(_scope(case)))
     if members_only:
         assess_prompt += _SCOPE_NOTE.format(members=seed_csv)
+    if not session:
+        assess_prompt = correlate_prompt + "\n\n" + assess_prompt
     assess_kw = dict(system=_skill("IntelAnalysis"), tools=T.ANALYZE_TOOLS,
                      servers={"analyze": T.ANALYZE_SERVER}, resume=session,
                      output_schema=Assessment, case=case)
-    p3 = await _phase(assess_prompt, label="assess", model=JUDGE.model, effort=JUDGE.effort, **assess_kw)
+    try:
+        p3 = await _phase(assess_prompt, label="assess", model=JUDGE.model, effort=JUDGE.effort,
+                          **assess_kw)
+    except PhaseTimeout as e:
+        _note_partial(case, "assess", str(e))
+        p3 = None
     phases["assess"] = p3
 
     assessment = None
@@ -501,8 +563,12 @@ async def _judge(domains: list[str], case: str,
     if (assessment is not None and ESCALATE_ON and assessment.confidence == "low"
             and ESCALATE.model != JUDGE.model):
         _log(f"low confidence — escalating assess to {ESCALATE.model}")
-        p3b = await _phase(assess_prompt, label="assess+", model=ESCALATE.model,
-                           effort=ESCALATE.effort, **assess_kw)
+        try:
+            p3b = await _phase(assess_prompt, label="assess+", model=ESCALATE.model,
+                               effort=ESCALATE.effort, **assess_kw)
+        except PhaseTimeout as e:      # keep the cheap judge's assessment
+            _note_partial(case, "assess+", str(e))
+            p3b = None
         phases["assess+"] = p3b
         if p3b and p3b.subtype == "success" and p3b.structured_output:
             assessment = Assessment.model_validate(p3b.structured_output)
@@ -602,15 +668,44 @@ def _enforce_tiers(assessment: Assessment, case: str) -> Assessment:
 def _convergence_snapshot(case: str, failed: list[str] | None = None) -> str:
     """Record this round in cases/<case>/rounds.jsonl via the convergence tool (its own authority
     on what counts as a new host/indicator). `failed` are hosts that failed to collect THIS round
-    (run_case_parallel's `fails`; run_case has no partial-failure list — a hard collect failure
-    there raises and the round never reaches this call) — convergence.py's zero_growth/is_converged
-    then refuse to call a round zero-growth just because a failure also produced nothing new.
+    (run_case_parallel's `fails`) or run_case's failure markers (seeds collect wrote nothing for,
+    and `partial <phase>` for a salvaged phase) — convergence.py's zero_growth/is_converged then
+    refuse to call a round zero-growth just because a failure also produced nothing new.
     Returns its one-line summary for the worklog."""
     cmd = [sys.executable, os.path.join("tools", "kb", "convergence.py"), "snapshot", case]
     if failed:
         cmd += ["--failed", ",".join(sorted(set(failed)))]
     r = T._run(cmd, timeout=120)
     return (r.stdout or r.stderr or "").strip()
+
+
+def _record_partial(case: str, rnd: int, partial: list[dict]) -> None:
+    """Record this round's salvaged phases: as `partial` on the round's rounds.jsonl row (the one
+    _convergence_snapshot just appended) and in state.json `partial_phases` ({round, phase,
+    reason, ts}). Best-effort — a bookkeeping failure never fails the run."""
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = [{"phase": p.get("phase"), "reason": p.get("reason")} for p in partial]
+    path = os.path.join(ROOT, "cases", case, "rounds.jsonl")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+        if lines:
+            last = json.loads(lines[-1])
+            last["partial"] = rows
+            lines[-1] = json.dumps(last)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+            os.replace(tmp, path)
+    except (OSError, ValueError) as e:
+        _log(f"  (partial phases not written to rounds.jsonl: {e})")
+    try:
+        import case_state as cs
+        st = cs.load_state(case)
+        st.setdefault("partial_phases", []).extend({"round": rnd, **r, "ts": ts} for r in rows)
+        cs.save_state(case, st)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (partial phases not written to state.json: {e})")
 
 
 def _is_converged(case: str, stale: int) -> bool:
@@ -677,41 +772,53 @@ def _case_no_spend(case: str) -> bool:
     return bool((_scope(case).get("constraints") or {}).get("no_spend"))
 
 
-def _reverse_whois_previews(case: str, known: set, cap: int) -> list[dict]:
-    """FREE reverse-WHOIS preview counts for the case's registrant email/phone — never a purchase.
-
-    Returns [{kind, term, count}] for every term whose count is 0 < count ≤ cap: the estate the
-    cross-type loop may PROPOSE buying (an `rwhois.purchase` item in proposal.json, run only after
-    the analyst approves it). A >cap count is shared-registrar NOISE and is never proposed. Under a
-    `no_spend` scope even the preview is skipped. Each term is previewed at most once per case; the
-    counts persist in cases/<case>/rwhois_previews.json so later rounds re-read them for free.
-    `known` is accepted for call-site symmetry with the other seed sources; purchased domains are
-    deduplicated downstream when the approved purchase is ingested."""
-    if _case_no_spend(case):
-        return []
+def _rwhois_preview_count(case: str, kind: str, term: str, cap: int) -> int:
+    """The FREE reverse-WHOIS preview count for ONE registrant term — previewed at most once per
+    case and cached in cases/<case>/rwhois_previews.json (later rounds re-read it for free). A
+    failed preview reads 0. Never a purchase."""
     path = os.path.join(ROOT, "cases", case, "rwhois_previews.json")
     try:
         with open(path, encoding="utf-8") as fh:
             seen: dict = json.load(fh) or {}
     except Exception:  # noqa: BLE001 — missing/corrupt cache = nothing previewed yet
         seen = {}
-    changed = False
-    for kind, term in _case_registrant_terms(case):
-        tag = f"{kind}:{term}"
-        if tag in seen:
-            continue
+    term = term.lower() if kind == "email" else term
+    tag = f"{kind}:{term}"
+    if tag not in seen:
         n = (_rw_call(_REVERSE_FLAG_ORCH[kind], term, "preview") or {}).get("count", 0) or 0
         seen[tag] = {"kind": kind, "term": term, "count": int(n)}
-        changed = True
         _log(f"  reverse-whois preview {kind}={term}: {n} domains"
              + (" — noise (>cap), never proposed" if n > cap else ""))
-    if changed:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(seen, fh, indent=2, sort_keys=True)
         except Exception:  # noqa: BLE001
             pass
+    try:
+        return int(seen[tag].get("count") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+def _reverse_whois_previews(case: str, known: set, cap: int) -> list[dict]:
+    """FREE reverse-WHOIS preview counts for the case's registrant email/phone — never a purchase.
+
+    Returns [{kind, term, count}] for every term whose count is 0 < count ≤ cap: the estate the
+    cross-type loop may PROPOSE buying (an `rwhois.purchase` item in proposal.json, run only after
+    the analyst approves it). A >cap count is shared-registrar NOISE and is never proposed. Under a
+    `no_spend` scope even the preview is skipped. Each term is previewed at most once per case
+    (_rwhois_preview_count). `known` is accepted for call-site symmetry with the other seed
+    sources; purchased domains are deduplicated downstream when the approved purchase is ingested."""
+    if _case_no_spend(case):
+        return []
+    for kind, term in _case_registrant_terms(case):
+        _rwhois_preview_count(case, kind, term, cap)
+    try:
+        with open(os.path.join(ROOT, "cases", case, "rwhois_previews.json"), encoding="utf-8") as fh:
+            seen: dict = json.load(fh) or {}
+    except Exception:  # noqa: BLE001
+        seen = {}
     return [r for r in seen.values() if 0 < r.get("count", 0) <= cap]
 
 
@@ -986,7 +1093,8 @@ def _sdk_seed_sources(case: str, known) -> list:
 # candidates (frontier miners + KB-linked nodes + the case's node registry + the SDK seed sources),
 # the PLAN phase (read-only PLAN_TOOLS) re-ranks them and adds cross-type pivots, proposal.split()
 # runs the free/quota-backed ones within auto_max on its own and writes everything else to a
-# digest-bound proposal.json the analyst approves. audit.gate() enforces the approval.
+# digest-bound proposal.json — approved by the analyst (review mode, `--review`) or by the loop
+# itself (AUTO mode, the /cti default; gated tools excepted). audit.gate() enforces the approval.
 PLAN_TOP = int(os.environ.get("HARNESS_PLAN_TOP", "60"))     # candidates shown to the planner
 
 
@@ -1037,11 +1145,13 @@ async def _plan_round(case: str, cands: list, *, hostile: bool) -> list:
     return [by_id[i] for i in order] + [c for c in added if c.id not in seen]
 
 
-def _execute_items(case: str, items, *, hostile: bool, approved_run: bool = False) -> list[str]:
+def _execute_items(case: str, items, *, hostile: bool, approved_run: bool = False,
+                   outcomes: dict | None = None) -> list[str]:
     """Run pivots: a `collect` domain (or historical origin IP) becomes next round's seed; every
     other route goes through audit.gate() (the approval rule lives there) and pivot_routes.execute
     (rows → KB rung-aware, → typed nodes). Returns the seeds to collect. Marks every dispatched id
-    pivoted."""
+    pivoted. `outcomes` (optional) receives {id: execute result | {"error": gate denial}} for each
+    non-collect item."""
     import case_state as cs
     import pivot_routes as PR
     new, done = [], []
@@ -1078,6 +1188,8 @@ def _execute_items(case: str, items, *, hostile: bool, approved_run: bool = Fals
                                   hostile=hostile)
         if not allowed:
             _log(f"    ✗ {d['id']} {d['tool']} {d['selector'][:40]} — {why[:120]}")
+            if outcomes is not None:
+                outcomes[d["id"]] = {"error": f"denied by the gate: {why}"}
             continue
         if d["tool"] == "enrich.host":
             # APPROVED keyed enrichment: re-collect the host with the metered layers on (the only
@@ -1100,6 +1212,8 @@ def _execute_items(case: str, items, *, hostile: bool, approved_run: bool = Fals
                 ("ERROR: " + str(r.get("error"))) if r.get("error") else \
                 f"{r.get('rows', 0)} row(s), {r.get('nodes_added', 0)} new node(s)"
         _log(f"    · {d['tool']}({d['selector'][:40]}) → {state}")
+        if outcomes is not None:
+            outcomes[d["id"]] = r
         # A transient error (a Wayback 503, a urlscan timeout) must not drop the lead for good:
         # it stays un-pivoted and is re-offered next round. A skip (no key, unsupported coin) is
         # a stable answer and is recorded as done.
@@ -1110,7 +1224,8 @@ def _execute_items(case: str, items, *, hostile: bool, approved_run: bool = Fals
     return new
 
 
-def _run_approved(case: str, *, hostile: bool) -> tuple[list[str], bool]:
+def _run_approved(case: str, *, hostile: bool,
+                  outcomes: dict | None = None) -> tuple[list[str], bool]:
     """Resume path: run exactly the ids the analyst approved (digest re-checked, set frozen),
     then close the proposal. Returns (domain seeds those items produced, whether a proposal ran)."""
     started = P.begin_run(ROOT, case)
@@ -1126,9 +1241,311 @@ def _run_approved(case: str, *, hostile: bool) -> tuple[list[str], bool]:
         cs.mark_pivoted(case, rejected)   # the analyst said no: never re-propose these ids
     _log(f"\n▶ approved proposal · running {len(items)} item(s) · {len(rejected)} rejected")
     try:
-        return _execute_items(case, items, hostile=hostile, approved_run=True), True
+        return _execute_items(case, items, hostile=hostile, approved_run=True,
+                              outcomes=outcomes), True
     finally:
         P.mark_consumed(ROOT, case)
+
+
+def _set_approval_mode(case: str, approval: str | None, *, resume: bool) -> str:
+    """Resolve (when not given) and RECORD this run's approval mode in state.json — the gate
+    (audit.auto_mode) and every later round read it there. Returns "auto" or "review"."""
+    import case_state as cs
+    if approval == "auto":
+        mode, source = "auto", "run argument"
+    else:      # "review" = --review (CLI or MCP review=true); None = resolve the default chain
+        mode, source = audit.resolve_approval_mode(case, review=approval == "review",
+                                                   resume=resume, root=ROOT)
+    try:
+        st = cs.load_state(case)
+        st["approval_mode"] = mode
+        st["approval_mode_source"] = source
+        st["approval_mode_at"] = datetime.datetime.now(datetime.timezone.utc) \
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+        st["pending_gated"] = []          # this run's auto rounds re-list what is still gated
+        cs.save_state(case, st)
+    except Exception as e:  # noqa: BLE001 — unrecorded = the gate reads review (fail-closed)
+        _log(f"  (approval mode not recorded: {e} — the gate treats the case as review)")
+    _log(f"approval mode: {mode.upper()} ({source})"
+         + ("" if mode == "review" else " — proposals are auto-approved except gated tools; "
+            "--review restores per-round analyst approval"))
+    return mode
+
+
+def _record_gated(case: str, held) -> None:
+    """state.json `pending_gated`: the proposal items auto mode held back (gated tools). Never
+    marked pivoted, so a `--review` run proposes them to the analyst again."""
+    import case_state as cs
+    try:
+        st = cs.load_state(case)
+        st["pending_gated"] = [{k: (c if isinstance(c, dict) else c.to_dict()).get(k)
+                                for k in ("id", "type", "selector", "tool", "why")} for c in held]
+        cs.save_state(case, st)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (pending_gated not recorded: {e})")
+
+
+def _auto_round(case: str, needs, *, hostile: bool, round_no: int, dropped=(),
+                last_round: bool = False, outcomes: dict | None = None) -> tuple[list[str], int, list]:
+    """AUTO MODE: approve every non-gated proposal item through the digest-bound proposal.json
+    path (approved_by=auto, ledgered) and run it now. Gated items are held for the analyst. On the
+    last round `collect` items stay un-pivoted (nothing would investigate them) and are re-offered
+    by the next run. Returns (new domain seeds, items run, held gated items)."""
+    approvable, held = P.split_gated(needs, audit.gated_item)
+    for c in held:
+        _log(f"    ⛔ gated (never auto-approved): {c.tool}({c.selector[:40]})")
+    if last_round:
+        approvable = [c for c in approvable if c.tool != "collect"]
+    if not approvable:
+        return [], 0, held
+    P.write(ROOT, case, round_no=round_no, items=approvable, dropped=dropped, mode="auto")
+    res = P.approve(ROOT, case, approve_all=True, by="auto")
+    if res.get("error"):
+        _log(f"  auto-approval refused: {res['error']} — re-proposed next round")
+        return [], 0, held
+    audit.record_auto_approvals(case, [i for i in res.get("items") or []
+                                       if i.get("id") in set(res.get("approved") or [])],
+                                digest=str(res.get("digest")), round_no=round_no)
+    from selector_types import auto_max_hits
+    _log(f"  ✓ auto-approved {len(res.get('approved') or [])} pivot(s) (metered / "
+         f">{auto_max_hits()} hits / unknown size) — approved_by=auto, "
+         f"digest {str(res.get('digest'))[:19]}…")
+    new, _ran = _run_approved(case, hostile=hostile, outcomes=outcomes)
+    return new, len(res.get("approved") or []), held
+
+
+# A vendor answer that means "no more credits / slow down" (HTTP 402 / 429): the rest of that
+# vendor's metered leads wait for the next run — the vendor enforces the limit, never a local cap.
+_VENDOR_LIMIT_RE = re.compile(r"\b(402|429)\b|payment required|too many requests|rate.?limit"
+                              r"|quota|insufficient (credit|balance|points)", re.I)
+_VENDOR_STOPPED: dict[str, set] = {}       # case -> vendors that answered 402/429 in THIS run
+# collection_outcomes.json collect statuses that mean the host was tried and not collected
+# (crashed / timed out / withheld by policy, e.g. a hostile host never fetched direct)
+_COLLECT_FAILED = frozenset({"error", "timed_out", "skipped_policy"})
+_FRONTIER_ATTEMPTS_FALLBACK = 1
+
+
+def _frontier_max_attempts() -> int:
+    """tool_policy.json auto_mode.frontier_max_attempts — how often AUTO mode may queue one
+    free-frontier host before it is reported as failed instead (embedded fallback 1)."""
+    try:
+        with open(os.path.join(HERE, "references", "tool_policy.json"), encoding="utf-8") as fh:
+            node = (json.load(fh).get("auto_mode") or {}).get("frontier_max_attempts")
+        return max(1, int(node["value"] if isinstance(node, dict) else node))
+    except Exception:  # noqa: BLE001 — unreadable reference: the conservative fallback
+        return _FRONTIER_ATTEMPTS_FALLBACK
+
+
+def _collect_failed(case: str, host: str) -> bool:
+    """The host's last recorded collection (cases/<case>/collection_outcomes.json) failed."""
+    try:
+        with open(os.path.join(ROOT, "cases", case, "collection_outcomes.json"),
+                  encoding="utf-8") as fh:
+            row = ((json.load(fh) or {}).get("hosts") or {}).get(host) or {}
+        return str((row.get("collect") or {}).get("status")) in _COLLECT_FAILED
+    except Exception:  # noqa: BLE001 — no outcome recorded = not known to have failed
+        return False
+
+
+def _frontier_exhausted(case: str, host: str, attempts: dict, cap: int) -> bool:
+    """AUTO mode already queued `host` `cap` times, or queued it and its collection failed."""
+    n = int(attempts.get(host.lower(), 0) or 0)
+    return n >= cap or (n > 0 and _collect_failed(case, host.lower()))
+
+
+def _auto_free_frontier(case: str, known, *, hostile: bool, max_new: int) -> list[str]:
+    """AUTO MODE: the FREE frontier hosts the proposer cannot offer (KB cluster peers and strong
+    infra reverses under an apex the case already holds — the hosts the hand-back lists as
+    'uncollected cluster peers') → next round's free-only collection seeds, through the same
+    `collect` executor as every discovered host (rung recorded: KB peer = kit, infra = neighbour —
+    collected, never attributed). Guards: an apex held back as a co-tenancy lead stays held unless
+    an approval covers it; a host AUTO mode already queued `frontier_max_attempts` times, or queued
+    once and failed to collect, is never re-queued (state.json `frontier_attempts`)."""
+    import case_state as cs
+    if max_new <= 0:
+        return []
+    try:
+        held = cs.held_cotenancy_apexes(case)
+        attempts = cs.frontier_attempts(case)
+    except Exception as e:  # noqa: BLE001 — unknown guards: collect nothing on our own
+        _log(f"  (auto frontier skipped: {e})")
+        return []
+    cap = _frontier_max_attempts()
+    picked, failed = [], []
+    for c in _sdk_seed_sources(case, known):
+        if c.tool != "collect":
+            continue
+        h = c.selector.lower()
+        apex = cs._frontier_apex(h)
+        if not apex or apex in held or cs.never_seed(apex):
+            continue
+        if _frontier_exhausted(case, h, attempts, cap):
+            failed.append(h)
+            continue
+        picked.append(c)
+        if len(picked) >= max_new:
+            break
+    if failed:
+        _log(f"  ✗ {len(failed)} free-frontier host(s) not re-queued (failed collection / "
+             f"{cap} attempt(s)): {', '.join(failed[:8])}")
+    if not picked:
+        return []
+    cs.record_frontier_attempts(case, [c.selector for c in picked])
+    _log(f"  ↻ auto: {len(picked)} free-frontier host(s) collected free-only before any hand-back: "
+         f"{', '.join(c.selector for c in picked)}")
+    return _execute_items(case, picked, hostile=hostile)
+
+
+def _auto_metered_leads(case: str, *, hostile: bool, round_no: int) -> int:
+    """AUTO MODE: run the deterministic frontier's metered leads (case_state.frontier
+    `metered_leads`: FOFA ip= / icon_hash=, WhoisXML reverse-WHOIS — what `intel.py loop` lists)
+    through the SAME path as every auto-approved pivot: a digest-bound proposal approved_by auto
+    (ledgered in tool_calls.jsonl), audit.gate, pivot_routes.execute. Once per lead per case
+    (state.json `metered_leads_run` + `pivoted`); results land as typed nodes the next round's
+    propose() pivots on. Rails: never under no_spend / smoke; a lead whose paid query ALREADY
+    answered in this case (case_state.metered_lead_answered: api_usage ledger row ok=true, an
+    enrichment leg that ran it, a stored reverse-WHOIS purchase) is settled as skipped, no spend —
+    only that dedup decides, a Plan-phase drop of the same pivot neither blocks nor forces it;
+    reverse-WHOIS is PREVIEWED first and bought only for 0 < count ≤ rwhois_auto_cap (a >cap term
+    is shared-registrar noise — never bought); a vendor's HTTP 402/429 stops that vendor's leads
+    for the rest of the run. Returns the number of leads executed."""
+    import case_state as cs
+    if not audit.auto_mode(case, ROOT) or _case_no_spend(case) or T.SMOKE:
+        return 0
+    try:
+        leads = (cs.frontier(case, max_new=0) or {}).get("metered_leads") or []
+        st = cs.load_state(case)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (metered-lead probe failed: {e})")
+        return 0
+    pivoted = {str(x) for x in st.get("pivoted") or []}
+    stopped = _VENDOR_STOPPED.setdefault(case, set())
+    ran = 0
+
+    def _settle(lead, cand, outcome):
+        cs.record_metered_lead(case, lead, cand_id=cand.id, outcome=outcome, round_no=round_no)
+        cs.mark_pivoted(case, [cand.id])          # the proposer never re-offers it either
+
+    for lead in leads:
+        svc, q = str(lead.get("service") or ""), str(lead.get("query") or "")
+        if svc in stopped:
+            continue
+        cand = cs.metered_lead_candidate(lead)
+        if cand is None:
+            _log(f"    · metered lead {svc} {q[:60]}: no executable route — left for the analyst")
+            continue
+        if cand.id in pivoted:
+            _settle(lead, cand, "already pivoted this case")
+            continue
+        try:
+            src = cs.metered_lead_answered(case, lead)
+        except Exception as e:  # noqa: BLE001 — unknown answer state: never spend on a guess
+            _log(f"    · metered lead {svc} {q[:60]}: dedup check failed ({e}) — left open")
+            continue
+        if src:
+            _log(f"    · metered lead {svc} {q[:60]}: skipped — already answered ({src}), "
+                 f"no spend")
+            _settle(lead, cand, f"skipped: already answered ({src})")
+            continue
+        if cand.tool == "rwhois.purchase":
+            cap = T._rwhois_auto_cap()
+            n = _rwhois_preview_count(case, cand.type, cand.selector, cap)
+            if n <= 0 or n > cap:
+                why = ("preview: 0 domains — nothing to buy" if n <= 0 else
+                       f"preview: {n} domains > rwhois_auto_cap {cap} — shared-registrar noise, "
+                       f"never bought")
+                _log(f"    · metered lead {svc} {q[:60]}: {why}")
+                _settle(lead, cand, why)
+                continue
+        out: dict = {}
+        _log(f"  ▶ metered lead (auto) · {svc} {q[:60]}")
+        _new, n_ok, _held = _auto_round(case, [cand], hostile=hostile, round_no=round_no,
+                                        outcomes=out)
+        res = out.get(cand.id)
+        if not n_ok or res is None:
+            continue                     # not approved / not run: re-offered next round
+        err = str(res.get("error") or "") if isinstance(res, dict) else ""
+        if err and _VENDOR_LIMIT_RE.search(err):
+            stopped.add(svc)
+            _log(f"    ⛔ {svc} answered {err[:80]} — no further {svc} lead runs this run")
+            continue
+        _settle(lead, cand, ("error: " + err) if err else
+                ("skipped: " + str(res.get("skipped"))) if res.get("skipped") else
+                f"ran: {res.get('rows', 0)} row(s), {res.get('nodes_added', 0)} new node(s)")
+        ran += 1
+    return ran
+
+
+# A live fetch that died on the PROXY side (tunnel 50x / 401, proxy unreachable), not on the target:
+# the host was never really asked, so it earns ONE re-collection through today's egress path.
+_PROXY_SIDE_RE = re.compile(r"ProxyError|Unable to connect to proxy|Tunnel connection failed"
+                            r"|\b50[234]\b|Bad Gateway|Gateway Time-?out", re.I)
+
+
+def _auto_recollect_failed(case: str, *, hostile: bool, round_no: int, max_new: int) -> int:
+    """AUTO MODE: re-collect, ONCE per host per case (state.json `recollected`), a collected host
+    whose live fetch failed on the proxy side BEFORE the hostile retry path existed — its raw
+    carries a proxy-side `meta.live_error` and no `meta.live_fetch` (the field the retry/archive
+    path stamps on every hostile collection). Re-collected free-only (collect_one's consent rule)
+    with force, ALWAYS through the exit-rotation path (hostile=True, passive=True) whatever the
+    case posture: another pool exit, then archive-only, never direct — the single-exit fetch is
+    exactly what failed. The case's posture is untouched; the marker records
+    `recollect_path: exit-rotation`. A host already collected under the new path, a target-side
+    failure (TLS, DNS, 4xx from the site) or a host re-collected before is left alone. Returns the
+    hosts re-collected."""
+    import case_state as cs
+    if max_new <= 0:
+        return 0
+    try:
+        done = cs.recollected_hosts(case)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (re-collect check skipped: {e})")
+        return 0
+    picks = []
+    for p in sorted(glob.glob(os.path.join(ROOT, "cases", case, "raw", "*.json"))):
+        try:
+            with open(p, encoding="utf-8") as fh:
+                meta = (json.load(fh) or {}).get("meta") or {}
+        except Exception:  # noqa: BLE001
+            continue
+        host = str(meta.get("host") or "").lower()
+        err = str(meta.get("live_error") or "")
+        if (host and err and _PROXY_SIDE_RE.search(err) and not meta.get("live_fetch")
+                and host not in done and host not in picks):
+            picks.append(host)
+        if len(picks) >= max_new:
+            break
+    if not picks:
+        return 0
+    _log(f"  ↻ auto: re-collecting {len(picks)} host(s) whose earlier live fetch failed on the "
+         f"proxy side (exit rotation, then archive — never direct), once each: {', '.join(picks)}")
+    for host in picks:
+        res = T.collect_one(host, case, hostile=True, passive=True, force=True)
+        status = str(res.get("status") or res.get("note") or res.get("error") or "")
+        cs.record_recollected(case, host, status=status or ("ok" if res.get("ok") else "failed"),
+                              round_no=round_no, path="exit-rotation")
+        _log(f"    · {host} → {status[:160] or ('ok' if res.get('ok') else 'failed')}")
+    ok_, note = T.ingest(case)
+    if not ok_:
+        _log(f"  re-collect ingest failed: {str(note)[-200:]}")
+    return len(picks)
+
+
+def _auto_continue(case: str, stop: str, *, current, hostile: bool, round_no: int,
+                   max_new: int, last_round: bool,
+                   metered: bool = True) -> tuple[list[str], str | None]:
+    """AUTO MODE, at a round that would hand back (plan-veto / gated-only / no-frontier): first
+    drain what auto mode runs on its own — the deterministic metered leads (unless this round
+    already ran them: `metered=False`), then (not on the final round: nothing would investigate
+    them) the one-time re-collection of proxy-failed hosts and the FREE frontier hosts. Anything
+    ran → (new hosts, None): the loop collects them and re-plans. Nothing left → ([], stop), the
+    original reason."""
+    ran = _auto_metered_leads(case, hostile=hostile, round_no=round_no) if metered else 0
+    if not last_round:
+        ran += _auto_recollect_failed(case, hostile=hostile, round_no=round_no, max_new=max_new)
+    new = [] if last_round else _auto_free_frontier(
+        case, _all_collected(case) + list(current), hostile=hostile, max_new=max_new)
+    return (new, None) if (new or ran) else ([], stop)
 
 
 async def _xtype_step(case: str, current: list[str], *, hostile: bool, round_no: int,
@@ -1137,33 +1554,63 @@ async def _xtype_step(case: str, current: list[str], *, hostile: bool, round_no:
 
     FREE WORK DRAINS FIRST: free corpus pivots within auto_max run, and host collections
     (`collect`, at most `max_new` per round) continue, while metered / oversized / unknown-size
-    pivots are HELD. The loop pauses for approval only when no free work is left (or on the last
-    round, so the analyst still sees what is pending) — so routes without a count probe never
-    stall free-frontier collection. Held items are not marked pivoted; propose() re-offers them."""
+    pivots are HELD. REVIEW mode pauses for approval only when no free work is left (or on the
+    last round, so the analyst still sees what is pending) — so routes without a count probe never
+    stall free-frontier collection. Held items are not marked pivoted; propose() re-offers them.
+    AUTO mode (state.json approval_mode, the /cti default) approves and runs the held items in the
+    same round (_auto_round) and never stops at awaiting-approval; gated items wait in the
+    hand-back. AUTO mode also runs the deterministic frontier's metered leads every round
+    (_auto_metered_leads) and, before ANY hand-back (plan-veto / gated-only / no-frontier),
+    collects the free frontier hosts the proposer cannot offer (_auto_continue)."""
     import case_state as cs
     from selector_types import auto_max_hits
+    auto = audit.auto_mode(case, ROOT)
     cands = cs.propose(case, extra=_sdk_seed_sources(case, _all_collected(case) + list(current)))
     if not cands:
         # Only Plan-dropped leads left (state.json `dropped`, never re-offered): still a planner
         # judgment, not an exhausted frontier — hand back, same as a whole-frontier veto.
-        if cs.load_state(case).get("dropped"):
+        stop = "plan-veto" if cs.load_state(case).get("dropped") else "no-frontier"
+        new, stop = (_auto_continue(case, stop, current=current, hostile=hostile,
+                                    round_no=round_no, max_new=max_new, last_round=last_round)
+                     if auto else ([], stop))
+        if stop == "plan-veto":
             _log("  ⏸ only planner-dropped candidate(s) remain — handing back to the analyst")
-            return [], "plan-veto"
-        return [], "no-frontier"
+        return new, stop
     _log(f"\n▶ cross-type frontier · {len(cands)} candidate(s)")
     planned = await _plan_round(case, cands, hostile=hostile)
     if not planned:
         # The planner vetoed EVERY candidate. That is a judgment to show the analyst, never a
         # finding that the frontier is exhausted — so the case is handed back, not marked cold.
-        _log(f"  ⏸ the planner dropped all {len(cands)} candidate(s) — handing back to the analyst")
-        return [], "plan-veto"
-    auto, needs, dropped = P.split(planned, no_spend=_case_no_spend(case), auto_max=auto_max_hits())
+        new, stop = (_auto_continue(case, "plan-veto", current=current, hostile=hostile,
+                                    round_no=round_no, max_new=max_new, last_round=last_round)
+                     if auto else ([], "plan-veto"))
+        if stop:
+            _log(f"  ⏸ the planner dropped all {len(cands)} candidate(s) — handing back to the "
+                 f"analyst")
+        return new, stop
+    auto_items, needs, dropped = P.split(planned, no_spend=_case_no_spend(case),
+                                         auto_max=auto_max_hits())
     for c in dropped:
         _log(f"    no_spend: dropped metered {c.tool}({c.selector[:40]})")
-    pivots = [c for c in auto if c.tool != "collect"]
-    collects = [c for c in auto if c.tool == "collect"]
+    pivots = [c for c in auto_items if c.tool != "collect"]
+    collects = [c for c in auto_items if c.tool == "collect"]
     if pivots:
         _execute_items(case, pivots, hostile=hostile)
+    if auto:
+        # a FINAL round never consumes collects it cannot run (nothing investigates them after it)
+        new = (_execute_items(case, collects[:max(0, max_new)], hostile=hostile)
+               if collects and not last_round else [])
+        auto_new, ran, held = (_auto_round(case, needs, hostile=hostile, round_no=round_no,
+                                           dropped=dropped, last_round=last_round)
+                               if needs else ([], 0, []))
+        _record_gated(case, held)
+        new = list(dict.fromkeys(new + auto_new))
+        ml = _auto_metered_leads(case, hostile=hostile, round_no=round_no)
+        if not pivots and not collects and not ran and not ml:
+            return _auto_continue(case, "gated-only" if held else "no-frontier", current=current,
+                                  hostile=hostile, round_no=round_no, max_new=max_new,
+                                  last_round=last_round, metered=False)
+        return new, None
     pause = bool(needs) and ((not pivots and not collects) or last_round)
     # a pausing or FINAL round never consumes collects it cannot run (nothing investigates them
     # after it) — they stay un-pivoted, so the next run's propose() offers them again
@@ -1212,15 +1659,43 @@ async def _leak_round(case: str, *, hostile: bool) -> None:
     --free-only). ONCE PER CASE: the attempt is recorded in state.json `leak_round` (ran_at, exit)
     whatever its outcome, so later rounds and resumes never re-fan-out — retryable / held legs stay
     OPEN for `intel.py enrich <case> --leak-only` (or case_enrich), which reuses the checkpoints.
-    Off the event loop (a slow vendor must not block the stdin/MCP loop)."""
+    Then, in AUTO mode only, ONE full enrichment pass (_full_enrich_round). Off the event loop (a
+    slow vendor must not block the stdin/MCP loop)."""
+    await _enrich_pass(case, hostile=hostile, marker="leak_round", leak_only=True)
+    await _full_enrich_round(case, hostile=hostile)
+
+
+async def _full_enrich_round(case: str, *, hostile: bool) -> None:
+    """AUTO mode only (state.json approval_mode == "auto"): ONE full `intel.py enrich <case>` pass
+    (no --leak-only), so every lead class auto mode may approve (enrichment_run._auto_classes —
+    e.g. Telegram account-age leads) runs in an unattended run. Once per case, recorded in
+    state.json `enrich_round` like `leak_round`. REVIEW mode: nothing runs here — the analyst
+    approves enrichment leads per item, as before."""
     import case_state as cs
     try:
-        if cs.load_state(case).get("leak_round"):
+        auto = cs.load_state(case).get("approval_mode") == "auto"
+    except Exception:  # noqa: BLE001 — unreadable state: never assume consent
+        auto = False
+    if auto:
+        await _enrich_pass(case, hostile=hostile, marker="enrich_round", leak_only=False)
+
+
+async def _enrich_pass(case: str, *, hostile: bool, marker: str, leak_only: bool) -> None:
+    """One `intel.py enrich <case>` pass, once per case: skipped when state.json[`marker`] is
+    set, and the attempt (ran_at, exit) recorded there whatever its outcome. HARNESS_NO_ENRICH
+    smoke → --free-only; hostile → --passive."""
+    import case_state as cs
+    what = "leak fan-out" if leak_only else "full enrichment"
+    rerun = f"intel.py enrich {case}" + (" --leak-only" if leak_only else "")
+    try:
+        if cs.load_state(case).get(marker):
             return
     except Exception as e:  # noqa: BLE001 — unreadable state: skip rather than risk a repeat
-        _log(f"  leak fan-out skipped (state unreadable: {e}) — run intel.py enrich {case} --leak-only")
+        _log(f"  {what} skipped (state unreadable: {e}) — run {rerun}")
         return
-    cmd = [sys.executable, os.path.join("tools", "intel.py"), "enrich", case, "--leak-only"]
+    cmd = [sys.executable, os.path.join("tools", "intel.py"), "enrich", case]
+    if leak_only:
+        cmd.append("--leak-only")
     if T.SMOKE:
         cmd.append("--free-only")
     if hostile:
@@ -1233,18 +1708,18 @@ async def _leak_round(case: str, *, hostile: bool) -> None:
             if "leak coverage" in line or line.startswith("     ") or "enrichment" in line:
                 _log("  " + line.strip())
         if rc != 0:
-            _log(f"  leak fan-out exit {rc}: {(r.stderr or '')[-300:]}")
-    except Exception as e:  # noqa: BLE001 — a failed leak step is reported, never fatal
-        _log(f"  leak fan-out failed: {e}")
+            _log(f"  {what} exit {rc}: {(r.stderr or '')[-300:]}")
+    except Exception as e:  # noqa: BLE001 — a failed enrich step is reported, never fatal
+        _log(f"  {what} failed: {e}")
     if rc != 0:
-        _log(f"  → open leak legs stay on the frontier; rerun: intel.py enrich {case} --leak-only")
+        _log(f"  → open legs stay on the frontier; rerun: {rerun}")
     try:
         st = cs.load_state(case)
-        st["leak_round"] = {"ran_at": datetime.datetime.now(datetime.timezone.utc)
-                            .strftime("%Y-%m-%dT%H:%M:%SZ"), "exit": rc}
+        st[marker] = {"ran_at": datetime.datetime.now(datetime.timezone.utc)
+                      .strftime("%Y-%m-%dT%H:%M:%SZ"), "exit": rc}
         cs.save_state(case, st)
     except Exception as e:  # noqa: BLE001
-        _log(f"  (leak_round marker not written: {e})")
+        _log(f"  ({marker} marker not written: {e})")
 
 
 # Stop reason -> the state.json status vocabulary the deterministic loop already uses
@@ -1255,7 +1730,8 @@ async def _leak_round(case: str, *, hostile: bool) -> None:
 _STOP_STATUS = {"converged": "converged", "no-frontier": "cold",
                 "depth-cap": "awaiting-analyst", "round-cap": "awaiting-analyst",
                 "failed": "error", "backend-unavailable": "awaiting-analyst",
-                "awaiting-approval": "awaiting-approval", "plan-veto": "awaiting-analyst"}
+                "awaiting-approval": "awaiting-approval", "plan-veto": "awaiting-analyst",
+                "gated-only": "awaiting-analyst"}
 
 
 def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: int) -> None:
@@ -1268,8 +1744,10 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
     genuinely exhausted (stopping is the finding), awaiting-analyst means work remains and only the
     round cap ended the run — including the DEFAULT single-round `./intel open`, which previously
     exited identically whether it had converged or merely run out of permission to continue.
-    Metered leads are surfaced but never auto-run: spending FOFA/WhoisXML/Censys credits stays an
-    analyst decision. Best-effort throughout — a failure here must not fail an otherwise good case."""
+    REVIEW mode: metered leads are surfaced but never auto-run. AUTO mode (the /cti default): the
+    proposals already ran; what is listed is what auto mode may not approve (gated tools,
+    state.json `pending_gated`). Best-effort throughout — a failure here must not fail an
+    otherwise good case."""
     case_dir = os.path.join(ROOT, "cases", case)
     pending, metered, probed = [], [], True
     try:
@@ -1298,12 +1776,36 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
         # analyst gets asked rather than told.
         status = "cold" if probed else "awaiting-analyst"
     try:
+        auto_run = cs.load_state(case).get("approval_mode") == "auto"
+        gated_now = [g for g in (cs.load_state(case).get("pending_gated") or [])
+                     if isinstance(g, dict)]
+    except Exception:  # noqa: BLE001 — unknown mode: never claim cold on it
+        auto_run, gated_now = False, []
+    # AUTO mode drained the free frontier, the metered leads and the re-collections before this
+    # stop (_auto_continue): a planner veto / empty proposal over a PROBED, empty frontier with no
+    # metered lead left is an exhausted case, not one waiting on the analyst. Pending gated items
+    # keep a gated-only stop with the analyst. Review mode keeps its statuses.
+    exhausted = (auto_run and stop in ("plan-veto", "no-frontier", "gated-only") and probed
+                 and not pending and not metered and not (stop == "gated-only" and gated_now))
+    if exhausted:
+        status = "cold"
+    # AUTO mode queued these frontier hosts already and they did not collect (failed outcome or
+    # the attempt cap): reported as failed, never silently re-listed as untouched frontier
+    failed: list[str] = []
+    try:
+        if pending and cs.load_state(case).get("approval_mode") == "auto":
+            att, cap = cs.frontier_attempts(case), _frontier_max_attempts()
+            failed = [h for h in pending if _frontier_exhausted(case, h, att, cap)]
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (frontier attempt check failed: {e})")
+    try:
         st = cs.load_state(case)
         st["status"] = status
         st["round"] = max(int(st.get("round") or 0), rounds)
         st["depth_limit"] = depth
         st["collected"] = sorted(cs.collected_hosts(case_dir))
         st["pending"] = pending
+        st["frontier_failed"] = failed
         st["metered_leads"] = metered
         st["history"].append({"round": st["round"], "collected": len(st["collected"]),
                               "verdict": stop, "driver": "orchestrator",
@@ -1317,18 +1819,36 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
     _log(f"\n== case '{case}': status={status} · {len(st['collected'])} host(s) · "
          f"{st['round']} round(s) · stopped: {stop} ==")
     _log(f"   assessment: cases/{case}/SUMMARY.md   (snapshots: cases/{case}/assessments/)")
+    auto = st.get("approval_mode") == "auto"
+    gated = [g for g in (st.get("pending_gated") or []) if isinstance(g, dict)]
+    _log(f"   approval mode: {'AUTO' if auto else 'REVIEW'} "
+         f"({st.get('approval_mode_source') or 'unrecorded'})")
     if status == "awaiting-analyst":
-        if pending:
-            _log(f"   ⏸ {len(pending)} uncollected cluster peer(s) still on the free frontier: "
-                 f"{', '.join(pending[:8])}{' …' if len(pending) > 8 else ''}")
-        else:
+        fresh = [h for h in pending if h not in failed]
+        if fresh:
+            _log(f"   ⏸ {len(fresh)} uncollected cluster peer(s) still on the free frontier: "
+                 f"{', '.join(fresh[:8])}{' …' if len(fresh) > 8 else ''}")
+        if failed:
+            _log(f"   ✗ {len(failed)} free-frontier host(s) auto mode queued but could not "
+                 f"collect (not re-queued): {', '.join(failed[:8])}"
+                 f"{' …' if len(failed) > 8 else ''}")
+        if not pending and stop == "gated-only":
+            _log("   ⏸ only GATED pivots remain — auto mode never approves them (listed below).")
+        elif not probed:
             _log("   ⏸ frontier UNKNOWN — the peer probe failed, so this run cannot say whether "
                  "leads remain. Treat as unfinished, not as exhausted.")
+        elif not pending and stop == "plan-veto":
+            _log("   ⏸ the planner dropped the remaining candidate(s) — they wait for your call "
+                 "(state.json `dropped`; listed metered leads below, if any).")
         _log(f"   → CONTINUE:  ./intel continue {case} {' '.join(seeds[:2])}"
              f"{' …' if len(seeds) > 2 else ''}   (or: python3 tools/intel.py loop {case})")
     elif status == "converged":
         _log("   ✓ converged — the last rounds added no new hosts or indicators. "
              "Reopen only if new evidence lands:")
+        _log(f"   → REOPEN:    python3 tools/case_state.py reopen {case} <new-seed>")
+    elif status == "cold" and exhausted:
+        _log("   ⏸ free frontier exhausted and the planner found nothing worth pursuing — "
+             "stopping (cold)")
         _log(f"   → REOPEN:    python3 tools/case_state.py reopen {case} <new-seed>")
     elif status == "cold":
         _log("   ✗ no free frontier left (stopping is itself the finding — a keyless/free search "
@@ -1341,9 +1861,18 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
             _log("     " + line)
         _log(f"   → APPROVE:   ./intel approve {case} --only <id,id> (or --all), then "
              f"./intel continue {case}")
+    if gated:
+        _log(f"   ⛔ {len(gated)} GATED pivot(s) pending for YOU — auto mode never approves "
+             f"{', '.join(sorted(audit.AUTO_GATED))}; nothing was sent:")
+        for g in gated[:10]:
+            _log(f"       · {g.get('id')} {g.get('tool')} {str(g.get('selector') or '')[:60]} — "
+                 f"{str(g.get('why') or '')[:70]}")
+        _log(f"   → DECIDE:    ./intel continue {case} --review   (per-item approval)")
     if metered:
         _log(f"   ⚠ {len(metered)} metered lead(s) await YOUR approval (would spend FOFA / "
-             f"WhoisXML / Censys credits — never auto-run):")
+             f"WhoisXML / Censys credits — never auto-run):" if not auto else
+             f"   ⚠ {len(metered)} metered lead(s) on the deterministic frontier auto mode did not "
+             f"run (vendor 402/429 this run, or no executable route):")
         for m in metered[:5]:
             _log(f"       · {m.get('service', '?')} {str(m.get('query', ''))[:60]} — "
                  f"{str(m.get('why', ''))[:70]}")
@@ -1357,17 +1886,21 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
 
 async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                    stale: int, max_new: int, collect_conc: int = 1,
-                   resume: bool = False) -> Assessment | None:
+                   resume: bool = False, approval: str | None = None) -> Assessment | None:
     """One or more rounds of the cross-type loop. A round with new DOMAIN seeds runs
     Collect→Correlate→(Verify)→Assess and snapshots an immutable assessment; every round boundary
     then runs the cross-type step (_xtype_step: propose → PLAN → free pivots within auto_max run,
-    the rest wait in proposal.json). Seeds of ANY type are accepted: a non-domain seed (email,
-    phone, wallet, IP, hash, string, filename, telegram) enters the case's typed node registry
-    and is pivoted on, never collected as a host. Stops on CONVERGED, the depth cap, an empty
-    frontier, or awaiting-approval. collect_conc>1 fans collect out per seed (collect_fanout)."""
+    the rest wait in proposal.json — or, in AUTO mode, are auto-approved and run in the same
+    round). Seeds of ANY type are accepted: a non-domain seed (email, phone, wallet, IP, hash,
+    string, filename, telegram) enters the case's typed node registry and is pivoted on, never
+    collected as a host. Stops on CONVERGED, the depth cap, an empty frontier, or (review mode)
+    awaiting-approval. collect_conc>1 fans collect out per seed (collect_fanout). `approval`
+    "auto" | "review" | None (resolve: audit.resolve_approval_mode) is recorded in state.json."""
     import case_state as cs
     domains = cs.register_seed_nodes(case, seeds)
     _record_seeds(case, domains)
+    _set_approval_mode(case, approval, resume=resume)
+    _VENDOR_STOPPED.pop(case, None)   # a vendor's 402/429 stops its metered leads for ONE run
     P.set_loop_active(ROOT, case, True)
     approved_new, ran = _run_approved(case, hostile=hostile)
     resume = resume or ran            # a run that consumed an approval continues the case
@@ -1383,6 +1916,7 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
         have = set(_all_collected(case))
         fresh = [s for s in fresh if T._host(s) not in have]
     final, stop, rnd = None, "depth-cap", 0
+    empty_errors = 0      # consecutive rounds that errored AND produced nothing (2 → stop)
     try:
         for rnd in range(1, depth + 1):
             fresh = [s for s in dict.fromkeys(fresh) if s not in current]
@@ -1400,8 +1934,10 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                 current = current + fresh
                 _log(f"\n===== ROUND {rnd}/{depth} · {len(current)} seed(s): {', '.join(current)} =====")
                 before = set(_all_collected(case))
+                _PARTIAL.pop(case, None)
+                round_err, got = None, None
                 try:
-                    final = await investigate(current, case, hostile=hostile, collect_conc=collect_conc)
+                    got = await investigate(current, case, hostile=hostile, collect_conc=collect_conc)
                 except backend_select.BackendUnavailable as e:
                     # Not a case failure: the backend stopped answering. Leave the case resumable
                     # and let harness/cli.py offer another backend.
@@ -1409,21 +1945,42 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                     _hand_back(case, "backend-unavailable", rounds=rnd, seeds=current, depth=depth)
                     raise
                 except Exception as e:  # noqa: BLE001
-                    _log(f"round {rnd} failed: {e}")
-                    stop = "failed"
-                    break
+                    round_err = str(e) or type(e).__name__
+                partial = _PARTIAL.pop(case, [])
+                grown = bool(set(_all_collected(case)) - before)
+                if round_err is not None:
+                    # SALVAGE: a round that errored keeps what it wrote and the run moves on; only
+                    # a SECOND consecutive round that errored AND produced nothing stops it.
+                    partial.append({"phase": "round", "reason": round_err[:300]})
+                    empty_errors = 0 if grown else empty_errors + 1
+                    if empty_errors >= 2:
+                        _log(f"round {rnd} failed: {round_err} — second consecutive round that "
+                             f"errored and produced nothing; stopping")
+                        _convergence_snapshot(case, failed=[f"partial {p['phase']}" for p in partial])
+                        _record_partial(case, rnd, partial)
+                        stop = "failed"
+                        break
+                    _log(f"round {rnd} partial: {round_err} — salvaged, continuing")
+                else:
+                    empty_errors = 0
+                    final = got
                 _binary_round(case, hostile=hostile, free_only=False)
                 await _leak_round(case, hostile=hostile)   # before any metered frontier pivot
-                table_md = _domain_table(case)
-                render.render_terminal(final, table_md=table_md)
-                snap = _persist_assessment(final, case, table_md)
-                _log(f" saved · {snap['snapshot_md']} (round {snap['round']}) · head {snap['summary']}")
+                if got is not None:
+                    table_md = _domain_table(case)
+                    render.render_terminal(got, table_md=table_md)
+                    snap = _persist_assessment(got, case, table_md)
+                    _log(f" saved · {snap['snapshot_md']} (round {snap['round']}) · head {snap['summary']}")
                 # A collect phase that wrote nothing for seeds it was given is a FAILED round, so
-                # it can never read as convergence (zero growth because nothing ran).
+                # it can never read as convergence (zero growth because nothing ran). A salvaged
+                # (partial) phase is never zero growth either: it may simply not have finished.
                 missing = [s for s in fresh if T._host(s) not in before]
                 failed = ([f"collect wrote no raw for: {', '.join(missing[:5])}"]
-                          if missing and not (set(_all_collected(case)) - before) else None)
-                conv = _convergence_snapshot(case, failed=failed)
+                          if missing and not grown else [])
+                failed += [f"partial {p['phase']}" for p in partial]
+                conv = _convergence_snapshot(case, failed=failed or None)
+                if partial:
+                    _record_partial(case, rnd, partial)
                 if conv:
                     _log("convergence · " + conv.splitlines()[0])
                 if depth == 1:
@@ -1460,7 +2017,8 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
     finally:
         P.set_loop_active(ROOT, case, False)
     _hand_back(case, stop, rounds=rnd, seeds=current or list(seeds), depth=depth)
-    if final is None and not resume and stop not in ("awaiting-approval", "no-frontier", "plan-veto"):
+    if final is None and not resume and stop not in ("awaiting-approval", "no-frontier", "plan-veto",
+                                                     "gated-only"):
         raise RuntimeError("no assessment produced")
     return final
 
@@ -1557,9 +2115,9 @@ def _persist_clusters(entries: list[tuple], case: str, table_md: str) -> dict:
             changelog.append(f"- {stamp} · c{i} · FAILED · {len(members)} domains{why[:120]}")
             continue
         with open(os.path.join(snap_dir, base + ".md"), "w", encoding="utf-8") as f:
-            f.write(render.render_markdown(a, table_md if i == 1 else ""))
+            f.write(render.render_cited_markdown(a, table_md if i == 1 else "", case_dir))
         with open(os.path.join(snap_dir, base + ".json"), "w", encoding="utf-8") as f:
-            f.write(a.model_dump_json(indent=2))
+            f.write(_rc.strip_secrets(a.model_dump_json(indent=2)))
         saved[_members_key(members)] = base
         _render_deliverables(case, os.path.join(snap_dir, base + ".md"), a)  # figure built once, reused
         bluf = (a.bluf or "").replace("\n", " ")
@@ -1782,7 +2340,8 @@ def _no_owner_verdict(case: str, members: list[str]) -> Assessment | None:
 
 
 async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_conc: int,
-                            judge_conc: int, depth: int = 1, stale: int = 2, max_new: int = 8) -> list:
+                            judge_conc: int, depth: int = 1, stale: int = 2, max_new: int = 8,
+                            approval: str | None = None) -> list:
     """Phase 3 — scale. Collect concurrently (deterministic, no LLM). With depth>1 (--continue) keep
     expanding the frontier and re-collecting CHEAPLY until the case converges — judgment does NOT run
     per round. Then partition into same-operator clusters and judge each ONCE, in parallel; clusters
@@ -1793,6 +2352,8 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
     import case_state as cs
     domains = cs.register_seed_nodes(case, seeds)       # non-domain seeds → typed nodes, never hosts
     _record_seeds(case, domains)
+    _set_approval_mode(case, approval, resume=False)
+    _VENDOR_STOPPED.pop(case, None)
     P.set_loop_active(ROOT, case, True)
     approved_new, _ran = _run_approved(case, hostile=hostile)
     current, stop, rnd = list(dict.fromkeys(approved_new + domains)), "depth-cap", 0
@@ -1803,7 +2364,9 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
             P.set_loop_active(ROOT, case, True)
             if current:
                 t0 = time.time()
-                res = T.collect_many(current, case, hostile=hostile, max_workers=max_conc)
+                # hostile: passive (pool exits + archive only) — never the analyst's IP, never skipped
+                res = T.collect_many(current, case, hostile=hostile, passive=hostile,
+                                     max_workers=max_conc)
                 ok = [r for r in res if r.get("ok")]
                 fails = [r["host"] for r in res if not r.get("ok")]
                 _log(f"round {rnd}: collected {len(ok)}/{len(res)} in {time.time() - t0:.0f}s "
@@ -2069,10 +2632,13 @@ def _main() -> None:
     cont = "--continue" in argv
     parallel = "--parallel" in argv
     fanout = "--fanout" in argv
+    # --review: per-round analyst approval (stop at awaiting-approval). Default = auto mode unless
+    # scope.json auto_approve / the recorded mode of a resumed case / tool_policy.json say review.
+    review = "--review" in argv
     if "--no-verify" in argv:
         globals()["VERIFY_ON"] = False   # per-run override of the adversarial-verify default
-    argv = [a for a in argv
-            if a not in ("--hostile", "--continue", "--parallel", "--fanout", "--no-verify")]
+    argv = [a for a in argv if a not in ("--hostile", "--continue", "--parallel", "--fanout",
+                                         "--no-verify", "--review")]
     depth = int(_pop_val(argv, "--depth", "4" if cont else "1"))
     stale = int(_pop_val(argv, "--stale", "2"))
     max_new = int(_pop_val(argv, "--max-new", "8"))
@@ -2081,7 +2647,7 @@ def _main() -> None:
     if depth > 1:
         cont = True
     if len(argv) < 2 and not (cont and argv):
-        sys.exit("usage: orchestrator.py <CASE-ID> [--hostile] [--no-verify] "
+        sys.exit("usage: orchestrator.py <CASE-ID> [--hostile] [--no-verify] [--review] "
                  "[--fanout [--collect-conc N]] "
                  "[--continue [--depth N] [--stale N] [--max-new N]] "
                  "[--parallel [--collect-conc N] [--judge-conc N]] "
@@ -2090,6 +2656,8 @@ def _main() -> None:
                  "[--no-spend] [--scope FILE] <seed> ...   (a seed may be a domain/URL, email, "
                  "phone, IP, hash, wallet, telegram handle, filename or string)\n"
                  "  --continue CASE with no seeds resumes the case (e.g. after `intel approve`).\n"
+                 "  --review: stop at awaiting-approval for every paid/oversized pivot (default: "
+                 "auto mode — proposals auto-approved except gated tools).\n"
                  "  intake flags are optional: an unscoped run proceeds as `unknown` and says so "
                  "(python3 harness/case_scope.py questions).")
     # INTAKE — resolved before anything is collected, and BEFORE the seed list is split off, since
@@ -2132,7 +2700,8 @@ def _main() -> None:
             pdepth = depth if cont else 1
             entries = asyncio.run(run_case_parallel(seeds, case, hostile=hostile, max_conc=collect_conc,
                                                     judge_conc=judge_conc, depth=pdepth, stale=stale,
-                                                    max_new=max_new))
+                                                    max_new=max_new,
+                                                    approval="review" if review else None))
             # A per-cluster judge failure does not raise (see run_case_parallel) — the other
             # clusters' results are already saved — but the run as a whole must still say so.
             if any(len(e) > 3 and e[3] for e in entries):
@@ -2142,7 +2711,7 @@ def _main() -> None:
             # is the single sequential collect session. Judgment is unchanged.
             asyncio.run(run_case(seeds, case, hostile=hostile, depth=depth, stale=stale,
                                  max_new=max_new, collect_conc=collect_conc if fanout else 1,
-                                 resume=resume))
+                                 resume=resume, approval="review" if review else None))
     except backend_select.BackendUnavailable as e:
         _log(f"\n⚠ the {e.backend} backend stopped answering ({e.kind}): {e.reason}\n"
              f"   the case is intact — collected data is cached and re-running resumes it.")
@@ -2161,8 +2730,9 @@ def _persist_assessment(assessment: Assessment, case: str, table_md: str) -> dic
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     rnd = len([f for f in os.listdir(snap_dir) if f.endswith(".json")]) + 1
     base = f"{stamp}_r{rnd}"
-    md_body = render.render_markdown(assessment, table_md)
-    js = assessment.model_dump_json(indent=2)
+    # Rule 21: per-claim source links + References; credentials never reach a URL in either file
+    md_body = render.render_cited_markdown(assessment, table_md, case_dir)
+    js = _rc.strip_secrets(assessment.model_dump_json(indent=2))
 
     # immutable snapshot — the audit trail
     snap_md = os.path.join(snap_dir, base + ".md")
@@ -2278,7 +2848,7 @@ def _render_deliverables(case: str, snap_md: str, assessment: Assessment) -> dic
     # cited in a REJECTED alternative, a registrar role mailbox — is masked, because a skim reader
     # or an IOC scraper keeps the value and drops the exculpatory framing. The snapshot under
     # assessments/ keeps the full values for the analyst.
-    body = render.render_markdown(assessment, "")
+    transform = None
     try:
         sys.path.insert(0, os.path.join(os.path.dirname(ROOT), "scripts"))
         from cti_third_party_mask import mask_third_parties  # noqa: WPS433
@@ -2297,9 +2867,12 @@ def _render_deliverables(case: str, snap_md: str, assessment: Assessment) -> dic
                             extra.append(v)
         except Exception as e:  # noqa: BLE001
             _log(f" deliverables: prior-owner name mask incomplete ({e!r})")
-        body = mask_third_parties(body, keep=keep, hosts=hosts, extra=extra, current_case=case)
+        transform = lambda t: mask_third_parties(t, keep=keep, hosts=hosts, extra=extra,  # noqa: E731
+                                                 current_case=case)
     except Exception as e:  # noqa: BLE001 — degrade loudly, never ship unmasked silently
         _log(f" deliverables: third-party mask unavailable ({e!r}) — report NOT masked; review before sharing")
+    # Rule 21: per-claim source links + References; the mask runs with every link shielded
+    body = render.render_cited_markdown(assessment, "", case_dir, transform)
     parts = ["\n".join(fm), body]
     if fig:
         parts += ["\n## Relationship graph\n",

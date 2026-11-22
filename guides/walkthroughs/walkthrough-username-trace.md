@@ -104,7 +104,7 @@ FND-012  Other handles in same thread: cross-reference pending  [INFO]
 | Location signal | "EU" | None | None |
 | Real name | None | None | None |
 
-**Assessment:** Single individual, security researcher profile, no confirmed malicious activity found.
+**Assessment (claim ladder, [`techniques/username-osint.md`](../../techniques/username-osint.md) §7.1):** L1 established on all three. L2 (same controller) GitHub ↔ Reddit **likely** — rare handle, matching focus and activity window; no platform-authored cross-link yet. HackForums rests on a single reference: L1 only. L3/L4 not assessed — no person-level or real-identity claim. No confirmed malicious activity found.
 
 ---
 
@@ -113,7 +113,7 @@ FND-012  Other handles in same thread: cross-reference pending  [INFO]
 ```
 ┌─[ SUBJECT RECORD: nullvector88 ]──────────────────────────────┐
 │ Type: handle                                                   │
-│ Confidence: PROBABLE (71/100)                                  │
+│ Confidence: PROBABLE (71/100) — L2 same-controller only        │
 │ Real identity: not established                                 │
 │ Email pivot: nullvector88@proton.me  (Proton — anonymous)     │
 │ Platforms: GitHub (primary), GitLab (mirror), Reddit          │

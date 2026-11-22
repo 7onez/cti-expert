@@ -63,19 +63,21 @@ import bp_rea  # noqa: E402 — REA deep-static layer (on by default; --no-rea);
 import bp_archive_time  # noqa: E402 — member reader (zip/tar/dir) + leak-archive timestamp forensics
 import bp_git  # noqa: E402 — embedded .git identities/remotes/commits + module identifiers (leads)
 import bp_keys  # noqa: E402 — key/cert material deduplicated by SPKI SHA-256 (hashes only)
-# Per-call ceiling for helper binaries (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json →
-# 5000s). The engine's resolver is a stdlib sibling; a standalone BinaryPivot falls back to the env.
+# Per-call ceiling for helper binaries — the ONE resolver (wp_timeouts: env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 18000s / 5 h). BinaryPivot also ships standalone, without the engine's
+# WebPivot/tools; that copy cannot import wp_timeouts, so it honours an exported CTI_CALL_TIMEOUT
+# and otherwise uses the resolver's own default (18000).
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))), "WebPivot", "tools"))
     from wp_timeouts import floor as _floor  # noqa: E402
-except Exception:  # noqa: BLE001
+except Exception:  # noqa: BLE001 — standalone copy: no wp_timeouts on the path
     def _floor(t):
         try:
-            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 18000)
         except ValueError:
-            c = 5000
-        c = c if c > 0 else 5000
+            c = 18000
+        c = c if c > 0 else 18000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 # User-Agent: inside the repo the Android default comes from the one source, WebPivot's wp_ua

@@ -3,13 +3,13 @@
 
   "install": {
     "_comment": "pinned_version is what the adapter was verified against; a different installed version still runs but the result and the banner say so (output shapes may drift). env names the variable that overrides PATH lookup.",
-    "pinned_version": "6.7.0",
+    "pinned_version": "6.9.0",
     "env": "REA_BIN",
-    "install_hint": "npm install --global rea-agents@6.7.0"
+    "install_hint": "npm install --global rea-agents@6.9.0"
   },
 
   "commands": {
-    "_comment": "BinaryPivot file kind -> REA CLI commands run for it, in order. `asar` is a pseudo-kind for an Electron archive named *.asar (no magic bytes). `when` = a previous command's normalized_result flag that must be true first (inspect-dart-aot only runs on a detected Flutter build). `args` are extra CLI arguments. Timeouts are seconds per command.",
+    "_comment": "BinaryPivot file kind -> REA CLI commands run for it, in order. `asar` is a pseudo-kind for an Electron archive named *.asar (no magic bytes). `when` = a previous command's normalized_result flag that must be true first (inspect-dart-aot only runs on a detected Flutter build). `args` are extra CLI arguments; every one must be in bp_rea._ALLOWED_ARGS (a hard ceiling in code, like the command ceiling), otherwise the whole step is refused. `min_version` = the oldest REA release that accepts this step's `args`: on an older installed REA the args are dropped (the run records `args_skipped` with the reason) and the command still runs without them; if REA still answers `Unknown flag`, the command is retried once without args. Timeouts are seconds per command. inspect-go-binary --include-string-literals (REA 6.9.0: 'recover bounded Go string literals from pointer/length headers', #9206) reads static (ptr, len) headers from non-executable sections of the same file — no new command, nothing executed; REA bounds it at 2000 strings by default. REA 6.8.0 rejects the flag, so a 6.8.0 install still gets the Go module identity but no Go string literals.",
     "entries": {
       "apk": [
         {"command": "identify-flutter-build", "timeout": 300},
@@ -17,13 +17,13 @@
       ],
       "pe": [
         {"command": "inspect-managed-members", "timeout": 600},
-        {"command": "inspect-go-binary", "timeout": 300}
+        {"command": "inspect-go-binary", "timeout": 300, "args": ["--include-string-literals"], "min_version": "6.9.0"}
       ],
       "elf": [
-        {"command": "inspect-go-binary", "timeout": 300}
+        {"command": "inspect-go-binary", "timeout": 300, "args": ["--include-string-literals"], "min_version": "6.9.0"}
       ],
       "macho": [
-        {"command": "inspect-go-binary", "timeout": 300}
+        {"command": "inspect-go-binary", "timeout": 300, "args": ["--include-string-literals"], "min_version": "6.9.0"}
       ],
       "asar": [
         {"command": "analyze-javascript-application", "timeout": 900, "args": ["--artifact-format", "asar"]}
@@ -32,10 +32,11 @@
   },
 
   "limits": {
-    "_comment": "Caps on what one run keeps: literal strings scanned for indicators, citations retained in the result (value + source location), and facts per label.",
+    "_comment": "Caps on what one run keeps: literal strings scanned for indicators, citations retained in the result (value + source location), and facts per label. max_json_depth = deepest array/object nesting accepted in one REA reply; a deeper reply is refused unparsed as a per-step error, because Python's JSON decoder overflows the stack (RecursionError) on deeply nested input.",
     "max_literals": 20000,
     "max_citations": 200,
-    "max_facts_per_label": 40
+    "max_facts_per_label": 40,
+    "max_json_depth": 256
   },
 
   "ioc_labels": {

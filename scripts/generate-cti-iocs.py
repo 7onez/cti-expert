@@ -26,7 +26,15 @@ Outputs three machine-readable formats for SIEM / TIP ingest and sharing.
 
 Usage:
     uv run generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|jsonl|all]
+                                [--tlp LEVEL] [--allow-red] [--allow-downgrade]
     python3 generate-cti-iocs.py <case.json> IOC-CASE-0001 --format all
+
+STIX TLP marking: the most restrictive marking among case.classification, case.tlp, classification
+and tlp (bare `red` or `TLP:RED`, `TLP:AMBER + STRICT`; WHITE read as CLEAR). With no marking at all
+it is TLP:AMBER. A marking that is present but unreadable stops the run (exit 2) unless --tlp LEVEL
+sets the level explicitly. A --tlp LEVEL less restrictive than the strictest readable case marking
+needs --allow-downgrade (the warning still prints). A TLP:RED case or export needs --allow-red as
+well; nothing is written without the required flags.
 
 With --format all (default) writes <out_prefix>.stix.json, .txt, .csv and .jsonl.
 With a single format, <out_prefix> is treated as the exact output path.
@@ -105,7 +113,9 @@ youtube.com youtu.be haveibeenpwned.com shodan.io crt.sh google.com docs.google.
 reddit.com archive.org web.archive.org ssllabs.com grayhatwarfare.com securitytrails.com
 virustotal.com""".split())
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling cti_refs
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # sibling cti_refs, cti_case_meta
+# Not optional: without the shared TLP reader the STIX marking would have no fail-closed path.
+from cti_case_meta import TLP_ORDER, tlp_collect, tlp_most_restrictive, tlp_parse, tlp_resolve  # noqa: E402
 try:
     from cti_refs import load_ref as _load_ref
 except Exception:  # noqa: BLE001 — standalone copy: embedded fallback only
@@ -464,20 +474,144 @@ def write_jsonl(inds, attr, path):
                                 "to": a["to"], "reach": a["reach"]}, ensure_ascii=False) + "\n")
 
 def _now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    """STIX timestamp: RFC 3339, UTC with a `Z`, millisecond precision (STIX 2.1 §2.16, §3.2)."""
+    d = datetime.now(timezone.utc)
+    return d.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (d.microsecond // 1000)
 
 
-def write_stix(inds, attr, data, path):
+# STIX 2.1 §2.9: SCO ids are UUIDv5 in this namespace over the RFC 8785 canonical JSON of the
+# object's "ID Contributing Properties", so two producers emit the same id for the same value.
+STIX_SCO_NAMESPACE = uuid.UUID("00abedb4-aa42-466c-9c01-fed23315a9b7")
+
+# TLP 2.0 marking-definition objects, verbatim from the OASIS CTI TC's published extension
+# (oasis-open/cti-stix-common-objects, extension-definition-specifications/tlp-2.0). These are
+# fixed, shared objects: their ids MUST NOT be minted locally. STIX 2.1 §7.2.1.4 only defines the
+# TLP 1.0 set (white/green/amber/red), which has no AMBER+STRICT and no CLEAR.
+TLP2_EXTENSION = "extension-definition--60a3c5c5-0d10-413e-aab3-9e08dde9e88d"
+TLP2_MARKING_IDS = {
+    "clear": "marking-definition--94868c89-83c2-464b-929b-a1a8aa3c8487",
+    "green": "marking-definition--bab4a63c-aed9-4cf5-a766-dfca5abac2bb",
+    "amber": "marking-definition--55d920b0-5e8b-4f79-9ee9-91f868d9b421",
+    "amber+strict": "marking-definition--939a9414-2ddd-4d32-a0cd-375ea402b003",
+    "red": "marking-definition--e828b379-4e03-4974-9ac4-e53a884c97c1",
+}
+DEFAULT_TLP = "amber"   # the skill's default handling marking for a case that records none
+
+
+def _tlp_fields(data):
+    """All legacy markings and source-preserving metadata from REPORT.json."""
+    case = data.get("case") if isinstance(data.get("case"), dict) else {}
+    fields = []
+    for prefix, obj in (("case.", case), ("", data)):
+        fields.extend([(prefix + "classification", obj.get("classification"), False),
+                       (prefix + "tlp", obj.get("tlp"), True)])
+        for key, value_key in (("tlp_sources", "tlp"), ("tlp_unreadable", "value")):
+            entries = obj.get(key) or []
+            if not isinstance(entries, list):
+                fields.append((prefix + key, entries, True))
+                continue
+            for entry in entries:
+                value = entry.get(value_key) if isinstance(entry, dict) else entry
+                label = entry.get("source") if isinstance(entry, dict) else key
+                fields.append((prefix + str(label), value, True))
+    return fields
+
+
+def tlp_level(data):
+    """(level, problem) for the report's own marking, never raises. The most restrictive TLP 2.0
+    level among case.classification, case.tlp, classification and tlp (cti_case_meta.tlp_resolve);
+    DEFAULT_TLP when none is recorded; (None, problem) when one is present but unreadable."""
+    level, problem = tlp_resolve(_tlp_fields(data))
+    if problem:
+        return None, problem
+    return level or DEFAULT_TLP, None
+
+
+def recorded_tlp(data):
+    """The strictest READABLE marking the report records (lower-case), or None, never raises.
+    Unreadable values beside it never hide it; DEFAULT_TLP is not a recorded marking."""
+    readable, _, _ = tlp_collect(_tlp_fields(data))
+    return tlp_most_restrictive([lv for _, lv in readable])
+
+
+def stix_tlp(data, override=None, allow_red=False, allow_downgrade=False):
+    """(level, error) for the STIX export, failing closed: an explicit `override` (--tlp) replaces
+    the report's marking; otherwise an unreadable marking is an error, never a default. TLP:RED is
+    an error unless `allow_red` (--allow-red): RED is for named recipients only. An override LESS
+    restrictive than the strictest readable case marking is an error unless `allow_downgrade`
+    (--allow-downgrade); a RED case needs both flags to be exported under a lower level."""
+    if override is not None:
+        level = tlp_parse(override)
+        if not level:
+            return None, "--tlp %r is not a TLP level (clear, green, amber, amber+strict, red)" % override
+    else:
+        level, problem = tlp_level(data)
+        if problem:
+            return None, ("%s; refusing to guess the STIX marking. Fix the case marking or pass "
+                          "--tlp LEVEL explicitly." % problem)
+    recorded = recorded_tlp(data)
+    if (level == "red" or recorded == "red") and not allow_red:
+        return None, ("the case or export is TLP:RED (named recipients only); pass --allow-red "
+                      "to authorise STIX export.")
+    if recorded and TLP_ORDER.index(level) < TLP_ORDER.index(recorded) and not allow_downgrade:
+        return None, ("--tlp %s is LESS restrictive than the case marking TLP:%s; pass "
+                      "--allow-downgrade to authorise the downgrade."
+                      % (level.upper(), recorded.upper()))
+    return level, None
+
+
+def tlp_marking(level):
+    return {"type": "marking-definition", "spec_version": "2.1", "id": TLP2_MARKING_IDS[level],
+            "created": "2022-10-01T00:00:00.000Z", "name": "TLP:" + level.upper(),
+            "extensions": {TLP2_EXTENSION: {"extension_type": "property-extension", "tlp_2_0": level}}}
+
+
+def sco_id(sco_type, contributing):
+    """Deterministic SCO id (STIX 2.1 §2.9 / §3.4): UUIDv5 over RFC 8785 canonical JSON.
+    For these flat string-valued property sets, sorted keys + no whitespace + raw UTF-8 IS the
+    RFC 8785 form."""
+    name = json.dumps(contributing, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "%s--%s" % (sco_type, uuid.uuid5(STIX_SCO_NAMESPACE, name))
+
+
+def _stix_literal(s):
+    """A STIX pattern string constant: only `'` and `\\` are escaped (STIX 2.1 §9)."""
+    return "'%s'" % str(s).replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _vocab(s, fallback):
+    """Lowercase a-z0-9 and hyphen only — the form STIX requires of relationship_type and
+    open-vocabulary literals (§3.1, §5.1)."""
+    v = re.sub(r"[^a-z0-9]+", "-", str(s or "").lower()).strip("-")
+    return v if len(v) >= 3 else fallback
+
+
+# platform labels the extractor uses -> account-type-ov values where the vocabulary has one
+_ACCOUNT_TYPE = {"x/twitter": "twitter", "twitter": "twitter", "facebook": "facebook", "skype": "skype"}
+
+
+def build_stix(inds, attr, data, now=None, tlp=None, allow_red=False, allow_downgrade=False):
+    """The STIX 2.1 bundle as a dict. See techniques/ioc-export.md for what it guarantees.
+    The marking comes from stix_tlp(data, tlp, allow_red, allow_downgrade); its refusal raises
+    ValueError, so no caller can obtain a bundle under a guessed, unauthorised RED or unauthorised
+    downgraded marking."""
     case = data.get("case", {})
-    now = _now()
+    now = now or _now()
+    level, err = stix_tlp(data, tlp, allow_red, allow_downgrade)
+    if err:
+        raise ValueError(err)
+    marking = tlp_marking(level)
+    marks = [marking["id"]]
     producer = "identity--" + str(uuid.uuid4())
-    objs = [{
+    objs = [marking, {
         "type": "identity", "spec_version": "2.1", "id": producer,
         "created": now, "modified": now,
         "name": "CTI Expert case %s" % (case.get("id") or case.get("label") or "?"),
         "identity_class": "system",
         "description": CREDIT,
+        "object_marking_refs": marks,
     }]
+    seen_ids = {marking["id"], producer}
     STIX_SCO = {
         "ipv4": "ipv4-addr", "ipv6": "ipv6-addr", "domain": "domain-name",
         "url": "url", "email": "email-addr",
@@ -487,48 +621,61 @@ def write_stix(inds, attr, data, path):
     def pattern_for(i):
         t = i["type"]
         if t in STIX_SCO:
-            return "[%s:value = '%s']" % (STIX_SCO[t], i["value"].replace("'", "\\'"))
+            return "[%s:value = %s]" % (STIX_SCO[t], _stix_literal(i["value"]))
         if t in HASH_KEYS:
-            return "[file:hashes.'%s' = '%s']" % (HASH_KEYS[t], i["value"])
+            return "[file:hashes.'%s' = %s]" % (HASH_KEYS[t], _stix_literal(i["value"]))
         return None
+
+    def emit(obj):
+        if obj["id"] not in seen_ids:     # deterministic SCO ids collapse a repeated value
+            seen_ids.add(obj["id"])
+            objs.append(obj)
+        return obj["id"]
 
     sub_stix = {}  # subject_id -> stix id (for relationships)
 
     for i in inds:
         t, val = i["type"], i["value"]
-        sco_id = None
         if t in STIX_SCO:
-            sco_id = "%s--%s" % (STIX_SCO[t], uuid.uuid4())
-            objs.append({"type": STIX_SCO[t], "spec_version": "2.1", "id": sco_id, "value": val})
+            props = {"value": val}
+            oid = emit(dict(type=STIX_SCO[t], spec_version="2.1", id=sco_id(STIX_SCO[t], props),
+                            object_marking_refs=marks, **props))
         elif t in HASH_KEYS:
-            sco_id = "file--%s" % uuid.uuid4()
-            objs.append({"type": "file", "spec_version": "2.1", "id": sco_id, "hashes": {HASH_KEYS[t]: val}})
+            props = {"hashes": {HASH_KEYS[t]: val}}
+            oid = emit(dict(type="file", spec_version="2.1", id=sco_id("file", props),
+                            object_marking_refs=marks, **props))
         elif i["category"] in ("social", "messaging") or t == "username":
-            sco_id = "user-account--%s" % uuid.uuid4()
-            objs.append({"type": "user-account", "spec_version": "2.1", "id": sco_id,
-                         "account_login": val, "account_type": (i.get("platform") or "osint").lower()})
+            plat = str(i.get("platform") or "").lower()
+            props = {"account_login": val, "account_type": _ACCOUNT_TYPE.get(plat) or _vocab(plat, "osint")}
+            oid = emit(dict(type="user-account", spec_version="2.1", id=sco_id("user-account", props),
+                            object_marking_refs=marks, **props))
         elif t in ("name", "org-name"):
-            sco_id = "identity--%s" % uuid.uuid4()
-            objs.append({"type": "identity", "spec_version": "2.1", "id": sco_id,
-                         "created": now, "modified": now, "name": val,
-                         "identity_class": "individual" if t == "name" else "organization"})
+            oid = emit({"type": "identity", "spec_version": "2.1", "id": "identity--%s" % uuid.uuid4(),
+                        "created": now, "modified": now, "created_by_ref": producer, "name": val,
+                        "identity_class": "individual" if t == "name" else "organization",
+                        "object_marking_refs": marks})
         else:
-            # phone, wallet, alias, location, device... -> custom selector observable
-            sco_id = "x-cti-selector--%s" % uuid.uuid4()
-            objs.append({"type": "x-cti-selector", "spec_version": "2.1", "id": sco_id,
-                         "selector_type": t, "category": i["category"], "value": val,
-                         "role": i["role"]})
+            # phone, wallet, alias, location, device... -> custom object (STIX 2.1 §11.2)
+            oid = emit({"type": "x-cti-selector", "spec_version": "2.1",
+                        "id": "x-cti-selector--%s" % uuid.uuid4(),
+                        "created": now, "modified": now, "created_by_ref": producer,
+                        "selector_type": t, "category": i["category"], "value": val,
+                        "role": i["role"], "object_marking_refs": marks})
         if i.get("subject_id") and i["subject_id"] not in sub_stix:
-            sub_stix[i["subject_id"]] = sco_id
+            sub_stix[i["subject_id"]] = oid
         pat = pattern_for(i)
         if pat:
-            objs.append({
+            ind = {
                 "type": "indicator", "spec_version": "2.1", "id": "indicator--%s" % uuid.uuid4(),
                 "created": now, "modified": now, "created_by_ref": producer,
                 "name": "%s %s" % (t, val), "pattern": pat, "pattern_type": "stix",
-                "valid_from": now, "confidence": int(i.get("confidence") or 0),
-                "labels": [i["category"], i["role"]],
-            })
+                "pattern_version": "2.1", "valid_from": now,
+                "labels": [i["category"], i["role"]], "object_marking_refs": marks,
+            }
+            conf = int(i.get("confidence") or 0)
+            if conf > 0:    # absent = unspecified (§3.2); 0 would assert "no confidence"
+                ind["confidence"] = min(conf, 100)
+            objs.append(ind)
 
     for a in attr:
         fid = sub_stix.get(_find_sid(data, a["from"]))
@@ -537,14 +684,20 @@ def write_stix(inds, attr, data, path):
             objs.append({
                 "type": "relationship", "spec_version": "2.1", "id": "relationship--%s" % uuid.uuid4(),
                 "created": now, "modified": now, "created_by_ref": producer,
-                "relationship_type": a["rel"].replace("_", "-"),
+                "relationship_type": _vocab(a["rel"], "related-to"),
                 "source_ref": fid, "target_ref": tid,
                 "description": ("can reach / contacted" if a["reach"] else a["rel"]),
+                "object_marking_refs": marks,
             })
 
-    bundle = {"type": "bundle", "id": "bundle--%s" % uuid.uuid4(),
-              "x_cti_generator": "CTI Expert", "x_cti_generator_url": CREDIT_URL,
-              "objects": objs}
+    return {"type": "bundle", "id": "bundle--%s" % uuid.uuid4(),
+            "x_cti_generator": "CTI Expert", "x_cti_generator_url": CREDIT_URL,
+            "objects": objs}
+
+
+def write_stix(inds, attr, data, path, tlp=None, allow_red=False, allow_downgrade=False):
+    bundle = build_stix(inds, attr, data, tlp=tlp, allow_red=allow_red,
+                        allow_downgrade=allow_downgrade)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(bundle, f, indent=2, ensure_ascii=False)
 
@@ -558,17 +711,29 @@ def _find_sid(data, label):
 
 def main(argv):
     fmt = "all"
+    tlp = None
+    allow_red = allow_downgrade = False
     args = []
     i = 0
     while i < len(argv):
         if argv[i] == "--format" and i + 1 < len(argv):
             fmt = argv[i + 1].lower()
             i += 2
+        elif argv[i] == "--tlp" and i + 1 < len(argv):
+            tlp = argv[i + 1]
+            i += 2
+        elif argv[i] == "--allow-red":
+            allow_red = True
+            i += 1
+        elif argv[i] == "--allow-downgrade":
+            allow_downgrade = True
+            i += 1
         else:
             args.append(argv[i])
             i += 1
     if len(args) < 2:
-        print("usage: generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|jsonl|all]")
+        print("usage: generate-cti-iocs.py <case.json> <out_prefix> [--format stix|flat|csv|jsonl|all]"
+              " [--tlp LEVEL] [--allow-red] [--allow-downgrade]")
         return 2
     case_path, out = args[0], args[1]
     try:
@@ -577,6 +742,18 @@ def main(argv):
     except (OSError, ValueError) as e:
         print("error: cannot read/parse case JSON %r: %s" % (case_path, e))
         return 1
+
+    level = None
+    if fmt in ("all", "stix"):
+        # decided before anything is written: a refused marking leaves no partial export behind
+        level, err = stix_tlp(data, tlp, allow_red, allow_downgrade)
+        if err:
+            print("error: STIX TLP marking: " + err, file=sys.stderr)
+            return 2
+        recorded = recorded_tlp(data)
+        if tlp is not None and recorded and TLP_ORDER.index(level) < TLP_ORDER.index(recorded):
+            print("warning: --tlp %s is LESS restrictive than the case marking TLP:%s"
+                  % (level.upper(), recorded.upper()), file=sys.stderr)
 
     inds = extract(data)
     attr = attribution(data)
@@ -597,7 +774,8 @@ def main(argv):
         written.append(p)
     if fmt in ("all", "stix"):
         p = (out + ".stix.json") if fmt == "all" else out
-        write_stix(inds, attr, data, p)
+        write_stix(inds, attr, data, p, tlp=level, allow_red=allow_red,
+                   allow_downgrade=allow_downgrade)
         written.append(p)
     if fmt in ("all", "jsonl"):
         p = (out + ".jsonl") if fmt == "all" else out

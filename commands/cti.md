@@ -59,6 +59,12 @@ it, skip with that reason. Keep no-spend separate from egress posture; `--free-o
 Ambiguous input: state the reading chosen and proceed, asking only when two readings require
 materially different work.
 
+> **Emerging-threat triggers.** When the target is a vulnerability id, a vendor advisory, a
+> campaign or malware report, or an actor name or profile, and a defended organisation's exposure
+> is the question, the selector legs above still run as written. The response around them
+> (triage, exposure, Threat Advisory, Threat Assessment, hunt package, acknowledgments and the
+> +7/+30-day checkpoints) follows [`workflows/wf-emerging-threat.md`](../workflows/wf-emerging-threat.md).
+
 ## Step 2 — Run the cross-type harness loop (default engine), don't hand-run collectors
 
 For any seed type (domain, URL, email, phone, IP, hash, wallet, Telegram handle, filename or
@@ -66,11 +72,31 @@ string), run the `cti` driver. It recalls, then runs the **cross-type harness lo
 - typed pivots on every selector type;
 - a read-only Plan phase that ranks and adds pivots;
 - free work (and urlscan Pro, quota-backed) within 25 hits runs on its own;
-- every metered, oversized or unknown-size pivot waits in `cases/<CASE-ID>/proposal.json` for
-  the analyst's approval.
+- every metered, oversized or unknown-size pivot is written to `cases/<CASE-ID>/proposal.json`.
+  **AUTO mode (the default)** approves every such item itself each round and resumes at once,
+  round after round, until the case converges, goes cold or reaches `--depth`. **`--review`**
+  (MCP `review=true`) restores per-round approval: the round stops at `awaiting-approval` for the
+  analyst.
 
 Your typed seeds collect with the keyed layers. Every host the loop finds collects free-only,
-and its keyed enrichment is an `enrich.host` proposal item.
+and its keyed enrichment is an `enrich.host` proposal item (auto-approved in auto mode).
+
+**Visual evidence is automatic.** Every host the run collects live, or recovers from a Wayback
+capture, gets one full-page screenshot at `cases/<case>/evidence/screenshots/<host>/<UTC>.png`
+with sha256, a custody line, a seal and `seal_status`. A hostile host is shot only through the
+pool exit its fetch used, never direct; an archive-only host is shot at its Wayback URL. A failure
+is recorded as `screenshot: failed (<reason>)` and never fails the collection (no browser →
+`screenshot: unavailable (no browser)`). `HARNESS_SCREENSHOT=0` turns it off; defaults in
+`WebPivot/references/screenshot.json → collection` (on, 60 s per host). The house report embeds
+them, and Rule 21 cites every public evidence URL inline as `[n]` with a References section.
+The per-round snapshots follow the same rule: `assessments/<UTC>_rN.md` and
+`report/<UTC>_rN.{md,pdf,docx}` cite each evidence row as `[n]` and close with `# References` —
+the row's own URL where it has one, else the public page that re-checks it (crt.sh, RDAP,
+urlscan, the web archive, the page itself); a source with no public page (a vendor API) is
+named by its source class with "(no public link)". Private and loopback links are dropped, and
+credential query keys (`key`, `token`, `apikey`, …) never appear in any URL. Rules:
+`IntelReport/references/report_citations.json`. The pipeline's `open --screenshots` still
+implies a post-JS `--render` of each host's DOM for extraction.
 
 **Identity and estate routes** (`pivot_map.json`; every row is a LEAD — kit/neighbour facts,
 never an owner edge):
@@ -79,14 +105,14 @@ never an owner edge):
 |---|---|---|---|
 | `pgp.lookup` | email | automatically | always (keyless keyservers) |
 | `corp.registry` | registrant org | automatically (keyless registries; jurisdiction = scope `jurisdiction`, else the case's one ccTLD) | always |
-| `telegram.resolve` | t.me handle | **approval** — every pending handle of the round sits in one proposal; show the batch and ask the analyst to confirm it (≤ 10 per round). The `tg:<id>` row carries the account's creation date (`created_estimate` for a user/bot, `created` for a channel) | Telethon + a research-account session exist |
+| `telegram.resolve` | t.me handle | **proposal item** — auto-approved in auto mode; under `--review` every pending handle of the round sits in one proposal for the analyst to confirm (≤ 10 per round). The `tg:<id>` row carries the account's creation date (`created_estimate` for a user/bot, `created` for a channel) | Telethon + a research-account session exist |
 | `revimg.links` | public avatar / profile-photo URL | automatically, ≤ 5 per round (never a local file) | always |
 | `takedown.watch` | collected domain whose capture reads NXDOMAIN / parked / suspended, or WHOIS hold | automatically, once per domain per 7 days | always |
 | `container.registry` | org slug, GitHub owner → `ghcr.io/<owner>`, OCI `image.source` | automatically, ≤ 10 per round, never `--layers` | always |
 | `masked.hint` | masked e-mail/phone hint from an account lookup | automatically (offline) | always |
-| `telegram.phone` | registrant or seed phone (E.164) | **approval** — the approved item is the import's confirm | Telethon + session; research account only (Telegram ToS, daily import limit) |
-| `google.account` | registrant or seed gmail.com / googlemail.com | **approval** | GHunt installed + session file |
-| `corp.opencorporates` | registrant org | **approval** (metered) | `OPENCORPORATES_API_TOKEN` set |
+| `telegram.phone` | registrant or seed phone (E.164) | **proposal item** — the approved item (auto or analyst) is the import's confirm | Telethon + session; research account only (Telegram ToS, daily import limit) |
+| `google.account` | registrant or seed gmail.com / googlemail.com | **proposal item** (auto-approved; analyst under `--review`) | GHunt installed + session file |
+| `corp.opencorporates` | registrant org | **proposal item** (metered; auto-approved; analyst under `--review`) | `OPENCORPORATES_API_TOKEN` set |
 
 **Person-profile mode.** When the subject is a person, set it before the run
 (`case_scope set <CASE-ID> --subject-type person [--jurisdiction VN]`, or `case_scope`
@@ -97,20 +123,76 @@ reminds you to import `subject_profile` / `client_seeds` / `engagement` and to r
 `exposure_score model=executive` yourself — the loop never scores. Unset = infrastructure (off).
 
 ```bash
-python3 scripts/backend/intel.py cti <target> [--case <CASE-ID>] [--depth N] [--deep] [--free-only]
+python3 scripts/backend/intel.py cti <target> [--case <CASE-ID>] [--depth N] [--deep] [--free-only] [--quarry] [--review]
+# --review only: approve the pending proposal, then resume
 python3 scripts/backend/intel.py harness approve <CASE-ID> --only <ids> [--reject <ids>]   # unlisted = deferred
 python3 scripts/backend/intel.py harness continue <CASE-ID>
 ```
 
-**Confirm before launching.** A harness run collects live, runs LLM phases for tens of minutes,
-and spends on your typed seeds. State the target, the case id, the rounds and the spend posture,
-and start it only after the analyst agrees (project rule: confirm before harness/pivot runs).
+**Auto mode is the default — launch without asking.** `/cti` starts the run directly: no launch
+confirmation and no per-round approval. Say what you started (target, case id, rounds, spend
+posture, Quarry on/off) and where its log is. The mode resolves as: `--review` (CLI) / `review=true`
+(MCP) → a seedless `harness continue` keeps the mode the case recorded → `scope.json`
+`auto_approve` (true/false) → `tool_policy.json` `auto_mode.default` (true). It is recorded in
+`state.json` `approval_mode`.
 
-**Ask the analyst** before approving: show the proposal table (`harness approve <CASE-ID> --show`
-or `case_approve` without `confirm`), and approve only the ids they name. Unlisted items are
-deferred, not dropped; only `--reject` drops one for good. The MCP `cti` tool starts the harness
-run in the background and returns the case id and log path; check it with
-`harness status <CASE-ID>`.
+In auto mode:
+- every proposal kind is auto-approved, with no budget cap: metered or oversized corpus routes,
+  `enrich.host`, `rwhois.purchase`, VPS co-tenancy collects, `telegram.resolve`,
+  `telegram.phone` and any other kind;
+- each approval is digest-bound, like an analyst's, and is recorded in `proposal.json`
+  `auto_log` and in `tool_calls.jsonl` with `approved_by: "auto"`, a timestamp and the digest;
+- the per-run metered-call count never denies. A vendor's own HTTP 402/429 stops that vendor;
+- ANY.RUN submissions go out as **public** tasks, never private. The risk briefing is written to
+  `anyrun/submissions.json` and the ledger;
+- **the frontier is drained before any hand-back.** A round that would stop on a planner veto,
+  gated-only pivots or no proposals first collects, free-only, the uncollected cluster peers and
+  infra hosts still on the free frontier (recorded as kit / neighbour, never attributed; held
+  co-tenancy leads stay held unless an approval covers them), then re-plans. A host is queued at
+  most `auto_mode.frontier_max_attempts` times (default 2) and never again after a failed
+  collection; the hand-back lists those as `frontier_failed`;
+- **the deterministic frontier's metered leads run too** (FOFA `ip=` / `icon_hash=`, WhoisXML
+  reverse-WHOIS) once per lead per case, through the same digest-bound auto-approval path, logged
+  `approved_by: auto` in `tool_calls.jsonl` and `state.json` `metered_leads_run`. A lead runs only
+  if the case has no answer yet for the same paid query — a successful `api_usage` ledger row (an
+  empty result counts), an enrichment leg that ran it (e.g. email-deep's reverse-WHOIS) or a stored
+  reverse-WHOIS purchase; otherwise it is settled `skipped: already answered (<source>)` with no
+  spend. A failed call (402/429/5xx) is not an answer, and a planner drop alone neither blocks nor
+  forces a lead. Reverse-WHOIS is always previewed first and never bought above `rwhois_auto_cap`;
+  a vendor's 402/429 stops that vendor's leads for the rest of the run;
+- one full `intel.py enrich <case>` runs after the leak round (state `enrich_round`); `case_state
+  reopen` re-arms it and the leak fan-out;
+- **proxy-failed hosts are re-collected once** before any hand-back: a case host whose earlier live
+  fetch failed on the proxy side (tunnel 50x/401, proxy unreachable) and was never fetched through
+  the exit-rotation path (no `meta.live_fetch`) is re-collected through it whatever the case
+  posture — a different exit, then archive-only, never direct — recorded in `state.json`
+  `recollected` (`recollect_path: exit-rotation`) and never repeated; the case's hostile
+  classification is unchanged. A
+  target-side failure (TLS error, HTTP status) is not retried. A co-tenancy hold never covers an
+  apex the case already collected, so that apex's own subdomains drain like any frontier host;
+- **when it stops.** Once the free frontier, the metered leads and the one-time re-collections are
+  drained, a planner veto or an empty proposal ends the case `cold` ("free frontier exhausted and
+  the planner found nothing worth pursuing"), not `awaiting-analyst`. Gated items still pending
+  keep it with the analyst; a failed frontier probe is reported as UNKNOWN, never as cold.
+
+**Still gated in auto mode — never auto-approved:** `engage_account`, `webamon_scan`,
+`misp_publish`, `misp_push`. The run does not stall on them: it carries on with everything else
+and lists them as pending in the hand-back (`state.json` `pending_gated`). Decide them with
+`harness continue <CASE-ID> --review`. Hostile egress stays enforced in both modes: against
+hostile infrastructure an outbound call needs passive/proxy. Hostile hosts are collected only
+through the egress pool (`pivot_extract --hostile`, set by `collect_core`): on a proxy-side
+failure (CONNECT 401/407/502/503/504, unreachable exit, timeout) the collector retries once
+through a **different** exit, then reads the archives only (latest Wayback capture, then the
+urlscan DOM) — never direct, and no exit means no live fetch. The raw records
+`meta.content_source` (live | archive | none) and `meta.live_fetch`; the host status reads
+`archive-only (…; live failed (…))` or `unreachable (…)`. An origin answer (TLS error, HTTP
+status) is not retried on another exit. Tunables: `WebPivot/references/fetch_profile.json →
+hostile_exit_retry`.
+
+**`--review`:** show the proposal table (`harness approve <CASE-ID> --show` or `case_approve`
+without `confirm`), and approve only the ids the analyst names. Unlisted items are deferred, not
+dropped; only `--reject` drops one for good. The MCP `cti` tool starts the harness run in the
+background and returns the case id and log path; check it with `harness status <CASE-ID>`.
 
 **Fallback — the deterministic pipeline** (no LLM), used for `--pipeline`, `--quick`, `--passive`
 (no live contact, no chase loop), inside a harness run (never nested), or automatically when no
@@ -125,9 +207,10 @@ under `bin/analysis/<sha256>.json` and ingested into the KB without adding a web
 Binary identifiers belong to the file; a shared download host is not a same-operator link.
 
 A configured `ANYRUN_API_KEY` also submits the saved file on a spending run; `--free-only`,
-case `no_spend`, hostile posture, or the default free-only `loop` suppress submissions.
-A public-only ANY.RUN plan is refused unless `ANYRUN_ALLOW_PUBLIC=1` is explicitly set;
-public tasks expose the sample worldwide and cannot be recalled.
+case `no_spend`, hostile posture, or the default free-only `loop` suppress submissions. In auto
+mode the submission is an explicit **public** task (the analyst's standing decision). Under
+`--review` a public-only ANY.RUN plan is refused unless `ANYRUN_ALLOW_PUBLIC=1` is explicitly set.
+Public tasks expose the sample worldwide and cannot be recalled.
 
 
 Hand-running a collector is a fallback, not the default. If you do it, **say so in the write-up**
@@ -204,7 +287,7 @@ remain hypotheses, not recursive estate pivots:
 | **registrant phone** | `/phone` + reverse-WHOIS preview + `/dork-sweep`; keyed `cld route <phone>`; keyed and spend allowed: `/osint-industries phone <E164> --case <id>` (caller-ID names, registered platforms — historic corroboration, never the number's current holders). Page-text phone is not automatically a registrant |
 | **apex / URL** | collector already sent CLD Feeds + host-matched Shield when keyed; no second domain route. Run `/intelx phonebook <apex>` if keyed and spend allowed, `/github-osint` + `/secrets` and `/dork-sweep <apex>`; execute/review generated searches rather than count query strings as findings |
 | **registrant organization** | keyed `cld ransomware <org>` **and** `cld internal-leaks <org>` when not privacy/proxy/registrar boilerplate; host search in the collector is not an org search |
-| **Telegram handle** | `tg-age:<handle>` lead → `telegram age @<handle>` (id + creation date; KB facts `telegram_account` / `telegram_created`). **Held until the analyst confirms:** enrichment prints `N telegram lead(s) AWAITING APPROVAL — @a, @b`; show that list, ask the analyst, and only on an explicit yes run `intel.py enrich <case> --approve telegram` (MCP `case_enrich approve_telegram=true`). No session → `unavailable`, kept open. A bare numeric user id needs no confirm (offline). A direct `telegram age @handle` / `telegram resolve` returns a briefing until `--confirm` / `confirm=true` — show it and ask first. Keyed `cld route t.me/<handle>` runs as before; never route `t.me` as the operator domain |
+| **Telegram handle** | `tg-age:<handle>` lead → `telegram age @<handle>` (id + creation date; KB facts `telegram_account` / `telegram_created`). **Follows the case's approval mode** (`state.json` `approval_mode`): in AUTO mode (the `/cti` default) tg-age leads run on their own, each logged in `tool_calls.jsonl` as `enrich_approve` with `approved_by: auto`; in `--review` mode they are held — enrichment prints `N telegram lead(s) AWAITING APPROVAL — @a, @b`; show that list, ask the analyst, and only on an explicit yes run `intel.py enrich <case> --approve telegram` (MCP `case_enrich approve_telegram=true`). No session → `unavailable`, kept open. A bare numeric user id needs no confirm (offline). A direct `telegram age @handle` / `telegram resolve` outside a run returns a briefing until `--confirm` / `confirm=true` — show it and ask first. The Telegram entry points are safe inside a running event loop. Keyed `cld route t.me/<handle>` runs as before; never route `t.me` as the operator domain |
 | **GitHub account / repo link** | `github <account-or-repo>` for public committer identities; search/secret legs on the account where applicable; re-enter corroborated email/handle results |
 | **wallet / IBAN / file hash** | `/intelx search <wallet-or-IBAN>` if keyed; `/iban` for IBAN; `/hash-id` before hash lookup, then keyed `cld ioc hash <hash>` for a confirmed file hash only |
 
@@ -240,7 +323,7 @@ the same cold-start path in one call, useful from a script, a cron, or a sub-age
 resumable, parseable result:
 
 ```bash
-python3 scripts/backend/intel.py cti <target> [--case ID] [--quick|--deep|--passive] [--free-only] [--extend] [--quarry|--no-quarry] [--pipeline] [--depth N]
+python3 scripts/backend/intel.py cti <target> [--case ID] [--quick|--deep|--passive] [--free-only] [--extend] [--quarry|--no-quarry] [--review] [--pipeline] [--depth N]
 ```
 
 It runs `recall`, then stops if the target is already confirmed-attributed (unless `--extend`).
@@ -253,9 +336,11 @@ itself on every path whenever Quarry is on for the case). A no-spend or no-conta
 cancelled scan, a rejected key, an error, or an unanswered ask returns `status: awaiting-quarry` and
 does not collect — the job is checkpointed, and the next run resumes it. Collection starts only after a
 `completed` or `reused` import. Then:
-- **Default:** the **cross-type harness loop** runs for `--depth` rounds (3; 6 with `--deep`).
-  `--free-only` maps to `--no-spend`. It stops at `awaiting-approval` when paid pivots need the
-  analyst; `next` is then `["approve","report"]`.
+- **Default:** the **cross-type harness loop** runs for `--depth` rounds (3; 6 with `--deep`) in
+  **auto mode**: paid pivots are auto-approved and the loop keeps going. `--free-only` maps to
+  `--no-spend`. The summary carries `approval_mode` and any `pending_gated` items. With
+  `--review` it stops at `awaiting-approval` when paid pivots need the analyst; `next` is then
+  `["approve","report"]`.
 - **`--pipeline` / `--quick` / `--passive`, inside a harness run, or no harness backend** (nothing
   collected): collect (`pipeline open`
   for a domain/URL; a binary seed is first analysed by BinaryPivot + REA and continues as its
@@ -287,6 +372,10 @@ etc. clients), not only the top-level collector's own rows.
   new seed, one sub-agent per seed, until the frontier is exhausted
 - `--passive` — no live contact with the target; work from Wayback/urlscan captures only.
   **Use this for any hostile target.**
+- `--review` — opt out of auto mode: per-round analyst approval of paid / oversized pivots (the
+  run stops at `awaiting-approval`). MCP: `review=true`
+- `--quarry` — use Quarry for this case: wait, with no time limit, for its scan to finish and
+  import before any pivot spends. MCP: `quarry=true`
 - `--no-harness` — skip the Step 2b non-convergence auto-escalation to the `/harness` deepening loop
 
 ## Deep mode — parallel sub-agent fan-out (`--deep`)
@@ -356,6 +445,8 @@ the case has an `assessment.md`, turn it into the presentation bundle via the co
 generators (see SKILL.md §8 for the full flow and the format prompt):
 ```bash
 uv run "$SKILL_DIR/scripts/build_report_data.py" "$INTEL_HOME/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"
+# after any analyst merge onto the JSON — the CSV must carry the imported rows
+uv run "$SKILL_DIR/scripts/build_report_data.py" --from-report "CTI-REPORT-<CASE-ID>-<DATE>.json" --csv "CTI-REPORT-<CASE-ID>-<DATE>.csv"
 ```
 This emits the exact flat schema the generators consume — operator/registrant subjects with
 selectors, the full domain estate as network indicators, findings/timeline/connections, and the

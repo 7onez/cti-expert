@@ -286,16 +286,38 @@ def _iso_ok(v) -> bool:
         return False
 
 
+_SCALAR = (str, int, float, bool, type(None))
+
+
+def _flat_dict(v, depth=2) -> bool:
+    """A JSON object of scalars; a value may also be a list of scalars or (depth 2) one more flat
+    object — the C1 `bands` {level: [lo, hi] | {min, max}} shape, and no deeper."""
+    if not isinstance(v, dict) or not all(isinstance(k, str) for k in v):
+        return False
+    for x in v.values():
+        if isinstance(x, list):
+            if not all(isinstance(i, _SCALAR) for i in x):
+                return False
+        elif isinstance(x, dict):
+            if depth < 2 or not _flat_dict(x, depth - 1):
+                return False
+        elif not isinstance(x, _SCALAR):
+            return False
+    return True
+
+
 def _report_row(spec, raw):
     """One report row -> (normalised row, None) or (None, reason). Spec keys: required, enums,
     patterns, dates, lists (strings), numbers, raw_lists (scalars kept as-is), objects (a list of
-    sub-rows validated with their own spec)."""
+    sub-rows validated with their own spec), dicts (one JSON object of scalars, each value a scalar,
+    a list of scalars or one flat object — stored as-is)."""
     if not isinstance(raw, dict):
         return None, "row is not a JSON object"
     row = {}
     lists = set(spec.get("lists") or [])
     raw_lists = set(spec.get("raw_lists") or [])
     objects = spec.get("objects") or {}
+    dicts = set(spec.get("dicts") or [])
     for k, v in raw.items():
         if k in lists:
             if isinstance(v, str):
@@ -318,6 +340,10 @@ def _report_row(spec, raw):
                     return None, f"`{k}[{j}]`: {why}"
                 subs.append(s)
             row[k] = subs
+        elif k in dicts:
+            if not _flat_dict(v):
+                return None, f"`{k}` must be a JSON object of scalars (a value may be a list of scalars or one flat object)"
+            row[k] = dict(v)
         elif isinstance(v, str):
             row[k] = v.strip()
         elif v is None or isinstance(v, (int, float, bool)):

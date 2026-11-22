@@ -14,13 +14,22 @@ and append a per-case manifest row — mirroring wp_capture's model so a screens
 SAME WAY a DOM capture does (cite the sha256, not the path). Captures are timestamped and
 never overwritten, so re-capturing a page dates any change between the two.
 
+Each manifest entry also carries the collection context (wp_custody, handbook §5): `collector`,
+`persona`, `egress_ip` (or null plus `egress_note`), the local `clock_sync` state at collection
+start, and the tool and browser versions (`tool_version`, `browser`, `browser_version`,
+`playwright_version`). Inside a case store the capture and every verify append to the custody log
+`cases/<case>/evidence/custody.jsonl`, and a PNG that verifies is made read-only. The per-case
+manifest itself stays writable — it is appended on every capture — and is never what a report
+cites; the PNG's sha256 is.
+
 OPSEC: this is an OUTBOUND, attributable fetch — a real browser hits the target from your
 egress. On hostile infrastructure pass `--proxy` so the request does not carry the analyst's
 own IP. Requires Playwright (the WebPivot venv / `RENDER_PY`).
 
 CLI:
     python3 wp_screenshot.py <url> --case <ID> [--proxy URL] [--label "..."] [--json]
-    python3 wp_screenshot.py --verify <png|manifest.json>      # re-hash, detect tampering
+                             [--persona P] [--egress-ip IP] [--collector NAME]
+    python3 wp_screenshot.py --verify <png|manifest.json> [--no-seal]   # re-hash, detect tampering
 """
 from __future__ import annotations
 
@@ -35,10 +44,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # import wp_net / wp_refs standalone
 
-# Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 5000s).
+# Per-call ceiling — ONE resolver (wp_timeouts: env → .env → references/timeouts.json → 18000s / 5 h).
 # Applied to the Playwright page.goto timeout below.
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 from wp_ua import DEFAULT_UA  # noqa: E402 — the one User-Agent source (Android Chrome)
+import wp_custody  # noqa: E402 — collection context, custody log, seal
 
 try:
     from wp_refs import load_ref, ref_path                       # shared RULE 3 loader
@@ -61,6 +71,23 @@ CAP = _REFS["capture"]
 LAYOUT = _REFS["layout"]
 # The browser UA sent to the target: the shared Android default unless screenshot.json overrides it.
 CAPTURE_UA = CAP.get("user_agent") or DEFAULT_UA
+SCREENSHOT_VERSION = "wp_screenshot/2"   # /2: collection context, browser versions, custody + seal
+_ENGINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def case_home(root: str = None) -> str:
+    """The directory holding cases/: an explicit `root` (--root), else $INTEL_HOME, else the
+    vendored intel_engine/ — never the caller's cwd (AGENTS.md: cases live under
+    $INTEL_HOME/cases/<id>/ only; a cwd default split one case across two stores)."""
+    return root or os.environ.get("INTEL_HOME") or _ENGINE
+
+
+def _playwright_version():
+    try:
+        from importlib.metadata import version
+        return version("playwright")
+    except Exception:                                            # noqa: BLE001
+        return None
 
 
 def _utc_stamp() -> str:
@@ -92,11 +119,12 @@ def _title(html: str):
     return re.sub(r"\s+", " ", m.group(1)).strip()[:200] if m else None
 
 
-def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str = ".",
+def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str = None,
                        proxy: str = None, timeout: int = None, ua: str = None,
                        label: str = None, click: str = None, wait_selector: str = None,
                        wait_after: float = None, full_page: bool = True,
-                       extra: dict = None, host: str = None) -> dict:
+                       extra: dict = None, host: str = None, collector: str = None,
+                       persona: str = None, egress_ip: str = None) -> dict:
     """Render `url` to a full-page PNG and record it as evidence. Returns the manifest entry.
 
     Many evidence pages sit behind ONE interaction — a splash/"enter" gate, a cookie wall, a
@@ -116,6 +144,12 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
         raise RuntimeError(wp_browser.chromium_missing_note())
     from playwright.sync_api import sync_playwright              # lazy: playwright only needed here
 
+    root = case_home(root) if case else (root or ".")
+    proxy_used = wp_browser.resolve_proxy(proxy)
+    context_ev = (wp_custody.evidence_root(outdir) if outdir else
+                  wp_custody.case_evidence_dir(case, root) if case else None)
+    context = wp_custody.collection_context(proxy_used, collector, persona, egress_ip,
+                                            evidence_dir=context_ev)
     host = _host_slug(host) if host else _host_slug(url)
     if outdir:
         base = outdir
@@ -126,12 +160,16 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
     else:
         base = man_dir = os.path.join(root, LAYOUT["dir"], host)
     os.makedirs(base, exist_ok=True)
-    png = os.path.join(base, f"{_utc_stamp()}.png")
-
+    stamp = _utc_stamp()
+    png = os.path.join(base, f"{stamp}.png")
     to_ms = _floor(timeout or CAP["timeout_seconds"]) * 1000
     actions: list[str] = []
     with sync_playwright() as p:
         browser = p.chromium.launch(**wp_browser.chromium_launch_kwargs(proxy))
+        try:
+            browser_version = browser.version
+        except Exception:                                        # noqa: BLE001
+            browser_version = None
         ctx = browser.new_context(user_agent=ua or CAPTURE_UA,
                                   viewport={"width": 1280, "height": 800})
         page = ctx.new_page()
@@ -168,13 +206,19 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
             actions.append(f"settled {wait_after}s")
         final_url = page.url
         html = page.content()
-        page.screenshot(path=png, full_page=full_page)
+        data = page.screenshot(full_page=full_page)
         browser.close()
 
-    if not os.path.exists(png):
-        raise RuntimeError("screenshot was not written — the render produced no image "
-                           "(the target may have blocked the browser or timed out)")
-    data = open(png, "rb").read()
+    n = 2
+    while True:
+        try:
+            fd = os.open(png, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            break
+        except FileExistsError:
+            png = os.path.join(base, f"{stamp}-{n}.png")
+            n += 1
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
     w, h = _png_dims(data)
     entry = {
         "url": url,
@@ -186,48 +230,128 @@ def capture_screenshot(url: str, case: str = None, outdir: str = None, root: str
         "width": w,
         "height": h,
         "title": _title(html),
-        "proxy": bool(wp_browser.resolve_proxy(proxy)),
+        "proxy": bool(proxy_used),
         "label": label,
         "actions": actions,
         "full_page": full_page,
         "tool": "wp_screenshot",
+        "tool_version": SCREENSHOT_VERSION,
+        "browser": "chromium",
+        "browser_version": browser_version,
+        "playwright_version": _playwright_version(),
         "host": host,
+        **context,
     }
     if extra:
         entry.update(extra)
     # Append to the per-case manifest (one file listing every capture in the case).
     os.makedirs(man_dir, exist_ok=True)
     man = os.path.join(man_dir, LAYOUT["manifest_filename"])
-    arr = []
-    if os.path.exists(man):
+    # Serialise read/append/write together, so concurrent exclusive PNGs retain both records.
+    with open(man, "a+", encoding="utf-8") as fh:
+        if wp_custody.fcntl:
+            wp_custody.fcntl.flock(fh.fileno(), wp_custody.fcntl.LOCK_EX)
+        fh.seek(0)
         try:
-            arr = json.load(open(man, encoding="utf-8"))
+            arr = json.load(fh)
             if not isinstance(arr, list):
                 arr = []
-        except Exception:                                        # noqa: BLE001
+        except ValueError:
             arr = []
-    arr.append(entry)
-    json.dump(arr, open(man, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    entry["manifest"] = man
+        entry["manifest"] = man
+        ev = wp_custody.evidence_root(png)
+        if ev:
+            entry["custody"] = wp_custody.append(
+                ev, "capture", wp_custody.item_ref(ev, png), entry["sha256"],
+                f"rendered screenshot {url}" + (f" ({label})" if label else ""), context.get("collector"))
+        entry["custody_head"] = entry["custody"]["head"] if ev else None
+        arr.append(entry)
+        fh.seek(0)
+        fh.truncate()
+        json.dump(arr, fh, ensure_ascii=False, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
     return entry
 
 
-def verify(path: str) -> dict:
-    """Re-hash a stored PNG (or every PNG a manifest lists) and report match/mismatch."""
+def _check(p: str, expected: str, seal: bool = None, actor: str = None,
+           case_dir: str = None, log: bool = True) -> dict:
+    """Hash and seal the same no-follow descriptor; manifest entries stay inside their case.
+
+    Every result carries `seal_status`: `sealed`, `not_sealed` (not requested, or the content did
+    not match), `unavailable_on_platform` (no `fchmod`) or `failed` (the chmod itself raised after
+    the content matched — the PNG is intact, only unsealed). `seal_reason` explains the last two."""
+    ev = wp_custody.evidence_root(p) if p else None
+    if case_dir is not None and (not p or wp_custody.contained_ref(
+            case_dir, os.path.relpath(os.path.abspath(p), os.path.abspath(case_dir))) is None):
+        return {"path": p, "sha256": expected, "status": "REJECTED", "sealed": False,
+                "seal_status": "not_sealed", "custody_head": None}
+    logged = wp_custody.first_capture_digest(ev, wp_custody.item_ref(ev, p)) if ev else None
+    expected = logged if logged is not None else expected
+    sealed = False
+    seal_state = {"seal_status": "not_sealed"}
+    try:
+        with wp_custody.pinned(p) as fd:
+            before = os.fstat(fd)
+            got = wp_custody.fd_sha256(fd)
+            ok = got == expected and wp_custody.inode_state(before) == wp_custody.inode_state(os.fstat(fd))
+            status = "MATCH" if ok else "TAMPERED"
+            if ok and (seal if seal is not None else bool(ev)):
+                if hasattr(os, "fchmod"):
+                    try:
+                        wp_custody.seal(p, [(p, fd, before)])
+                        sealed = True
+                        seal_state = {"seal_status": "sealed"}
+                    except wp_custody.SealError as exc:
+                        seal_state = {"seal_status": "failed", "seal_reason": str(exc)}
+                else:
+                    seal_state = {"seal_status": "unavailable_on_platform",
+                                  "seal_reason": "os.fchmod unavailable; pathname chmod is unsafe"}
+    except FileNotFoundError:
+        status = "MISSING"
+    except (OSError, ValueError, TypeError):
+        status = "TAMPERED"
+    if status != "MATCH":
+        sealed, seal_state = False, {"seal_status": "not_sealed"}
+    custody = None
+    if ev and log:
+        custody = wp_custody.append(ev, "verify", wp_custody.item_ref(ev, p), expected,
+                                     status + ("; sealed read-only" if sealed else "")
+                                     + (f"; seal {seal_state['seal_status']}: {seal_state['seal_reason']}"
+                                        if seal_state.get("seal_reason") else ""), actor)
+    return {"path": p, "sha256": expected, "status": status, "sealed": sealed, **seal_state,
+            "custody_head": custody["head"] if custody else None}
+
+
+def verify(path: str, seal: bool = None, actor: str = None) -> dict:
+    """Re-hash a stored PNG (or every PNG a manifest lists) and report match/mismatch. Only reads
+    the PNGs and the manifest, so it works on sealed (read-only) files."""
     if os.path.isdir(path):
         path = os.path.join(path, LAYOUT["manifest_filename"])
     if path.endswith(".json"):
-        arr = json.load(open(path, encoding="utf-8"))
-        out = []
-        for e in arr:
-            p = e.get("path")
-            ok = os.path.exists(p) and hashlib.sha256(open(p, "rb").read()).hexdigest() == e.get("sha256")
-            out.append({"path": p, "sha256": e.get("sha256"),
-                        "status": "MATCH" if ok else ("MISSING" if not (p and os.path.exists(p)) else "TAMPERED")})
+        with wp_custody.pinned(path) as fd, os.fdopen(os.dup(fd), encoding="utf-8") as fh:
+            arr = json.load(fh)
+        ev = wp_custody.evidence_root(path)
+        case_dir = os.path.dirname(os.path.abspath(ev)) if ev else os.path.dirname(os.path.abspath(path))
+        out = [_check(e.get("path"), e.get("sha256"), seal, actor, case_dir) for e in arr]
         return {"manifest": path, "checked": len(out), "results": out,
+                "custody_head": wp_custody.check_log(ev).get("head") if ev else None,
                 "all_ok": all(r["status"] == "MATCH" for r in out)}
-    got = hashlib.sha256(open(path, "rb").read()).hexdigest()
-    return {"path": path, "sha256": got}
+    # A lone PNG: compare against the case manifest entry that recorded it, when there is one.
+    ev = wp_custody.evidence_root(path)
+    man = os.path.join(ev, LAYOUT["dir"], LAYOUT["manifest_filename"]) if ev else None
+    if man and os.path.isfile(man):
+        for e in json.load(open(man, encoding="utf-8")):
+            p = e.get("path")
+            if p and os.path.exists(p) and os.path.exists(path) and os.path.samefile(p, path):
+                r = _check(path, e.get("sha256"), seal, actor)
+                return dict(r, all_ok=r["status"] == "MATCH")
+    if ev and wp_custody.first_capture_digest(ev, wp_custody.item_ref(ev, path)) is not None:
+        r = _check(path, None, seal, actor)
+        return dict(r, all_ok=r["status"] == "MATCH")
+    got = wp_custody.file_sha256(path)
+    return {"path": path, "sha256": got, "custody_head": None, "sealed": False,
+            "seal_status": "not_sealed", "note": "no manifest entry found — digest only, not compared"}
 
 
 def _main() -> None:
@@ -235,7 +359,8 @@ def _main() -> None:
     ap.add_argument("url", nargs="?", help="URL (or host) to screenshot")
     ap.add_argument("--case", help="write into cases/<case>/evidence/screenshots/ with a manifest")
     ap.add_argument("--outdir", help="explicit output directory (overrides --case layout)")
-    ap.add_argument("--root", default=".", help="repo root that holds cases/ (default: .)")
+    ap.add_argument("--root", default=None,
+                    help="directory holding cases/ (default: $INTEL_HOME, else intel_engine/)")
     ap.add_argument("--proxy", help="research egress (http://host:port) — use on hostile infra")
     ap.add_argument("--timeout", type=int, help="navigation timeout, seconds")
     ap.add_argument("--ua", help="override the browser User-Agent")
@@ -250,12 +375,18 @@ def _main() -> None:
     ap.add_argument("--no-full-page", dest="full_page", action="store_false",
                     help="capture only the viewport, not the whole scrolled page")
     ap.add_argument("--verify", metavar="PNG|MANIFEST", help="re-hash a stored capture and exit")
+    ap.add_argument("--no-seal", dest="seal", action="store_false", default=None,
+                    help="with --verify: do not make a matching case PNG read-only")
+    ap.add_argument("--collector", help="who collects (default: $CTI_COLLECTOR, else a case pseudonym)")
+    ap.add_argument("--persona", help="virtual identity in use (default: $CTI_PERSONA)")
+    ap.add_argument("--egress-ip", dest="egress_ip",
+                    help="egress IP confirmed with `proxy.py test` (default: $CTI_EGRESS_IP)")
     ap.add_argument("--json", action="store_true", help="emit JSON")
     ap.set_defaults(full_page=True)
     a = ap.parse_args()
 
     if a.verify:
-        r = verify(a.verify)
+        r = verify(a.verify, seal=a.seal, actor=a.collector)
         print(json.dumps(r, ensure_ascii=False, indent=2))
         sys.exit(0 if r.get("all_ok", True) else 1)
     if not a.url:
@@ -264,7 +395,8 @@ def _main() -> None:
         e = capture_screenshot(a.url, case=a.case, outdir=a.outdir, root=a.root, proxy=a.proxy,
                                timeout=a.timeout, ua=a.ua, label=a.label, click=a.click,
                                wait_selector=a.wait_selector, wait_after=a.wait_after,
-                               full_page=a.full_page)
+                               full_page=a.full_page, collector=a.collector, persona=a.persona,
+                               egress_ip=a.egress_ip)
     except Exception as exc:                                     # noqa: BLE001
         print(f"[wp_screenshot] capture failed: {exc}", file=sys.stderr)
         sys.exit(2)

@@ -15,6 +15,11 @@ The list is reference DATA (RULE 3): this script only fetches and re-shapes it. 
 kept verbatim (`*.ck` wildcards, `!www.ck` exceptions); ICANN and PRIVATE sections are stored
 separately so a caller can tell a registry suffix from a hosting-platform suffix.
 
+The PSL is MPL-2.0. Every written file carries `licence`, `source` and `notice` (the MPL-2.0
+Exhibit A text) as top-level keys so the notice survives each refresh; the loader reads only
+`icann` / `private`. If the upstream header stops naming MPL 2.0 the script refuses to write —
+a licence change needs a human to update these constants and THIRD_PARTY_NOTICES.md.
+
 Usage:
   python3 WebPivot/tools/wp_psl_update.py            # fetch + write (network: publicsuffix.org)
   python3 WebPivot/tools/wp_psl_update.py --from public_suffix_list.dat   # offline re-shape
@@ -31,6 +36,21 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(os.path.dirname(HERE), "references", "public_suffix_list.json")
 SOURCE = "https://publicsuffix.org/list/public_suffix_list.dat"
+LICENCE = "MPL-2.0"
+NOTICE = ("This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. "
+          "If a copy of the MPL was not distributed with this file, You can obtain one at "
+          "https://mozilla.org/MPL/2.0/.")
+
+
+def header_licence_ok(text: str) -> bool:
+    """True when the .dat's leading comment block still carries the MPL-2.0 Exhibit A notice."""
+    head = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line.startswith("//"):
+            break
+        head.append(line.lstrip("/").strip())
+    return NOTICE in " ".join(head)
 
 
 def parse(text: str) -> tuple[list[str], list[str]]:
@@ -60,6 +80,9 @@ def main() -> int:
         req = urllib.request.Request(SOURCE, headers={"User-Agent": wp_common.DEFAULT_UA})
         with urllib.request.urlopen(req, timeout=60) as r:
             text = r.read().decode("utf-8")
+    if not header_licence_ok(text):
+        sys.exit("refusing to write: the upstream header no longer carries the MPL-2.0 Exhibit A notice — "
+                 "review the licence and update LICENCE/NOTICE here and THIRD_PARTY_NOTICES.md")
     icann, private = parse(text)
     if len(icann) < 5000 or len(private) < 2000:
         sys.exit(f"refusing to write a suspiciously short list ({len(icann)} icann / {len(private)} private rules)")
@@ -72,6 +95,8 @@ def main() -> int:
                      "multi_part_tlds is merged on top as an analyst override. Refresh with "
                      "WebPivot/tools/wp_psl_update.py — never edit by hand."),
         "source": SOURCE,
+        "licence": LICENCE,
+        "notice": NOTICE,
         "fetched_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "icann": {"_comment": "ICANN section — registry-operated public suffixes.", "values": icann},
         "private": {"_comment": "PRIVATE section — hosting/SaaS platform suffixes (tenant = registrable unit).",

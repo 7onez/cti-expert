@@ -60,7 +60,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (103 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (105 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an
@@ -99,7 +99,9 @@ the returned `Response` onto its own tri-state result; it does not build a `Requ
 both from each file's syntax tree. A call site the shared transport cannot serve (a stream, a
 per-call proxy, a cookie jar, a test seam, a component that ships standalone) is listed in
 `scripts/references/http_allowlist.json` with that reason; a User-Agent exception is also listed
-in `WebPivot/references/fetch_profile.json → ua_exceptions`.
+in `WebPivot/references/fetch_profile.json → ua_exceptions`. §3b also keeps the vendored renderers
+under `scripts/vendor/` network-free; the one gated exception, archify's `brand-marks.mjs` (on only
+with `ARCHIFY_BRAND_REMOTE=1`), is listed under `vendor_js_network`.
 
 `wp_http.py` has no permanent test (owner decision: no new test files). Before committing a
 change to it, re-prove the contract against a loopback `http.server`: 2xx, gzip, 4xx with a body,

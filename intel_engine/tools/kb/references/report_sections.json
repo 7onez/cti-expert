@@ -14,7 +14,53 @@
       "counting_rules": ["metric"],
       "metrics": ["metric"],
       "subject_profile": ["entity", "field", "value"],
-      "client_seeds": ["type", "value"]
+      "client_seeds": ["type", "value"],
+      "key_findings": ["n"],
+      "affiliate_exposure": ["org", "country"],
+      "leak_claims": ["actor", "venue", "claim"],
+      "threat_events": ["event", "start"],
+      "usernames_to_reserve": ["platform", "handle"],
+      "negative_checks": ["check", "scope"],
+      "email_services": ["email", "service"],
+      "relationships": ["from", "to", "relation"],
+      "actors": ["name", "type"],
+      "claim_confidence": ["claim"],
+      "pivot_opportunities": ["seed_artifact", "pivot_question"],
+      "playbook": ["tactic", "behaviours"],
+      "hunt_hypotheses": ["id"],
+      "telemetry_priorities": ["source"]
+    }
+  },
+
+  "risk": {
+    "_comment": "Organisation risk rendering + lint (report block `risk_assessment`, the C1 object). score_max mirrors scripts/osint/references/exposure_organisation.json settings.score_max (the '/10' in 'High (6.4/10)'). overall_tolerance: the lint flags an overall score further than this from the mean of the listed domain scores. priority_required_severities: a key finding at one of these severities with no priority is linted. untimed_priorities: key_findings priorities that carry no deadline (the Severity Tier Matrix P4, scripts/osint/references/severity_tiers.json tiers.P4 = track only) -> the label rendered after the priority, 'P4 (track only — no deadline)'; roadmap priorities stay the P1-P3 time buckets. priority_mismatch: severity -> priorities the tier grid can never produce for it (Critical is never P4), linted on a key finding. Vocabulary only, never case data.",
+    "score_max": 10,
+    "overall_tolerance": 0.06,
+    "priority_required_severities": ["critical", "high"],
+    "untimed_priorities": {"P4": "track only — no deadline"},
+    "priority_mismatch": {"critical": ["P4"]}
+  },
+
+  "actor_profile": {
+    "_comment": "Actor threat-profile chapter (report blocks `actor_profile` ONE object, `claim_confidence`, `pivot_opportunities`, `playbook`, `hunt_hypotheses`, `telemetry_priorities`) — structure adapted from [PK Packt ACTIH companion repo, 2026, chapter-03 threat-profile deliverable] (MIT). tactic_order: ATT&CK Enterprise tactic order; playbook rows and the derived ATT&CK coverage table sort by it (an unknown tactic sorts last, analyst order kept). likelihood_terms: the ICD-203 estimative vocabulary an attribution must state (both members of each ICD-203 pair accepted, compared case-insensitively); confidence_terms: analytic-confidence words an attribution must state (a trailing ' confidence' is ignored). sources_required_confidence: a claim_confidence row at one of these levels with no sources is linted. scores_file: the case file (cases/<case>/<scores_file>, {<actor>: {threat_score, band, posture, ...}}) read for the profile's threat-score line, looked up by threat_score_ref else the actor name; score_keys: the only keys carried from it. A score is an analyst lead, never attribution. Vocabulary only, never case data.",
+    "tactic_order": ["Reconnaissance", "Resource Development", "Initial Access", "Execution", "Persistence",
+                     "Privilege Escalation", "Defense Evasion", "Credential Access", "Discovery",
+                     "Lateral Movement", "Collection", "Command and Control", "Exfiltration", "Impact"],
+    "likelihood_terms": ["almost no chance", "remote", "very unlikely", "highly improbable", "unlikely",
+                         "improbable", "roughly even chance", "roughly even odds", "likely", "probable",
+                         "very likely", "highly probable", "almost certain", "almost certainly", "nearly certain"],
+    "confidence_terms": ["high", "moderate", "medium", "low"],
+    "sources_required_confidence": ["high"],
+    "scores_file": "actor_scores.json",
+    "score_keys": ["threat_score", "band", "posture"],
+    "pointers": {
+      "_comment": "Pointer lint (QA warnings only, never an import rejection). hunt_index: path, or list of paths, relative to intel_engine/, of the hunt indexes; a valid hunt_hypotheses[].hunt_package_ref is an `id` under a tactic group's `entries` (hunt_packages.json), a Sigma rule id under `sources.<repo>.rule_ids` or a Senrigan hunt id under `senrigan_hunts` (hunt_rules_yamato.json) (any index missing/unreadable -> ONE warning, refs unchecked). tempo_key: the ledger key case_timeline --tempo writes; tempo_ledger_suffix: the ledger file case_timeline writes as <stem>_events.json (cases/<case>/timeline_events.json by the documented stem, report/timeline_events.json from the house report). A tempo_ref is that ledger's case-relative path, optionally '#'+tempo_key; it must stay inside the case dir, exist and carry tempo_key. abstain_statuses: tempo statuses that are no finding — a non-empty tempo_summary beside one is linted.",
+      "hunt_index": ["IntelAnalysis/references/hunt_packages.json", "IntelAnalysis/references/hunt_rules_yamato.json"],
+      "tempo_key": "operator_tempo",
+      "tempo_ledger_suffix": "_events.json",
+      "abstain_statuses": ["insufficient"],
+      "_telemetry_baselines_index": "Path, relative to intel_engine/, of the Windows telemetry baseline map; every key under its `settings` (except _comment) is a valid telemetry_priorities[].baseline_ref (file missing/unreadable/unset -> ONE warning, refs unchecked).",
+      "telemetry_baselines_index": "IntelAnalysis/references/telemetry_baselines.json"
     }
   },
 

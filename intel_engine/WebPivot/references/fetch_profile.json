@@ -37,5 +37,11 @@
       "cf_clearance",
       "turnstile"
     ]
+  },
+  "hostile_exit_retry": {
+    "_comment": "Live fetch of a HOSTILE host (pivot_extract --hostile, which collect_core passes for every hostile host collected passively or through a proxy). The fetch names its exit explicitly. When it fails on the PROXY side, it is retried `exit_retries` time(s) through a DIFFERENT exit; when that fails too, the collection reads the archives only (Wayback latest capture, then the urlscan DOM). It never falls back to direct. `proxy_side_statuses`: the CONNECT answers that prove the exit, not the origin, failed. The tunnel never opened: 502/503/504 are gateway failures, and 401/407 mean the exit refused its own auth (e.g. 'Tunnel connection failed: 401 Unauthorized'). `retry_on_timeout`: also rotate when the request timed out. An origin answer (an HTTP status, a TLS certificate, a challenge page) is never retried through another exit: that would only hit the target from a second IP.",
+    "proxy_side_statuses": [401, 407, 502, 503, 504],
+    "retry_on_timeout": true,
+    "exit_retries": 1
   }
 }

@@ -266,6 +266,32 @@ the template above. Every key is optional; every row is a JSON object.
 | `qa_warnings` | list of strings from `report_sections.lint(sections, findings)` (sensitive client values scrubbed unless `--show-sensitive`) |
 | `findings[].confirmation` | confirmed\|strong_indirect\|attempted_unproven\|unverified (copied from the evidence import) |
 | `findings[].not_proven` | what the finding does not establish |
+| `risk_assessment` | OBJECT `{model, domains[], overall, coverage, bands, priorities, import_record}` — the organisation risk object (report block, else `cases/<case>/exposure_organisation.json`); only these keys are carried. Rendered "Overall Risk" (score sentence + domain table, highest score first) and "Rating Scales" (bands + P1/P2/P3 deadlines) |
+| `key_findings` | `n`, `finding`, `severity`, `priority` P1\|P2\|P3\|P4, `priority_label` — rendered in `n` order; `priority_label` is "P1 (7 days)" with the deadline from `risk_assessment.priorities`, or "P4 (track only — no deadline)" for the Severity Tier Matrix track-only tier |
+| `affiliate_exposure` | `org`, `country`, `infected_hosts`, `latest_infection`, `stealer_family`, `portal` — COUNTS ONLY: any other field is dropped by the builder and again by the generators (`counts_only`), so a credential or cookie never reaches the JSON, the HTML data or the DOCX |
+| `leak_claims` | `actor`, `venue`, `date`, `claim`, `proven` (bool), `evidence[]`; unproven rows print **Unconfirmed** |
+| `leak_claims_tally` | `{claims: N, proven: K}` — K counts only rows whose `proven` is literally true; the generators print "Of N dark-web/Telegram claims naming the subject, K are proven" from the rows, and `validate_metrics` warns when a hand-edited tally disagrees with them |
+| `threat_events` | `event`, `start`, `end`?, `location`, `why_it_raises_risk`, `local_legal_notes`, `grade` — by start date |
+| `usernames_to_reserve` | `platform`, `handle`, `status` available\|taken_by_other\|reserved |
+| `negative_checks` | `check`, `scope`, `result` (default "no record"), `date` — rendered "Checked — Nothing Found" with the zero-hit `sources_checked` rows |
+| `email_services` | `email`, `service`, `evidence[]`, `date`. The address is written "(withheld)@domain" (also inside `qa_warnings`) unless `build_report_data.py --show-sensitive`; the generators re-apply this to a hand-authored file |
+| `actor_profile` | OBJECT — the actor threat-profile object as imported (see "House report sections — actor threat profile"), plus `threat_score` {`actor`, `threat_score`, `band`, `posture`, `source`} when `cases/<case>/actor_scores.json` holds the actor |
+| `claim_confidence` | `claim`, `confidence` High\|Medium\|Low\|Low_to_Medium (rendered "Low to Medium"), `rationale`, `sources[]` |
+| `pivot_opportunities` | `seed_artifact`, `pivot_question`, `defensive_use` |
+| `playbook` | `tactic`, `behaviours[]`, `attack_ids[]`, `evidence[]` — in ATT&CK tactic order |
+| `attack_coverage` | DERIVED: `technique_id`, `tactics[]`, `playbook` (bool), `hunts[]` (HH ids), `mappings[]` ("MAP-nn (status)" from `attack_mapping`) — every technique the playbook or a hunt hypothesis names, in tactic order |
+| `hunt_hypotheses` | `id` HH-nn, `hypothesis`, `priority_telemetry[]`, `behavioural_signals[]`, `attack_ids[]`, `hunt_package_ref`? |
+| `telemetry_priorities` | `source`, `why`, `baseline_ref`? — in the analyst's priority order |
+| `report_figures` | `{card_maps: {person\|threats\|suppliers: png}, exposure_charts: {fig_exposure_year\|fig_exposure_country\|fig_exposure_family: png}, exposure_source}` — absolute paths. The builder draws them into `cases/<case>/report/report-data/` (card maps via `house_report_charts.build_card_maps`, card text through `house_report.scrub` — the Rule 12 vendor/tool-name scrub + masking — exactly as in the house report; charts via `house_report_exposure_charts`); with `--no-figures`, or when drawing fails, it records the house report's `report/card_map_*.png` / `fig_exposure_*.png` (the person map only when no sensitive client seed could be on it). The HTML inlines each PNG as a data URI and drops this key from its embedded data; the DOCX embeds each with its caption |
+
+Order in the generators (house-report order): Key Questions, subject card map, Overall Risk, Key
+Findings — Severity and Priority (HTML overview / DOCX executive summary); Counting Rules, Rating Scales; threat card map,
+Affiliate Exposure (+ charts), Dark-web and Telegram Claims, Services Registered by E-mail, Events That
+Raise the Threat; Actor Profile (one chapter: Executive Line, Source Basis and Confidence, Actor
+Overview, Intent, Capability, Victimology, Persona & OPSEC, Tempo, Infrastructure and Defensive Pivots,
+Operational Playbook, ATT&CK Coverage, Hunt Hypotheses, Priority Telemetry); Roles, supplier card map,
+Incident Timeline …; Recommendations, Usernames to Reserve; QA Warnings, Sources Checked, Checked —
+Nothing Found. Each renders only when present.
 
 Backward compatibility: `intelligence_gaps` (flat strings) is still emitted — when `open_questions`
 exist, one string per OQ row leads the list; `recommendations` (flat strings) is derived from
@@ -278,3 +304,113 @@ records but the unit is tokens / credentials / bytes / attack chains (unless a c
 `does_not_mean` covers that metric), when `values[]` holds duplicates or two metrics count the same
 value, and when attempted and confirmed outcomes are summed. The generators run it on a
 hand-authored JSON that lacks `metric_warnings` and print the warnings in Counting Rules.
+
+## House report sections — organisation risk, threat and person (report block)
+
+These `report` block keys are accepted by `evidence_import` (schema: `references/evidence_import.json`
+`report_sections`), merged by `report_sections.load` (latest import wins per merge key) and rendered by
+the house report (`house_report_sections.py`). `build_report_data.py` carries them into REPORT.json too
+(see Report JSON fields), so the HTML and DOCX generators render them as well. An
+absent key renders nothing.
+
+| Key | Row fields | Where it renders |
+|-----|-----------|------------------|
+| `risk_assessment` | OBJECT, the organisation risk object: `domains[]` (`id`, `name`, `exploitability` 0–3, `harm` 0–3, `score` 0–10, `level` Critical\|High\|Medium\|Low, `main_issue`, `rationale`), `overall` {`score`, `level`, `method`}, `coverage` {`rated`, `total`, `unrated[]`, `warning`?}, `bands` {level: inclusive lower bound}, `priorities` {P1: "7 days", …}. When no import carries it, `cases/<case>/exposure_organisation.json` (from `exposure_score.py --model organisation --case`) is read | Executive Summary "Overall risk": "<level> (<score>/10), mean of N of M rated domains" plus a domain · score · level · main issue table, highest score first. Methodology "Rating scales": bands and P1/P2/P3 deadlines |
+| `key_findings` | `n` (number), `finding`, `severity` Critical\|High\|Medium\|Low\|Info, `priority` P1\|P2\|P3\|P4 (P4 only here; `roadmap` stays P1–P3) | Executive Summary "Key findings", in `n` order, with the priority deadline from `risk_assessment.priorities`; P4 prints "P4 (track only — no deadline)" |
+| `affiliate_exposure` | `org`, `country`, `infected_hosts` (number), `latest_infection` ISO date, `stealer_family` (string or list), `portal` | Findings "Affiliate exposure — infected computers". Counts only: no credential or cookie is ever printed. Charts by year of infection, country and stealer family when the data exists (from these rows, otherwise from the case's stealer-triage `STEALER-ANALYSIS-*.json`) |
+| `leak_claims` | `actor`, `venue`, `date` ISO, `claim`, `proven` (bool), `evidence[]` | Findings "Dark-web and Telegram claims": "Of N dark-web/Telegram claims naming the subject, K are proven"; every unproven row is labelled **Unconfirmed** |
+| `threat_events` | `event`, `start` ISO, `end` ISO?, `location`, `why_it_raises_risk`, `local_legal_notes`, `grade` (Admiralty) | Findings "Events that raise the threat", by start date |
+| `email_services` | `email`, `service`, `evidence[]`, `date` ISO | Findings "Services registered by e-mail". The address is shown as "(withheld)@domain" unless `--show-sensitive`, and is withheld from the QA warnings too |
+| `usernames_to_reserve` | `platform`, `handle`, `status` available\|taken_by_other\|reserved | Recommendations "Usernames to reserve", as a defensive recommendation |
+| `negative_checks` | `check`, `scope`, `result` (default "no record"), `date` ISO | Appendix "Sources checked" → "Checked — nothing found", together with the zero-hit ledger sources |
+| `relationships` | `from`, `to`, `relation`, `description`?, `group`?, `side` left\|right\|full, `grade`?, `confirmed` (bool, default true), `dates`?, `cc` (2-letter)?, `icon`? | Card maps (person / organisation). An unconfirmed card is drawn dashed |
+| `actors` | `name`, `type` (the panel title), `claim`?, `grade`?, `confirmed` (bool, default true), `cc`?, `date`?, `icon`? | Threat card map. An unconfirmed claim is drawn dashed |
+
+Lint (`report_sections.lint`, shown in the QA warnings appendix): a Critical or High key finding
+without a priority; a Critical key finding at P4 (the Severity Tier Matrix never gives Critical that
+tier — a severity / exposure / priority mismatch); an overall risk score that is not the mean of its
+domain scores; a threat event that ended before the report date (stale); a leak claim marked proven
+with no evidence.
+
+## House report sections — actor threat profile (report block)
+
+An actor threat-profile deliverable, structure adapted from [PK Packt ACTIH companion repo, 2026,
+chapter-03 threat-profile deliverable] (MIT). The house report renders one "# Actor Profile" chapter
+after Findings when `actor_profile` or any of the row sections below is present; every sub-section
+with no data is omitted. Vocabulary (ATT&CK tactic order, ICD-203 likelihood terms, confidence words,
+the actor-score file) lives in `references/report_sections.json` `actor_profile`. An actor profile,
+its threat score and its tier are analyst judgement and leads — never attribution in the KB and
+never a same-operator edge (RULE 5).
+
+| Key | Row fields | Where it renders |
+|-----|-----------|------------------|
+| `actor_profile` | ONE object: `name` (required), `executive_line`, `aliases[]` {`name`, `source`}, `attribution` {`assessment`, `likelihood` (ICD-203 term), `confidence`, `dissent[]`}, `activity_timeline[]` {`when`, `event`, `sources[]`}, `intent` {`motivations[]`, `evidence[]`}, `capability` {`summary`, `evidence[]`}, `victimology` {`sectors[]`, `geographies[]`, `data_targeted[]`}, `persona_opsec[]`, `tempo_summary`, `tempo_ref` (pointer to the case timeline's tempo analysis), `threat_score_ref` (key into `cases/<case>/actor_scores.json`; default `name`) | Executive line + threat-score line (an analyst lead, from the actor-score file only); Overview: Aliases, Attribution — always "<assessment> — *<likelihood>*, **<confidence> confidence**" (an absent term is printed as "not stated") and every dissent line —, Activity timeline (by `when`); Intent; Capability; Victimology; Persona & OPSEC; Tempo |
+| `claim_confidence` | `claim`, `confidence` High\|Medium\|Low\|Low to Medium, `rationale`, `sources[]` | "Source basis and confidence" |
+| `pivot_opportunities` | `seed_artifact`, `pivot_question`, `defensive_use` | "Infrastructure and defensive pivots" — a hit is a lead, not a same-operator link |
+| `playbook` | `tactic`, `behaviours[]`, `attack_ids[]`, `evidence[]` | "Operational playbook", in ATT&CK tactic order (unknown tactics last) |
+| `hunt_hypotheses` | `id` HH-nn, `hypothesis`, `priority_telemetry[]`, `behavioural_signals[]`, `attack_ids[]`, `hunt_package_ref`? (a key into the hunt-package index, carried as a string) | "Hunt hypotheses", by id |
+| `telemetry_priorities` | `source`, `why`, `baseline_ref`? (a key into the `settings` of `intel_engine/IntelAnalysis/references/telemetry_baselines.json` — the Windows audit setting that produces the source, carried as a string) | "Priority telemetry", numbered in the analyst's order |
+
+"ATT&CK coverage" is derived, not imported: every technique id the playbook or a hunt hypothesis
+names, with its tactic(s), whether the playbook carries it, the HH ids that hunt it, and the
+incident `attack_mapping` rows (MAP-nn) that evidence the same technique. `attack_mapping` keeps its
+own per-technique, per-status incident table in "Infrastructure and lifecycle"; the playbook is the
+actor-level, per-tactic behaviour view, so neither duplicates the other.
+
+Lint: an attribution without an ICD-203 likelihood term or a confidence; an intent with no evidence; a
+High `claim_confidence` row without sources; a hunt hypothesis without priority telemetry or
+behavioural signals; a playbook row with an ATT&CK id but no evidence; a `hunt_package_ref` that is
+not an `id` in `intel_engine/IntelAnalysis/references/hunt_packages.json` (index missing or unreadable:
+one "hunt package index unavailable — refs not checked" warning); a `tempo_ref` that is not the case's
+timeline ledger (`<stem>_events.json`, e.g. `timeline_events.json` or `timeline_events.json#operator_tempo`,
+case-relative), whose file is absent or has no `operator_tempo` read; a non-empty `tempo_summary` while
+that read's status is `insufficient`; a `baseline_ref` that is not a `settings` key in
+`intel_engine/IntelAnalysis/references/telemetry_baselines.json` (map missing or unreadable: one
+"telemetry baseline map unavailable — refs not checked" warning). All are QA warnings, never import
+rejections.
+
+**Priority telemetry and `baseline_ref`.** Name the log source in `source` and why the hunt needs it in
+`why`. When the source is Windows event logging, set `baseline_ref` to the matching setting key in
+`telemetry_baselines.json` (for example `process_creation_cmdline`, `logon`, `scheduled_task_audit`,
+`powershell_script_block`). That map, adapted from Yamato Security's EventLog-Baseline-Guide (MIT),
+gives the audit subcategory, the Windows default, what each compared baseline (Yamato Security,
+Microsoft client/server, ASD) sets, and the guide's log-size floor. It answers the consumer's first
+question, "do we even log this?"; it is a configuration pointer, not evidence that the consumer logs
+it. A `baseline_ref` that resolves is printed after the row's Why as "— Windows audit setting: <name>
+(<event IDs>)" in every output, and REPORT.json carries it as `baseline_setting` next to `baseline_ref`;
+a row with no ref, or one that does not resolve, prints as before.
+
+Synthetic example (invented actor; example.com only):
+
+```json
+{"report": {
+  "actor_profile": {
+    "name": "SAMPLE PANDA",
+    "executive_line": "SAMPLE PANDA runs short credential-phishing waves against example logistics portals.",
+    "aliases": [{"name": "Group-0001", "source": "https://example.com/reports/group-0001"}],
+    "attribution": {"assessment": "One operator runs every wave in this case", "likelihood": "likely",
+                    "confidence": "moderate",
+                    "dissent": ["A resold phishing kit could explain the overlap."]},
+    "activity_timeline": [{"when": "2025-11", "event": "First observed wave",
+                           "sources": ["https://example.com/wave-1"]}],
+    "intent": {"motivations": ["financial gain"], "evidence": ["https://example.com/payout-panel"]},
+    "capability": {"summary": "Commodity kit, hand-tuned lures, fast domain rotation.",
+                   "evidence": ["https://example.com/kit"]},
+    "victimology": {"sectors": ["logistics"], "geographies": ["EU"], "data_targeted": ["portal credentials"]},
+    "persona_opsec": ["Registers through privacy proxies."],
+    "tempo_summary": "Registrations cluster on weekdays.",
+    "tempo_ref": "timeline_events.json#operator_tempo"},
+  "claim_confidence": [{"claim": "The waves share one operator", "confidence": "Medium",
+                        "rationale": "Shared registrant and kit build", "sources": ["https://example.com/overlap"]}],
+  "pivot_opportunities": [{"seed_artifact": "Kit favicon hash", "pivot_question": "Which other hosts serve it?",
+                           "defensive_use": "Pre-emptive blocklist"}],
+  "playbook": [{"tactic": "Initial Access", "behaviours": ["Links to look-alike portals"],
+                "attack_ids": ["T1566.002"], "evidence": ["https://example.com/lure"]}],
+  "hunt_hypotheses": [{"id": "HH-01", "hypothesis": "Look-alike portal visits follow a phishing e-mail",
+                       "priority_telemetry": ["proxy logs", "mail gateway"],
+                       "behavioural_signals": ["first visit to a days-old domain after a mail click"],
+                       "attack_ids": ["T1566.002"]}],
+  "telemetry_priorities": [{"source": "Web proxy logs", "why": "Lure clicks"},
+                           {"source": "Windows process creation with command line",
+                            "why": "Lure attachment spawning a script host", "baseline_ref": "process_creation_cmdline"}]}}
+```

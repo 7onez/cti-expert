@@ -26,6 +26,7 @@ import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 import case_abstract  # noqa: E402 — same dir (tools/): abstract.json follows every head write
+import report_citations  # noqa: E402 — same dir (tools/): Rule 21 snapshot citations
 
 
 def _now() -> str:
@@ -65,6 +66,22 @@ def _render_md(a: dict, table_md: str = "") -> str:
     return "\n".join(out)
 
 
+def _render_cited_md(a: dict, table_md: str = "", case_dir: str = "") -> str:
+    """_render_md plus the IntelReport Rule 21 citation pass (report_citations): every evidence
+    row cites the public page that re-checks it or names its non-public source class, credentials
+    are stripped from URLs, vendor names -> source class, private links dropped, `# References`
+    appended. Never raises: degrades to the uncited render."""
+    try:
+        labels: dict = {}
+        est = report_citations.case_estate(
+            case_dir, [m.get("domain") for m in a.get("cluster") or [] if isinstance(m, dict)])
+        b = dict(a, evidence=[report_citations.cite_claim(e, est, labels) if isinstance(e, str) else e
+                              for e in a.get("evidence") or []])
+        return report_citations.finalize(_render_md(b, table_md), est, labels)
+    except Exception:  # noqa: BLE001 — never break a snapshot over a citation
+        return report_citations.strip_secrets(_render_md(a, table_md))
+
+
 def snapshot(case: str, assessment_path: str, table_md: str = "") -> dict:
     """Write an immutable, timestamped assessment snapshot (append-only history), refresh SUMMARY.md
     (living head) + assessment.json (back-compat head), and append one CHANGELOG.md line."""
@@ -75,8 +92,8 @@ def snapshot(case: str, assessment_path: str, table_md: str = "") -> dict:
     stamp = _stamp()
     rnd = len([f for f in os.listdir(snap_dir) if f.endswith(".json")]) + 1
     base = f"{stamp}_r{rnd}"
-    md_body = _render_md(a, table_md)
-    js = json.dumps(a, ensure_ascii=False, indent=2)
+    md_body = _render_cited_md(a, table_md, case_dir)
+    js = report_citations.strip_secrets(json.dumps(a, ensure_ascii=False, indent=2))
 
     with open(os.path.join(snap_dir, base + ".md"), "w", encoding="utf-8") as f:
         f.write(md_body)

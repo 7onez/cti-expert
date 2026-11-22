@@ -21,6 +21,19 @@ plans/
 
 # Runtime-installed third-party tools (cloned by the installer)
 vendor/
+# ...except the three trimmed third-party copies the report build ships (see each VENDOR.md and
+# THIRD_PARTY_NOTICES.md). Re-include only these named directories; anything else dropped under
+# scripts/vendor/ (or any other vendor/ path) stays ignored.
+!/scripts/vendor/
+/scripts/vendor/*
+!/scripts/vendor/archify/
+!/scripts/vendor/diagram-design/
+!/scripts/vendor/diagram-ai-generator/
+
+# Local agent-tool installs and scratch files (a maintainer's skill manager, draw.io scratch)
+/.agents/
+/skills-lock.json
+/untitled.drawio
 
 # Virtual environments
 .venv/

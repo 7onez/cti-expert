@@ -40,7 +40,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import signal
 import sys
 import tempfile
 import uuid
@@ -50,7 +50,9 @@ from typing import Any, Callable, Optional
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
 import audit  # noqa: E402 — the phase context the orchestrator bound (case/phase/hostile)
+import wp_timeouts  # noqa: E402 — the one phase-budget resolver + the active phase deadline
 from openai_backend import (  # noqa: E402 — reuse the shim's SDK-shaped surface, one implementation
     AgentDefinition,
     AssistantMessage,
@@ -74,7 +76,11 @@ __all__ = ["AgentDefinition", "AssistantMessage", "ClaudeAgentOptions", "HookMat
            "parse_omp_events", "judge_events", "codex_config", "omp_mcp_config", "build_command"]
 
 BACKEND = (os.environ.get("HARNESS_BACKEND") or "codex").strip().lower()
-PHASE_TIMEOUT = int(os.environ.get("HARNESS_CLI_TIMEOUT", "1800"))
+# One phase budget for every front-end: HARNESS_CLI_TIMEOUT, else HARNESS_PHASE_TIMEOUT (env, then
+# the skill-root .env), else references/timeouts.json phase_timeout (18000 s). The MCP tool timeouts
+# below (codex tool_timeout_sec, omp mcp.json timeout / OMP_MCP_TIMEOUT_MS) take the same value, so
+# the host never cuts a tool before the phase deadline does.
+PHASE_TIMEOUT = wp_timeouts.resolve_phase_timeout(("HARNESS_CLI_TIMEOUT", "HARNESS_PHASE_TIMEOUT"))
 STRUCT_RETRIES = int(os.environ.get("HARNESS_STRUCT_RETRIES", "3"))
 EMIT_NAME = "emit_result"
 SERVER_NAME = "intel"
@@ -350,17 +356,71 @@ def _child_env(extra: dict) -> dict:
     return env
 
 
+def _phase_budget() -> int:
+    """Seconds this phase process may run: PHASE_TIMEOUT, cut to the orchestrator's phase
+    deadline when one is bound (wp_timeouts.set_phase_deadline), minimum 1 s."""
+    left = wp_timeouts.remaining(margin=0)
+    return PHASE_TIMEOUT if left is None else max(1, min(PHASE_TIMEOUT, int(left)))
+
+
+def _kill_group(pid: int) -> None:
+    """SIGKILL the phase's whole process group: the host CLI AND its MCP server / collector
+    grandchildren, which share its pipes and would otherwise outlive the phase."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 async def _run_phase(cmd: list, *, cwd: str, env: dict, timeout: int,
                      stdin_text: Optional[str] = None) -> tuple[int, str, str]:
-    def _go():
-        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
-                           input=stdin_text if stdin_text is not None else "",
-                           **({} if stdin_text is not None else {"stdin": subprocess.DEVNULL}))
-        return p.returncode, p.stdout or "", p.stderr or ""
+    """Run one host-CLI phase process in its own session. On `timeout` — or when the awaiting task
+    is cancelled (the orchestrator's phase wall clock) — the whole process group is killed, so no
+    host CLI or MCP server keeps running past its phase; rc 124 carries the output read so far."""
     try:
-        return await asyncio.to_thread(_go)
-    except subprocess.TimeoutExpired as e:
-        return 124, (e.stdout or "") if isinstance(e.stdout, str) else "", f"phase timed out after {timeout}s"
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, cwd=cwd, env=env, start_new_session=True,
+            stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    except (OSError, ValueError) as e:
+        return 127, "", f"could not start {cmd[:1]}: {e}"
+    out, err = bytearray(), bytearray()
+
+    async def _drain(stream, buf):
+        while True:
+            chunk = await stream.read(65536)
+            if not chunk:
+                return
+            buf.extend(chunk)
+
+    async def _feed():
+        if stdin_text is None:
+            return
+        try:
+            proc.stdin.write(stdin_text.encode("utf-8"))
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            proc.stdin.close()
+
+    def _text(buf):
+        return buf.decode("utf-8", "replace").replace("\r\n", "\n")
+
+    try:
+        await asyncio.wait_for(asyncio.gather(_feed(), _drain(proc.stdout, out),
+                                              _drain(proc.stderr, err), proc.wait()), timeout)
+    except asyncio.TimeoutError:
+        _kill_group(proc.pid)
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+        except (asyncio.TimeoutError, ProcessLookupError):
+            pass
+        return 124, _text(out), f"phase timed out after {timeout}s"
+    except asyncio.CancelledError:
+        _kill_group(proc.pid)
+        raise
+    return proc.returncode, _text(out), _text(err)
 
 
 def _phase_context() -> tuple[Optional[str], str, bool]:
@@ -404,6 +464,9 @@ async def query(*, prompt: str, options: ClaudeAgentOptions):
     })
     if case:
         server_env["INTEL_CASE"] = case
+    deadline = wp_timeouts.phase_deadline()
+    if deadline is not None:   # the MCP server's tool calls clamp to this phase's deadline
+        server_env[wp_timeouts.DEADLINE_ENV] = repr(deadline)
     emit_path = ""
     if want_struct:
         emit_path = _emit_file(case)
@@ -435,13 +498,17 @@ async def query(*, prompt: str, options: ClaudeAgentOptions):
     prompt_now = full_prompt
     while True:
         cmd = build_command(backend, model=model, resume=sid or None, session_dir=session_dir)
-        rc, out, err = await _run_phase(cmd, cwd=cwd, env=env, timeout=PHASE_TIMEOUT, stdin_text=prompt_now)
+        rc, out, err = await _run_phase(cmd, cwd=cwd, env=env, timeout=_phase_budget(),
+                                        stdin_text=prompt_now)
         run = parse_codex_events(out) if backend == "codex" else parse_omp_events(out)
         sid = run.session_id or sid
         usage = run.usage or usage
         for name, args in run.tool_calls:
             yield AssistantMessage(content=[ToolUseBlock(name=name, input=args, id="")])
         failure = judge_events(run)
+        if rc == 124 and err.startswith("phase timed out"):
+            failure = err          # a phase that ran out of budget never reads as a success
+            break
         if failure is None and rc != 0 and not run.tool_calls and not run.final_text:
             failure = f"{backend} exited {rc}: {(err or out).strip()[-300:]}"
         if failure is None and rc != 0 and "authenticat" in (err + out).lower():

@@ -32,6 +32,8 @@ Each verification TXT record proves the org provisioned that platform — a dist
 
 Record each as an INFO/MEDIUM finding: "org is a `{platform}` tenant → separate identity boundary." Cluster of tokens = rich shadow-IT / SSO map.
 
+The same tokens, plus SPF includes, MX, NS, CNAME targets and certificate issuers, feed the deterministic supplier map. `wp_suppliers.py` turns a case's raws into `cases/<id>/suppliers.json`, using the table in `references/suppliers.json`. The third-party-risk procedure built on that map (supplier breaches, KEVs, stealer infections among supplier staff) is [fx-supplier-exposure.md](fx-supplier-exposure.md).
+
 ## IdP / SSO Fingerprinting (OIDC discovery)
 Fetch the OpenID discovery doc and read the `issuer` field — no auth, no enumeration:
 ```
@@ -115,3 +117,4 @@ Reachable API Surface:
 - [fx-edge-appliance-recon.md](fx-edge-appliance-recon.md) — internet-facing appliance KEV mapping
 - [owasp-audit.md](owasp-audit.md) / [dependency-audit.md](dependency-audit.md) — triage discovered API endpoints
 - [secret-scanning.md](secret-scanning.md) — validate any keys found for discovered SaaS platforms (read-only)
+- [fx-supplier-exposure.md](fx-supplier-exposure.md) — supplier map (`suppliers.json`) and the third-party-risk checks per supplier

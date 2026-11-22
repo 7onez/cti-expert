@@ -38,6 +38,7 @@ from cti_docx_heatmaps import (
     build_relation_strength, add_relation_heatmap,
 )
 from cti_refs import docx_strings, malicious_verdict
+import cti_report_sections as RS
 
 
 def add_evidence_screenshots(doc, images) -> None:
@@ -400,7 +401,15 @@ def rebuild_with_cover_toc_and_charts(doc: Document, json_data: dict, case_dir: 
         body.append(sect_pr)
 
 
+def _letters(text: str) -> str:
+    return "".join(ch for ch in strip_accents(str(text).lower()) if ch.isalpha())
+
+
 def _try_inject(doc, heading_text, json_data, injected, case, case_dir=None):
+    # the report-block "Key Findings — Severity and Priority" heading leads its own table: a chart
+    # injected there would split the heading from the table it introduces
+    if _letters(heading_text) == _letters(RS.SECTION["key_findings"][0]):
+        return
     if "confidence_matrix" not in injected and _heading_matches(heading_text, CHART_KEYWORDS["confidence_matrix"]):
         findings = json_data.get("findings", [])
         if findings:

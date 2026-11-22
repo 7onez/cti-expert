@@ -22,8 +22,9 @@ Auth: the key rides ONLY in the `X-API-Key` header and is never logged or printe
 Resolution: env var  >  skill-root .env  >  keyless (fails with exit 3).
 Env vars (first hit wins): CHONGLUADAO_API_KEY, CLD_API_KEY, CHONGLUADAO_KEY, BURNER_API_KEY.
 
-Timeouts: harness the data to the fullest — the default per-call ceiling is 5000s
-(~83 min) and the bulk-export job polls up to that budget. A 403, and a 404 that names the
+Timeouts: harness the data to the fullest — the default per-call ceiling is the shared resolver's
+(wp_timeouts: env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 18000s / 5 h) and the
+bulk-export job polls up to that budget. A 403, and a 404 that names the
 missing resource, returns immediately and is treated as SKIP (exit 0), so a batch/pivot continues
 instead of hard-failing. A 404 whose body is exactly {"detail":"Not Found"} is a route that no
 longer exists — that is an error (exit 2), never a silent skip.
@@ -105,7 +106,17 @@ if _WP not in sys.path:
     sys.path.append(_WP)
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 import wp_http  # noqa: E402 — the one transport
-DEFAULT_TIMEOUT = 5000          # ~83-min ceiling per call (harness all the data)
+# Per-call ceiling — the ONE resolver (wp_timeouts: env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 18000s / 5 h). Should wp_timeouts be missing from a partial copy, the
+# client still honours an exported CTI_CALL_TIMEOUT, else the resolver's own default (18000).
+try:
+    from wp_timeouts import CALL_TIMEOUT as DEFAULT_TIMEOUT  # noqa: E402
+except Exception:  # noqa: BLE001 — no wp_timeouts on the path
+    try:
+        DEFAULT_TIMEOUT = int(os.environ.get("CTI_CALL_TIMEOUT") or 18000)
+    except ValueError:
+        DEFAULT_TIMEOUT = 18000
+    DEFAULT_TIMEOUT = DEFAULT_TIMEOUT if DEFAULT_TIMEOUT > 0 else 18000
 STEP_TIMEOUT = 180              # per HTTP round-trip inside an async poll loop
 POLL_INTERVAL = 5               # seconds between async polls
 # A 429 is the vendor's own limit (TI: 10/s, 100/min, 10k/day per key; Feeds: 60/s). Wait out a
@@ -1119,7 +1130,8 @@ def build_parser():
         spx.add_argument("--raw", action="store_true",
                          help="emit only the provider body (loadable STIX/MISP/JSON), no envelope")
         spx.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                         help="per-call / async-budget ceiling in seconds (default 5000 ≈ 83 min)")
+                         help="per-call / async-budget ceiling in seconds "
+                              f"(default CTI_CALL_TIMEOUT, now {DEFAULT_TIMEOUT})")
     return ap
 
 

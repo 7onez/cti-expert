@@ -43,7 +43,9 @@ import binary_auto  # noqa: E402
 KB_DIR = os.environ.get("HARNESS_KB", "knowledge")        # e.g. HARNESS_KB=knowledge_scratch
 SMOKE = bool(os.environ.get("HARNESS_NO_ENRICH"))         # skip FOFA/urlscan/WHOIS (fast, no credits)
 FORCE = bool(os.environ.get("HARNESS_FORCE"))             # re-collect even if already investigated
-SHOT = bool(os.environ.get("HARNESS_SCREENSHOT"))         # capture a page screenshot as visual evidence (needs browser)
+# Screenshot every collected host (custody-tracked PNG; needs a browser, costs no credits): env
+# HARNESS_SCREENSHOT=0/1, else WebPivot/references/screenshot.json collection.enabled (true).
+SHOT = collect_core.screenshots_enabled()
 NO_ARCHIVE = bool(os.environ.get("HARNESS_NO_ARCHIVE"))   # disable Wayback SPN + master ledger (evidence capture is ON by default)
 
 
@@ -114,7 +116,11 @@ def _host(url: str) -> str:
     return collect_core.host_of(url)
 
 
-def _run(cmd: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], timeout: int = 180) -> collect_core.RunResult:
+    """collect_core.run under ROOT: floored to the call ceiling, clamped to the active phase
+    deadline, process group killed on timeout; never raises (r.status: ok | error | timed_out).
+    Synchronous by design — the stdio MCP server runs every tools/call in its executor thread
+    (mcp_server._handle), so a long call never blocks the stdin loop."""
     return collect_core.run(cmd, ROOT, timeout)
 
 
@@ -448,7 +454,7 @@ def collect_one(url: str, case: str, *, hostile: bool = False, passive: bool = F
         flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest, extra_flags=extra)
 
 
-def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
+def collect_many(seeds: list[str], case: str, *, hostile: bool = False, passive: bool = False,
                  max_workers: int = 8) -> list[dict[str, Any]]:
     """Fan collect_one across `seeds` concurrently (mechanical, no LLM) — the Phase-3 collector
     that scales to a big seed set without blowing one model session's context/turn budget. Same
@@ -464,7 +470,7 @@ def collect_many(seeds: list[str], case: str, *, hostile: bool = False,
                 group, case, max_workers=max_workers,
                 root=ROOT, py=PY, render_py=RENDER_PY,
                 collector=os.path.join(ROOT, "WebPivot", "tools", "pivot_extract.py"),
-                hostile=hostile, force=FORCE, smoke=SMOKE, no_archive=NO_ARCHIVE,
+                hostile=hostile, passive=passive, force=FORCE, smoke=SMOKE, no_archive=NO_ARCHIVE,
                 want_shot=SHOT, flaresolverr=FLARESOLVERR, manifest_cb=_append_manifest,
                 extra_flags=flags)
     return out
@@ -502,6 +508,11 @@ def ingest(case: str) -> tuple[bool, str]:
 async def fallback_probe(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "fallback_probe.py"), _host(args["domain"]),
               "--kb", KB_DIR], timeout=120)
+    if r.timed_out:   # the phase continues; whatever the probe printed before the kill is kept
+        note = r.stderr.splitlines()[-1] if r.stderr else "timed out"
+        return {"content": [{"type": "text", "text": f"fallback_probe {note}"
+                             + (f"\npartial output:\n{r.stdout}" if r.stdout else "")}],
+                "is_error": True}
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "probe produced no output"}],
             "is_error": r.returncode != 0}
 
@@ -766,6 +777,72 @@ async def pgp_lookup(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "appliance_scan",
+    "PASSIVE edge/VPN appliance scan for a `target` domain or IP (techniques/fx-edge-appliance-"
+    "recon.md): what scan databases ALREADY stored — Shodan InternetDB (keyless ports, CPEs, tags), "
+    "plus Shodan host / Censys host when keyed and spend is allowed (free_only=true or a no_spend "
+    "case scope skips them, with the reason) — never a packet to the target. Fingerprints Citrix "
+    "NetScaler, F5 BIG-IP, Cisco ASA/Expressway, Ivanti/Pulse, FortiGate, PAN-OS, Exchange and "
+    "peers from CPEs and stored banners; maps each product FAMILY to the CISA KEV catalogue "
+    "(cached); compares the announced version with the vendor advisory table → patch-lag rows in "
+    "days, and an index uptime → 'no reboot since <date>' with the 497.1-day wrap caveat. "
+    "escalation CRITICAL only for a KEV CVE whose advisory shows the version pre-fix on a version "
+    "the ANALYST confirmed (version_confirmed=true; shown as version_confirmed_by); a CPE or "
+    "index-reported version stays TENTATIVE (verify with vuln_check). Citrix FIPS/NDcPP builds "
+    "are compared with their own fixed releases (edition from a documented marker, the vendor's "
+    "standard build list, or edition=); an unknown edition whose fixes differ stays TENTATIVE. "
+    "Never says vulnerable. "
+    "case=<ID> writes cases/<case>/appliances.json; record_kb=true writes appliance_product / "
+    "kev_exposure KB FACTS only, never edges.",
+    {"target": str},  # case, free_only, record_kb, version_confirmed, edition, advisory, refresh_kev optional
+    annotations=ToolAnnotations(readOnlyHint=False),  # writes cases/<case>/appliances.json (+ KB facts)
+)
+async def appliance_scan(args: dict[str, Any]) -> dict[str, Any]:
+    raw = str(args.get("target") or "").strip()
+    try:
+        from ipaddress import ip_address
+        try:
+            literal = ip_address(raw)
+        except ValueError:
+            literal = None
+        target = _host(f"http://[{raw}]" if literal and literal.version == 6 else raw).rstrip(".")
+        try:
+            ip_address(target)
+            valid = True
+        except ValueError:
+            valid = (bool(target) and len(target) <= 253
+                     and not re.fullmatch(r"[0-9.]+", target)
+                     and all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                             for label in target.split(".")))
+    except ValueError:
+        valid = False
+    if not valid or raw.startswith("-"):
+        return _err("appliance_scan needs target=<valid domain | IP>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_appliance.py"), target, "--json"]
+    case = str(args.get("case") or "").strip()
+    if case:
+        cmd += ["--case", case]
+    if _flag(args, "free_only"):
+        cmd.append("--free-only")
+    if _flag(args, "record_kb"):
+        cmd += ["--kb", KB_DIR]
+    if _flag(args, "version_confirmed"):
+        cmd.append("--version-confirmed")
+    if str(args.get("edition") or "").strip().lower() in ("standard", "fips", "ndcpp"):
+        cmd += ["--edition", str(args["edition"]).strip().lower()]
+    if _flag(args, "refresh_kev"):
+        cmd.append("--refresh-kev")
+    for adv in str(args.get("advisory") or "").split(";"):
+        if adv.strip():
+            cmd += ["--advisory", adv.strip()]
+    r = _run(cmd, timeout=600)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"appliance_scan failed for {target}: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
+
+
+@tool(
     "container_registry",
     "Passive PUBLIC container-registry OSINT (Docker Hub, GHCR, Quay; any OCI v2 registry for one "
     "image). A namespace (`example`, `ghcr.io/<owner>`, `quay.io/<ns>`) lists its repositories "
@@ -892,6 +969,11 @@ async def reverse_image(args: dict[str, Any]) -> dict[str, Any]:
     "mode='resolve': @username / t.me link / invite link "
     "/ -100id → public metadata (id, title, usernames incl. collectible, participants, flags, "
     "restriction reasons, about); no import; invites are previewed, never joined. "
+    "messages=N (mode=resolve, default off; true = the reference default; capped by "
+    "references/telegram.json messages.max_n) also reads the DATES of up to N recent posts of a "
+    "PUBLIC channel/group — never joined, nothing sent, no text/sender/phone kept; forwarded, "
+    "service and scheduled rows dropped with a count — as operator_events rows that, with case, "
+    "land in cases/<case>/telegram/ where case_timeline tempo=true picks them up. "
     "mode='age': @username / t.me link / numeric user id (several, comma/space-separated, ≤ 10 "
     "resolves) → numeric id + account CREATION DATE — estimated from the id for a user/bot (date, "
     "range, error_days, confidence; a numeric id is dated offline with no session), Telegram's own "
@@ -906,7 +988,7 @@ async def reverse_image(args: dict[str, Any]) -> dict[str, Any]:
     "desktop|android|ios`, run by the analyst in a terminal) and TELEGRAM_API_ID/HASH become "
     "optional; the api and device are fixed for the session's life. mode='status' with "
     "sessions=true lists the account's active sessions and consistency checks, read-only.",
-    {},  # target:str (phone numbers / resolve target), mode:str, confirm:bool, save_photo:str, case:str, sessions:bool
+    {},  # target:str (phone numbers / resolve target), mode:str, confirm:bool, save_photo:str, case:str, sessions:bool, messages:int
     annotations=ToolAnnotations(readOnlyHint=False),   # mode=phone imports a contact on the research account
 )
 async def telegram_lookup(args: dict[str, Any]) -> dict[str, Any]:
@@ -937,6 +1019,14 @@ async def telegram_lookup(args: dict[str, Any]) -> dict[str, Any]:
         cmd.append("--sessions")
     if mode in ("phone", "resolve") and str(args.get("save_photo") or "").strip():
         cmd += ["--save-photo", os.path.abspath(str(args["save_photo"]).strip())]
+    if mode == "resolve" and args.get("messages") not in (None, False, "", 0, "0", "false"):
+        msgs = args["messages"]
+        if msgs is True or str(msgs).strip().lower() == "true":
+            cmd.append("--messages")
+        elif str(msgs).strip().isdigit():
+            cmd += ["--messages", str(int(str(msgs).strip()))]
+        else:
+            return _err("telegram_lookup messages must be a positive integer or true")
     if str(args.get("case") or "").strip():
         cmd += ["--case", str(args["case"]).strip()]
     r = _run(cmd, timeout=600)
@@ -1153,9 +1243,9 @@ async def analyze_artifact(args: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- ANALYZE tools
-def _as_of(args: dict[str, Any]) -> list[str]:
+def _as_of(value: Any) -> list[str]:
     """query.py's point-in-time view (`--as-of`) when the caller asked for one."""
-    v = str(args.get("as_of") or "").strip()
+    v = str(value or "").strip()
     return ["--as-of", v] if v else []
 
 
@@ -1169,7 +1259,7 @@ def _as_of(args: dict[str, Any]) -> list[str]:
 )
 async def kb_cluster(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--cluster", _host(args["domain"]), *_as_of(args)])
+              "--kb", KB_DIR, "--cluster", _host(args["domain"]), *_as_of(args.get("as_of"))])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no peers"}],
             "is_error": r.returncode != 0}
 
@@ -1183,7 +1273,7 @@ async def kb_cluster(args: dict[str, Any]) -> dict[str, Any]:
 )
 async def kb_entity(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--entity", args["value"], *_as_of(args)])
+              "--kb", KB_DIR, "--entity", args["value"], *_as_of(args.get("as_of"))])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no record"}],
             "is_error": r.returncode != 0}
 
@@ -1210,6 +1300,35 @@ async def kb_query_shared(args: dict[str, Any]) -> dict[str, Any]:
 async def risk_signals(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "kb", "risk_signals.py"), "--case", args["case"]])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
+
+
+@tool(
+    "supplier_map",
+    "SUPPLIER MAP for an organisation case: reads the stored raws (no network, no credits) and maps "
+    "the subject's TXT verification tokens, SPF includes, MX, nameservers, CNAME targets, certificate "
+    "issuer and same-site document metadata to named suppliers (references/suppliers.json + "
+    "mail_providers.json) → cases/<case>/suppliers.json with high/medium/low confidence per "
+    "supplier. `subject` = the subject's apex domain(s), comma-separated; only hosts at/under them "
+    "count. A supplier is a relationship OF the subject shared with every other customer — never an "
+    "operator link; record_kb=true writes `supplier` KB facts only, never edges. Next step: per-"
+    "supplier breach / KEV / stealer checks (techniques/fx-supplier-exposure.md).",
+    {"case": str, "subject": str},  # record_kb (optional) is declared in references/tool_params.json
+    annotations=ToolAnnotations(readOnlyHint=False),   # writes cases/<case>/suppliers.json (+ KB facts)
+)
+async def supplier_map(args: dict[str, Any]) -> dict[str, Any]:
+    case = str(args.get("case") or "").strip()
+    subj = [_host(s) for s in re.split(r"[\s,]+", str(args.get("subject") or "")) if s]
+    if not case or not subj:
+        return _err("supplier_map needs case=<ID> and subject=<apex[,apex]>")
+    cmd = [PY, os.path.join("WebPivot", "tools", "wp_suppliers.py"), case,
+           "--subject", ",".join(subj), "--print"]
+    if _flag(args, "record_kb"):
+        cmd += ["--kb", KB_DIR]
+    r = _run(cmd)
+    v = _load_json_str(r.stdout or "")
+    if not v:
+        return _err(f"supplier_map failed: {(r.stderr or r.stdout or '')[-400:]}")
+    return _ok(json.dumps(v, ensure_ascii=False, indent=2))
 
 
 _REVERSE_FLAG = {"email": "--reverse-email", "name": "--reverse-name", "phone": "--reverse-phone"}
@@ -1704,7 +1823,13 @@ async def render_diagram(args: dict[str, Any]) -> dict[str, Any]:
     "(Wayback / urlscan / crt.sh / RDAP / BGP) — never a local case-store path. Required: inputs "
     "(list of JSON paths or a glob), stem (output path, no extension). Optional: title, subtitle, "
     "history (wayback_ga.py JSON paths), markdown=true, lang (en|vi), source, grading, "
-    "max_certs (default 12), max_lanes (default 24), no_figure=true.",
+    "max_certs (default 12), max_lanes (default 24), no_figure=true, tempo=true (adds the "
+    "OPERATOR TEMPO read to the ledger as operator_tempo — LEAD ONLY: hour x weekday UTC "
+    "histogram of operator-chosen timestamps only (non-bot commit author times, operator_events "
+    "post/message/panel rows, manually issued certs, registrations; ACME/automated certs, crawls, "
+    "scans and observation windows are dropped with a reason), the UTC offsets whose local "
+    "working window holds the most events, a second-rhythm flag, confounders, and 'insufficient' "
+    "below the event floor; never feeds correlation, clustering or the KB).",
     {"inputs": list, "stem": str},
 )
 async def case_timeline(args: dict[str, Any]) -> dict[str, Any]:
@@ -1725,6 +1850,8 @@ async def case_timeline(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--markdown"]
     if args.get("no_figure"):
         cmd += ["--no-figure"]
+    if args.get("tempo"):
+        cmd += ["--tempo"]
     r = _run(cmd, timeout=300)
     return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
             "is_error": r.returncode != 0}
@@ -1902,9 +2029,11 @@ async def case_loop(args: dict[str, Any]) -> dict[str, Any]:
     "or the case's scope is no_spend (then only keyless CLD runs and metered vendors read "
     "not_consulted); passive is an egress posture and does NOT hold spend. leak_only=true runs "
     "just the leak fan-out (the harness runs it after round-1 collection, before frontier pivots). "
-    "Telegram handle leads (tg-age: @handle → id + creation date on the research account) are HELD "
-    "awaiting approval: the output lists the pending batch — ASK THE ANALYST to confirm it, and only "
-    "after an explicit yes re-run with approve_telegram=true.",
+    "Telegram handle leads (tg-age: @handle → id + creation date on the research account) follow "
+    "the case's approval mode (state.json approval_mode): in AUTO mode (the /cti default) they run "
+    "on their own, each ledgered with approved_by=auto; in --review mode they are HELD — the output "
+    "lists the pending batch, ASK THE ANALYST to confirm it, and only after an explicit yes re-run "
+    "with approve_telegram=true.",
     {"case": str},  # free_only, passive, reopen_legacy, leak_only, approve_telegram: bool optional (tool_params.json)
     annotations=ToolAnnotations(readOnlyHint=False),
 )
@@ -1979,11 +2108,16 @@ async def case_approve(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "cti",
     "Run the `cti` driver end-to-end on ONE target (domain, URL, email, phone, IP, hash or wallet). "
-    "DEFAULT ENGINE = the cross-type harness loop: recall, then typed pivots on any seed type, a "
-    "read-only Plan phase and per-round analyst approval of every metered pivot. A harness run "
-    "takes tens of minutes, so this tool STARTS it in the background and returns at once with the "
-    "case id, a log path and the status command — check `case_frontier`/`harness status`, and the "
-    "analyst approves pending pivots with `case_approve`. When Quarry is on for the case (quarry=true, "
+    "DEFAULT ENGINE = the cross-type harness loop: recall, then typed pivots on any seed type and a "
+    "read-only Plan phase, in AUTO mode by default: every paid / oversized / unknown-size proposal "
+    "item is auto-approved (approved_by=auto, recorded in proposal.json and the tool-call ledger) "
+    "and the loop keeps going until it converges, goes cold or hits the depth; engage_account, "
+    "webamon_scan, misp_publish and misp_push are NEVER auto-approved (listed as pending in the "
+    "hand-back), ANY.RUN submissions are PUBLIC tasks, and hostile egress stays enforced. "
+    "review=true restores per-round analyst approval (stops at `awaiting-approval`; the analyst "
+    "approves with `case_approve`). A harness run takes tens of minutes, so this tool STARTS it in "
+    "the background and returns at once with the case id, a log path and the status command — "
+    "check `case_frontier`/`harness status`. When Quarry is on for the case (quarry=true, "
     "QUARRY_ENABLED=on, or a recorded yes) the driver first waits for the Quarry scan with no time "
     "limit (hours or days on a large estate — the wait survives network faults and resumes if "
     "interrupted) before any pivot spends the same vendor accounts, and the run is backgrounded on "
@@ -1993,7 +2127,7 @@ async def case_approve(args: dict[str, Any]) -> dict[str, Any]:
     "loop) and returns its machine-readable summary (case, status, converged, open_leads, next) "
     "as the LAST line. Called from inside a harness phase it always uses the pipeline (no "
     "recursion).",
-    {"target": str},  # case, quick, deep, passive, free_only, extend optional — tool_params.json
+    {"target": str},  # case, quick, deep, passive, free_only, extend, review optional — tool_params.json
     annotations=ToolAnnotations(readOnlyHint=False),
 )
 async def cti(args: dict[str, Any]) -> dict[str, Any]:
@@ -2027,6 +2161,8 @@ async def cti(args: dict[str, Any]) -> dict[str, Any]:
         cmd.append("--no-quarry")
     if args.get("pipeline") or (in_harness and not harness_path):
         cmd.append("--pipeline")
+    if _flag(args, "review"):
+        cmd.append("--review")
     if args.get("depth"):
         cmd += ["--depth", str(int(args["depth"]))]
     if background:
@@ -2042,10 +2178,13 @@ async def cti(args: dict[str, Any]) -> dict[str, Any]:
                              stdin=subprocess.DEVNULL, start_new_session=True)
         return _ok(f"cti started on {target} — case {case} — in the background"
                    + (" (waiting for Quarry first)" if quarry_waits else "")
-                   + f". Log: {log_path}. Its last line is the JSON summary when it "
-                   f"finishes; the case stops at `awaiting-approval` when paid pivots need the "
-                   f"analyst — show the proposal (case_approve case={case}, no confirm) and approve "
-                   f"only what they name. Status: `harness status {case}`.")
+                   + f". Log: {log_path}. Its last line is the JSON summary when it finishes. "
+                   + (f"REVIEW mode: the case stops at `awaiting-approval` when paid pivots need "
+                      f"the analyst — show the proposal (case_approve case={case}, no confirm) and "
+                      f"approve only what they name. " if _flag(args, "review") else
+                      "AUTO mode: paid pivots are auto-approved (gated tools stay pending for the "
+                      "analyst). ")
+                   + f"Status: `harness status {case}`.")
     r = _run(cmd, timeout=1800)   # pipeline: the driver may run a full collect+loop pass
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}
@@ -2498,11 +2637,30 @@ async def serp_ads(args: dict[str, Any]) -> dict[str, Any]:
     "third-party URLs in the manifest but do not download them). BUDGETED: same-site assets get the "
     "generous allowance because they are the operator's own code, third-party CDN libraries a small "
     "one — anything dropped is listed in `skipped_for_budget`, so read that before treating a bundle "
-    "as the whole page. Cite the capture_sha256, not the directory path.",
-    {"url": str},  # case:str, outdir:str, verify:bool, dir:str, third_party:bool
+    "as the whole page. Cite the capture_sha256, not the directory path. CUSTODY: every manifest "
+    "records collector, persona, egress_ip (null + egress_note when unknown) and the local clock_sync "
+    "state; inside a case, capture and verify append to cases/<case>/evidence/custody.jsonl and an "
+    "intact capture is sealed read-only on verify (no_seal=true to skip). working_copy=true with a "
+    "capture dir (or screenshot PNG) in url/dir copies it to evidence/work/ and logs the copy — "
+    "analyse that, never the original. fixity_sample=N with case (or the case id as url) re-hashes a "
+    "random sample of N stored captures + screenshots and reports altered/missing files; seed=<int> "
+    "makes the sample reproducible. Optional context: persona, egress_ip (from proxy.py test), "
+    "collector.",
+    {"url": str},  # case,outdir,dir,persona,egress_ip,collector:str; verify,third_party,working_copy,no_seal:bool; fixity_sample,seed:int
 )
 async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("WebPivot", "tools", "wp_capture.py")
+    actor = ["--collector", str(args["collector"])] if args.get("collector") else []
+    if args.get("fixity_sample") not in (None, "", False):
+        case = str(args.get("case") or args.get("url") or "")
+        if not case:
+            return _ok("capture_evidence fixity_sample=N needs the case id in `case` (or `url`).")
+        cmd = [PY, script, "--fixity", str(int(args["fixity_sample"])), "--case", case] + actor
+        if args.get("seed") not in (None, ""):
+            cmd += ["--seed", str(int(args["seed"]))]
+        r = _run(cmd, timeout=600)
+        return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
+                "is_error": r.returncode != 0}
     # verify=true takes a capture DIRECTORY; accept it in either `dir` or the required `url`, so a
     # caller passing only the required field can still verify.
     target = str(args.get("dir") or args.get("url") or "")
@@ -2510,8 +2668,12 @@ async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
         return _ok("capture_evidence needs a `url` to capture, or a capture directory in `url`/"
                    "`dir` with verify=true.")
     cmd = [PY, script, target]
-    if args.get("verify") or args.get("dir"):
-        cmd += ["--verify"]
+    if _flag(args, "working_copy"):
+        cmd += ["--working-copy"] + actor
+    elif _flag(args, "verify") or args.get("dir"):
+        cmd += ["--verify"] + actor
+        if _flag(args, "no_seal"):
+            cmd += ["--no-seal"]
     else:
         if args.get("case"):
             cmd += ["--case", str(args["case"])]
@@ -2519,6 +2681,9 @@ async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
             cmd += ["--outdir", str(args["outdir"])]
         if args.get("third_party") is False:
             cmd += ["--no-third-party"]
+        for key in ("persona", "egress_ip", "collector"):
+            if args.get(key):
+                cmd += [f"--{key.replace('_', '-')}", str(args[key])]
     r = _run(cmd, timeout=300)
     return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
             "is_error": r.returncode != 0}
@@ -2540,20 +2705,31 @@ async def capture_evidence(args: dict[str, Any]) -> dict[str, Any]:
     "action taken is recorded in the manifest so a capture that clicked through a gate says so. "
     "OUTBOUND and ATTRIBUTABLE like any live fetch: on hostile infrastructure pass proxy=<egress> so "
     "the request does not carry the analyst's own IP. verify=true re-hashes a stored PNG or a case "
-    "manifest to confirm nothing was altered before you cite it. Required: url (or a png/manifest "
-    "path with verify=true). Optional: case, outdir, proxy, label, click, wait_selector, wait_after.",
-    {"url": str},  # case,outdir,proxy,label,click,wait_selector:str; wait_after:num; verify:bool -> args.get()
+    "manifest to confirm nothing was altered before you cite it; inside a case a matching PNG is then "
+    "sealed read-only (no_seal=true to skip) and every capture/verify is appended to "
+    "cases/<case>/evidence/custody.jsonl. Each manifest entry records collector, persona, egress_ip "
+    "(null + egress_note when unknown), clock_sync, tool_version, browser_version and "
+    "playwright_version. Required: url (or a png/manifest path with verify=true). Optional: case, "
+    "outdir, proxy, label, click, wait_selector, wait_after, persona, egress_ip (from proxy.py test), "
+    "collector.",
+    {"url": str},  # case,outdir,proxy,label,click,wait_selector,persona,egress_ip,collector:str; wait_after:num; verify,no_seal:bool -> args.get()
 )
 async def capture_screenshot(args: dict[str, Any]) -> dict[str, Any]:
     script = os.path.join("WebPivot", "tools", "wp_screenshot.py")
     target = str(args.get("url") or "")
     if not target:
         return _err("capture_screenshot needs a `url` to capture (or a png/manifest path with verify=true).")
-    if args.get("verify"):
-        r = _run([RENDER_PY, script, "--verify", target], timeout=120)
+    if _flag(args, "verify"):
+        cmd = [RENDER_PY, script, "--verify", target]
+        if _flag(args, "no_seal"):
+            cmd += ["--no-seal"]
+        if args.get("collector"):
+            cmd += ["--collector", str(args["collector"])]
+        r = _run(cmd, timeout=120)
         return _ok(r.stdout or r.stderr or "no output")
     cmd = [RENDER_PY, script, target, "--json"]
-    for flag in ("case", "outdir", "proxy", "label", "click", "wait_after"):
+    for flag in ("case", "outdir", "proxy", "label", "click", "wait_after", "persona", "egress_ip",
+                 "collector"):
         if args.get(flag) is not None:
             cmd += [f"--{flag.replace('_', '-')}", str(args[flag])]
     if args.get("wait_selector"):
@@ -2648,7 +2824,10 @@ async def anyrun_lookup(args: dict[str, Any]) -> dict[str, Any]:
     "says privacy_verified=null with a `verify_command`, the task was still running — call again "
     "with verify_task=true and target=<task uuid> to finish the check (nothing is submitted). NEVER "
     "put a case ID or an analyst/client name in `tags` or the filename. kind='file' (a local path) "
-    "or 'url'.",
+    "or 'url'. AUTO MODE (a case whose state.json approval_mode is auto — the /cti default): the "
+    "gate pre-approves a PUBLIC submission only — confirm=true with privacy='public' and "
+    "allow_public=true — and records its risk briefing in the ledger; a private/owner request is "
+    "refused there, and hostile posture still needs passive/proxy.",
     {"target": str},  # kind, confirm, privacy, allow_public, allow_unverified_plan, tags, verify_task:bool, wait:int
     annotations=ToolAnnotations(readOnlyHint=False),
 )
@@ -2991,7 +3170,11 @@ _SHARE = os.path.join("IntelShare", "tools")
     "Pass case; optional host (space/comma-separated), info (the event headline — never a case "
     "id), label, tlp, confidence (the ICD-203 term), distribution (the level to REQUEST — the "
     "push still stages at 0), include_review, review_value (one approved value; repeatable as a "
-    "space-separated list), threat_level, analysis.",
+    "space-separated list), threat_level, analysis. TLP follows the CASE's own marking: omitted, "
+    "it inherits the strictest recorded marking (amber if none; an unreadable marking is refused); "
+    "a tlp less restrictive than that marking is refused unless allow_downgrade=true, and a "
+    "TLP:RED case builds nothing unless allow_red=true — set either only on the analyst's "
+    "explicit yes. misp_push re-checks the case marking before staging.",
     {"case": str},
     annotations=READONLY,
 )
@@ -3011,8 +3194,13 @@ async def misp_export(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--review-value", val]
     if args.get("include_review"):
         cmd += ["--include-review"]
+    for flag, key in (("--allow-downgrade", "allow_downgrade"), ("--allow-red", "allow_red")):
+        if _flag(args, key):
+            cmd += [flag]
     r = _run(cmd, timeout=120)
     out = (r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")
+    if r.returncode == 2:           # the case's TLP marking refused the export; nothing written
+        return _err(f"misp_export refused for {args['case']}: {(r.stderr or '').strip()[-600:]}")
     if r.returncode != 0 and not (r.stdout or "").strip():
         return _err(f"misp_export failed for {args['case']}: {(r.stderr or '')[-400:]}")
     return _ok(out + "\n\nNOTHING HAS BEEN SENT. Sharing is a separate, confirmed step "
@@ -3575,10 +3763,30 @@ async def masked_hint_match(args: dict[str, Any]) -> dict[str, Any]:
     "ratings c1..c8 (0-3 each: account footprint 15, PII 20, family/close relations 15, address & "
     "habits 15, corporate assets 10, reputation 10, breaches & stealer logs 10, account security "
     "5); higher is safer. Pass `indicators` as 'c1=2,c2=3,c2_rationale=…' or a JSON file; missing "
-    "criteria stay explicit coverage gaps with a worst-case floor. Ratings are analyst "
-    "assessments, not attribution evidence.",
-    {},  # indicators:str, infile:str, model:str
-    annotations=READONLY,
+    "criteria stay explicit coverage gaps with a worst-case floor. model=organisation is an "
+    "ANALYST-RATED organisation risk by domain (affiliates, impersonation, edge, insider, "
+    "personnel, actors, credentials, suppliers, mail_dns, code_docs): each rated exploitability "
+    "0-3 x harm 0-3 (as 'edge=3x3' or edge_exploitability/edge_harm), with <d>_rationale "
+    "(required at harm 3) and <d>_issue; domain score 0-10 from a reference matrix, overall = "
+    "mean of the rated domains, bands Critical>=8/High>=6/Medium>=4/Low, priorities P1 7d / P2 30d "
+    "/ P3 90d. Unrated domains are excluded and listed under coverage (warning below half); never "
+    "compare organisations on different coverage. `case` writes "
+    "cases/<case>/exposure_organisation.json. model=actor is an analyst-rated THREAT SCORE 0-1 "
+    "for ONE actor against ONE organisation: intent, capability, sectoral_reach, org_exposure in "
+    "0.25 steps, each with <dim>_rationale (intent >= 0.75 must cite a URL or CASE-/cases/ "
+    "reference); opportunity = 0.6 reach + 0.4 exposure; score = 0.5 I + 0.25 C + 0.25 O; intent "
+    "0 forces 0 (Intent floor rule); bands Critical>=0.85/High>=0.60/Medium>=0.35/Low>=0.10/"
+    "Negligible (needs rationale=); returns posture and review_due; exposure_level=None|Limited|"
+    "Significant|Extensive adds the tier; `case` updates cases/<case>/actor_scores.json with a "
+    "history (reason=; a shift > 0.10 without one warns). Never compare actor scores across "
+    "organisations. model=tier reads the Severity Tier Matrix: severity=Critical|High|Medium|Low "
+    "x exposure -> P1 (7d) / P2 (30d) / P3 (90d) / P4 (track only); `case` with item= updates "
+    "cases/<case>/tier_log.json (a re-tier needs trigger=<id> and rationale=). For "
+    "executive/organisation/actor/tier pass `ratings` as a JSON "
+    "object (safe for rationales containing commas). Ratings are analyst assessments, not "
+    "attribution evidence, and a score is not a probability.",
+    {},  # indicators:str, infile:str, model:str, ratings:str (JSON object), case:str
+    annotations=ToolAnnotations(readOnlyHint=False),   # case: writes exposure_organisation.json / actor_scores.json / tier_log.json
 )
 async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
     cmd = [PY, _os_("exposure_score.py")]
@@ -3586,6 +3794,12 @@ async def exposure_score(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--model", str(args["model"])]
     if args.get("infile"):
         cmd.append(str(args["infile"]))
+    ratings = args.get("ratings")
+    if ratings:
+        cmd += ["--ratings", ratings if isinstance(ratings, str)
+                else json.dumps(ratings, ensure_ascii=False)]
+    if args.get("case"):
+        cmd += ["--case", str(args["case"])]
     for kv in str(args.get("indicators") or "").split(","):
         if kv.strip():
             cmd += ["--set", kv.strip()]
@@ -3716,7 +3930,8 @@ async def dork_builder(args: dict[str, Any]) -> dict[str, Any]:
 @tool(
     "cn_recon",
     "PRC filing and corporate-registry recon for a `domain` (or a `serial` / `company` you already "
-    "hold): pulls the keyless ICP mirrors, parses the licence, and reverses the LICENCE SERIAL "
+    "hold): tries the keyless ICP mirror (reports `unavailable` with the reason when it does not "
+    "answer — api.vvhan.com stopped resolving in 2026-11), parses the licence, and reverses the LICENCE SERIAL "
     "into sibling-domain queries — cluster on the serial, never the province prefix, since 苏 "
     "covers a whole province while -3 is one site within one filing. Names every gate it did not "
     "pass rather than working around it: beian.miit.gov.cn and GSXT are CAPTCHA-walled, and "
@@ -4096,7 +4311,7 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       impersonation_hunt, search_pivot, censys, intelx_search, grayhatwarfare,
                       anyrun_lookup, anyrun_submit, webamon_scan, capability_check,
                       url_paths, capture_evidence, capture_screenshot, serp_ads, passive_ssl, ip_info,
-                      domain_liveness, takedown_watch, pgp_lookup, container_registry,
+                      domain_liveness, takedown_watch, pgp_lookup, appliance_scan, container_registry,
                       google_account, reverse_image, telegram_lookup, corp_registry,
                       detect_login, make_persona, engage_account, harvest_authenticated,
                       engage_report,
@@ -4107,7 +4322,7 @@ COLLECT_SERVER = create_sdk_mcp_server(
                       cn_recon, vn_corp, sellers_lookup, cti, quarry, deep_profile, wifi_ssid, cld,
                       kb_ingest, corpus_search, app_developer, osint_industries])
 ANALYZE_SERVER = create_sdk_mcp_server(
-    "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals,
+    "analyze", tools=[kb_cluster, kb_entity, kb_query_shared, risk_signals, supplier_map,
                       reverse_whois, cert_overlap, reference_check, reference_add, reference_mirrors,
                       which_cases, domain_verdict, api_usage, tool_calls, case_scope,
                       case_clusters, case_frontier, case_loop, case_enrich, case_reopen, case_approve,
@@ -4133,7 +4348,8 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__serp_ads", "mcp__collect__passive_ssl",
                  "mcp__collect__ip_info",
                  "mcp__collect__domain_liveness", "mcp__collect__takedown_watch",
-                 "mcp__collect__pgp_lookup", "mcp__collect__container_registry",
+                 "mcp__collect__pgp_lookup", "mcp__collect__appliance_scan",
+                 "mcp__collect__container_registry",
                  "mcp__collect__google_account", "mcp__collect__reverse_image",
                  "mcp__collect__telegram_lookup", "mcp__collect__corp_registry",
                  "mcp__collect__detect_login", "mcp__collect__make_persona",
@@ -4154,6 +4370,7 @@ COLLECT_TOOLS = ["mcp__collect__pivot_extract", "mcp__collect__doc_metadata",
                  "mcp__collect__osint_industries"]
 ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__kb_query_shared", "mcp__analyze__risk_signals",
+                 "mcp__analyze__supplier_map",
                  "mcp__analyze__reverse_whois", "mcp__analyze__cert_overlap",
                  "mcp__analyze__reference_check", "mcp__analyze__reference_add",
                  "mcp__analyze__reference_mirrors",

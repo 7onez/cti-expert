@@ -1,0 +1,29 @@
+{
+  "_comment": "Rule 21 source citations for the per-round assessment snapshots (assessments/<UTC>_rN.md and report/<UTC>_rN.md/.pdf/.docx), read by tools/report_citations.py. Extend `secret_query_keys` when a new vendor puts a credential in a query string, and `source_links` when a new public result page can be rebuilt from a claim. A claim whose source has no public page is cited by its source class with '(no public link)'. It is never left looking uncited.",
+  "secret_query_keys": {
+    "_comment": "Query/fragment parameter NAMES (case-insensitive, exact match) removed from every URL before it is written to a snapshot, its JSON or its References. A credential must never reach a shareable report.",
+    "values": ["key", "apikey", "api_key", "api-key", "x-api-key", "token", "access_token", "auth_token",
+               "refresh_token", "id_token", "apitoken", "api_token", "auth", "authorization", "bearer",
+               "jwt", "secret", "client_secret", "password", "passwd", "pwd", "pass", "session",
+               "sessionid", "session_id", "sid", "sig", "signature", "credential", "credentials",
+               "x-amz-signature", "x-amz-credential", "x-amz-security-token", "x-goog-signature",
+               "x-goog-credential", "license", "licence"]
+  },
+  "source_links": {
+    "_comment": "Ordered rules: when `match` (a case-insensitive regex) hits the claim and the claim names the `needs` selector, the snapshot cites `url` (filled with that selector) labelled with `class`. `needs` is one of domain (any host the claim names; the template may also use {apex}, its registrable domain), estate_domain (a host collected into the case), crtsh_id, urlscan_uuid, package, or empty (a fixed URL). Only templates whose page opens without an account belong here.",
+    "entries": {
+      "crtsh_id": {"match": "\\bcrt\\.sh\\b", "needs": "crtsh_id", "url": "https://crt.sh/?id={crtsh_id}", "class": "certificate transparency log"},
+      "crtsh_domain": {"match": "\\bcrt\\.sh\\b|certificate transparency|\\bCT (?:log|certificate)s?\\b|\\bSAN\\b", "needs": "domain", "url": "https://crt.sh/?q={domain}", "class": "certificate transparency log"},
+      "rdap": {"match": "(?<!reverse-)(?<!reverse )\\b(?:WHOIS|RDAP|registrar|registrant)\\b", "needs": "domain", "url": "https://rdap.org/domain/{apex}", "class": "registration data (RDAP)"},
+      "urlscan_result": {"match": "\\burlscan\\b", "needs": "urlscan_uuid", "url": "https://urlscan.io/result/{urlscan_uuid}/", "class": "public web-scan capture"},
+      "urlscan_domain": {"match": "\\burlscan\\b", "needs": "domain", "url": "https://urlscan.io/domain/{domain}", "class": "public web-scan capture"},
+      "wayback": {"match": "\\bWayback\\b|\\bweb[- ]archive\\b|\\barchived?\\b", "needs": "domain", "url": "https://web.archive.org/web/*/{domain}", "class": "web archive capture index"},
+      "virustotal": {"match": "\\bVirusTotal\\b", "needs": "domain", "url": "https://www.virustotal.com/gui/domain/{domain}", "class": "multi-engine reputation service"},
+      "otx": {"match": "\\bOTX\\b|\\bAlienVault\\b", "needs": "domain", "url": "https://otx.alienvault.com/indicator/domain/{domain}", "class": "reputation feed"},
+      "sellers_json": {"match": "\\bsellers\\.json\\b", "needs": "", "url": "https://realtimebidding.google.com/sellers.json", "class": "published ad-seller registry"},
+      "google_play": {"match": "\\bGoogle Play\\b|\\bPlay Store\\b", "needs": "package", "url": "https://play.google.com/store/apps/details?id={package}", "class": "published app-store listing"},
+      "ads_txt": {"match": "\\bads\\.txt\\b", "needs": "estate_domain", "url": "https://{estate_domain}/ads.txt", "class": "live operator page"},
+      "page": {"match": "\\bpage\\b|\\btitle\\b|\\bheader\\b|\\bserved\\b|\\bfetch(?:ed)?\\b|\\blanding\\b|\\bDOM\\b|\\bHTML\\b|\\bfooter\\b|\\bscript\\b", "needs": "estate_domain", "url": "https://{estate_domain}/", "class": "live operator page"}
+    }
+  }
+}

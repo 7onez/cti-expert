@@ -35,7 +35,32 @@ In Claude Code, ask with `AskUserQuestion`, and ask the two questions that actua
 
 Two answers matter as much as "yes": **which values** (the `review` list is personal data and
 third-party-derived values, and is approved value by value, never in bulk) and **which TLP** the
-source material allows you to attach.
+source material allows you to attach. Labels are FIRST TLP 2.0: `clear` (public), `green`
+(community), `amber` (recipient organisation and its clients), `amber+strict` (recipient
+organisation only), `red` (named recipients only). TLP limits who may read the indicators. MISP
+distribution limits where the event syncs. Set both.
+
+**The case's own marking bounds the TLP.** `sh_export` reads the case's markings with the same
+parser as the reports and the STIX exporter (`scripts/cti_case_meta.case_markings`: TLP tokens in
+the head of `assessment.md`, `classification` / `tlp` in `assessment.json` and `scope.json`; the
+most restrictive readable one wins) before it builds anything:
+
+| Case marking | `--tlp` | Result |
+|---|---|---|
+| none recorded | omitted | `tlp:amber` (the `event_defaults` level) |
+| readable | omitted | the case's strictest marking |
+| readable | less restrictive | REFUSED unless `--allow-downgrade` (MCP `allow_downgrade`); with it, a warning on stderr and in `meta.warnings` |
+| any readable `red`, or `--tlp red` | any | REFUSED unless `--allow-red` (MCP `allow_red`) — no event at all for a RED case without it |
+| unreadable (e.g. `purple`) | omitted | REFUSED — fail closed, never a default |
+| unreadable | given | the explicit level, with a warning |
+| cannot be checked (`scripts/cti_case_meta.py` not importable) | omitted / given | REFUSED / needs `--allow-downgrade` |
+
+A refusal builds nothing, writes nothing, and exits 2 (`misp_export` returns an error). A built
+export records what was authorised in `meta.tlp_gate` (markings digest, strictest marking,
+exported TLP, `allow_red`, `allow_downgrade`, UTC). `sh_misp.py push` re-reads the case's markings
+before staging: when they changed since the build, or the export predates the gate, the same rule
+is applied with only the authorisations the export recorded — push has no override flags; rebuild
+with `misp_export` and the flags it asks for.
 
 ## 1. The two-step rail
 

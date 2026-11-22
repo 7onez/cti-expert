@@ -1,0 +1,42 @@
+{
+  "_comment": "Config for wp_custody.py — the CHAIN-OF-CUSTODY layer under every evidence capture (handbook/collection-preservation.md §5, §6). It decides where the append-only custody log and the working-copy store live, which actions a custody line may record, how many stored captures a fixity sample re-hashes by default, which environment variables name the collector, the persona and a confirmed egress IP, and how the local clock-sync state is read. RULE 1: never put a case value here. RULE 3: the code holds the logic, this file holds the knobs.",
+
+  "layout": {
+    "_comment": "Paths are relative to the case EVIDENCE directory (cases/<case>/evidence/). `log_filename` is the append-only custody log (one JSON object per line, hash-chained, never rewritten). `work_dir` is the separate store for analysis copies. `salt_filename` stores the random per-case salt used to pseudonymise unnamed collectors; retain it with the case so their pseudonym is stable.",
+    "evidence_dir": "evidence",
+    "log_filename": "custody.jsonl",
+    "work_dir": "work",
+    "salt_filename": "collector.salt"
+  },
+
+  "actions": {
+    "_comment": "The custody actions a log line may carry. capture and verify are appended automatically by wp_capture / wp_screenshot; copy by the working-copy helper; export, transfer and cite are recorded by hand (`wp_capture.py --custody ACTION`). An unknown action is refused, so a typo cannot create a custody event nobody will search for.",
+    "values": ["capture", "verify", "copy", "export", "transfer", "cite"]
+  },
+
+  "manual_actions": {
+    "_comment": "Only these actions may be recorded by hand. capture, verify and copy must come from the code that performed the operation; hand-writing them would manufacture a verification baseline.",
+    "values": ["export", "transfer", "cite"]
+  },
+
+  "fixity": {
+    "_comment": "Random-sample re-hash of stored evidence (Berkeley Protocol ¶172). `default_sample` is how many stored items one fixity run re-hashes when the caller does not say. The sample is drawn with a recorded seed, so a run can be reproduced exactly.",
+    "default_sample": 5
+  },
+
+  "identity": {
+    "_comment": "Environment variables that name the collection context written into every manifest (¶155(g)). `collector_env` names the analyst; when unset a stable pseudonym hashes the OS login with the case salt (never the raw login). Without a case salt the collector is null with the reason. `persona_env` names the virtual identity in use (unset = no persona); `egress_env` carries the analyst-confirmed egress IP. Otherwise egress is derived from the proxy actually used, or null with the reason.",
+    "collector_env": "CTI_COLLECTOR",
+    "persona_env": "CTI_PERSONA",
+    "egress_env": "CTI_EGRESS_IP"
+  },
+
+  "clock_sync": {
+    "_comment": "LOCAL commands that report whether the system clock is synchronised, tried in order. Each must answer from the host itself — never a network time service. `synced` / `not_synced` are the exact stdout values that map to a state; anything else (or a missing binary, an error, a timeout) is `unknown`. On the embedded fallback this list is empty and every capture records `unknown`.",
+    "values": [
+      {"argv": ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
+       "synced": ["yes"], "not_synced": ["no"], "timeout_seconds": 3,
+       "source": "timedatectl NTPSynchronized (systemd-timedated)"}
+    ]
+  }
+}

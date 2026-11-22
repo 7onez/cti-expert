@@ -206,7 +206,7 @@ different services entirely. See [`techniques/threat-intel.md`](../techniques/th
 |----------|------|--------|-------|
 | 1 (BTC) | Blockchair | `curl -s "https://api.blockchair.com/bitcoin/dashboards/address/<ADDR>"` | Multi-chain, SQL-like queries |
 | 2 (ETH) | Etherscan | `https://etherscan.io/address/<ADDR>` | Standard Ethereum explorer |
-| 3 (BTC) | WalletExplorer | `https://www.walletexplorer.com/address/<ADDR>` | Wallet clustering + entity labels |
+| 3 (BTC) | WalletExplorer | `https://www.walletexplorer.com/address/<ADDR>` | Heuristic wallet clusters (record the method) + third-party entity labels (ladder R4, not identity) |
 | 4 (Visual) | OXT.me | `https://oxt.me/` | Bitcoin transaction graph |
 | 5 (Scam) | Chainabuse | `https://www.chainabuse.com/address/<ADDR>` | Scam/fraud address reports |
 | 6 (Multi) | Breadcrumbs | `https://www.breadcrumbs.app/` | Visual multi-chain investigation |

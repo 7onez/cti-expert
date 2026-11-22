@@ -8,5 +8,10 @@
     "_comment": "Where evidence screenshots and their manifest are written under a case: cases/<case>/evidence/<dir>/<host>/<UTC-timestamp>.png, with one manifest per case listing every capture (url, final_url, captured_at, sha256, pixel dimensions, page title). Captures are timestamped and never overwritten, so two captures of the same page date any change between them.",
     "dir": "screenshots",
     "manifest_filename": "manifest.json"
+  },
+  "collection": {
+    "_comment": "AUTOMATIC per-host screenshot during /cti collection (collect_core.collect_host -> tools/collect_screenshot.py -> wp_screenshot). `enabled` is the default when env HARNESS_SCREENSHOT is unset (HARNESS_SCREENSHOT=0 turns it off, =1 on); it costs no credits, so review and auto mode both take it. Every host collected live, or recovered from a Wayback capture, gets one full-page PNG in the same custody-tracked store as capture_screenshot (cases/<case>/evidence/screenshots/<host>/<UTC>.png: sha256, custody line, seal, seal_status). A hostile host is shot only through the pool exit its fetch used, never direct; an archive-only host is shot at its Wayback URL. `per_host_timeout_seconds` bounds one host's shot (browser launch + navigation + verify) and is still clamped to the active phase deadline; a timeout or any failure is recorded as `screenshot: failed (<reason>)` and never fails the collection.",
+    "enabled": true,
+    "per_host_timeout_seconds": 60
   }
 }

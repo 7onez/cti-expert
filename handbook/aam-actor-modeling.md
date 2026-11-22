@@ -73,7 +73,9 @@ banking credentials, cashing out via one reused crypto wallet.
 - **Orient** — treats takedowns as routine cost, not as targeted attention; no sign they know they're
   under investigation. *Evidence: no infra change after our passive collection.*
 - **Decide** — pending decision is which host to rotate to next; the wallet is a fixed dependency they
-  have **not** decided to change. *Evidence: single wallet across all 30 domains.*
+  have **not** decided to change. *Evidence: single wallet across all 30 domains (confirmed not a
+  processor/exchange deposit address — `blockchain-investigation.md` §6 ladder R2/R4 — before
+  treating it as the operator's own).*
 - **Act** — positioned to spin up the next domain batch within hours of a takedown.
 
 Posture:

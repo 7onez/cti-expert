@@ -394,6 +394,34 @@
         "outdir": {
           "type": "string",
           "description": "Explicit output directory (overrides the case layout)."
+        },
+        "collector": {
+          "type": "string",
+          "description": "Who collected (analyst id); recorded in the manifest and the custody log. Defaults to CTI_COLLECTOR or the OS user."
+        },
+        "persona": {
+          "type": "string",
+          "description": "Research persona used for the collection, if any; recorded in the manifest."
+        },
+        "egress_ip": {
+          "type": "string",
+          "description": "Public egress IP the capture left from (e.g. from the /cti-proxy test); never looked up over the network."
+        },
+        "no_seal": {
+          "type": "boolean",
+          "description": "On verify, do NOT make an intact case capture read-only."
+        },
+        "working_copy": {
+          "type": "boolean",
+          "description": "Verify the capture in `dir`, then copy it writable to cases/<case>/evidence/work/ and log the copy; the original stays untouched."
+        },
+        "fixity_sample": {
+          "type": "integer",
+          "description": "Re-hash a random sample of N stored captures/screenshots of `case`; reports TAMPERED/MISSING and logs a verify line each."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Seed for fixity_sample so the sample can be replayed; reported in the output."
         }
       },
       "anyrun_lookup": {
@@ -572,6 +600,10 @@
           "type": "boolean",
           "description": "Continue even though recall already found a confirmed prior attribution for this target."
         },
+        "review": {
+          "type": "boolean",
+          "description": "Opt OUT of auto mode: per-round analyst approval — the harness loop stops at awaiting-approval for every paid / oversized / unknown-size pivot (approve with case_approve, resume with `harness continue`). Default false = AUTO mode: every proposal item is auto-approved (approved_by=auto in proposal.json and the ledger) except engage_account / webamon_scan / misp_publish / misp_push, which stay pending for the analyst."
+        },
         "pipeline": {
           "type": "boolean",
           "description": "Run the deterministic pipeline synchronously instead of the default cross-type harness loop (which starts in the background)."
@@ -657,6 +689,10 @@
         "max_lanes": {
           "type": "integer",
           "description": "Max hosts drawn in the figure (default 24)."
+        },
+        "tempo": {
+          "type": "boolean",
+          "description": "Add the lead-only operator tempo read (operator-chosen timestamps only; UTC-offset working-window scan, second-rhythm flag, confounders; 'insufficient' below the event floor). Never feeds attribution, clustering or KB edges."
         }
       },
       "render_diagram": {
@@ -753,7 +789,7 @@
         },
         "tlp": {
           "type": "string",
-          "description": "TLP tag governing redistribution. Pick what the SOURCE of the material allows, not what is convenient.",
+          "description": "TLP tag governing redistribution. Pick what the SOURCE of the material allows, not what is convenient. Omit to inherit the case's strictest recorded marking (amber when the case records none; an unreadable case marking is refused until you pass one).",
           "enum": [
             "clear",
             "green",
@@ -790,6 +826,14 @@
         "review_value": {
           "type": "string",
           "description": "Approve specific held-back values (space- or comma-separated). This is the per-value decision the review class exists for."
+        },
+        "allow_downgrade": {
+          "type": "boolean",
+          "description": "Authorise a tlp LESS restrictive than the case's own strictest marking (e.g. green on an amber+strict case). Without it the export is refused; with it the downgrade is warned about and recorded. Only on the analyst's explicit yes to THIS downgrade."
+        },
+        "allow_red": {
+          "type": "boolean",
+          "description": "Authorise building ANY event for a case marked TLP:RED, or an event tagged tlp red. Without it nothing is built for a RED case. Only on the analyst's explicit yes — RED is for named recipients."
         }
       },
       "misp_search": {
@@ -1264,6 +1308,28 @@
         "full_page": {
           "type": "boolean",
           "description": "Set false to capture only the viewport, not the whole scrolled page. Default true."
+        },
+        "collector": {
+          "type": "string",
+          "description": "Who collected (analyst id); recorded in the manifest and the custody log. Defaults to CTI_COLLECTOR or the OS user."
+        },
+        "persona": {
+          "type": "string",
+          "description": "Research persona used for the collection, if any; recorded in the manifest."
+        },
+        "egress_ip": {
+          "type": "string",
+          "description": "Public egress IP the capture left from (e.g. from the /cti-proxy test); never looked up over the network."
+        },
+        "no_seal": {
+          "type": "boolean",
+          "description": "On verify, do NOT make a matching case PNG read-only."
+        }
+      },
+      "supplier_map": {
+        "record_kb": {
+          "type": "boolean",
+          "description": "Also write one `supplier` KB fact per subject x supplier (facts only, never edges)."
         }
       },
       "origin_history": {
@@ -1485,7 +1551,8 @@
         "confirm": {"type": "boolean", "description": "phone: send the contact import; resolve / age: send the @username / link resolves (numeric user ids in age are offline and need none). Omit/false first to get the briefing; true only after the analyst approves THIS lookup."},
         "save_photo": {"type": "string", "description": "Directory outside the repo to write the profile photo; default reports only sha256 + dimensions."},
         "case": {"type": "string", "description": "Case ID; saves the JSON under cases/<case>/telegram/."},
-        "sessions": {"type": "boolean", "description": "mode=status only: also list the research account's active sessions (device, app, ip, country, last active) and run opentele2's consistency checks. Read-only; never terminates a session."}
+        "sessions": {"type": "boolean", "description": "mode=status only: also list the research account's active sessions (device, app, ip, country, last active) and run opentele2's consistency checks. Read-only; never terminates a session."},
+        "messages": {"type": "integer", "description": "mode=resolve only, default off (omit/0). Also read the DATES of up to N recent posts/messages of a PUBLIC channel/group (clamped to references/telegram.json messages.max_n) as operator_events {when UTC, kind post|message, source telegram, host t.me/<handle>, url} for case_timeline tempo=true. Read-only: never joins, never sends; private chats and invite links are not read; no text, sender id or phone is kept; forwarded, service and scheduled rows are dropped with a count. Same confirm gate as the resolve; with case the rows are saved under cases/<case>/telegram/. A FloodWait stops the read with a partial result."}
       },
       "corp_registry": {
         "jurisdiction": {"type": "string", "description": "ISO-2 (GB, FR, NO, FI, US, VN, CN) or OpenCorporates code (us_de). Omit = all registries."},
@@ -1505,8 +1572,16 @@
         },
         "model": {
           "type": "string",
-          "description": "Scoring model: composite (default, unchanged) or executive (start at 100, deduct eight c1..c8 key-personnel ratings).",
-          "enum": ["composite", "executive"]
+          "description": "Scoring model: composite (default, unchanged), executive (start at 100, deduct eight c1..c8 key-personnel ratings), organisation (analyst-rated exploitability 0-3 x harm 0-3 per risk domain, 0-10, mean of rated domains), actor (analyst-rated Threat Score 0-1 for one actor against one organisation: intent/capability/sectoral_reach/org_exposure in 0.25 steps, Intent floor rule) or tier (Severity Tier Matrix: severity x exposure -> P1-P4).",
+          "enum": ["composite", "executive", "organisation", "actor", "tier"]
+        },
+        "ratings": {
+          "type": "string",
+          "description": "executive/organisation/actor/tier: the analyst ratings as a JSON object, e.g. {\"edge\": {\"exploitability\": 3, \"harm\": 3, \"rationale\": \"...\", \"issue\": \"...\"}} or {\"actor\": \"EXAMPLE-SPIDER\", \"intent\": {\"rating\": 0.75, \"rationale\": \"...\", \"evidence\": \"https://...\"}, \"exposure_level\": \"Limited\"} or {\"severity\": \"High\", \"exposure\": \"Extensive\", \"rationale\": \"...\"}. Use this instead of `indicators` whenever a rationale contains a comma. A rationale is required at harm 3 (organisation) and for every actor dimension."
+        },
+        "case": {
+          "type": "string",
+          "description": "Case id. organisation: writes cases/<case>/exposure_organisation.json for the report; actor: updates cases/<case>/actor_scores.json (keyed by actor, re-scores appended to history); tier: updates cases/<case>/tier_log.json (needs item=; a re-tier needs trigger= and rationale=)."
         }
       },
       "email_hygiene": {
@@ -1693,6 +1768,15 @@
       "pgp_lookup": {
         "sources": {"type": "string", "description": "Comma-separated subset of keyservers to query: keys_openpgp_org, keyserver_ubuntu, proton (default: all applicable)."},
         "timeout": {"type": "integer", "description": "Per-request timeout in seconds (default 20)."}
+      },
+      "appliance_scan": {
+        "case": {"type": "string", "description": "Case ID: write cases/<case>/appliances.json and honour its scope no_spend."},
+        "free_only": {"type": "boolean", "description": "Keyless only: skip the metered Shodan host / Censys host lookups (InternetDB + KEV still run)."},
+        "record_kb": {"type": "boolean", "description": "Record appliance_product / kev_exposure KB facts (facts only, never edges)."},
+        "version_confirmed": {"type": "boolean", "description": "The analyst verified the announced version(s); a pre-fix KEV match then escalates to CRITICAL."},
+        "edition": {"type": "string", "enum": ["standard", "fips", "ndcpp"], "description": "The analyst verified the firmware edition (Citrix standard / FIPS / NDcPP trains share version numbers); the build is then compared with that edition's fixed releases."},
+        "advisory": {"type": "string", "description": "Extra advisory row(s) for the patch-lag table, ';'-separated: ID:YYYY-MM-DD[:fixed1,fixed2[:CVE]]."},
+        "refresh_kev": {"type": "boolean", "description": "Re-download the CISA KEV catalogue even when the cached copy is within its TTL."}
       },
       "sellers_lookup": {
         "refresh": {

@@ -310,7 +310,8 @@ history sources never named yields an `edge network (IP lookup)` lead instead of
 shared-infrastructure apexes excluded, `ip_intel.cohost_total` honoured); above it a
 `vps co-tenancy — approve` lead lists every domain and `propose()` offers each as an approval item
 (`est_hits` above auto_max, source `approve_ip:<ip>`) — nothing is collected or linked until the
-analyst approves. An approved run (`_run_approved`) records each domain that RAN in `state.json →
+item is approved (by the loop in AUTO mode, the `/cti` default; by the analyst under `--review`).
+An approved run (`_run_approved`) records each domain that RAN in `state.json →
 approved_cohosts {ip: {domains, hosts}}` (the loop's analyst-run equivalent is
 `scripts/backend/intel.py approve-cohost <case> <ip> <domain…|--all>`; no MCP tool exists for it).
 From then the frontier seeds exactly those domains, ingest links exactly those, and the partition
@@ -425,6 +426,10 @@ python3 tools/kb/reference.py --kb "${HARNESS_KB:-knowledge}" ingest-case <CASE>
 Attributing the cluster + banking its distinctive fingerprints is what makes the NEXT case faster —
 future collections that hit a `signal` fingerprint or an attributed domain resolve instantly.
 
+Before banking a new heuristic, threshold, denylist entry or LLM judgement step, apply
+`docs/evaluation-hygiene.md` (repo root): temporal holdout, baseline, base-rate statement,
+abstention scored as an outcome. A green golden set is a regression gate, not an accuracy figure.
+
 ---
 
 ## Cost per run
@@ -457,7 +462,7 @@ future collections that hit a `signal` fingerprint or an attributed domain resol
 | empty-seed | `fallback_probe.py` | `fallback_probe` tool |
 | ingest | `ingest_webpivot.py` | `ingest` |
 | plan (cross-type) | read-only KB/status tools only — no spend/approve | Plan phase (`PLAN_TOOLS`); consumes `propose` candidates |
-| propose / approve | `case_state.py propose`; `harness approve` / `case_approve` / TTY | digest-bound `proposal.json`; `audit.gate` enforces |
+| propose / approve | `case_state.py propose`; AUTO mode (default): the loop approves non-gated items itself (`approved_by: auto`, `auto_log`); `--review`: `harness approve` / `case_approve` / TTY | digest-bound `proposal.json`; `audit.gate` enforces |
 | corpus-search | `pivot_routes.py` / `corpus_search` | Collect phase route runner |
 | correlate | `query.py --cluster --strong`/`--entity`, `cert_overlap.py`, `reference.py check`, `risk_signals.py` | Correlate phase tools |
 | verify (adversarial) | refute each link — `reference.py check`, `query.py --entity` (prevalence), `cert_overlap.py` | verify phase (`HARNESS_VERIFY`, `--no-verify`) |

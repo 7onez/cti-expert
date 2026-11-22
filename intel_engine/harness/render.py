@@ -15,6 +15,7 @@ import sys as _sys
 _ENGINE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _sys.path.insert(0, os.path.join(_ENGINE, "tools"))
 from case_state import may_overwrite_assessment, HARNESS_RENDER_MD  # noqa: E402
+import report_citations as _rc  # noqa: E402 — Rule 21 citation pass shared with the house report
 
 try:
     from rich import box
@@ -228,6 +229,29 @@ def render_markdown(a: Assessment, table_md: str = "") -> str:
             out += [f"- {it}" for it in items]
             out.append("")
     return "\n".join(out)
+
+
+def render_cited_markdown(a: Assessment, table_md: str = "", case_dir: str = "", transform=None) -> str:
+    """The per-round SNAPSHOT render (assessments/<UTC>_rN.md, report/<UTC>_rN.md): render_markdown
+    plus the IntelReport Rule 21 citation pass. Each evidence row cites the public page that
+    re-checks it (its own URL, or one rebuilt from the selectors it names — crt.sh, RDAP, urlscan,
+    the web archive, the page itself); a source with no public page is named by its class with
+    "(no public link)". Alternatives cite when a source is identifiable. Then: credentials stripped
+    from every URL, vendor names -> source class (indicator values kept), `transform` (e.g.
+    third-party masking) applied with links shielded, public URLs -> hyperlinked `[n]`, private /
+    loopback links dropped, `# References` appended. `case_dir` supplies the case's own hosts
+    (raw/*.json, plus the cluster) whose page is cited as the live operator page. Never raises:
+    degrades to the uncited render."""
+    labels: dict = {}
+    est = _rc.case_estate(case_dir, [m.domain for m in (a.cluster or [])])
+    try:
+        b = a.model_copy(deep=True)
+        b.evidence = [_rc.cite_claim(e, est, labels) for e in (b.evidence or [])]
+        for alt in b.alternatives or []:
+            alt.why = _rc.cite_claim(alt.why, est, labels, require=False)
+    except Exception:  # noqa: BLE001 — never break a snapshot over a citation
+        b = a
+    return _rc.finalize(render_markdown(b, table_md), est, labels, transform)
 
 
 def save_markdown(a: Assessment, case: str, root: str, table_md: str = "") -> str:

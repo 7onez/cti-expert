@@ -250,6 +250,11 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
     mail = None
     if probe_tls and self_host and not is_archived:
         mail = detect_mail_provider(self_host, timeout=8)
+    # --- CNAME chains (supplier map context; same gate, recursive resolver only) ---
+    cnames = detect_cnames(
+        ((urlparse(effective_url).hostname if effective_url else None) or self_host)
+        .lower().split(":")[0].rstrip(".")
+    ) if (probe_tls and self_host and not is_archived) else None
 
     # --- app-download artifacts (scam trading-app / APK funnels) ---
     app_downloads = extract_app_downloads(html, base_url)
@@ -302,6 +307,7 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "tls_cert": tls_cert,
         "jarm": jarm,
         "mail": mail,
+        "cnames": cnames,
         "app_downloads": app_downloads,
         "qr_codes": qr_codes,
         "assets": assets,

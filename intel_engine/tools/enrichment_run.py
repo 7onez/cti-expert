@@ -181,9 +181,10 @@ def _call(op, argv, case_dir, hide_env=None):
     if wp not in sys.path:
         sys.path.insert(0, wp)
     import api_usage
+    import wp_timeouts  # the ONE ceiling resolver: env CTI_CALL_TIMEOUT → .env → references → 18000
     ledger = api_usage._log_path()
     before = os.path.getsize(ledger) if os.path.isfile(ledger) else 0
-    timeout = int(env.get("CTI_CALL_TIMEOUT") or 5000)
+    timeout = wp_timeouts.resolve_call_timeout()
     try:
         r = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout)
         result = {"returncode": r.returncode, "stdout": r.stdout, "stderr": r.stderr[-1000:]}
@@ -825,6 +826,46 @@ def _print_coverage(doc):
         print(f"     {r['type']:8} {r['selector'][:48]:48} {r['vendor']:12} {r['state']:13} {r['reason']}")
 
 
+def _audit():
+    """harness/audit.py (the approval-mode policy and the tool-call ledger), or None."""
+    try:
+        harness = os.path.join(ROOT, "harness")
+        if harness not in sys.path:
+            sys.path.append(harness)
+        import audit
+        return audit
+    except Exception:  # noqa: BLE001 — no ledger module: auto approval is not available either
+        return None
+
+
+def _auto_classes(case):
+    """The APPROVAL_CLASSES a case approves on its own: all of them when the mode the run RECORDED
+    (state.json `approval_mode`) is "auto"; none in review mode, when nothing was recorded (a
+    standalone `intel.py enrich`), or when the ledger cannot be written. A class naming an
+    auto-gated tool (tool_policy.json auto_mode.gated_tools) never qualifies."""
+    try:
+        mode = str(case_state.load_state(case).get("approval_mode") or "")
+    except Exception:  # noqa: BLE001
+        return set()
+    audit = _audit() if mode == "auto" else None
+    if audit is None:
+        return set()
+    return {c for c in APPROVAL_CLASSES if c not in audit.AUTO_GATED}
+
+
+def _ledger_auto_approval(case, lead):
+    """One tool-call ledger line per auto-approved lead, written BEFORE the lead runs."""
+    audit = _audit()
+    if audit is None:
+        return
+    audit.record("enrich_approve", {"class": lead.get("approval"), "lead": lead.get("key"),
+                                    "value": lead.get("value")},
+                 allowed=True, reason="", classes=["auto-approved"], case=str(case),
+                 phase="enrich-auto",
+                 extra={"approved_by": "auto", "approved_at": time.strftime(
+                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+
+
 def run_case(case, free_only=False, passive=False, call=None, defer_metered=False, reopen_legacy=False,
              leak_only=False, approve=()):
     """Run eligible leads once; checkpoint results and close only accounted-for legs.
@@ -833,7 +874,10 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
     dork/secret query leads remain open for the slash-command agent to execute and review.
     `leak_only` runs just the leak fan-out leads (the harness's round-1 step). Every run ends by
     writing the per-selector leak coverage table (enrichment/leak_coverage.json). Leads carrying
-    an `approval` class run only when that class is in `approve` (the analyst's batch confirm).
+    an `approval` class run only when that class is in `approve` (the analyst's batch confirm) —
+    or, when the case's recorded approval mode is AUTO (state.json `approval_mode`, written by the
+    harness from audit.resolve_approval_mode), on their own: each such lead is ledgered in
+    tool_calls.jsonl with approved_by=auto before it runs. `--review` / unrecorded → held.
     """
     case_dir = case_state._case_dir(case)
     constraints = _scope(case_dir)
@@ -848,7 +892,8 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
     invoke = call or _call
     results = []
     approve = set(approve or ())
-    awaiting = {}
+    auto_classes = _auto_classes(case) - approve
+    awaiting, auto_ran = {}, {}
     for lead in case_state.frontier(case).get("enrichment_leads", []):
         if leak_only and not lead.get("leak"):
             continue
@@ -858,7 +903,10 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
         key = lead["key"]
         ops = _lead_ops(lead)
         policy, rc, t0 = "", None, time.monotonic()
-        if lead.get("approval") and lead["approval"] not in approve:
+        if lead.get("approval") in auto_classes:
+            _ledger_auto_approval(case, lead)
+            auto_ran.setdefault(lead["approval"], []).append(lead.get("value") or key)
+        if lead.get("approval") and lead["approval"] not in approve | auto_classes:
             reason, policy = "held", "awaiting_approval"
             summary = (f"held: awaiting analyst approval — runs on the research account only after "
                        f"`enrich <case> --approve {lead['approval']}`")
@@ -895,12 +943,16 @@ def run_case(case, free_only=False, passive=False, call=None, defer_metered=Fals
         if reason in FINAL_OUTCOMES:
             case_state.mark_enrichment_done(case, [key], reason)
         results.append({"key": key, "reason": reason, "status": execution["status"],
-                        "summary": _short(summary)})
+                        "summary": _short(summary)}
+                       | ({"approved_by": "auto"} if lead.get("approval") in auto_classes else {}))
         print(f"   enrichment {key}: {reason} [{execution['status']}]"
               + (" (open for later run)" if reason not in FINAL_OUTCOMES else ""))
     remaining = len(case_state.frontier(case).get("enrichment_leads", []))
     print(f"   enrichment: {len(results)} handled; {remaining} lead(s) still open "
           "(query-only, held, unavailable, and retryable leads require later review/run)")
+    for cls, values in auto_ran.items():
+        print(f"   enrichment: AUTO mode — {len(values)} {cls} lead(s) approved (approved_by=auto, "
+              f"ledgered in tool_calls.jsonl): {', '.join(values)}")
     for cls, values in awaiting.items():
         print(f"   enrichment: {len(values)} {cls} lead(s) AWAITING APPROVAL — {', '.join(values)}. "
               f"Ask the analyst; on yes run: intel.py enrich {case} --approve {cls}")

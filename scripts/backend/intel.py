@@ -203,9 +203,12 @@ DISPATCH = {
                                                                # known selectors (corroborating only)
     "takedown-watch":("WebPivot/tools/wp_takedown.py",   []),  # RDAP hold / DNS sinkhole + successor leads
     "pgp-lookup":    ("WebPivot/tools/wp_pgp.py",        []),  # keyserver UIDs + key creation date
+    "appliance-scan":("WebPivot/tools/wp_appliance.py",  []),  # passive edge appliance → KEV + patch lag
     "container-registry": ("WebPivot/tools/wp_container.py", []),  # Docker Hub/GHCR/Quay images + secrets
     "report-sections": ("tools/report_sections.py",     []),  # load|sources <case>: analyst report
                                                                # block + sources checked (zero hits kept)
+    "suppliers":     ("WebPivot/tools/wp_suppliers.py",  []),  # case raws → cases/<id>/suppliers.json
+                                                               # (C3 supplier map; KB facts only with --kb)
     "corp":          ("WebPivot/tools/wp_corp.py",       []),  # global company/officer registries (leads)
     "google-account":("WebPivot/tools/wp_google.py",     []),  # GHunt wrapper: Gmail/Gaia → Google-account leads
     "telegram":      ("WebPivot/tools/wp_telegram.py",   []),  # phone (confirm-gated) / @user → account / age (id + creation date)
@@ -381,8 +384,10 @@ BLURB = {
     "masked-hint": "correlate masked recovery hints (de*****@…, *******08) with the case's known e-mails/phones — corroborating only",
     "takedown-watch": "RDAP EPP hold / DNS sinkhole status + successor domains on the last known IPs (leads; content match = kit sibling)",
     "pgp-lookup": "keyless PGP keyserver pivot (keys.openpgp.org, Ubuntu HKP, Proton) → UIDs, fingerprints, key creation dates",
+    "appliance-scan": "passive edge/VPN appliance scan (InternetDB keyless; Shodan host / Censys when keyed, skipped under --free-only / no_spend) → product + version, CISA KEV family matches, patch lag after the advisory, 'no reboot since' from index uptime; CRITICAL only on a pre-fix version the analyst confirmed (--version-confirmed), else TENTATIVE (CPE / index versions included); --case writes cases/<id>/appliances.json, --kb facts only",
     "container-registry": "public container-registry OSINT (Docker Hub / GHCR / Quay): images, config labels, env names, layer secrets (redacted)",
     "report-sections": "a case's merged analyst report block (KQ/OQ, roles, timeline, ATT&CK, scenarios, P1-P3, counting rules) or its sources-checked rows, zero hits kept",
+    "suppliers": "subject's supplier map from a case's stored raws (TXT verification / SPF / MX / NS / CNAME / cert issuer / document) → cases/<id>/suppliers.json; a supplier is a relationship of the subject, never an operator link; --kb writes facts only",
     "corp": "global company + officer registry pivot (GLEIF, UK Companies House, OpenCorporates, FR/NO/FI registries, SEC; VN → vn-corp) — officers are homonym candidates unless corroborated",
     "google-account": "e-mail / Gaia ID → Google-account leads via an existing GHunt login (profile, Maps contributions, services); --dry-run checks setup",
     "telegram": "Telegram: `phone <E164> [--confirm-import]` (contact import on the research account, briefing first) · `resolve <@user|t.me link> [--confirm]` · `age <@user|t.me link|user id> … [--confirm]` (id + estimated creation date; briefing until --confirm, numeric ids offline) · `status` · `login` (interactive)",

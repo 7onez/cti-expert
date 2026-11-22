@@ -86,7 +86,8 @@ from cti_docx_sections import (
     add_connections_section, add_source_list, add_intelligence_gaps,
     add_recommendations, add_methodology_notes, add_key_questions, add_counting_rules,
     add_analysis_sections, add_sources_checked, add_generated_footer, add_engagement,
-    add_identity_cards, add_client_seeds
+    add_identity_cards, add_client_seeds, add_risk_summary, add_rating_scales,
+    add_threat_person_findings, add_house_section, add_actor_profile
 )
 
 
@@ -131,8 +132,9 @@ def generate_output_path(data: dict, output_path: str = None) -> str:
     return f"CTI-REPORT-{case_id}-{date}.docx"
 
 
-def build_report(data: dict, lang: str = "en") -> Document:
-    """Assemble the full CTI report document (`lang` selects the generated furniture strings)."""
+def build_report(data: dict, lang: str = "en", base: str = None) -> Document:
+    """Assemble the full CTI report document (`lang` selects the generated furniture strings; `base`,
+    the report JSON's directory, resolves relative `report_figures` paths)."""
     from cti_refs import docx_strings
     S = docx_strings(lang)
     doc = Document()
@@ -158,12 +160,18 @@ def build_report(data: dict, lang: str = "en") -> Document:
     #    subject identity card
     add_key_questions(doc, data)
     add_identity_cards(doc, data)
+    #    then the subject card map, Overall risk and Key findings (organisation-risk block)
+    add_risk_summary(doc, data, base)
 
     # 7. Subject profiles
     add_subject_profile(doc, data)
 
     # 8. Key findings
     add_findings_section(doc, data)
+    # 8b. Threat card map, affiliate exposure (+ charts), leak claims, e-mail services, threat events
+    add_threat_person_findings(doc, data, base)
+    # 8c. Actor Profile chapter (actor threat-profile report block), house order
+    add_actor_profile(doc, data)
 
     # 9. Charts section
     findings = data.get("findings", [])
@@ -218,17 +226,19 @@ def build_report(data: dict, lang: str = "en") -> Document:
     add_methodology_notes(doc, data)
     add_client_seeds(doc, data)
     add_counting_rules(doc, data)
+    add_rating_scales(doc, data)
 
     # 15. Roles, incident timeline, ATT&CK mapping, scenarios (analyst report block)
-    add_analysis_sections(doc, data)
+    add_analysis_sections(doc, data, base)
 
     # 16. Recommendations (P1/P2/P3 when a roadmap exists)
     add_recommendations(doc, data)
+    add_house_section(doc, data, "usernames_to_reserve")
 
     # 17. Open questions (table) / intelligence gaps (bullets)
     add_intelligence_gaps(doc, data)
 
-    # 18. Appendices — QA warnings, sources checked (zero-hit rows kept)
+    # 18. Appendices — QA warnings, sources checked (zero-hit rows kept), checked — nothing found
     add_sources_checked(doc, data)
     add_generated_footer(doc)
     # Bake a real clickable TOC into the field cache (Word still auto-updates it).
@@ -263,7 +273,7 @@ def main():
     output_path = generate_output_path(data, output_path)
 
     print(f"Generating CTI Report: {output_path}")
-    doc = build_report(data, lang)
+    doc = build_report(data, lang, os.path.dirname(os.path.abspath(json_path)))
     doc.save(output_path)
     print(f"CTI Report saved: {output_path}")
     print(f"  Subjects: {len(data.get('subjects', []))}")

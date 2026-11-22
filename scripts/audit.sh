@@ -120,7 +120,7 @@ for b in bad:
 sys.exit(1 if bad else 0)
 PY
 
-echo "== 3b. collection HTTP goes through wp_http, the User-Agent through wp_ua =="
+echo "== 3b. collection HTTP goes through wp_http, the User-Agent through wp_ua; vendored JS/markup stays network-free =="
 # A new client that opens its own connection gets its own answer to the questions wp_http exists to
 # answer once (which User-Agent, what an HTTP error means, what a dropped connection means), and a
 # hard-coded User-Agent goes stale on its own schedule. Both are read from each file's SYNTAX TREE,
@@ -203,6 +203,144 @@ if not bad:
 sys.exit(1 if bad else 0)
 PY
 
+# The same gate for the vendored JavaScript and markup under scripts/vendor/: the renderers must
+# not reach the network, and the HTML they emit must not pull a remote font, script, stylesheet or
+# image (a report opened offline would leak its open to that host). Read as TEXT with comments
+# blanked out; XML-namespace / JSON-schema URIs and data: URLs never count. The exceptions are the
+# vendor_js_network entries {path, pattern, reason} in the same allowlist; a stale entry fails too.
+python3 - <<'JSNET' || fail=1
+import json, re, subprocess, sys
+ALLOW = "scripts/references/http_allowlist.json"
+EXTS = (".js", ".mjs", ".cjs", ".html", ".css", ".svg")
+NET_MODS = r"(?:node:)?(?:https?|http2|net|tls|dgram|dns(?:/promises)?|undici)"
+URL = r"""["']?\s*(?P<url>(?:https?:)?//[^"'\s)>]*)"""
+CHECKS = [   # (label, regex, carries a URL to vet)
+    ("fetch() call", r"(?<![\w$])fetch\s*\(", False),
+    ("XMLHttpRequest", r"\bXMLHttpRequest\b", False),
+    ("node http(s) request", r"\bhttps?\.(?:request|get)\s*\(", False),
+    ("network module require", r"\brequire\s*\(\s*[\"'`]" + NET_MODS + r"[\"'`]\s*\)", False),
+    ("network module import", r"\bimport\b[^;]*?\bfrom\s*[\"']" + NET_MODS + r"[\"']", False),
+    ("network module import", r"\bimport\s*\(?\s*[\"'`]" + NET_MODS + r"[\"'`]", False),
+    ("dns.lookup", r"\bdns\.lookup\b", False),
+    ("WebSocket", r"\bnew\s+WebSocket\b", False),
+    ("sendBeacon", r"\bnavigator\.sendBeacon\b", False),
+    ("EventSource", r"\bEventSource\b", False),
+    ("remote <link href>", r"<link\b[^>]*?\bhref\s*=\s*" + URL, True),
+    ("remote <script src>", r"<script\b[^>]*?\bsrc\s*=\s*" + URL, True),
+    ("remote <img src>", r"<img\b[^>]*?\bsrc\s*=\s*" + URL, True),
+    ("remote CSS @import", r"@import\s+(?:url\(\s*)?" + URL, True),
+    ("remote CSS url()", r"\burl\(\s*" + URL, True),
+]
+CHECKS = [(label, re.compile(rx, re.I if url else 0), url) for label, rx, url in CHECKS]
+INERT = re.compile(r"^(?:https?:)?//(?:www\.w3\.org|json-schema\.org)/", re.I)
+
+def _blank(text, a, b):
+    """Replace text[a:b] with spaces, keeping newlines so line numbers hold."""
+    return text[:a] + re.sub(r"[^\n]", " ", text[a:b]) + text[b:]
+
+def strip_js(src):
+    """Blank // and /* */ comments; strings, template literals and regex literals are skipped
+    so a '//' inside 'https://…' is never read as a comment."""
+    out, i, n, prev = list(src), 0, len(src), ""
+    while i < n:
+        c = src[i]
+        if c in "\"'`":
+            j = i + 1
+            while j < n and src[j] != c and not (c != "`" and src[j] == "\n"):
+                j += 2 if src[j] == "\\" else 1
+            i, prev = j + 1, c
+        elif src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            out[i:j] = " " * (j - i)
+            i = j
+        elif src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out[i:j] = [ch if ch == "\n" else " " for ch in src[i:j]]
+            i = j
+        elif c == "/" and (prev == "" or prev in "(,=:[!&|?{};+-*%<>~^"):
+            j, cls = i + 1, False                       # regex literal: skip to its closing /
+            while j < n and src[j] != "\n" and (cls or src[j] != "/"):
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    cls = True
+                elif src[j] == "]":
+                    cls = False
+                j += 1
+            i, prev = j + 1, "/"
+        else:
+            if not c.isspace():
+                prev = c
+            i += 1
+    return "".join(out)
+
+def strip_comments(path, src):
+    if path.endswith((".js", ".mjs", ".cjs")):
+        return strip_js(src)
+    for rx in ((r"<!--.*?-->",) if path.endswith((".html", ".svg")) else ()) + (r"/\*.*?\*/",):
+        for m in reversed(list(re.finditer(rx, src, re.S))):
+            src = _blank(src, m.start(), m.end())
+    return src
+
+def scan(path):
+    """-> [(line, label, source line)] for every network call / remote reference in one file."""
+    try:
+        raw = open(path, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        return [(0, f"unreadable ({e})", "")]
+    text, lines, hits = strip_comments(path, raw), raw.splitlines(), set()
+    for label, rx, has_url in CHECKS:
+        for m in rx.finditer(text):
+            if has_url and INERT.match(m.group("url")):
+                continue
+            ln = text.count("\n", 0, m.start()) + 1
+            hits.add((ln, label, lines[ln - 1].strip() if ln <= len(lines) else ""))
+    return sorted(hits)
+
+try:
+    allow = json.load(open(ALLOW, encoding="utf-8"))
+    entries = (allow.get("vendor_js_network") or {}).get("entries") or []
+except Exception as e:
+    print(f"  FAIL: {ALLOW} unreadable ({e})")
+    sys.exit(1)
+bad, rules = [], []
+for k, e in enumerate(entries):
+    e = e if isinstance(e, dict) else {}
+    path, pat, reason = (str(e.get(f) or "") for f in ("path", "pattern", "reason"))
+    if not (path and pat and reason.strip()):
+        bad.append(f"{ALLOW}: vendor_js_network entry #{k} needs path, pattern and reason")
+        continue
+    try:
+        rules.append([path, re.compile(pat), 0])
+    except re.error as err:
+        bad.append(f"{ALLOW}: vendor_js_network entry {path} pattern {pat!r} is not a regex ({err})")
+# Tracked plus not-yet-committed (but not gitignored) files: a vendored drop is gated before its commit.
+files = [p for p in subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard",
+                                    "scripts/vendor"], capture_output=True, text=True).stdout.splitlines()
+         if p.endswith(EXTS)]
+n_hits = 0
+for path in files:
+    for ln, label, line in scan(path):
+        n_hits += 1
+        covering = [r for r in rules if r[0] == path and r[1].search(line)]
+        for r in covering:
+            r[2] += 1
+        if not covering:
+            bad.append(f"{path}:{ln} {label}: {line[:120]} — the vendored renderer must stay "
+                       f"network-free; remove it, or list it in {ALLOW} -> vendor_js_network with the reason")
+for path, rx, used in rules:
+    if not used:
+        bad.append(f"{ALLOW}: vendor_js_network entry {path} /{rx.pattern}/ no longer applies — remove it")
+for b in bad:
+    print("  FAIL:", b)
+if not bad:
+    print(f"  {len(files)} vendored JS/markup files: {n_hits} network reference(s), "
+          f"all documented in {ALLOW} -> vendor_js_network")
+sys.exit(1 if bad else 0)
+JSNET
+
 echo "== 4. @tool count matches CLAUDE.md RULE 3 =="
 n="$(grep -cE '^@tool\(' intel_engine/harness/tools.py)"
 doc="$(grep -oE 'every .@tool. \(([0-9]+) today' CLAUDE.md | grep -oE '[0-9]+' | head -1)"
@@ -244,7 +382,7 @@ export WAYBACK_MIN_INTERVAL=0
 if [ "$has_root_tests" = 0 ]; then
   note "SKIPPED (tests/ is local-only and absent from this checkout)"
 else
-for t in tests/test_collect_core.py tests/test_indicator_classification.py \
+for t in tests/test_collect_core.py tests/test_indicator_classification.py tests/test_third_party_licences.py \
          tests/test_references.py tests/test_no_sample_submission.py tests/test_binary_auto.py \
          tests/test_binary_backend_hosts.py tests/test_binary_rea.py \
          tests/test_email_permute.py tests/test_hooks.py \
@@ -256,14 +394,15 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_title_pivot.py tests/test_case_pipeline_smoke.py \
          tests/test_pipeline_step_timeout.py tests/test_key_alias_registry.py \
          tests/test_house_report_compose.py tests/test_docx_timeline_chart.py \
+         tests/test_house_report_risk_sections.py tests/test_house_report_actor_profile.py tests/test_telemetry_baselines.py \
          tests/test_deep_archive.py tests/test_house_report_mo_neighbours.py \
          tests/test_intelx_autofire.py tests/test_shodan_search.py \
-         tests/test_build_report_data_privacy.py tests/test_archive_recovery_hygiene.py \
+         tests/test_build_report_data_privacy.py tests/test_report_json_sections.py tests/test_archive_recovery_hygiene.py \
          tests/test_ioc_exclusion_gate.py tests/test_subdomain_frontier.py tests/test_search_pivot_fallback.py \
          tests/test_proxy.py tests/test_github_harvest.py tests/test_cld_reputation.py \
          tests/test_call_timeout.py tests/test_registrable_psl.py tests/test_landlord_ip.py tests/test_social_handle.py \
          tests/test_archify_blueprint.py tests/test_render_parity.py \
-         tests/test_email_hygiene_nullmx.py scripts/test_pivot_orchestrator.py \
+         tests/test_email_hygiene_nullmx.py scripts/test_pivot_orchestrator.py tests/test_handle_rarity.py \
          tests/test_osint_tools.py tests/test_cluster_corroboration.py tests/test_social_noise_classification.py \
          tests/test_keyed_feeds.py tests/test_reference_type_infer.py tests/test_query_entity_lookup.py \
          tests/test_dispatcher_fixes.py tests/test_prior_overlap_same_run.py tests/test_cti_driver.py \
@@ -275,7 +414,13 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py \
          tests/test_extract_accuracy.py tests/test_idn_selectors.py tests/test_ct_client.py \
          tests/test_ct_reporting.py tests/test_cert_queries.py tests/test_register_agents.py \
          tests/test_report_data_hygiene.py tests/test_crypto_reference.py tests/test_osint_industries.py \
-         tests/test_grayhatwarfare.py; do
+         tests/test_grayhatwarfare.py tests/test_stix_conformance.py tests/test_card_map.py \
+         tests/test_exposure_actor.py \
+         tests/test_hunt_packages.py tests/test_hunt_rules_yamato.py \
+         tests/test_exposure_organisation.py tests/test_suppliers.py tests/test_appliance_scan.py tests/test_telemetry_baseline_render.py \
+         tests/test_audit_js_network.py tests/test_phase_budget.py \
+         tests/test_hostile_exit_retry.py tests/test_collect_screenshot.py tests/test_snapshot_citations.py \
+         tests/test_evidence_images_manifest.py tests/test_house_report_ledger_links.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
   # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
   # run_eval tuple-`check()` style that never calls check()/exits reports PASS while testing nothing.
@@ -343,6 +488,7 @@ for t in intel_engine/tests/test_dashboard.py intel_engine/tests/test_diagram.py
          intel_engine/tests/test_indicator_classification.py intel_engine/tests/test_liveness.py \
          intel_engine/tests/test_misconfig.py intel_engine/tests/test_misp.py \
          intel_engine/tests/test_paths_capture.py intel_engine/tests/test_pssl.py \
+         intel_engine/tests/test_evidence_custody.py \
          intel_engine/tests/test_serp.py intel_engine/tests/test_timeline.py \
          intel_engine/tests/test_mcp_server_concurrency.py \
          intel_engine/tests/test_validin_engines.py \
@@ -381,12 +527,13 @@ elif [ -n "$sdk_py" ]; then
   for t in intel_engine/tests/test_context_budget.py intel_engine/tests/test_tool_gate.py \
            intel_engine/tests/test_references.py intel_engine/tests/test_case_scope.py \
            intel_engine/tests/test_openai_backend.py intel_engine/tests/test_spend_rails.py \
-           intel_engine/tests/test_cross_type_loop.py intel_engine/tests/test_mcp_protocol.py; do
+           intel_engine/tests/test_cross_type_loop.py intel_engine/tests/test_mcp_protocol.py \
+           intel_engine/tests/test_snapshot_render.py; do
     if [ ! -f "$t" ]; then bad "engine test missing: $t"; continue; fi
     if "$sdk_py" "$t" >/tmp/audit_e 2>&1; then note "PASS $t"; else tail -5 /tmp/audit_e; bad "$t"; fi
   done
 else
-  note "SKIPPED (no Python with claude_agent_sdk found) — 8 tests incl. the context-governor check."
+  note "SKIPPED (no Python with claude_agent_sdk found) — 9 tests incl. the context-governor check."
   note "  Create the skill venv (scripts/install.sh) or export INTEL_PY=<python with the SDK>."
 fi
 

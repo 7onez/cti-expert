@@ -191,13 +191,28 @@ def _wx_action(url, mode=None):
     return "whois"
 
 
+def _wx_results(out):
+    """Result count for the usage ledger: reverse-WHOIS domainsCount, WHOIS-history
+    recordsCount, else the list length; None when the answer carries no count."""
+    if not isinstance(out, dict):
+        return None
+    for k in ("domainsCount", "recordsCount"):
+        if isinstance(out.get(k), int):
+            return out[k]
+    for k in ("domainsList", "records"):
+        if isinstance(out.get(k), list):
+            return len(out[k])
+    return None
+
+
 def _get_json(url, params, timeout=30):
     r = wp_http.request(url + "?" + urlencode(params), timeout=timeout, ua=DEFAULT_UA)
     r.raise_for_status()
     out = json.loads(r.body)
     if api_usage:
         api_usage.record("whoisxml", _wx_action(url, params.get("mode")), credits=1,
-                         query=params.get("domainName") or params.get("terms") or params.get("q"))
+                         query=params.get("domainName") or params.get("terms") or params.get("q"),
+                         results=_wx_results(out))
     return out
 
 
@@ -206,7 +221,12 @@ def _post_json(url, payload, timeout=30):
     r.raise_for_status()
     out = json.loads(r.body)
     if api_usage:
-        api_usage.record("whoisxml", _wx_action(url, payload.get("mode")), credits=1)
+        # the normalised search term(s), so a later run can tell WHICH reverse-WHOIS was bought
+        terms = ((payload.get("basicSearchTerms") or {}).get("include") or []) \
+            if isinstance(payload.get("basicSearchTerms"), dict) else []
+        api_usage.record("whoisxml", _wx_action(url, payload.get("mode")), credits=1,
+                         query=" ".join(str(t).strip().lower() for t in terms if t) or None,
+                         results=_wx_results(out))
     return out
 
 

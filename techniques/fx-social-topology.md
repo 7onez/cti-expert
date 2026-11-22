@@ -38,7 +38,7 @@ Analyze the structural properties of a subject's social network — not just who
 | Subject deeply embedded in one dense cluster | Core member — likely shares ideology/affiliation with cluster |
 | Subject has high degree but low clustering | Hub connecting diverse, unrelated audiences |
 | Dense subgraph created rapidly (< 7 days) | Coordinated inauthentic behavior — investigate |
-| Mutual-follow cluster with identical creation dates | Botnet or sock puppet network |
+| Mutual-follow cluster with identical creation dates | Botnet, sock puppet network, or a bought batch from one account vendor — not proof of one operator (see [username-osint.md](username-osint.md) §7.5) |
 
 ## Tools & Fallbacks
 | Priority | Tool | Install | Notes |

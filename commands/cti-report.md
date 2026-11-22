@@ -20,7 +20,11 @@ will not resolve.
 **House report** (the editorial PDF + DOCX, composed deterministically from the case dir — sections
 I–XI, both confidence scales + confidence scatter, relationship graph + entity map, inference chain,
 temporal view + heatmaps, landing-page captures (web-scan / web-archive stand-ins for dead pages),
-per-domain dossiers, Appendices A–E incl. glossary; third-party selectors masked, internal tool/path
+per-domain dossiers, Appendices A–E incl. glossary; from the analyst `report` block when present:
+overall risk score + domain table + rating scales, numbered key findings, affiliate infostealer
+exposure (counts + charts), dark-web/Telegram claims with the proven tally, services registered by
+e-mail, events that raise the threat, usernames to reserve, and "Checked — nothing found"
+(handbook/report-template.md); third-party selectors masked, internal tool/path
 names scrubbed; the landing-page step is the only egress — proxy-gated, `--no-screenshots` to skip,
 `--no-archive-fallback` to forbid the stand-ins):
 
@@ -48,6 +52,8 @@ case dir — build the report JSON deterministically first, then run the generat
 
 ```bash
 uv run "$SKILL_DIR/scripts/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"
+# after any analyst merge onto the JSON — the CSV must carry the imported rows
+uv run "$SKILL_DIR/scripts/build_report_data.py" --from-report "CTI-REPORT-<CASE-ID>-<DATE>.json" --csv "CTI-REPORT-<CASE-ID>-<DATE>.csv"
 ```
 
 Before rendering, confirm the assessment: states confidence on both axes (Admiralty per finding,
@@ -56,4 +62,13 @@ rung; reports empty findings as empty; and includes alternative hypotheses where
 reaches a named individual.
 
 **Inherit the source's TLP marking.** A TLP:RED case must not be published to an Artifact or any
-hosted URL.
+hosted URL. Labels are FIRST TLP 2.0. With no marking on the case, `house-report` and the STIX IOC
+export default to `TLP:AMBER`:
+
+| Label | Recipients may share with |
+|---|---|
+| `TLP:CLEAR` | anyone, publicly (replaces the TLP 1.0 label WHITE) |
+| `TLP:GREEN` | their community, not via public channels |
+| `TLP:AMBER` | their organisation and its clients, need-to-know |
+| `TLP:AMBER+STRICT` | their organisation only, need-to-know |
+| `TLP:RED` | the named recipients only, no further disclosure |

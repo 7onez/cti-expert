@@ -53,7 +53,7 @@ Fully keyless. No network calls — it scores features you pass in.
 2. Note whether the site serves UNRELATED legitimate content (a compromise tell)
 3. Run phish_domain_survival.py with the collected features
 4. Read registration_class:
-     maliciously_registered  -> operator-owned infra; safe to pivot/cluster/report
+     maliciously_registered  -> operator infra is the leading hypothesis; pivot and corroborate before clustering/reporting
      likely_compromised      -> a VICTIM; corroborate before naming; report to the owner
      indeterminate           -> collect more features (age/registrar/NS)
 5. Read survival_outlook to prioritise takedown effort and set re-check cadence
@@ -97,7 +97,7 @@ python3 scripts/phish_domain_survival.py evil.top --refs myrefs.json
 |------|--------|---------|
 | purpose | age < 7d / < 30d / < 180d | freshly/very/young — purpose-registered |
 | purpose | reg→use gap ≤ 7d | served content immediately after registration |
-| purpose | high label entropy | random/DGA-like label |
+| purpose | high label entropy | random/DGA-like label — weak alone: CDN/hash hostnames, device/rDNS-style names, pinyin and acronyms raise entropy, wordlist DGAs stay low ([P06 Schüppen et al., USENIX Sec 2018]; set-level triage in `domain-advanced.md` §7) |
 | purpose | long label + ≥2 hyphens | lure-string shape (`secure-login-update`) |
 | purpose | digits mixed with letters | look-alike substitution (`paypa1`) |
 | purpose | combosquat | known brand embedded in a non-brand label |

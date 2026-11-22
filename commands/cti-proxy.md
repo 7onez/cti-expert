@@ -12,7 +12,8 @@ it here changes the egress for the **whole skill** — keyless crt.sh, Wayback/C
 urlscan, the CLD connector, WHOIS, analytics-ID reverses, and `/apikeys test`.
 
 ```bash
-python3 scripts/proxy/proxy.py status                       # pool + policy + toggles
+python3 scripts/proxy/proxy.py status                       # EFFECTIVE pool + policy + toggles, with sources
+python3 scripts/proxy/proxy.py status --probe               # ... plus one probe per exit (the /cti preflight)
 python3 scripts/proxy/proxy.py add http://user:pass@host:3128 --label res-1
 python3 scripts/proxy/proxy.py add 1.2.3.4:8080             # bare host:port -> http://
 python3 scripts/proxy/proxy.py rotation round-robin         # | random | sticky | off
@@ -32,8 +33,22 @@ python3 scripts/proxy/proxy.py disable                      # back to your real 
 - **No-leak default.** With a pool set, a direct connection is **never** used as a
   fallback unless you run `allow-direct on` — the point of a proxy is to not expose
   the real IP on a hostile case.
+- **Vendor direct fallback.** When every exit refuses the CONNECT tunnel to a vendor
+  API host listed in `scripts/proxy/vendor_hosts.json`, or every exit is dead for the
+  request (connection refused, timeout, unreachable, the proxy's own DNS failing, 407),
+  or a mix of the two, that vendor host alone is queried direct, with a one-time
+  stderr notice. Investigated targets never take this path.
+- **`/cti` egress preflight.** Before collection, `/cti` (CLI and MCP) probes each
+  exit once against `test_url` (`api.ipify.org`, never the target). If every exit
+  fails and direct is off, the run stops with status `egress-unavailable`
+  ("proxy pool dead (N exits: refused/timeout), direct disabled — fix CTI_PROXY or
+  run with CTI_PROXY_ALLOW_DIRECT=1"), recorded in the case state and the JSON summary.
+  If direct is on, it prints a one-line warning that the run egresses direct from this host.
 - **Precedence.** Env `CTI_PROXY` / `CTI_PROXIES` (and standard `HTTPS_PROXY`)
   override the stored pool — use them for a one-off session without editing the store.
+  `status` prints the effective values the opener uses after env, `.env` and
+  `proxies.json` resolution, the source of each, and masks credentials as
+  `scheme://***@host:port`.
 - **Accepted input formats.** `add` takes any of: a full URL
   `scheme://[user:pass@]host:port`; a bare `host:port`; a provider export
   `host:port:user:pass`; a `user:pass@host:port` authority; even a pasted

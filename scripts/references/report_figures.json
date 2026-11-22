@@ -1,0 +1,7 @@
+{
+  "_comment": "Report PNG embedding limit shared by the HTML and both DOCX generators through cti_report_sections. Tune max_bytes to the largest figure deliverable; oversized files are skipped with a stderr note. Containment and PNG signatures are always required.",
+  "figure_limits": {
+    "_comment": "Maximum bytes per embedded PNG; the conservative embedded fallback is smaller than this configured limit.",
+    "max_bytes": 20971520
+  }
+}

@@ -257,7 +257,9 @@ def resolve(case: str, root: str = ROOT, *, persist: bool = True, **given: objec
     reference's own defaults. Unsupplied fields are NOT invented — they stay at their default and
     the rendered prompts disclose that the run is assuming.
 
-    `given` accepts the intake fields plus `no_direct_contact` / `no_spend` (constraints).
+    `given` accepts the intake fields plus `no_direct_contact` / `no_spend` (constraints) and
+    `auto_approve` (true = auto mode, false = review mode for this case; unset = the
+    tool_policy.json default — harness/audit.py resolve_approval_mode reads it).
     """
     prev = load(case, root) or {}
     scope = _defaults()
@@ -284,6 +286,14 @@ def resolve(case: str, root: str = ROOT, *, persist: bool = True, **given: objec
             supplied.append(c)
     scope["constraints"] = {"no_direct_contact": bool(cons.get("no_direct_contact")),
                             "no_spend": bool(cons.get("no_spend"))}
+    # Approval mode for the case's cross-type loop: kept across rewrites, never invented, and not
+    # an intake answer (it never enters stated_fields).
+    aa = given.get("auto_approve")
+    aa_changed = isinstance(aa, bool) and aa != prev.get("auto_approve")
+    if isinstance(aa, bool):
+        scope["auto_approve"] = aa
+    elif isinstance(prev.get("auto_approve"), bool):
+        scope["auto_approve"] = prev["auto_approve"]
 
     scope["target_class"] = normalise_class(scope.get("target_class"))
     scope["subject_type"] = normalise_subject_type(scope.get("subject_type"))
@@ -294,7 +304,7 @@ def resolve(case: str, root: str = ROOT, *, persist: bool = True, **given: objec
     scope["stated"] = bool(scope["stated_fields"])
     scope["stated_at"] = _now() if supplied else prev.get("stated_at")
     scope["source"] = "argument" if supplied else ("scope.json" if prev else "default")
-    if persist and (supplied or not prev):
+    if persist and (supplied or not prev or aa_changed):
         save(case, scope, root)
     return scope
 

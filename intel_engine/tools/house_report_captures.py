@@ -47,6 +47,21 @@ def _mtime_utc(path: str) -> str:
     return dt.datetime.fromtimestamp(os.path.getmtime(path), dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+_WAYBACK_RE = re.compile(r"^https?://web\.archive\.org/web/(\d{14})[a-z_]*/(.+)$", re.I)
+
+
+def _archived_target(url: str):
+    """(archived host, archive time ISO-Z) for a web.archive.org/web/<14-digit ts>/<url> URL, else None."""
+    m = _WAYBACK_RE.match(url or "")
+    if not m:
+        return None
+    ts = m.group(1)
+    host = _host_of(m.group(2))
+    if not host or host == "web.archive.org":
+        return None
+    return host, f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"
+
+
 def existing_screenshots(case_dir: str) -> dict:
     """host -> {host, path, url, captured_at, sha256, title, actions} for every capture on disk.
     The wp_screenshot manifest wins over the bare pipeline PNG (it carries provenance)."""
@@ -86,6 +101,12 @@ def existing_screenshots(case_dir: str) -> dict:
                 continue
             host = (e.get("host") or "").lower() or _host_of(e.get("url") or "")
             src = e.get("source") or "live"
+            arch = _archived_target(e.get("url") or "")
+            if arch and src == "live" and host in ("", "web.archive.org"):
+                # a render of a web-archive URL is evidence of the ARCHIVED host, dated by the archive
+                host, src = arch[0], "wayback"
+                e = {**e, "source_url": e.get("source_url") or e.get("url"),
+                     "archived_at": e.get("archived_at") or arch[1]}
             # an archive copy is dated by the ARCHIVE (when the page looked like this), the file by our fetch
             cand = {"host": host, "path": p, "url": e.get("url") or f"https://{host}/",
                     "captured_at": (e.get("archived_at") if src != "live" else None) or e.get("captured_at") or _mtime_utc(p),
@@ -310,6 +331,10 @@ def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int, cre
         os.makedirs(out_dir, exist_ok=True)
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = os.path.join(out_dir, f"{stamp}_urlscan.png")
+        n = 2
+        while os.path.exists(path):
+            path = os.path.join(out_dir, f"{stamp}_urlscan-{n}.png")
+            n += 1
         open(path, "wb").write(png)
         w, hgt = (None, None)
         if png[:8] == b"\x89PNG\r\n\x1a\n":
@@ -323,6 +348,18 @@ def _urlscan_capture(h: str, case_dir: str, proxy: str | None, timeout: int, cre
                  "actions": [], "full_page": False, "tool": "house_report_captures", "host": h,
                  "source": "urlscan", "source_url": s.get("result"), "archived_at": scan_time,
                  "retrieved_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        import wp_custody
+        ev = os.path.join(case_dir, "evidence")
+        entry.update(wp_custody.collection_context(proxy, evidence_dir=ev))
+        entry["collection_context_scope"] = (
+            "retrieval from urlscan.io, not the original target visit; the original collector, "
+            "egress and clock state are unknown")
+        custody = wp_custody.append(
+            ev, "capture", wp_custody.item_ref(ev, path), entry["sha256"],
+            f"urlscan PNG retrieval for {h}; source={s.get('result')}; archived_at={scan_time}; "
+            f"retrieved_at={entry['retrieved_at']}; context describes retrieval, not original scan",
+            entry.get("collector"))
+        entry["custody_head"] = custody["head"]
         _append_manifest(case_dir, entry)
         return entry
     return None
@@ -666,7 +703,8 @@ def captures_ledger_md(entries: dict, created_of=None) -> str:
             what += " — predates the current registrant era (previous registrant)"
         if e.get("actions"):
             what += ", " + "; ".join(e["actions"])
-        link = e.get("source_url") or "—"
+        # a live render cites the page it rendered; an archive copy its frozen capture (Rule 21)
+        link = e.get("source_url") or (e.get("url") if src == "live" else None) or "—"
         rows.append(f"| {(e.get('captured_at') or '')[:19].replace('T', ' ')} | `{h}` | {what} | {link} | `{e['sha256']}` |")
     return "\n".join(rows)
 

@@ -85,9 +85,10 @@ def _run_orchestrator(passthrough: list[str], *, cont: bool) -> int:
             env["HARNESS_FAILOVER_FILE"] = signal_file
             rc = subprocess.run(cmd, cwd=ROOT, env=env).returncode
             if rc != bs.FAILOVER_EXIT:
-                # Cross-type loop stopped at awaiting-approval: on an interactive terminal, show the
-                # proposal, record the analyst's choice and resume; headless runs keep the
-                # checkpoint for `intel approve` / the case_approve tool.
+                # Cross-type loop stopped at awaiting-approval (review mode only — auto mode never
+                # leaves a pending proposal): on an interactive terminal, show the proposal, record
+                # the analyst's choice and resume; headless runs keep the checkpoint for
+                # `intel approve` / the case_approve tool.
                 if rc == 0 and sys.stdin.isatty() and _tty_approve(case):
                     if "--continue" not in cmd:
                         cmd.insert(3, "--continue")
@@ -333,10 +334,13 @@ def _cmd_doctor(pin: str | None) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(prog="intel", description="OSINT harness console")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    o = sub.add_parser("open", help="one Collect→Correlate→Assess round over the seeds")
-    o.add_argument("args", nargs=argparse.REMAINDER, help="CASE <seed-url> ... [orchestrator flags]")
-    c = sub.add_parser("continue", help="iterate to convergence (--continue)")
-    c.add_argument("args", nargs=argparse.REMAINDER, help="CASE <seed-url> ... [--depth N ...]")
+    o = sub.add_parser("open", help="one Collect→Correlate→Assess round over the seeds (AUTO "
+                                    "approval by default; --review = per-round analyst approval)")
+    o.add_argument("args", nargs=argparse.REMAINDER,
+                   help="CASE <seed-url> ... [--review] [orchestrator flags]")
+    c = sub.add_parser("continue", help="iterate to convergence (--continue; a seedless resume keeps "
+                                        "the case's recorded auto/review mode unless --review)")
+    c.add_argument("args", nargs=argparse.REMAINDER, help="CASE <seed-url> ... [--depth N] [--review] ...")
     st = sub.add_parser("status", help="case state (no LLM, no API key)")
     st.add_argument("case", nargs="?", help="a CASE id; omit to list every case")
     dr = sub.add_parser("doctor", help="which LLM backend a run would use (probes auth; no phases)")

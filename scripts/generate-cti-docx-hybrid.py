@@ -281,7 +281,7 @@ def main():
             # analyst report-block sections the Markdown body does not already carry (before the
             # rebuild, so they reach the baked TOC)
             from cti_docx_sections import add_missing_house_sections
-            added = add_missing_house_sections(doc, json_data)
+            added = add_missing_house_sections(doc, json_data, os.path.dirname(os.path.abspath(json_path)))
             if added:
                 print(f"[Phase 2] Appended report-block sections: {', '.join(added)}")
 

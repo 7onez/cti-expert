@@ -62,19 +62,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from theme import (COMMUNITY_CYCLE as COMM, EDGE_CLASS as EDGE_COLOR,  # noqa: E402
                    OPERATOR_FILL, OPERATOR_STROKE, mermaid_init)
 
-# Per-call ceiling (CTI_CALL_TIMEOUT: env → .env → references/timeouts.json → 5000s). The engine's
-# resolver is a stdlib sibling; a standalone copy falls back to the value the parent process exports.
+# Per-call ceiling — the ONE resolver (wp_timeouts: env CTI_CALL_TIMEOUT → .env →
+# references/timeouts.json → 18000s / 5 h). A standalone IntelGraph copy has no WebPivot/tools and
+# cannot import wp_timeouts; it honours the value the parent process exports, else the resolver's
+# own default (18000).
 try:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))), "WebPivot", "tools"))
     from wp_timeouts import floor as _floor  # noqa: E402
-except Exception:  # noqa: BLE001
+except Exception:  # noqa: BLE001 — standalone copy: no wp_timeouts on the path
     def _floor(t):
         try:
-            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 5000)
+            c = int(os.environ.get("CTI_CALL_TIMEOUT") or 18000)
         except ValueError:
-            c = 5000
-        c = c if c > 0 else 5000
+            c = 18000
+        c = c if c > 0 else 18000
         return c if not isinstance(t, (int, float)) else max(int(t), c)
 
 # A subgraph title is centred over a box whose width comes from its CONTENT, so a long one

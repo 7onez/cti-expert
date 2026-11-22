@@ -1,0 +1,83 @@
+{
+  "_comment": "Tunables for case_timeline.py --tempo (operator_tempo.py): the hour-of-day x weekday read of WHEN an operator acts. Adapted from the 'two distinct activity rhythms' timing read in the Packt ACTIH companion repo (MIT, (c) 2026 Packt) [PK Packt ACTIH companion repo, 2026, chapter-03 threat-profile deliverable]; the event filter, the offset scan, the abstention floor and the two-rhythm residue test are our adaptation. Output is LEAD-ONLY: it never feeds attribution, clustering or KB edges. Keep the after-hours window aligned with analysis/signature-catalog.md T-02.",
+  "settings": {
+    "_comment": "min_events/min_distinct_days = the abstention floor (below it the read is 'insufficient'); top_n = offsets reported; consistent_margin = offsets within this share of the best form the reported range; min_working_share = below it no offset concentrates activity ('no_clear_window'); burst_collapse_minutes = same kind+host events closer than this are ONE decision; drop_midnight_exact = a 00:00:00 stamp is date-only precision, not an action at midnight; two_rhythm_* = the second-band test, built on HOURS ONLY (weekday/weekend is reported per band as an attribute, never as a band): residue = events outside the primary working hours on any day; it must hold max(min_events, min_share x n) events, and min_working_share of it must sit in one working-window-wide band whose start is at least the window width (circular hours) from the primary band's start, so the two bands never overlap; min_coverage_gain = primary band + second band must beat the best single window-wide band of hours by at least max(min_events, this share x n) events, otherwise the read is one rhythm.",
+    "min_events": 30,
+    "min_distinct_days": 10,
+    "top_n": 5,
+    "consistent_margin": 0.05,
+    "min_working_share": 0.5,
+    "burst_collapse_minutes": 10,
+    "drop_midnight_exact": true,
+    "max_listed_exclusions": 50,
+    "two_rhythm_min_share": 0.2,
+    "two_rhythm_min_events": 10,
+    "two_rhythm_min_working_share": 0.6,
+    "two_rhythm_min_coverage_gain": 0.2
+  },
+  "working_window": {
+    "_comment": "Local business window scored per candidate offset. Hours are [start, end) local; days are Python weekday numbers (0 = Monday). A Sun-Thu work week is [6, 0, 1, 2, 3].",
+    "start_hour": 9,
+    "end_hour": 18,
+    "days": [0, 1, 2, 3, 4]
+  },
+  "after_hours_window": {
+    "_comment": "Second window, any weekday. 23:00-06:00 local matches signature-catalog T-02 (Off-Timezone Clustering) so a posting-time read and an operator-tempo read use the same definition of 'off hours'.",
+    "start_hour": 23,
+    "end_hour": 6
+  },
+  "offsets": {
+    "_comment": "Candidate UTC offsets in hours, -12 to +14 including the half/quarter-hour zones in common use.",
+    "values": [-12, -11, -10, -9, -9.5, -8, -7, -6, -5, -4, -3.5, -3, -2, -1, 0, 1, 2, 3, 3.5, 4, 4.5, 5, 5.5, 5.75, 6, 6.5, 7, 8, 8.75, 9, 9.5, 10, 10.5, 11, 12, 12.75, 13, 14]
+  },
+  "operator_kinds": {
+    "_comment": "Event kinds whose timestamp an operator plausibly chose or acted at. Used for `operator_events` rows ({when, kind, source, host?, url?}) in any input JSON and for commits read from github_harvest output (kind commit_author). A row whose kind is not listed is excluded with a reason.",
+    "entries": {
+      "commit_author": "git author time of a non-bot commit — the moment the author's client recorded the change",
+      "post": "a channel/forum/social post time taken from the platform record",
+      "message": "a direct or group message time",
+      "panel_action": "a manual action in an operator panel (ticket reply, deposit approval, config change) observed during an authorised engagement",
+      "login_event": "an interactive login seen in a log the analyst lawfully holds",
+      "manual_registration": "a registration the analyst has reason to believe was hand-placed (not drop-catch / bulk API)"
+    }
+  },
+  "timeline_kinds": {
+    "_comment": "Disposition of each case_timeline event kind. include=true keeps it, false drops it with `reason`, 'issuer_check' keeps a certificate only if its issuer is not in automated_cert_issuers. An unlisted kind is dropped.",
+    "entries": {
+      "registration": {"include": true, "reason": "registrar-stamped purchase moment; drop-catch and bulk-API registrations are automated (confounder)"},
+      "cert": {"include": "issuer_check", "reason": "issuance time is operator-chosen only for a manually ordered certificate"},
+      "whois_updated": {"include": false, "reason": "registrar/registry-side update (renewal, EPP status, transfer) — system-stamped"},
+      "expired": {"include": false, "reason": "term end computed from the creation date, not an action"},
+      "registrant_era": {"include": false, "reason": "WHOIS-history observation window — first/last seen, not acted"},
+      "hosting": {"include": false, "reason": "passive-DNS observation window — sensor first/last seen, not acted"},
+      "ns_era": {"include": false, "reason": "scanner observation window — first/last seen, not acted"},
+      "archive_span": {"include": false, "reason": "Wayback crawl schedule, not operator activity"},
+      "artifact_window": {"include": false, "reason": "Wayback crawl schedule, not operator activity"},
+      "wayback_capture": {"include": false, "reason": "Wayback crawl or on-demand capture time"},
+      "urlscan_scan": {"include": false, "reason": "third-party scan submission time"},
+      "content_updated": {"include": false, "reason": "page self-declared date — CMS/server-generated and forgeable"},
+      "collection": {"include": false, "reason": "our own collection time"}
+    }
+  },
+  "automated_cert_issuers": {
+    "_comment": "Case-insensitive substrings of a certificate issuer that mark automated (ACME / managed / AutoSSL) issuance — the timestamp is a renewal job's, not the operator's.",
+    "values": ["let's encrypt", "letsencrypt", "zerossl", "google trust services", "cpanel", "buypass", "amazon", "cloudflare", "microsoft azure", "acme", "autossl", "ssl.com acme"]
+  },
+  "bot_identity_patterns": {
+    "_comment": "Case-insensitive substrings of a commit author name/e-mail that mark an automated committer.",
+    "values": ["[bot]", "dependabot", "renovate", "github-actions", "actions@github.com", "semantic-release", "greenkeeper", "pre-commit-ci", "snyk-bot"]
+  },
+  "confounders": {
+    "_comment": "Printed with EVERY tempo read, whatever the verdict.",
+    "values": [
+      "automation or schedulers: cron jobs, CI pipelines, scheduled posts and certificate renewals fire at machine-chosen times (signature-catalog T-01 precision intervals are the tell)",
+      "shift work and outsourcing: a contracted or shift-based team keeps its client's hours, not its own",
+      "deliberate offsets or VPN: an operator aware of tempo analysis can delay or schedule actions; a VPN moves the apparent location, not the clock",
+      "DST: a fixed UTC offset cannot follow a daylight-saving change, so a set spanning one splits across adjacent offsets",
+      "mixed team: people in several zones produce a blended or bimodal histogram",
+      "platform server time: some platforms stamp events with server, queue or rounded time rather than the moment the operator acted",
+      "regional work week: the default window assumes Mon-Fri; a Sun-Thu or six-day week shifts the weekday share",
+      "collection sampling: collectors keep first/last commits or recent posts, so one period can dominate the set"
+    ]
+  }
+}

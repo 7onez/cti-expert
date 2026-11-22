@@ -53,8 +53,10 @@ seeds ──► collect_core.collect_many() ─► WebPivot/tools/pivot_extract.
 - **Harness** (`intel_engine/harness/`) is the LLM front-end over the same artifacts: `tools.py`
   `@tool` wrappers, `mcp_server.py` (stdio JSON-RPC, auto-discovers every `@tool`), `cli.py`.
   Cross-type loop: typed nodes → `propose` → Plan phase (`PLAN_TOOLS`, read-only) → auto free/urlscan
-  pivots with ≤ N=25 hits, else digest-bound `proposal.json` gated in `audit.gate` (`harness approve`,
-  `case_approve`, TTY). Dispatcher ops `propose` and `corpus-search`; weak links stay `add_fact` only.
+  pivots with ≤ N=25 hits, else digest-bound `proposal.json` gated in `audit.gate` — auto-approved
+  by the loop in AUTO mode (the `/cti` default; `approved_by: auto` in `proposal.json` + ledger;
+  `tool_policy.json` `auto_mode.gated_tools` never), or per round by the analyst under `--review`
+  (`harness approve`, `case_approve`, TTY). Dispatcher ops `propose` and `corpus-search`; weak links stay `add_fact` only.
   Plan-phase drops persist in `state.json` `dropped` (cleared by `reopen`); `propose` never offers a
   route whose key is absent (`pivot_routes.route_runnable`) or a `pivot_map.json`
   `propose_type_exclude` pair (anyrun on IPs); `rungs.json` `fact_only_node_classes` (Quarry
@@ -108,6 +110,7 @@ python3 scripts/backend/intel.py harness doctor [--backend X]      # which LLM b
 # Report pipeline (see §Runtime for the ask-first / always-save contract)
 S="$SKILL_DIR/scripts"
 uv run "$S/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/<CASE-ID>" -o REPORT.json
+uv run "$S/build_report_data.py" --from-report REPORT.json --csv REPORT.csv   # after any Step 0 merge
 uv run "$S/generate-cti-html.py"  REPORT.json REPORT.html
 uv run "$S/generate-cti-iocs.py"  REPORT.json IOC-PREFIX --format all
 python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>          # case dir → editorial PDF+DOCX
@@ -144,7 +147,12 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
   `wp_ua.DEFAULT_UA` (Android Chrome, from `fetch_profile.json → ua_pool`); the service-required
   exceptions are listed in `fetch_profile.json → ua_exceptions`. `audit.sh` §3b fails on a new
   `urlopen` / `build_opener` reference or a hard-coded User-Agent outside
-  `scripts/references/http_allowlist.json`.
+  `scripts/references/http_allowlist.json`. It also scans the vendored JS/markup under
+  `scripts/vendor/` (`.js/.mjs/.cjs/.html/.css/.svg`) for network calls (`fetch`,
+  `XMLHttpRequest`, `http(s).request/get`, a `node:http|https|net|dns|tls|undici` require/import,
+  `dns.lookup`, `WebSocket`, `sendBeacon`, `EventSource`) and remote `<link>`/`<script>`/`<img>`/CSS
+  `url()`/`@import` references; exceptions are `vendor_js_network` entries `{path, pattern, reason}`,
+  and a stale entry fails.
 - **Naming.** `wp_<vendor>.py`, `<x>_configured()` gates, `render_*` composers, `cmd_*` CLI
   handlers, `_<x>_cached` / `_<X>_CACHE` memos, `_write_<artifact>` persisters in `intel.py`.
 - **Attribution rails (SKILL.md RULE 5 — never name an innocent party).** New live-result blocks join `_HOST_YIELDING_SOURCES` only if
@@ -177,7 +185,7 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 | `intel_engine/harness/proposal.py` | digest-bound `proposal.json`; `harness approve` / `case_approve` / TTY gate |
 | `intel_engine/WebPivot/tools/wp_analyze.py` | `enrich_live` `have_*` gate block and per-pivot branches |
 | `intel_engine/WebPivot/tools/wp_http.py`, `wp_ua.py` | the one API transport (`request` → `Response`) and the one User-Agent source; policy in `references/http_client.json`, `fetch_profile.json` |
-| `scripts/references/http_allowlist.json` | the files allowed to open their own connection or hold a User-Agent string, each with its reason (`audit.sh` §3b) |
+| `scripts/references/http_allowlist.json` | the files allowed to open their own connection or hold a User-Agent string, and the vendored JS/markup lines allowed a network reference (`vendor_js_network`), each with its reason (`audit.sh` §3b) |
 | `intel_engine/WebPivot/tools/wp_refs.py` | `ref_path` / `load_ref` (also vendored as `kb_refs.py`, `ig_refs.py`) |
 | `intel_engine/tools/kb/noise_filters.py` | the single shared-infrastructure denylist (frontier and ingest both read it) |
 | `intel_engine/harness/tools.py`, `mcp_server.py`, `case_scope.py` | `@tool` registry (MCP auto-discovers), posture → `free_only`/hostile |

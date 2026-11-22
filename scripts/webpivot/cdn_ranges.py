@@ -71,7 +71,7 @@ import wp_http  # noqa: E402 — the one transport
 
 def _ceiling():
     """Per-call ceiling via cti_timeouts (env CTI_CALL_TIMEOUT → skill-root .env →
-    references/timeouts.json → 5000), so a standalone run still honours the analyst's setting."""
+    references/timeouts.json → 18000s / 5 h), so a standalone run still honours the analyst's setting."""
     import os as _o, sys as _s
     _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))  # -> scripts/
     try:
@@ -82,7 +82,7 @@ def _ceiling():
             v = int(_o.environ.get("CTI_CALL_TIMEOUT") or 0)
         except ValueError:
             v = 0
-        return v if v > 0 else 5000
+        return v if v > 0 else 18000
 
 
 _CALL_TIMEOUT = _ceiling()

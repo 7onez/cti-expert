@@ -31,6 +31,7 @@ CLI:
 """
 import argparse
 import json
+import os
 import sys
 import textwrap
 
@@ -400,8 +401,47 @@ def print_banner(free_only: bool = False, file=sys.stderr) -> None:
         print(line, file=file)
 
 
+def rea_lines() -> list:
+    """The optional REA deep-static layer (BinaryPivot/tools/bp_rea.py) as status lines, in the key
+    table's style. Not a key, so it never changes `mode`; it is here because a stale REA (REA_BIN at
+    a deleted Node, or an older REA under a new Node) otherwise goes unnoticed until a binary comes
+    back thin. Prints only the REA_BIN path, never another .env value. Never raises."""
+    try:
+        bp_tools = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "BinaryPivot", "tools")
+        if bp_tools not in sys.path:
+            sys.path.insert(0, bp_tools)
+        import bp_rea
+        h = bp_rea.install_health()
+    except Exception as e:  # noqa: BLE001 — a missing BinaryPivot is a reported gap, not a crash
+        return [f"  [unknown] REA — deep-static binary layer (optional): check failed ({type(e).__name__})"]
+    st = h.get("status")
+    state = {"ok": "PRESENT", "missing": "absent "}.get(st, "STALE  ")
+    where = f" via {h['source']}" if h.get("source") else ""
+    what = {"ok": f"REA {h.get('version')} at {h.get('binary')}{where} — matches pin {h.get('pinned')}",
+            "missing": f"not installed (pin {h.get('pinned')})",
+            "stale_path": f"REA_BIN={h.get('configured')} is missing or not executable"
+                          + (f"; this run falls back to {h.get('binary')} (REA {h.get('version') or '?'})"
+                             if h.get("exists") else ""),
+            "older_than_pin": f"REA {h.get('version')} at {h.get('binary')}{where} is OLDER than pin {h.get('pinned')}",
+            "newer_than_pin": f"REA {h.get('version')} at {h.get('binary')}{where} is newer than pin "
+                              f"{h.get('pinned')} (output shapes may drift)",
+            "unrunnable": f"{h.get('binary')}{where} does not answer `rea --version` (its Node may be gone)",
+            }.get(st, str(st))
+    lines = [f"  [{state}] REA — deep-static binary layer (optional)  [{st}]", f"      {what}"]
+    if st != "ok":
+        lines.append("      LOST:    deep-static APK/PE/ELF literals, Go/Dart/.NET build identities"
+                     if st in ("missing", "unrunnable") or not h.get("exists") else
+                     "      risk:    REA output may differ from what bp_rea.py was verified against")
+        fix = h.get("fix") or {}
+        lines.append(f"      fix:     {fix.get('install') or h.get('hint')}")
+        if fix.get("env_line"):
+            lines.append(f"               then set in .env: {fix['env_line']}")
+    return lines
+
+
 __all__ = ["key_status", "capability_meta", "discover_plans", "statement", "banner_lines", "print_banner",
-           "API_KEYS", "KEYLESS_BASELINE", "IMPACT_LABELS"]
+           "rea_lines", "API_KEYS", "KEYLESS_BASELINE", "IMPACT_LABELS"]
 
 
 def main():
@@ -433,6 +473,9 @@ def main():
             if r["signup"]:
                 print(f"      get one: {r['signup']}")
         print()
+    for line in rea_lines():
+        print(line)
+    print()
     print("Free and keyless regardless of any of the above:")
     for line in KEYLESS_BASELINE:
         print(f"  · {line}")

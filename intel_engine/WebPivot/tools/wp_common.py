@@ -67,11 +67,12 @@ from wp_ua import DEFAULT_UA, UA_POOL  # noqa: E402,F401
 
 # Per-call ceiling for every DATA-FETCHING / API / collector / subprocess call in the engine.
 # ONE resolver (wp_timeouts): process env CTI_CALL_TIMEOUT → skill-root/engine .env → the RULE 3
-# reference references/timeouts.json → 5000s (~83 min). Each call runs up to this long, then times
-# out and the run moves on. Deliberately NOT applied to raw DNS / TLS / JARM resolution micro-probes
+# reference references/timeouts.json → 18000s (5 h). Each call runs up to this long — never past
+# the active harness phase's deadline (wp_timeouts.floor clamps) — then times out and the run
+# moves on. Deliberately NOT applied to raw DNS / TLS / JARM resolution micro-probes
 # (getaddrinfo/dig/nslookup/handshake) — a dead name or black-hole IP would hang the full ceiling
 # there with no benefit; those keep their short fail-fast bounds.
-from wp_timeouts import CALL_TIMEOUT, resolve_call_timeout as _call_timeout  # noqa: E402,F401
+from wp_timeouts import CALL_TIMEOUT, floor as _floor_timeout, resolve_call_timeout as _call_timeout  # noqa: E402,F401
 
 # Enforce CALL_TIMEOUT as the FLOOR for every HTTP call this process makes. Every API/collector call
 # in the engine funnels through urllib.request.urlopen, so flooring it here (process-wide, once) makes
@@ -86,13 +87,9 @@ def _install_urlopen_floor():
 
     def _urlopen_capped(url, *args, **kwargs):
         if len(args) >= 2:                                  # positional timeout: urlopen(url, data, timeout, …)
-            t = args[1]
-            if not isinstance(t, (int, float)) or t < CALL_TIMEOUT:
-                args = (args[0], CALL_TIMEOUT) + args[2:]
+            args = (args[0], _floor_timeout(args[1])) + args[2:]
         else:
-            t = kwargs.get("timeout")
-            if not isinstance(t, (int, float)) or t < CALL_TIMEOUT:
-                kwargs["timeout"] = CALL_TIMEOUT
+            kwargs["timeout"] = _floor_timeout(kwargs.get("timeout"))
         return _orig(url, *args, **kwargs)
 
     _urlopen_capped._cti_capped = True

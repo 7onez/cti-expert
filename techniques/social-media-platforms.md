@@ -189,7 +189,7 @@ Usernames often embed geographic or temporal signals:
 | Pattern | Example | Signal |
 |---------|---------|--------|
 | Trailing digits = postal/ZIP code | `LinXiayu35170` | 35170 = Bruz, France |
-| Birth year suffix | `jsmith1998` | Born 1998 |
+| Birth year suffix | `jsmith1998` | Possible birth year (lead, not a DOB) |
 | Area code prefix | `user212nyc` | 212 = Manhattan |
 | Country code | `player44uk` | +44 = United Kingdom |
 
@@ -294,7 +294,7 @@ python -m sharetrace "https://..." --quiet
 Each platform links to the next — follow the breadcrumbs:
 1. Start with known username → enumerate across ALL platforms
 2. Find profile on platform X with clues pointing to platform Y
-3. Discovered new username → enumerate again
+3. Discovered new username → grade it on the claim ladder ([username-osint.md](username-osint.md) §7.1–7.2) before treating it as the same subject, then enumerate again
 4. Repeat until you find the target data
 
 ### Example Chain
@@ -321,7 +321,7 @@ Reddit username → Spotify social link → Base58-encoded string → Spotify pl
 | Twitter numeric User ID match | HIGH | Persistent identifier |
 | Snowflake timestamp decode | HIGH | Mathematical certainty |
 | BlueSky API profile data | HIGH | Direct from platform |
-| Username across platforms (photo match) | HIGH | Visual confirmation |
+| Username across platforms (photo match) | MEDIUM | Same-controller support only; photo must have no earlier source ([username-osint.md](username-osint.md) §7.1) |
 | Username across platforms (name only) | MEDIUM | May be different person |
 | Strava GPS endpoint location | HIGH | Hardware GPS data |
 | Platform false positive filtered | MEDIUM | Requires manual verification |
@@ -502,7 +502,7 @@ Step 5: Join link analysis (ShareTrace — Section 9)
 ### 15.3 Key Signals
 
 - **Channel admin** → ownership/affiliation
-- **Username** → often reused across platforms (high correlation value)
+- **Username** → often reused across platforms; a lead weighted by handle rarity ([username-osint.md](username-osint.md) §7.2), not a link
 - **Phone number** → visible to contacts; some bots expose it
 - **Message forwarding headers** → reveal original author of forwarded messages
 - **Subscriber demographics** → TGStat shows audience location/language distribution

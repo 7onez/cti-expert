@@ -46,6 +46,8 @@ CLI
     sh_export.py <case> --host site.example      # only artifacts collected from these hosts
     sh_export.py <case> --include-review         # add the held-back personal/derived values
     sh_export.py <case> --info "..." --tlp green --distribution 1
+    sh_export.py <case> --tlp green --allow-downgrade   # below the case's own marking: warned
+    sh_export.py <case> --allow-red                     # any event for a TLP:RED case
     sh_export.py <case> --root /path/to/repo -o out.json --pretty
 
 Python 3 stdlib only.
@@ -55,6 +57,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import glob
+import hashlib
 import json
 import os
 import re
@@ -201,6 +204,157 @@ def _utcnow() -> str:
 
 def _stamp() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+# --------------------------------------------------------------------------- the case's TLP
+# The case marking is resolved by the SAME parser the report builders and the STIX exporter use
+# (`scripts/cti_case_meta.py` at the skill root), never re-implemented here: two parsers drift,
+# and the one that drifts toward "readable" is the one that ships a RED case as GREEN.
+def _import_case_meta():
+    scripts = os.path.join(os.path.dirname(_repo_root()), "scripts")
+    if os.path.isdir(scripts) and scripts not in sys.path:
+        sys.path.append(scripts)
+    try:
+        import cti_case_meta  # noqa: PLC0415
+        return cti_case_meta
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_CASE_META = _import_case_meta()
+_TLP_ORDER = ("clear", "green", "amber", "amber+strict", "red")
+
+
+def read_case_markings(case_dir: str):
+    """cti_case_meta.case_markings for `case_dir`, or None when the parser is unavailable (the
+    skill imported without its scripts/) — never raises. None is NOT "no marking"."""
+    if _CASE_META is None:
+        return None
+    try:
+        m = _CASE_META.case_markings(case_dir)
+        return m if isinstance(m, dict) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def markings_digest(markings) -> str:
+    """A stable digest of the case's markings, so a push can tell they changed since the build."""
+    blob = json.dumps(markings, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def tlp_level_of(value):
+    """A TLP 2.0 level (lower-case) from `amber`, `TLP:RED`, `tlp:amber+strict`, else None."""
+    if _CASE_META is not None:
+        try:
+            return _CASE_META.tlp_parse(value)
+        except Exception:  # noqa: BLE001
+            return None
+    s = str(value or "").strip().lower()
+    s = s[4:] if s.startswith("tlp:") else s
+    return s if s in _TLP_ORDER else None
+
+
+def tlp_gate(case_dir: str, requested="", *, allow_downgrade: bool = False,
+             allow_red: bool = False) -> dict:
+    """Decide the event's TLP against the case's own markings. Never raises. Returns
+    {level, refusal, warnings, record}; `refusal` set means nothing may be built or staged.
+
+      * no --tlp: the case's strictest readable marking; the EVENT_DEFAULTS tlp when the case
+        records none; REFUSED when any marking is unreadable (fail closed, never a default);
+      * --tlp LESS restrictive than the strictest readable marking: REFUSED without
+        `allow_downgrade`, a warning with it;
+      * a readable RED anywhere on the case, or a RED event: REFUSED without `allow_red`."""
+    warnings, refusal = [], None
+    markings = read_case_markings(case_dir)
+    if markings is None:
+        strictest, unreadable = None, [{"source": "cti_case_meta",
+                                        "value": "case-marking parser unavailable"}]
+    else:
+        strictest = tlp_level_of(markings.get("tlp")) if markings.get("tlp") else None
+        unreadable = list(markings.get("tlp_unreadable") or [])
+    bad = ", ".join(f"{u.get('source')}={u.get('value')!r}" for u in unreadable)
+    req = str(requested or "").strip()
+    level = None
+    if req:
+        level = tlp_level_of(req)
+        if not level:
+            refusal = (f"REFUSED: --tlp {req!r} is not a TLP level (clear, green, amber, "
+                       f"amber+strict, red).")
+    elif unreadable:
+        refusal = (f"REFUSED: the case's TLP marking cannot be read ({bad}); refusing to guess "
+                   f"the event marking. Fix the case marking or pass --tlp LEVEL explicitly.")
+    else:
+        level = strictest or str(EVENT_DEFAULTS.get("tlp") or "amber")
+    if level and unreadable and req:
+        if markings is None and not allow_downgrade:
+            refusal = ("REFUSED: the case's TLP marking cannot be checked (scripts/cti_case_meta.py "
+                       "is not importable), so --tlp cannot be shown not to be a downgrade; pass "
+                       "--allow-downgrade to assert it.")
+        else:
+            warnings.append(f"case TLP marking unreadable ({bad}); the event uses the explicit "
+                            f"--tlp {level}.")
+    rank = _TLP_ORDER.index
+    needs = []
+    if level and not refusal and strictest and rank(level) < rank(strictest):
+        msg = (f"TLP DOWNGRADE: --tlp {level} is less restrictive than the case's own marking "
+               f"TLP:{strictest.upper()}")
+        if allow_downgrade:
+            warnings.append(msg + " — authorised with --allow-downgrade.")
+        else:
+            needs.append((msg, "--allow-downgrade"))
+    if level and not refusal and (level == "red" or strictest == "red") and not allow_red:
+        needs.append(("the case or the event is TLP:RED (named recipients only)", "--allow-red"))
+    if needs:
+        refusal = ("REFUSED: " + "; ".join(m for m, _ in needs) + ". Pass "
+                   + " and ".join(f for _, f in needs) + " to authorise building this MISP event.")
+    record = {"case_markings_digest": markings_digest(markings),
+              "strictest": ("TLP:" + strictest.upper()) if strictest else None,
+              "case_tlp": markings.get("tlp") if markings else None,
+              "unreadable": unreadable, "exported_tlp": level if not refusal else None,
+              "allow_red": bool(allow_red), "allow_downgrade": bool(allow_downgrade),
+              "case_dir": case_dir, "utc": _utcnow()}
+    return {"level": None if refusal else level, "refusal": refusal, "warnings": warnings,
+            "record": record}
+
+
+def tlp_recheck(export: dict, case_dir: str = "") -> str:
+    """Push-time re-check of an export's TLP against the case's CURRENT markings. Returns a
+    refusal string, or "" to proceed; never raises. The analyst's recorded authorisations
+    (`meta.tlp_gate.allow_*`) carry over, but nothing new is granted here: a stale export with no
+    `tlp_gate`, or markings that changed since the build, is judged by the same rule as a build."""
+    try:
+        meta = export.get("meta") if isinstance(export.get("meta"), dict) else {}
+        event = export.get("Event") if isinstance(export.get("Event"), dict) else export
+        gate = meta.get("tlp_gate") if isinstance(meta.get("tlp_gate"), dict) else None
+        tags = [str((t or {}).get("name") or "") if isinstance(t, dict) else str(t)
+                for t in (event.get("Tag") or [])]
+        levels = [lv for lv in (tlp_level_of(t) for t in tags if t.lower().startswith("tlp:"))
+                  if lv]
+        rebuild = " Rebuild it with misp_export (sh_export.py) and the flags it asks for."
+        if not levels:
+            return "REFUSED: the event carries no readable tlp: tag." + rebuild
+        event_tlp = max(levels, key=_TLP_ORDER.index)
+        case_dir = case_dir or str((gate or {}).get("case_dir") or "")
+        if not case_dir or not os.path.isdir(case_dir):
+            if gate and gate.get("exported_tlp") == event_tlp:
+                return ""                        # authorised at build; no case left to re-read
+            return ("REFUSED: the case's TLP marking cannot be re-read and the export records no "
+                    "TLP authorisation for this event." + rebuild)
+        current = markings_digest(read_case_markings(case_dir))
+        if (gate and gate.get("case_markings_digest") == current
+                and gate.get("exported_tlp") == event_tlp):
+            return ""
+        g = tlp_gate(case_dir, event_tlp,
+                     allow_downgrade=bool((gate or {}).get("allow_downgrade")),
+                     allow_red=bool((gate or {}).get("allow_red")))
+        if g["refusal"]:
+            why = ("the export predates the TLP gate" if not gate
+                   else "the case's TLP markings changed since the export was built")
+            return f"{g['refusal']} ({why}, tlp:{event_tlp}).{rebuild}"
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        return f"REFUSED: the TLP re-check failed ({exc!r}); nothing was staged."
 
 
 # --------------------------------------------------------------------------- reading the case
@@ -357,17 +511,42 @@ def _event_tags(tlp: str, confidence: str, class_pol: dict, extra=None) -> list:
     return out
 
 
+def _tlp_refused(case: str, gate: dict) -> dict:
+    """The result of a TLP refusal: same shape as a built export, nothing in it to share."""
+    return {
+        "meta": {"case": str(case), "built_at": _utcnow(), "seed": "", "target_class": "",
+                 "class_note": "", "max_publish_class_for_this_case": "never",
+                 "requires_acknowledgement": True, "hosts_read": 0, "pivots_read": 0,
+                 "base_rate_filters": "not read", "requested_distribution": 0,
+                 "staged_distribution": int(POLICY.get("staging_distribution", 0)),
+                 "refused": True, "refusal": gate["refusal"], "tlp_refused": True,
+                 "tlp_gate": gate["record"], "leaks": [], "warnings": list(gate["warnings"])},
+        "Event": {"info": "", "Tag": [], "Attribute": []},
+        "review": [], "excluded": [],
+        "counts": {"attributes": 0, "objects": 0, "attributes_in_objects": 0, "review": 0,
+                   "excluded": 0, "pivots_read": 0},
+    }
+
+
 def build_event(case: str, *, root: str | None = None, hosts=None, info: str = "",
                 label: str = "", tlp: str = "", confidence: str = "moderate",
                 threat_level=None, analysis=None, include_review: bool = False,
                 review_values=None, requested_distribution: int = 0, extra_tags=None,
-                max_attributes: int = 0, analyst_md: str = "") -> dict:
+                max_attributes: int = 0, analyst_md: str = "", allow_downgrade: bool = False,
+                allow_red: bool = False) -> dict:
     """Build the MISP event for a case. Returns the event plus the two lists that matter more than
-    it does: what was held back for review, and what was refused outright and why."""
+    it does: what was held back for review, and what was refused outright and why.
+
+    The case's own TLP marking is checked FIRST (`tlp_gate`): a refused marking builds nothing —
+    the result carries only `meta.refusal`, which `sh_misp.push` refuses to stage."""
     root = root or _repo_root()
+    gate = tlp_gate(os.path.join(root, "cases", str(case)), tlp,
+                    allow_downgrade=allow_downgrade, allow_red=allow_red)
+    if gate["refusal"]:
+        return _tlp_refused(case, gate)
     data = read_case(case, root)
     noise = _import_noise(root)
-    warnings = []
+    warnings = list(gate["warnings"])
     if noise is None:
         warnings.append(
             "BASE-RATE FILTERS UNAVAILABLE (tools/kb/noise_filters.py not importable). Every "
@@ -435,7 +614,7 @@ def build_event(case: str, *, root: str | None = None, hosts=None, info: str = "
                         f"subject, which a truncated attribute list does not.")
 
     seed = _seed_host(data)
-    tlp = tlp or str(EVENT_DEFAULTS.get("tlp") or "amber")
+    tlp = gate["level"]
     info = info or _default_info(seed, label or str(EVENT_DEFAULTS.get("default_label") or "fraud"))
 
     # Nothing WE compose may carry our own operational strings. Refusing beats stripping: a silent
@@ -480,6 +659,7 @@ def build_event(case: str, *, root: str | None = None, hosts=None, info: str = "
             "requires_acknowledgement": bool(class_pol.get("requires_acknowledgement")),
             "hosts_read": len({r["host"] for r in data["records"]}),
             "pivots_read": n_pivots,
+            "tlp_gate": gate["record"],
             "base_rate_filters": "noise_filters" if noise else "UNAVAILABLE",
             "requested_distribution": req,
             "requested_distribution_name": _dist_entry(req).get("name"),
@@ -901,7 +1081,12 @@ def _main(argv=None) -> int:
     ap.add_argument("--info", default="", help="event headline (never put a case id in it)")
     ap.add_argument("--label", default="", help="word for the default headline, e.g. phishing")
     ap.add_argument("--tlp", default="", choices=["", "clear", "green", "amber", "amber+strict",
-                                                  "red"])
+                                                  "red"],
+                    help="event TLP; default: the case's strictest marking (amber if none)")
+    ap.add_argument("--allow-downgrade", action="store_true",
+                    help="authorise a --tlp LESS restrictive than the case's own marking")
+    ap.add_argument("--allow-red", action="store_true",
+                    help="authorise an event for a case (or at a --tlp) marked TLP:RED")
     ap.add_argument("--confidence", default="moderate",
                     help="ICD-203 term for the assessment; becomes an estimative-language tag")
     ap.add_argument("--threat-level", type=int, default=None, help="1 High 2 Medium 3 Low 4 Undef")
@@ -928,7 +1113,16 @@ def _main(argv=None) -> int:
                       include_review=a.include_review, review_values=a.review_value,
                       requested_distribution=a.distribution, extra_tags=a.tag,
                       max_attributes=a.max_attributes,
-                      analyst_md=(open(a.report, encoding="utf-8").read() if a.report else ""))
+                      analyst_md=(open(a.report, encoding="utf-8").read() if a.report else ""),
+                      allow_downgrade=a.allow_downgrade, allow_red=a.allow_red)
+    for w in res["meta"].get("warnings") or []:
+        if w.startswith("TLP DOWNGRADE") or w.startswith("case TLP marking"):
+            print(f"WARNING: {w}", file=sys.stderr)
+    if res["meta"].get("tlp_refused"):          # nothing was built: write nothing, exit 2
+        print(res["meta"]["refusal"], file=sys.stderr)
+        if a.leads:
+            print(leads(res))
+        return 2
     if not a.no_write:
         case_dir = os.path.join(a.root or _repo_root(), "cases", str(a.case))
         res["meta"]["written_to"] = write_event(res, case_dir, a.out)

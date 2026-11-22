@@ -19,12 +19,32 @@ derivation build_report_data keeps for backward compatibility, and the anti-infl
   engagement_items(data)        -> [(label, value)] document-control metadata (author · version …)
   apply_engagement(data)        -> copies engagement.author onto case.analyst (the cover reads it)
   ensure_qa_warnings(data)      -> fills `qa_warnings` via the engine's report_sections.lint (stderr)
+  display_rows(data, key)       -> rows ready to render: the risk / threat / person sections sorted
+                                   and labelled as the house report shows them (others = rows())
+  section_note(data, key)       -> the intro sentence of a section ('' when none); the leak-claim
+                                   tally "Of N … claims naming the subject, K are proven"
+  claim_tally(rows)             -> (N claims, K proven) — K counts only `proven` literally true
+  risk_overall(data) / rating_scales(data) -> the organisation risk object, house-report wording
+  nothing_found(data)           -> (negative_checks rows, ["<source>: no results for …"] zero-hit lines)
+  counts_only(data)             -> affiliate_exposure rows cut to their named count fields
+  figures(data, group, base)    -> [(name, png bytes, caption)] for card maps / affiliate-exposure
+                                   charts in `report_figures` that pass resolve_figure (a PNG under the
+                                   size cap inside the report JSON's dir or the case report/ dir), read
+                                   once through one no-follow descriptor — renderers embed these bytes
+                                   and never reopen the path
+  triage_exposure(data)         -> exposure charts drawn from stealer-log triage (no affiliate rows):
+                                   rendered under EXPOSURE_TRIAGE_TITLE
+  actor_blocks(data)            -> [(heading, [("p", text) | ("bullets", [..]) | ("table", cols, rows)])] of
+                                   the "Actor Profile" chapter in house order ([] when no actor section);
+                                   attribution always with its likelihood term + confidence, every dissent line
 
 Every row is the analyst's judgement for the report only: a role, a scenario or a timeline entry is
 not a KB edge and never names an operator on a single signal (RULE 5).
 """
 import json
+import os
 import re
+import stat
 import sys
 
 from cti_refs import load_ref
@@ -91,6 +111,51 @@ SECTIONS = [
         ("calls", "Calls"), (lambda r: _checked_hits(r), "Hits"), (lambda r: _checked_status(r), "Status"),
         (("first", "first_utc", "first_seen"), "First (UTC)"),
         (("last", "last_utc", "last_seen"), "Last (UTC)")]),
+    ("risk_assessment", "Overall Risk", [
+        ("name", "Domain"), (lambda r: _score(r.get("score")), "Score"), ("level", "Level"),
+        ("main_issue", "Main issue")]),
+    ("rating_scales", "Rating Scales", []),
+    ("key_findings", "Key Findings — Severity and Priority", [
+        ("n", "#"), ("finding", "Finding"), ("severity", "Severity"), ("priority_label", "Priority")]),
+    ("affiliate_exposure", "Affiliate Exposure — Infected Computers", [
+        ("org", "Organisation"), ("country", "Country"), ("infected_hosts", "Infected computers"),
+        (lambda r: str(r.get("latest_infection") or "")[:10], "Latest infection"),
+        ("stealer_family", "Stealer family"), ("portal", "Portal exposed")]),
+    ("leak_claims", "Dark-web and Telegram Claims", [
+        (lambda r: str(r.get("date") or "")[:10], "Date"), ("actor", "Actor"), ("venue", "Venue"),
+        ("claim", "Claim"), (lambda r: "Proven" if r.get("proven") is True else "Unconfirmed", "Status"),
+        ("evidence", "Evidence")]),
+    ("email_services", "Services Registered by E-mail", [
+        ("email", "E-mail"), ("service", "Service"), ("evidence", "Evidence"),
+        (lambda r: str(r.get("date") or "")[:10], "Date")]),
+    ("threat_events", "Events That Raise the Threat", [
+        (lambda r: _event_dates(r), "Dates"), ("event", "Event"), ("location", "Location"),
+        ("why_it_raises_risk", "Why it raises the risk"), ("local_legal_notes", "Local legal notes"),
+        ("grade", "Grade")]),
+    ("usernames_to_reserve", "Usernames to Reserve", [
+        ("platform", "Platform"), ("handle", "Handle"),
+        (lambda r: RESERVE_LABEL.get(r.get("status"), str(r.get("status") or "").replace("_", " ")), "Status")]),
+    ("negative_checks", "Checked — Nothing Found", [
+        ("check", "Check"), ("scope", "Scope"), (lambda r: r.get("result") or "no record", "Result"),
+        (lambda r: str(r.get("date") or "")[:10], "Date")]),
+    # actor threat-profile chapter (ACTOR_TITLE) — block headings, house-report wording
+    ("claim_confidence", "Source Basis and Confidence", [
+        ("claim", "Claim"), (lambda r: str(r.get("confidence") or "").replace("_", " "), "Confidence"),
+        ("rationale", "Rationale"), ("sources", "Sources")]),
+    ("pivot_opportunities", "Infrastructure and Defensive Pivots", [
+        ("seed_artifact", "Seed artifact"), ("pivot_question", "Pivot question"),
+        ("defensive_use", "Defensive use")]),
+    ("playbook", "Operational Playbook", [
+        ("tactic", "Tactic"), ("behaviours", "Behaviours"), ("attack_ids", "ATT&CK"), ("evidence", "Evidence")]),
+    ("attack_coverage", "ATT&CK Coverage", [
+        ("technique_id", "Technique"), ("tactics", "Tactic"),
+        (lambda r: "yes" if r.get("playbook") else "", "Playbook"), ("hunts", "Hunt hypotheses"),
+        ("mappings", "Incident mapping")]),
+    ("hunt_hypotheses", "Hunt Hypotheses", [
+        ("id", "HH"), ("hypothesis", "Hypothesis"), ("priority_telemetry", "Priority telemetry"),
+        ("behavioural_signals", "Behavioural signals"), ("attack_ids", "ATT&CK"),
+        ("hunt_package_ref", "Hunt package")]),
+    ("telemetry_priorities", "Priority Telemetry", [("source", "Source"), ("why", "Why")]),
 ]
 SECTION = {k: (t, cols) for k, t, cols in SECTIONS}
 PRIORITY_HEADINGS = [("P1", "P1 — this week"), ("P2", "P2 — this month"), ("P3", "P3 — ongoing")]
@@ -174,6 +239,455 @@ def gap_strings(open_questions):
     return out
 
 
+# ------------------------------------------------------------------ risk / threat / person sections
+# House-report wording (intel_engine/tools/house_report_sections.py), so both report paths read alike.
+RESERVE_LABEL = {"available": "Available — register it now",
+                 "taken_by_other": "Taken by another account — monitor for impersonation",
+                 "reserved": "Already reserved by the subject"}
+THREAT_EVENTS_NOTE = ("Dated events in the coming period that attract attackers, protesters or opportunistic "
+                      "fraud towards the subject — plan monitoring and staffing around them.")
+NOTHING_FOUND_NOTE = ("Each check below ran and returned no record. A negative result is true at the date of "
+                      "the check; it bounds what this report claims and is not proof that no record exists.")
+RISK_NOTE = ("Each domain is rated by the analyst for exploitability and harm and mapped onto a fixed "
+             "0–{smax} scale (see Rating Scales). A score is analyst judgement, not a probability.")
+WITHHELD_EMAIL = "(withheld)"
+# affiliate_exposure: COUNTS ONLY — any other field (a credential, cookie, URL with a token) is dropped
+COUNT_FIELDS = ("org", "country", "infected_hosts", "latest_infection", "stealer_family", "portal",
+                "import_record")
+# report_figures groups -> (figure name, caption) in render order; captions follow the house report
+FIGURE_CAPTIONS = {
+    "card_maps": [
+        ("person", "Connections of the subject: the people, organisations, accounts and places the analyst "
+                   "linked to them, grouped by kind, each graded on the Admiralty scale; dashed = unconfirmed."),
+        ("threats", "Threat actors reported against the organisation, one panel per kind of actor, each graded "
+                    "on the Admiralty scale; dashed = unconfirmed."),
+        ("suppliers", "Third-party suppliers seen in public records (DNS verification records, mail routing, "
+                      "certificates, documents); a dashed card is a low-confidence inference, not a confirmed "
+                      "contract.")],
+    "exposure_charts": [
+        ("fig_exposure_year", "Infected computers by year of infection — counts only"),
+        ("fig_exposure_country", "Infected computers by country — counts only"),
+        ("fig_exposure_family", "Infected computers by stealer family — counts only")],
+}
+EXPOSURE_TRIAGE_TITLE = "Infected Computers — Stealer-Log Triage"
+EXPOSURE_TRIAGE_NOTE = ("Counts only, one infected computer per stealer log triaged in this case; no "
+                        "affiliate-exposure rows were recorded, so no organisation is named. No credential, "
+                        "cookie or password from the logs is reproduced.")
+_RESERVE_ORDER = {"available": 0, "taken_by_other": 1, "reserved": 2}
+
+
+def _real(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _score(v):
+    return f"{float(v):.1f}" if _real(v) else "—"
+
+
+def _num(v):
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return f"{v:,}" if _real(v) else str(v)
+
+
+def _score_max():
+    try:
+        return _num(_engine_report_sections().RISK["score_max"])
+    except Exception:  # noqa: BLE001 — engine not vendored: the C1 scale is 0-10
+        return "10"
+
+
+def _event_dates(r):
+    s, e = str(r.get("start") or "")[:10], str(r.get("end") or "")[:10]
+    return f"{s} – {e}" if e and e != s else s
+
+
+def withheld_email(v):
+    """'(withheld)@domain' — the domain kept, the mailbox never printed; idempotent."""
+    s = str(v or "").strip()
+    if s.startswith(WITHHELD_EMAIL):
+        return s
+    return WITHHELD_EMAIL + (s[s.rindex("@"):] if "@" in s else "")
+
+
+def claim_tally(rows_):
+    """(N claims, K proven) — K counts only rows whose `proven` is literally true."""
+    rs = [r for r in (rows_ or []) if isinstance(r, dict)]
+    return len(rs), sum(1 for r in rs if r.get("proven") is True)
+
+
+def counts_only(data):
+    """Cut every affiliate_exposure row to COUNT_FIELDS in place (a hand-authored JSON may carry a
+    credential or cookie column; it must not even reach the HTML's embedded data). Returns `data`."""
+    if isinstance(data, dict) and isinstance(data.get("affiliate_exposure"), list):
+        data["affiliate_exposure"] = [{k: r[k] for k in COUNT_FIELDS if k in r}
+                                      for r in data["affiliate_exposure"] if isinstance(r, dict)]
+    return data
+
+
+def _risk(data):
+    ra = data.get("risk_assessment") if isinstance(data, dict) else None
+    return ra if isinstance(ra, dict) and [d for d in ra.get("domains") or [] if isinstance(d, dict)] else {}
+
+
+def risk_overall(data):
+    """(summary sentence, coverage warning, unrated sentence) of the organisation risk object, or
+    None when it has no rated domain. Domain rows: display_rows(data, 'risk_assessment')."""
+    ra = _risk(data)
+    if not ra:
+        return None
+    doms = [d for d in ra["domains"] if isinstance(d, dict)]
+    ov = ra.get("overall") if isinstance(ra.get("overall"), dict) else {}
+    cov = ra.get("coverage") if isinstance(ra.get("coverage"), dict) else {}
+    rated = cov.get("rated") if _real(cov.get("rated")) else len(doms)
+    total = cov.get("total") if _real(cov.get("total")) else rated
+    line = (f"Overall risk score: {ov.get('level') or '—'} ({_score(ov.get('score'))}/{_score_max()}), "
+            f"mean of {_num(rated)} of {_num(total)} rated domains. " + RISK_NOTE.format(smax=_score_max()))
+    unrated = [str(u).replace("_", " ") for u in (cov.get("unrated") or []) if str(u).strip()]
+    return (line, str(cov.get("warning") or ""),
+            ("Not rated (no evidence either way): " + ", ".join(unrated) + ".") if unrated else "")
+
+
+def _band_range(lo, hi, smax):
+    if isinstance(lo, list) and len(lo) == 2:
+        return f"{_num(lo[0])} – {_num(lo[1])}"
+    if isinstance(lo, dict):
+        return f"{_num(lo.get('min', '—'))} – {_num(lo.get('max', '—'))}"
+    return f"{_score(lo)} – {smax}" if hi is None else f"{_score(lo)} to below {_score(hi)}"
+
+
+def rating_scales(data):
+    """([(risk level, score range)], [(priority, act within)]) — bands highest first; ([], []) when none."""
+    ra = _risk(data)
+    bands = ra.get("bands") if isinstance(ra.get("bands"), dict) else {}
+    prio = ra.get("priorities") if isinstance(ra.get("priorities"), dict) else {}
+    smax = _score_max()
+    scalar = bool(bands) and all(_real(v) for v in bands.values())
+    order = sorted(bands, key=lambda k: -bands[k]) if scalar else list(bands)
+    band_rows = [(str(k), _band_range(bands[k], bands[order[i - 1]] if scalar and i else None, smax))
+                 for i, k in enumerate(order)]
+    return band_rows, [(str(k), str(v)) for k, v in sorted(prio.items())]
+
+
+def display_rows(data, key):
+    """Rows of `key` sorted / labelled as the house report shows them; rows() for the other sections."""
+    if key == "risk_assessment":
+        doms = [d for d in _risk(data).get("domains") or [] if isinstance(d, dict)]
+        return sorted(doms, key=lambda d: (-(d["score"] if _real(d.get("score")) else -1), str(d.get("name") or "")))
+    rs = rows(data, key)
+    if key == "key_findings":
+        prio = _risk(data).get("priorities") or {}
+        prio = prio if isinstance(prio, dict) else {}
+        label = _engine_attr("priority_label") or (lambda p, _prio: str(p or ""))
+        return [dict(r, priority_label=label(r.get("priority"), prio))
+                for r in sorted(rs, key=lambda r: r["n"] if _real(r.get("n")) else 1e9)]
+    if key == "affiliate_exposure":
+        return sorted(rs, key=lambda r: (-(r["infected_hosts"] if _real(r.get("infected_hosts")) else 0),
+                                         str(r.get("org"))))
+    if key == "leak_claims":
+        return sorted(rs, key=lambda r: str(r.get("date") or ""))
+    if key == "threat_events":
+        return sorted(rs, key=lambda r: (str(r.get("start") or ""), str(r.get("event") or "")))
+    if key == "usernames_to_reserve":
+        return sorted(rs, key=lambda r: (_RESERVE_ORDER.get(r.get("status"), 9), str(r.get("platform"))))
+    if key == "email_services":
+        return sorted(rs, key=lambda r: (str(r.get("email")).lower(), str(r.get("service")).lower()))
+    if key == "playbook":
+        rank = _engine_attr("tactic_rank")
+        return sorted(rs, key=lambda r: rank(r.get("tactic"))) if rank else rs
+    if key == "hunt_hypotheses":
+        return sorted(rs, key=lambda r: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", str(r.get("id")))])
+    if key == "attack_coverage" and not rs:
+        derive = _engine_attr("attack_coverage")
+        return derive(data) if derive and (rows(data, "playbook") or rows(data, "hunt_hypotheses")) else []
+    return rs
+
+
+# ------------------------------------------------------------------ actor threat-profile chapter
+# House-report wording (house_report_sections.actor_profile); structure adapted from
+# [PK Packt ACTIH companion repo, 2026, chapter-03 threat-profile deliverable].
+ACTOR_TITLE = "Actor Profile"
+ACTOR_KEYS = ("actor_profile", "claim_confidence", "pivot_opportunities", "playbook", "hunt_hypotheses",
+              "telemetry_priorities")
+ATTRIBUTION_NOTE = ("The attribution is analyst judgement for this report: it is not a knowledge-base "
+                    "edge or a same-operator link (RULE 5), and a threat score is a lead, not attribution.")
+ACTOR_NOTES = {
+    "claim_confidence": ("Each claim this profile makes, with the analyst's confidence in it and why. A High "
+                         "rating must cite its sources."),
+    "pivot_opportunities": "Artifacts a defender can pivot on. A hit is a lead to investigate, not a same-operator link.",
+    "playbook": "Behaviours by ATT&CK tactic, in tactic order.",
+    "attack_coverage": ("Every technique the playbook or a hunt hypothesis names, with the incident ATT&CK mapping "
+                        "rows that evidence the same technique in this case."),
+}
+ALIAS_COLS = [("name", "Alias"), ("source", "Source")]
+ACTIVITY_COLS = [("when", "When"), ("event", "Activity"), ("sources", "Sources")]
+VICTIM_COLS = [(0, "Dimension"), (1, "Observed targeting")]
+
+
+def _telemetry_why(r):
+    """'Why', plus ' — Windows audit setting: …' when baseline_ref resolves in the telemetry-baseline map
+    (REPORT.json's carried baseline_setting when the engine is unavailable); a row with no ref or an
+    unresolved one prints its Why unchanged."""
+    resolve = _engine_attr("telemetry_baseline_setting")
+    st = (resolve(r.get("baseline_ref")) if resolve else None) or r.get("baseline_setting")
+    return f"{cell(r, 'why')} — Windows audit setting: {st}" if st else r.get("why")
+
+
+TELEMETRY_COLS = [(lambda r: r.get("_n"), "#"), ("source", "Source"), (_telemetry_why, "Why")]
+
+
+def _engine_attr(name):
+    try:
+        return getattr(_engine_report_sections(), name, None)
+    except Exception:  # noqa: BLE001 — a missing engine keeps the analyst order
+        return None
+
+
+def _items(v):
+    v = [v] if isinstance(v, str) else (v if isinstance(v, list) else [])
+    return [str(x).strip() for x in v if str(x).strip()]
+
+
+def attribution_text(att):
+    """(assessment sentence or '', [dissent lines]) — the assessment always carries its likelihood term
+    and confidence; an absent one is said to be absent, never dropped (RULE 5)."""
+    att = att if isinstance(att, dict) else {}
+    line = ""
+    if str(att.get("assessment") or "").strip():
+        lk = str(att.get("likelihood") or "").strip() or "likelihood term not stated"
+        cf = str(att.get("confidence") or "").strip()
+        cf = (cf if cf.lower().endswith("confidence") else f"{cf} confidence") if cf else "confidence not stated"
+        line = f"Assessment: {str(att['assessment']).strip()} — {lk}, {cf}."
+    return line, _items(att.get("dissent"))
+
+
+def threat_score_text(ts):
+    ts = ts if isinstance(ts, dict) else {}
+    if ts.get("threat_score") in (None, ""):
+        return ""
+    # posture may be a list of recommended actions: joined with '; ', never printed as a Python list
+    bits = [_num(ts["threat_score"])] + [
+        f"{k} {'; '.join(_items(ts[k])) if isinstance(ts[k], list) else ts[k]}"
+        for k in ("band", "posture") if ts.get(k) and (_items(ts[k]) or not isinstance(ts[k], list))]
+    return "Threat score (analyst lead, not attribution): " + " · ".join(bits) + " — from the case's actor scoring."
+
+
+def has_actor_profile(data):
+    return isinstance(data, dict) and (bool(data.get("actor_profile")) or any(rows(data, k) for k in ACTOR_KEYS[1:]))
+
+
+def actor_blocks(data):
+    """[(heading, [item])] of the Actor Profile chapter in house order; [] when no actor section is
+    present. item = ("p", text) | ("bullets", [text]) | ("table", cols, rows)."""
+    if not has_actor_profile(data):
+        return []
+    ap = data.get("actor_profile") if isinstance(data.get("actor_profile"), dict) else {}
+    out = []
+
+    def add(title, items):
+        items = [i for i in items if i and (i[0] != "table" or i[2])]
+        if items:
+            out.append((title, items))
+
+    def table(key):
+        return ("table", SECTION[key][1], display_rows(data, key))
+
+    def note(key):
+        return ("p", ACTOR_NOTES[key]) if display_rows(data, key) else None
+
+    add("Executive Line", [("p", f"Threat profile of {ap['name']}.") if ap.get("name") else None,
+                           ("p", str(ap["executive_line"])) if ap.get("executive_line") else None,
+                           ("p", threat_score_text(ap.get("threat_score"))) if threat_score_text(ap.get("threat_score")) else None])
+    add(SECTION["claim_confidence"][0], [note("claim_confidence"), table("claim_confidence")])
+    line, dissent = attribution_text(ap.get("attribution"))
+    timeline = sorted((t for t in ap.get("activity_timeline") or [] if isinstance(t, dict)),
+                      key=lambda t: str(t.get("when") or ""))
+    add("Actor Overview", [("table", ALIAS_COLS, [a for a in ap.get("aliases") or [] if isinstance(a, dict)]),
+                           ("p", line) if line else None,
+                           ("p", "Dissent and alternative views:") if dissent else None,
+                           ("bullets", dissent) if dissent else None,
+                           ("p", ATTRIBUTION_NOTE) if (line or dissent) else None,
+                           ("table", ACTIVITY_COLS, timeline)])
+    intent = ap.get("intent") if isinstance(ap.get("intent"), dict) else {}
+    if _items(intent.get("motivations")) or _items(intent.get("evidence")):
+        add("Intent", [("p", "Motivations: " + ("; ".join(_items(intent.get("motivations"))) or "—")),
+                       ("p", "Evidence: " + ("; ".join(_items(intent.get("evidence"))) or "—"))])
+    cap = ap.get("capability") if isinstance(ap.get("capability"), dict) else {}
+    if str(cap.get("summary") or "").strip() or _items(cap.get("evidence")):
+        add("Capability", [("p", str(cap.get("summary") or "").strip() or "—"),
+                           ("p", "Evidence: " + ("; ".join(_items(cap.get("evidence"))) or "—"))])
+    vic = ap.get("victimology") if isinstance(ap.get("victimology"), dict) else {}
+    add("Victimology", [("table", VICTIM_COLS,
+                         [{0: label, 1: "; ".join(_items(vic.get(k)))}
+                          for k, label in (("sectors", "Sectors"), ("geographies", "Geographies"),
+                                           ("data_targeted", "Data targeted")) if _items(vic.get(k))])])
+    add("Persona & OPSEC", [("bullets", _items(ap.get("persona_opsec"))) if _items(ap.get("persona_opsec")) else None])
+    add("Tempo", [("p", str(ap["tempo_summary"]).strip()) if str(ap.get("tempo_summary") or "").strip() else None,
+                  ("p", f"Tempo analysis: {str(ap['tempo_ref']).strip()} (case timeline).")
+                  if str(ap.get("tempo_ref") or "").strip() else None])
+    for key in ("pivot_opportunities", "playbook", "attack_coverage"):
+        add(SECTION[key][0], [note(key), table(key)])
+    add(SECTION["hunt_hypotheses"][0], [table("hunt_hypotheses")])
+    add(SECTION["telemetry_priorities"][0],
+        [("table", TELEMETRY_COLS, [dict(r, _n=i) for i, r in enumerate(rows(data, "telemetry_priorities"), 1)])])
+    return out
+
+
+def section_note(data, key):
+    """The intro sentence the house report prints above a section ('' when it prints none)."""
+    rs = rows(data, key)
+    if key == "affiliate_exposure" and rs:
+        total = sum(r["infected_hosts"] for r in rs if _real(r.get("infected_hosts")))
+        return (f"{_num(total)} infected computer(s) recorded across {len(rs)} affiliated organisation(s). "
+                "Counts only: no credential, cookie or password from the logs is reproduced in this report. "
+                "An infected computer exposes the organisation's portals; it does not identify who used it.")
+    if key == "leak_claims" and rs:
+        n, k = claim_tally(rs)
+        return (f"Of {n} dark-web/Telegram claims naming the subject, {k} are proven. An unconfirmed claim is "
+                "an actor's statement, not a finding: it is listed so the reader knows it exists.")
+    if key == "threat_events" and rs:
+        return THREAT_EVENTS_NOTE
+    if key == "usernames_to_reserve" and rs:
+        free = sum(1 for r in rs if r.get("status") == "available")
+        return ("Defensive recommendation: register the subject's handles before an impersonator does. "
+                f"{free} of {len(rs)} handle(s) checked are still available.")
+    if key == "email_services" and rs:
+        return ("Services where an account exists for the e-mail address. An account shows the address was used "
+                "to register; it does not show who registered it or that the account is active."
+                + ("" if data.get("sensitive_shown") else
+                   " E-mail addresses are withheld from this edition (domain kept)."))
+    if key == "negative_checks":
+        return NOTHING_FOUND_NOTE
+    return ""
+
+
+def nothing_found(data):
+    """(negative_checks rows, zero-hit lines): the analyst's negative checks plus every sources_checked
+    row with status 'zero', grouped by source class — the house 'Checked — nothing found'."""
+    zero = {}
+    for r in rows(data, "sources_checked"):
+        if str(r.get("status") or "").lower() == "zero":
+            sel = str(r.get("selector") or "")
+            zero.setdefault(str(r.get("source_class") or r.get("source") or ""), []).append(
+                "whole case" if sel in ("", "(case)") else sel)
+    return rows(data, "negative_checks"), [f"{src}: no results for " + ", ".join(zero[src]) for src in sorted(zero)]
+
+
+# report_figures containment: an embedded figure must be a PNG of bounded size inside the report JSON's
+# directory or the case's report/ directory (a hand- or LLM-authored REPORT.json could otherwise pull
+# any local file into a deliverable). Size cap in references/report_figures.json.
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_FIGURE_FALLBACK = {"figure_limits": {"max_bytes": 8 * 1024 * 1024}}
+_CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_FIG_MAX = None
+
+
+def figure_max_bytes():
+    global _FIG_MAX
+    if _FIG_MAX is None:
+        lim = load_ref("report_figures.json", _FIGURE_FALLBACK).get("figure_limits")
+        v = lim.get("max_bytes") if isinstance(lim, dict) else None
+        _FIG_MAX = v if _real(v) and v > 0 else _FIGURE_FALLBACK["figure_limits"]["max_bytes"]
+    return _FIG_MAX
+
+
+def figure_roots(data, base=None):
+    """Real directories a figure may come from: `base` (the report JSON's directory) and the case's
+    report/ directory under the engine's cases/ tree (case.id must be a plain case id)."""
+    roots = []
+    if base:
+        roots.append(os.path.realpath(base))
+    cid = ((data.get("case") or {}) if isinstance(data, dict) else {}).get("id")
+    if isinstance(cid, str) and _CASE_ID_RE.match(cid):
+        home = os.environ.get("INTEL_HOME") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "intel_engine")
+        roots.append(os.path.realpath(os.path.join(home, "cases", cid, "report")))
+    return roots
+
+
+def _inside(real, roots):
+    return any(real.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def resolve_figure(path, roots, base=None):
+    """(png bytes, '') for a PNG of at most figure_max_bytes() inside one of `roots`; else (None, why).
+    A relative path resolves against `base`; with no base it is refused. The file is opened ONCE
+    (O_NOFOLLOW where available, so a final component swapped to a symlink after the containment check
+    fails to open), the descriptor's own path is re-checked against `roots` where the OS exposes it
+    (/proc/self/fd), fstat confirms a regular file under the cap, and at most cap+1 bytes are read —
+    the signature, size and containment checks describe exactly the bytes returned. Never raises."""
+    try:
+        if not isinstance(path, str) or not path or "\x00" in path:
+            return None, "no path"
+        if not os.path.isabs(path):
+            if not base:
+                return None, "relative path with no report directory to resolve it against"
+            path = os.path.join(base, path)
+        real = os.path.realpath(path)
+        if not _inside(real, roots):
+            return None, "outside the report JSON's directory and the case report/ directory"
+        cap = figure_max_bytes()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) \
+            | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(real, flags)
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                return None, "not a file"
+            if st.st_size > cap:
+                return None, f"larger than {cap} bytes"
+            proc = f"/proc/self/fd/{fd}"
+            if os.path.islink(proc) and not _inside(os.readlink(proc), roots):
+                return None, "outside the report JSON's directory and the case report/ directory"
+            chunks, left = [], cap + 1
+            while left > 0:
+                b = os.read(fd, min(left, 1 << 20))
+                if not b:
+                    break
+                chunks.append(b)
+                left -= len(b)
+        finally:
+            os.close(fd)
+        png = b"".join(chunks)
+        if len(png) > cap:
+            return None, f"larger than {cap} bytes"
+        if not png.startswith(PNG_MAGIC):
+            return None, "not a PNG"
+        return png, ""
+    except (OSError, ValueError) as exc:
+        return None, f"unreadable ({exc.__class__.__name__})"
+
+
+def figures(data, group, base=None):
+    """[(name, png bytes, caption)] for `report_figures[group]` entries that pass resolve_figure; a
+    relative path resolves against `base` (the report JSON's directory). A rejected figure is named
+    on stderr and skipped, never embedded. Callers embed the returned bytes; they never reopen a path."""
+    figs = (data.get("report_figures") or {}) if isinstance(data, dict) else {}
+    got = figs.get(group) if isinstance(figs, dict) else None
+    if not isinstance(got, dict):
+        return []
+    roots = figure_roots(data, base)
+    out = []
+    for name, caption in FIGURE_CAPTIONS.get(group, []):
+        p = got.get(name)
+        if not isinstance(p, str) or not p:
+            continue
+        png, why = resolve_figure(p, roots, base)
+        if png:
+            out.append((name, png, caption))
+        else:
+            sys.stderr.write(f"cti_report_sections: figure {group}/{name} skipped — {why}.\n")
+    return out
+
+
+def triage_exposure(data):
+    """True when the exposure charts come from stealer-log triage (no affiliate_exposure rows): they
+    render under EXPOSURE_TRIAGE_TITLE instead of under the (absent) Affiliate Exposure table."""
+    figs = (data.get("report_figures") or {}) if isinstance(data, dict) else {}
+    return (isinstance(figs, dict) and figs.get("exposure_source") == "triage"
+            and not rows(data, "affiliate_exposure"))
+
+
 # ------------------------------------------------------------------ identity card / client seeds
 def _norm_seed(v):
     return re.sub(r"[\s\-().]+", "", str(v or "")).lower()
@@ -194,7 +708,8 @@ def _blank_or_withheld(v):
 
 def withhold_client(data, show=False):
     """Mark identity rows whose value the client supplied (`client_provided`), and — unless `show` — replace
-    every SENSITIVE client-seed value, and any identity row carrying the same value, by WITHHELD.
+    every SENSITIVE client-seed value, and any identity row carrying the same value, by WITHHELD, and
+    every `email_services` address by '(withheld)@domain' (also inside `qa_warnings`).
     Mutates `data` in place (idempotent) and returns it; `sensitive_shown` records the choice."""
     if not isinstance(data, dict):
         return data
@@ -214,8 +729,23 @@ def withhold_client(data, show=False):
         for s in seeds:
             if s.get("sensitive") and s.get("value") not in (None, ""):
                 s["value"] = WITHHELD
+        emails = set()
+        for r in rows(data, "email_services"):
+            if str(r.get("email") or "").strip() and not str(r["email"]).startswith(WITHHELD_EMAIL):
+                emails.add(str(r["email"]).strip())
+                r["email"] = withheld_email(r["email"])
+        if emails and isinstance(data.get("qa_warnings"), list):
+            data["qa_warnings"] = [scrub_values(w, emails, WITHHELD_EMAIL) for w in data["qa_warnings"]]
     data["sensitive_shown"] = show
     return data
+
+
+def scrub_values(text, values, repl):
+    """`text` with every value (longest first, case-insensitive) replaced by `repl`."""
+    t = str(text)
+    for v in sorted({str(v) for v in values if str(v or "").strip()}, key=len, reverse=True):
+        t = re.sub(re.escape(v), repl, t, flags=re.I)
+    return t
 
 
 def scrub_withheld(texts, data, raw_values):
@@ -301,6 +831,7 @@ def prepare(data, who="report"):
     client values (unless the builder recorded --show-sensitive), cover analyst from the engagement,
     metric + QA warnings for a hand-authored file."""
     withhold_client(data)
+    counts_only(data)
     apply_engagement(data)
     ensure_metric_warnings(data, who)
     ensure_qa_warnings(data, who)
@@ -419,6 +950,13 @@ def validate_metrics(data):
         if (_words(label) & R["entity_terms"]) and units:
             warns.append(f"counting rule '{label}' counts {sorted(units)[0]} under an entity label "
                          "and states no 'does_not_mean' — say what the number is not.")
+    # a leak-claim tally carried in the JSON may not claim more than its rows mark proven
+    tally = data.get("leak_claims_tally") if isinstance(data, dict) else None
+    if isinstance(tally, dict) and rows(data, "leak_claims"):
+        n, k = claim_tally(rows(data, "leak_claims"))
+        if tally.get("claims") != n or tally.get("proven") != k:
+            warns.append(f"leak_claims_tally says {tally.get('proven')} of {tally.get('claims')} claims are "
+                         f"proven, but the rows mark {k} of {n} proven (`proven` true) — the rows win.")
     return warns
 
 

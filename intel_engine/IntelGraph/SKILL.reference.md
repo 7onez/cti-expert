@@ -25,6 +25,7 @@ python3 "$GRAPH/scripts/render_mermaid.py"  diagram.mmd  outputs/stem   # via Pe
 python3 "$GRAPH/scripts/render_graphviz.py" graph.dot    outputs/stem   # needs graphviz/dot
 python3 "$GRAPH/scripts/render_network.py"  case_graph.json network.html --title "..."
 python3 "$GRAPH/scripts/case_timeline.py"   CASE/out/*.json --stem CASE/timeline --markdown
+python3 "$GRAPH/scripts/card_map.py"       spec.json -o map.svg --png map.png [--pdf map.pdf] [--mask]
 # theme.py + gantt.py:  sys.path.insert(0, "<GRAPH>/scripts")
 ```
 
@@ -130,6 +131,90 @@ and ignores an init directive's `fontFamily`/`themeVariables`). Pele paints thro
 `render_mermaid.py` resolves them into the SVG so it renders the same in cairo, librsvg, pandoc and
 Word — an unresolved `var()` paints black. `tests/test_diagram.py` holds that.
 
+## Relationship card maps — `card_map.py` (who is this subject connected to)
+
+A **card map** is a hand-composed exhibit: the subject as a dark **hub card** at the top centre, a
+vertical **trunk**, and rounded light **panels** of cards on either side ("Employers",
+"Associations", "Domains and accounts", "Locations", "DDoS-for-hire groups" …). Use it when the
+analyst already knows the grouping and the reader needs *who / what kind / how reliable* at a
+glance — the people, organisations, accounts and places linked to one subject; an organisation's
+core suppliers; the kinds of actor reported against an organisation. It is
+**not** a link-analysis tool: nothing is inferred and nothing is laid out by an algorithm. For a
+relationship web use `render_network.py`.
+
+```bash
+python3 "$GRAPH/scripts/card_map.py" "$GRAPH/references/card_map_example.json" \
+    -o outputs/card_map.svg --png outputs/card_map.png --pdf outputs/card_map.pdf
+```
+
+Each card has an avatar circle (initials, one of the built-in stroke icons `person`,
+`organisation`, `building`, `location`, `globe`, `chip`, `lightning`, `group`, or a **local** logo
+file embedded as base64 — never fetched; realpath must be inside the spec directory or its enclosing
+`cases/<id>/report/` directory, have a PNG/JPEG/SVG signature and fit `logo.max_bytes` in the reference;
+otherwise ignored with a warning), a bold name, grey description lines, a two-letter **country-code chip** (no flags, no
+emoji), a **relation chip**, and an **Admiralty badge** coloured by source letter (A green, B blue,
+C orange, D–F grey). **`confirmed: false` draws the card border and its connector dashed** and the
+footer legend says "Unconfirmed claim" — an unconfirmed claim must always look unconfirmed.
+
+**Spec (C2).** Keys beginning with `_` are ignored.
+
+```json
+{"title": "Connections of Morgan Sample",
+ "subtitle": "Public sources, compiled to 2026-11-15",
+ "hub": {"name": "Morgan Sample", "lines": ["Logistics operations manager"], "cc": "PT", "icon": "person"},
+ "trunk_labels": [{"text": "manager since 03/2024", "grade": "B1"}],
+ "panels": [{"title": "Employers", "side": "left",
+             "cards": [{"name": "Harbor Cargo Example", "lines": ["Shift planner"], "cc": "ES",
+                        "relation": "employed", "grade": "A2", "icon": "building",
+                        "confirmed": true, "dates": "2013 to 2016"},
+                       {"name": "Example Port Authority", "icon": "organisation",
+                        "relation": "visited (claimed)", "grade": "F6", "indent": true,
+                        "confirmed": false}]}],
+ "legend": true}
+```
+
+| Key | Meaning |
+|---|---|
+| `hub` | the subject card: `name`, `lines[]`, `cc`, and one of `icon` / `initials` / `logo` |
+| `trunk_labels[]` | chips riding on the trunk under the hub (`text` + optional `grade`) |
+| `panels[].side` | `left` / `right` (paired into one row, reading order), `full` (spans the width, cards in a grid), `center` (cards stacked ON the trunk — an intermediate node such as the current employer) |
+| `cards[].indent` | hang the card under the card above it with an elbow connector (a relation of a relation) |
+| `cards[].confirmed` | default `true`; `false` = dashed border and connector |
+| `cards[].grade` | Admiralty `A1`–`F6`; anything else is not drawn (warning) |
+| `cards[].cc` | ISO two-letter code; anything else is not drawn (warning) |
+
+A full synthetic example is `references/card_map_example.json`. Colours, sizes, glyph-width
+factors, legend wording and the actor/supplier-type → icon map are in `references/card_map.json`.
+Text wraps by an estimated glyph width and the canvas grows with content. A map with no `full` panel
+(one card column per side) is drawn on the narrower `sizes.narrow_width` canvas, so a page-width
+embed prints its text larger; with a `full` grid it uses `sizes.width`. All text is XML-escaped;
+the output is **deterministic** (same spec → same SVG bytes). PNG/PDF go through the same
+rasteriser chain as Mermaid (rsvg-convert → headless Chrome/Edge → cairosvg); with none the SVG is
+still written and the CLI exits 1 naming what to install. `--mask` always reduces person-card names
+(icon `person` or explicit `initials`, hub included) to initials and drops all logos, even when the
+house mask is a pass-through. Those names are replaced in titles, panel titles, trunk labels and
+all card text; organisation and place names stay. The optional house mask runs on top.
+Long subtitles wrap within `sizes.subtitle_max_share`; render sizes are local, safe for concurrent calls.
+
+**In the house report** the composer builds the maps itself, only when there is data
+(`house_report_charts.build_card_maps`), every card string through its own `scrub` + mask, and
+sensitive client-seed values withheld unless `--show-sensitive`:
+
+| Figure | Built from | Placed in |
+|---|---|---|
+| person map | `subject_profile` entities + `relationships` rows `{from, to, relation, description, group, side, grade, confirmed, dates, cc, icon}` (a row whose `from` is another card hangs under it) | Executive Summary, after the identity card |
+| threat landscape | `actors` rows `{name, type, claim, grade, confirmed, cc, date, icon}`, one panel per `type` | Findings |
+| suppliers | `cases/<id>/suppliers.json` (one panel per category; low confidence = dashed) | Infrastructure and lifecycle |
+
+No data → no figure (never an empty map). Builders and `--mask` replace e-mail addresses, phone
+numbers and birth-date patterns with `(withheld)` using `pii` / `pii_full_dates` in the reference.
+A full date has a day, month and 19xx/20xx year (numeric or English month name). It is treated as
+a birth date only on a person card, immediately after a birth cue (`born`, `DOB`, `date of birth`,
+etc.; optional punctuation and `on`/`in`), or immediately before a bracketed cue (`1990-01-02 (DOB)`).
+Non-birth full dates on other cards stay, as do year ranges (`2019 to 2026`) and month-year values
+(`03/2024`). Phone candidates require 10–15 digits (8–15 with `+`); full dates and pairs of year
+groups are excluded. This is pattern-based reduction, not a guarantee against arbitrary prose PII.
+
 ## The timeline figure — `case_timeline.py`  (run this on every case)
 
 The network graph answers *what is connected*; it cannot answer *were they connected at the same
@@ -202,6 +287,7 @@ re-check. So each dated claim carries four things: **what · when (UTC) · sourc
 | **A case's infrastructure over time** — when each domain was registered/expired, who held it, which IP hosted it when, which certs covered it | **Lifecycle swimlane** | **`case_timeline.py`** (matplotlib) |
 | Attack progression | Kill-chain / flow | Mermaid or Graphviz |
 | Actor ↔ infra ↔ victim links | Relationship graph | Graphviz |
+| Subject ↔ people / organisations / accounts / places, or actors by kind, with Admiralty grades | **Card map** | **`card_map.py`** (stdlib SVG) |
 | Matrix (Diamond Model, MITRE coverage, C1–C8 scoring) | Heatmap | matplotlib |
 
 When unsure which of two fits, generate the matplotlib version — it's the most reliable and most "report-native."

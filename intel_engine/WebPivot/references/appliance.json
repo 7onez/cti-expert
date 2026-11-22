@@ -1,0 +1,195 @@
+{
+  "_comment": "wp_appliance — PASSIVE edge/VPN appliance fingerprint -> CISA KEV mapping -> patch-lag inference (techniques/fx-edge-appliance-recon.md). Every endpoint, product pattern, advisory row, port-risk row and caveat lives here (RULE 3) so a renamed CPE, a new KEV product string or a new vendor advisory is a data edit, not a code change. Nothing here is case data: public vendor names, public CPE vocabulary and public PSIRT/KEV dates only. The tool never contacts the target: it reads Shodan InternetDB (keyless), Shodan host and Censys host (keyed, metered — skipped under free_only / scope no_spend) and the public KEV catalogue.",
+  "settings": {
+    "_comment": "internetdb_url / shodan_host_url take {ip}; the Shodan key is appended by the caller and never logged. kev_url = CISA's public KEV JSON feed; kev_cache_path is relative to the engine root (intel_engine/) unless absolute — the default cache/ dir is gitignored. kev_ttl_hours = re-download when the cache is older than this; a stale cache is still used (status stale_cache, with the reason) when the refresh fails. max_ips caps how many A records of one domain are looked up. max_kev_per_product caps the family list. snmp_wrap_days = 2^32 TimeTicks / 100 / 86400 (RFC 2578 §7.1.8); tcp_ts_wrap_days = a 1 kHz TCP-timestamp clock. wrap_alternatives = how many wrapped readings to list beside the face value. boot_window_days = the +/- on every boot estimate. confirmed_version_bases = the version bases that count as a CONFIRMED version for the CRITICAL escalation. Owner decision: ONLY `analyst` (the analyst verified the version and passed --version-confirmed / version_confirmed=true). A version read from a CPE (cpe_version), the index's own product/version field (index_version_field), a banner pattern or a build string is index-announced, can be stale or spoofed, and stays TENTATIVE.",
+    "internetdb_url": "https://internetdb.shodan.io/{ip}",
+    "shodan_host_url": "https://api.shodan.io/shodan/host/{ip}",
+    "censys_host_path": "/v3/global/asset/host/{id}",
+    "kev_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "kev_cache_path": "cache/kev.json",
+    "kev_ttl_hours": 24,
+    "timeout_seconds": 20,
+    "kev_timeout_seconds": 60,
+    "max_ips": 8,
+    "_comment_metered": "METERED pre-filter (Shodan host = 1 query credit, Censys host = 1 credit of the 100-a-month free quota). The keyless InternetDB leg runs first for every IP; a metered leg is bought only for an IP whose InternetDB record shows a catalogue CPE (products.*.cpe), a port in metered_gate_ports (the VPN / admin / IKE ports edge appliances listen on) or a tag in metered_gate_tags; InternetDB not_found or an unrelated record buys nothing. max_metered_ips caps how many IPs of one run get the metered legs (max_ips still caps the keyless leg). The planned credit count is computed before any spend and reported in metered_plan.",
+    "max_metered_ips": 4,
+    "metered_gate_ports": [443, 500, 1194, 1701, 1723, 4433, 4443, 4500, 8443, 10443],
+    "metered_gate_tags": ["vpn", "eol-product"],
+    "max_kev_per_product": 40,
+    "snmp_wrap_days": 497.1,
+    "tcp_ts_wrap_days": 49.7,
+    "wrap_alternatives": 2,
+    "boot_window_days": 1,
+    "confirmed_version_bases": ["analyst"]
+  },
+  "products": {
+    "_comment": "Product catalogue from the technique doc's fingerprint table, plus common peers. cpe = [{vendor, product}] regexes matched (case-insensitive, search) against the vendor/product fields of a CPE 2.2 (cpe:/a:v:p:ver) or 2.3 (cpe:2.3:a:v:p:ver) string. banner = regexes over the index's stored banner text, HTTP title, headers and body — product evidence only. version_regex = optional regexes with ONE group that read a version out of that stored text (basis banner_regex, never confirmed). build_map = announced build string -> version (Fox-IT style tables); empty means a build stays UNMAPPED. kev = regexes matched against the KEV entry's vendorProject and product (the FAMILY match). fingerprint_paths are documentation for an AUTHORISED direct check only; this tool never requests them.",
+    "entries": {
+      "citrix_netscaler": {
+        "name": "Citrix NetScaler ADC / Gateway", "vendor": "Citrix",
+        "cpe": [{"vendor": "^citrix$", "product": "netscaler|application_delivery_controller|^adc|gateway"}],
+        "banner": ["(?i)netscaler", "(?i)citrix gateway", "(?i)/vpn/index\\.html", "(?i)/logon/LogonPoint/", "(?i)\\bNSC_[A-Za-z0-9_]+="],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^citrix$", "product": "(?i)netscaler|application delivery controller|\\badc\\b|gateway"},
+        "fingerprint_paths": ["/vpn/index.html", "/logon/LogonPoint/tmindex.html"],
+        "editions": {
+          "_comment": "Citrix ships standard, FIPS and NDcPP firmware trains that share the release numbering (13.1-37.x exists as a standard build AND as FIPS builds), and the vendor documents NO build range that separates them. Two vendor-documented passive signals only: (1) markers — Citrix names FIPS firmware with 'FIPS' in the version ('14.1-FIPS, build 72.61', NetScaler FIPS FAQ; the bulletins name '13.1-FIPS' / '12.1-NDcPP'); a marker counts only inside version-bearing evidence (a CPE string, the index's product/version field, a version_regex hit), never anywhere in a page body. (2) standard_builds — exact standard build numbers per branch from the vendor's standard release-notes index; an exact match identifies a STANDARD build. Absence from the list is NOT evidence of FIPS (the index is not exhaustive, e.g. 13.1-49.13 is missing). Anything else is edition-unknown: when an advisory's per-edition fixed lists disagree on it, it stays TENTATIVE with the reason.",
+          "markers": {"fips": ["(?i)\\bFIPS\\b"], "ndcpp": ["(?i)\\bNDcPP\\b"]},
+          "standard_builds": {"13.1": ["64.39", "63.21", "62.23", "61.26", "60.32", "59.22", "58.32", "57.26", "56.18", "55.34", "54.29", "53.24", "52.19", "51.15", "50.23", "49.15", "48.47", "45.64", "42.47", "37.38", "33.54", "30.52", "27.59", "24.38", "21.50", "17.42", "12.51", "9.60", "4.44"]},
+          "source_urls": ["https://docs.netscaler.com/us/en/citrix-adc/current-release/fips/fips-faq.html",
+                          "https://docs.netscaler.com/us/en/citrix-adc/13-1/citrix-adc-release-notes.html"],
+          "verified": "2026-11-15"
+        }
+      },
+      "f5_bigip": {
+        "name": "F5 BIG-IP", "vendor": "F5",
+        "cpe": [{"vendor": "^f5$", "product": "^big-?ip"}],
+        "banner": ["(?i)BIGipServer", "(?i)BIG-IP", "(?i)/tmui/login\\.jsp"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^f5$", "product": "(?i)big-?ip"},
+        "fingerprint_paths": ["/tmui/login.jsp", "/mgmt/tm/sys/"]
+      },
+      "cisco_asa": {
+        "name": "Cisco ASA / Firepower (AnyConnect)", "vendor": "Cisco",
+        "cpe": [{"vendor": "^cisco$", "product": "adaptive_security_appliance|^asa|firepower_threat_defense"}],
+        "banner": ["(?i)\\+CSCOE\\+", "(?i)webvpn", "(?i)anyconnect", "(?i)cisco (asa|adaptive security appliance)"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^cisco$", "product": "(?i)adaptive security appliance|\\basa\\b|firepower threat defense"},
+        "fingerprint_paths": ["/+CSCOE+/logon.html", "/+CSCOE+/portal.html"]
+      },
+      "cisco_expressway": {
+        "name": "Cisco Expressway / TelePresence VCS", "vendor": "Cisco",
+        "cpe": [{"vendor": "^cisco$", "product": "expressway|telepresence_video_communication_server"}],
+        "banner": ["(?i)expressway", "(?i)telepresence video communication server"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^cisco$", "product": "(?i)expressway|telepresence video communication"},
+        "fingerprint_paths": []
+      },
+      "ivanti_connect_secure": {
+        "name": "Ivanti / Pulse Connect Secure", "vendor": "Ivanti",
+        "cpe": [{"vendor": "^(ivanti|pulsesecure|pulse_secure)$", "product": "connect_secure|pulse_connect_secure|policy_secure"}],
+        "banner": ["(?i)/dana-na/", "(?i)pulse secure", "(?i)ivanti connect secure"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^(ivanti|pulse secure)$", "product": "(?i)connect secure|policy secure"},
+        "fingerprint_paths": ["/dana-na/", "/dana-na/auth/url_default/welcome.cgi"]
+      },
+      "fortinet_fortigate": {
+        "name": "Fortinet FortiGate (FortiOS SSL-VPN)", "vendor": "Fortinet",
+        "cpe": [{"vendor": "^fortinet$", "product": "^fortios|^fortigate|^fortiproxy"}],
+        "banner": ["(?i)fortigate", "(?i)/remote/login", "(?i)fortinet"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^fortinet$", "product": "(?i)fortios|fortigate|fortiproxy"},
+        "fingerprint_paths": ["/remote/login", "/api/v2/"]
+      },
+      "paloalto_panos": {
+        "name": "Palo Alto Networks PAN-OS (GlobalProtect)", "vendor": "Palo Alto Networks",
+        "cpe": [{"vendor": "^(paloaltonetworks|palo_alto_networks|paloalto)$", "product": "pan-?os|globalprotect"}],
+        "banner": ["(?i)globalprotect", "(?i)/global-protect/", "(?i)/sslmgr", "(?i)\\bpan-os\\b"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^palo alto networks$", "product": "(?i)pan-?os|globalprotect"},
+        "fingerprint_paths": ["/global-protect/login.esp", "/sslmgr"]
+      },
+      "microsoft_exchange": {
+        "name": "Microsoft Exchange (OWA/ECP)", "vendor": "Microsoft",
+        "cpe": [{"vendor": "^microsoft$", "product": "^exchange_server"}],
+        "banner": ["(?i)x-owa-version", "(?i)outlook web app", "(?i)/owa/auth", "(?i)/ecp/", "(?i)microsoft exchange"],
+        "version_regex": ["(?i)x-owa-version:\\s*([0-9]+(?:\\.[0-9]+){2,3})"],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^microsoft$", "product": "(?i)exchange server"},
+        "fingerprint_paths": ["/owa/", "/ecp/", "/ews/exchange.asmx"]
+      },
+      "sonicwall_sma": {
+        "name": "SonicWall SMA / SonicOS SSL-VPN", "vendor": "SonicWall",
+        "cpe": [{"vendor": "^sonicwall$", "product": "^sma|sonicos|secure_mobile_access"}],
+        "banner": ["(?i)sonicwall", "(?i)/cgi-bin/welcome"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^sonicwall$", "product": "(?i)sma|sonicos|secure mobile access"},
+        "fingerprint_paths": ["/cgi-bin/welcome"]
+      },
+      "checkpoint_gateway": {
+        "name": "Check Point Quantum Security Gateway", "vendor": "Check Point",
+        "cpe": [{"vendor": "^checkpoint$|^check_point$", "product": "quantum|security_gateway|gaia"}],
+        "banner": ["(?i)check point", "(?i)/sslvpn/login"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^check point$", "product": "(?i)quantum|security gateway"},
+        "fingerprint_paths": []
+      },
+      "vmware_vcenter": {
+        "name": "VMware vCenter Server", "vendor": "VMware",
+        "cpe": [{"vendor": "^vmware$", "product": "^vcenter_server"}],
+        "banner": ["(?i)vmware vcenter", "(?i)/ui/login"],
+        "version_regex": [],
+        "build_map": {},
+        "kev": {"vendor": "(?i)^vmware$", "product": "(?i)vcenter"},
+        "fingerprint_paths": []
+      }
+    }
+  },
+  "build_regex": {
+    "_comment": "Cache-busting build strings on login-page static assets, read from the index's STORED HTTP body (never fetched). One group = the build. A build is UNMAPPED unless the product's build_map names it.",
+    "values": ["[?&](?:v|ver|version|build)=([0-9][0-9A-Za-z._-]{3,40})"]
+  },
+  "advisories": {
+    "_comment": "Vendor PSIRT rows for well-known KEV CVEs, each checked on 2026-11-15 against the vendor's own advisory (source_url) and the vendor-authored CVE record; KEV dateAdded / dueDate come from the live CISA catalogue at run time, not from here. wp_appliance IGNORES any row without both `verified` and `source_url` (an analyst's --advisory is exempt — it is the analyst's own claim). fixed_in lists the first fixed release per branch as the vendor states it (the STANDARD edition where editions exist); branch_depth = how many leading version numbers define a branch (2 = 13.1 / 7.4; 3 = PAN-OS hotfix trains like 10.2.8). A branch the vendor lists as affected with no fix (EOL) is absent from fixed_in, so it reads branch_unlisted — except in an edition-aware row, where affected_no_fix names those standard branches. fixed_fips / fixed_ndcpp (Citrix only) = the same bulletin's FIPS / NDcPP fixed releases, verified from the same source_url; their presence turns on edition-aware comparison (products.<pid>.editions decides the edition; an unknown edition whose per-edition verdicts disagree reads ambiguous_edition). An edition list left empty ([]) means not confirmed from the vendor and never yields a definite verdict. fixed_in null = no per-branch list kept here (Cisco / Exchange: left empty on purpose) — version status stays unknown and only the lag after the advisory is reported. upgrade_reboots is null everywhere: no vendor upgrade note was checked, so the uptime rows never assert that a fix needs a reboot. Removed on verification (no primary source for the advisory date): CVE-2023-46805 and CVE-2024-21887 (Ivanti — the KB article and blog did not expose the original publication date).",
+    "_comment_version_status": "branch_only means the observed version names the same branch as the fixed release but has fewer numeric components (13.1 vs 13.1-49.15). Compare only versions at least as specific as the fix. branch_only never asserts pre-fix status, never computes lag or past_kev_due, never yields CRITICAL, and never writes a kev_exposure KB fact. kev_exposure is written only for pre-fix KEV matches; other family matches remain in the scan output only.",
+    "entries": {
+      "CVE-2023-4966": {"product": "citrix_netscaler", "advisory_id": "CTX579459", "published": "2023-10-10", "fixed_in": ["14.1-8.50", "13.1-49.15", "13.0-92.19"], "affected_no_fix": ["12.1"], "fixed_fips": ["13.1-37.164", "12.1-55.300"], "fixed_ndcpp": ["12.1-55.300"], "branch_depth": 2, "upgrade_reboots": null, "notes": "fixed_in = standard builds; fixed_fips / fixed_ndcpp = the bulletin's 13.1-FIPS, 12.1-FIPS and 12.1-NDcPP fixes (same source_url). Standard 12.1 is EOL and affected with no fix (affected_no_fix).", "source_url": "https://support.citrix.com/external/article/CTX579459/netscaler-adc-and-netscaler-gateway-secu.html", "verified": "2026-11-15"},
+      "CVE-2023-3519": {"product": "citrix_netscaler", "advisory_id": "CTX561482", "published": "2023-07-18", "fixed_in": ["13.1-49.13", "13.0-91.13"], "affected_no_fix": ["12.1"], "fixed_fips": ["13.1-37.159", "12.1-55.297"], "fixed_ndcpp": ["12.1-55.297"], "branch_depth": 2, "upgrade_reboots": null, "notes": "fixed_in = standard builds; fixed_fips / fixed_ndcpp = the bulletin's 13.1-FIPS, 12.1-FIPS and 12.1-NDcPP fixes (same source_url). Standard 12.1 is EOL and affected with no fix (affected_no_fix).", "source_url": "https://support.citrix.com/external/article/CTX561482/citrix-adc-and-citrix-gateway-security-b.html", "verified": "2026-11-15"},
+      "CVE-2019-19781": {"product": "citrix_netscaler", "advisory_id": "CTX267027", "published": "2019-12-17", "fixed_in": null, "branch_depth": 2, "upgrade_reboots": null, "notes": "CTX267027 itself no longer resolves; Citrix's CTX267679 states it was released on 2019-12-17.", "source_url": "https://support.citrix.com/external/article/CTX267679/mitigation-steps-for-cve201919781.html", "verified": "2026-11-15"},
+      "CVE-2022-1388": {"product": "f5_bigip", "advisory_id": "K23605346", "published": "2022-05-04", "fixed_in": ["17.0.0", "16.1.2.2", "15.1.5.1", "14.1.4.6", "13.1.5"], "branch_depth": 2, "upgrade_reboots": null, "notes": "12.1.x and 11.6.x are affected with no fix (branch_unlisted). The K-article is script-rendered; date and versions read from F5's own CVE record, which cites K23605346.", "source_url": "https://my.f5.com/manage/s/article/K23605346", "cna_record": "https://cveawg.mitre.org/api/cve/CVE-2022-1388", "verified": "2026-11-15"},
+      "CVE-2023-46747": {"product": "f5_bigip", "advisory_id": "K000137353", "published": "2023-10-26", "fixed_in": null, "branch_depth": 2, "upgrade_reboots": null, "notes": "Fixed by engineering hotfixes per branch, not a plain release number — no fixed_in kept. Date from F5's own CVE record, which cites K000137353.", "source_url": "https://my.f5.com/manage/s/article/K000137353", "cna_record": "https://cveawg.mitre.org/api/cve/CVE-2023-46747", "verified": "2026-11-15"},
+      "CVE-2020-3452": {"product": "cisco_asa", "advisory_id": "cisco-sa-asaftd-ro-path-KJuQhB86", "published": "2020-07-22", "fixed_in": null, "branch_depth": 2, "upgrade_reboots": null, "source_url": "https://sec.cloudapps.cisco.com/security/center/content/CiscoSecurityAdvisory/cisco-sa-asaftd-ro-path-KJuQhB86", "verified": "2026-11-15"},
+      "CVE-2024-21762": {"product": "fortinet_fortigate", "advisory_id": "FG-IR-24-015", "published": "2024-02-08", "fixed_in": ["7.4.3", "7.2.7", "7.0.14", "6.4.15", "6.2.16", "6.0.18"], "branch_depth": 2, "upgrade_reboots": null, "source_url": "https://www.fortiguard.com/psirt/FG-IR-24-015", "verified": "2026-11-15"},
+      "CVE-2022-42475": {"product": "fortinet_fortigate", "advisory_id": "FG-IR-22-398", "published": "2022-12-12", "fixed_in": ["7.2.3", "7.0.9", "6.4.11", "6.2.12", "6.0.16"], "branch_depth": 2, "upgrade_reboots": null, "notes": "FortiOS 5.x is affected with no fix (migrate) — branch_unlisted.", "source_url": "https://www.fortiguard.com/psirt/FG-IR-22-398", "verified": "2026-11-15"},
+      "CVE-2024-3400": {"product": "paloalto_panos", "advisory_id": "CVE-2024-3400", "published": "2024-04-12", "fixed_in": ["10.2.9-h1", "10.2.8-h3", "10.2.7-h8", "10.2.6-h3", "10.2.5-h6", "10.2.4-h16", "10.2.3-h13", "10.2.2-h5", "10.2.1-h2", "10.2.0-h3", "11.0.4-h1", "11.0.3-h10", "11.0.2-h4", "11.0.1-h4", "11.0.0-h3", "11.1.2-h3", "11.1.1-h1", "11.1.0-h3"], "branch_depth": 3, "upgrade_reboots": null, "source_url": "https://security.paloaltonetworks.com/CVE-2024-3400", "verified": "2026-11-15"},
+      "CVE-2021-26855": {"product": "microsoft_exchange", "advisory_id": "MSRC CVE-2021-26855 (ProxyLogon)", "published": "2021-03-02", "fixed_in": null, "branch_depth": 2, "upgrade_reboots": null, "source_url": "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-26855", "verified": "2026-11-15"},
+      "CVE-2021-34473": {"product": "microsoft_exchange", "advisory_id": "MSRC CVE-2021-34473 (ProxyShell)", "published": "2021-07-13", "fixed_in": null, "branch_depth": 2, "upgrade_reboots": null, "source_url": "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-34473", "verified": "2026-11-15"}
+    }
+  },
+  "port_risk": {
+    "_comment": "Exposed-service port-risk matrix from the technique doc (passive, from the index's port list). critical=true marks container/cluster control planes that should never face the internet (hand off to techniques/cloud-audit.md).",
+    "entries": {
+      "445": {"service": "SMB", "why": "Legacy RCE family / anonymous shares", "critical": false},
+      "2375": {"service": "Docker API (plaintext)", "why": "Unauthenticated host/container takeover", "critical": true},
+      "3389": {"service": "RDP", "why": "BlueKeep-class exposure; brute/relay surface", "critical": false},
+      "6379": {"service": "Redis", "why": "No-auth default; common data exposure", "critical": false},
+      "9200": {"service": "Elasticsearch", "why": "Typically unauthenticated index access", "critical": false},
+      "27017": {"service": "MongoDB", "why": "No-auth by default", "critical": false},
+      "10250": {"service": "Kubelet (HTTPS)", "why": "Unauth pod listing/exec if misconfigured", "critical": true},
+      "2379": {"service": "etcd", "why": "Cluster secrets exposure", "critical": true},
+      "6443": {"service": "Kubernetes API", "why": "system:anonymous access if unrestricted", "critical": true}
+    }
+  },
+  "uptime_fields": {
+    "_comment": "Where an index record stores an uptime, read from each Shodan service record. path = dotted path in the record; unit = minutes | seconds | timeticks (1/100 s); clock = snmp_sysuptime (32-bit TimeTicks, wraps every snmp_wrap_days) | tcp_timestamp (wraps every tcp_ts_wrap_days at 1 kHz) | unknown (both wrap caveats are stated).",
+    "values": [
+      {"path": "uptime", "unit": "minutes", "clock": "unknown"},
+      {"path": "snmp.uptime", "unit": "timeticks", "clock": "snmp_sysuptime"}
+    ]
+  },
+  "caveats": {
+    "_comment": "Wording the output attaches. The tool never writes the words that claim exploitability; it reports lag and reboot evidence only.",
+    "entries": {
+      "general": "Passive scan-database evidence only — the target was not contacted. A fingerprint confirms the product, not exploitability; the version-to-CVE mapping stays TENTATIVE until the version is verified (/vuln-check, vendor advisory, authorised check).",
+      "kev_family": "KEV entries are matched on the product FAMILY (KEV vendorProject + product). A family match says this product line has known-exploited CVEs; whether this device's version is affected depends on the version.",
+      "index_vulns": "Index CVE lists (InternetDB / Shodan `vulns`) are inferred by the index from the announced version; they are not verified.",
+      "snmp_wrap": "Counter wraparound: SNMP sysUpTime is 32-bit TimeTicks (1/100 s) and wraps every ~497.1 days (RFC 2578 §7.1.8), so the face value may be the uptime plus a multiple of 497.1 days. Corroborate with two scans far apart: the uptime must grow by the elapsed time.",
+      "tcp_wrap": "A TCP-timestamp uptime (1 kHz clock) wraps every ~49.7 days, and many OSes randomise the TCP-timestamp offset per connection (RFC 7323), so such a value is often meaningless.",
+      "ha_pair": "Load balancers and HA pairs: one IP can front several nodes; the uptime belongs to whichever node answered that scan.",
+      "hot_patch": "Hot patching: some fixes, mitigations or live-patches apply without a reboot; a long uptime shows only that no reboot-requiring update was applied.",
+      "clock_offset": "The index timestamp may be ingest time rather than probe time, and a scanner may cache an earlier uptime; the boot date is 'on or about' (at least +/-1 day).",
+      "ha_conflict": "Conflicting uptimes across records of this IP point to an HA pair or load balancer, not to a reboot.",
+      "lag_wording": "Lag is the days between the vendor advisory and the latest index record still announcing a pre-fix version. It is not a statement that the device is exploitable or compromised.",
+      "kev_due": "Past the KEV due date is prioritisation context (BOD 22-01 binds US federal agencies), not a legal finding about a non-federal subject."
+    }
+  }
+}

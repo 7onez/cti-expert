@@ -18,7 +18,7 @@ ISO 13616 + ISO 7064.
 | **Geographically bound** | The first two chars are the issuing jurisdiction — often contradicting the site's claimed country. |
 | **Institution-bound** | The bank code identifies the receiving institution → the correct abuse/legal channel. |
 | **Hard to rotate** | Opening a mule account costs far more than registering a domain. Accounts get reused across campaigns far longer than infrastructure. |
-| **Actionable** | Unlike a wallet, a bank account has a supervised operator who can freeze it. This is the selector that actually stops losses. |
+| **Actionable** | Unlike a self-custodied wallet, a bank account has a supervised operator who can freeze it. (Custodial exchange / hosted-wallet addresses also have a service controller — see `blockchain-investigation.md` §6 ladder R4.) This is the selector that actually stops losses. |
 
 ---
 

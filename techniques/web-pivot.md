@@ -224,6 +224,12 @@ uv run "$WP/rank_relations.py" "<case>"/raw/*.json --min-strength 8 # strong lin
 | **2** | `same_ip` (unknown class) · `wp_theme` · `nameserver` · `reg_batch` · `email` |
 | **1** | `page_link` |
 
+
+> **Wallet caveat.** `wallet` scores 5 because a self-custodied address is a private ID — but an
+> address printed on a page can be a payment-processor or exchange deposit address shared by
+> unrelated merchants. Treat a wallet match as operator-grade only after the address has spent
+> into a cluster that is not labelled as a service; a never-spent or service-labelled address is
+> a lead (evidence ladder R2/R4 in `blockchain-investigation.md` §6, [P15 Meiklejohn et al., IMC 2013]).
 **Assessment:** `same_operator_likely` (≥2 signals incl. one ≥4, **or** strength ≥8) ·
 `related_probable` (strength ≥4) · else `weak_lead` (hidden unless `--include-weak`).
 `clusters` = connected components over non-weak edges. The denylist

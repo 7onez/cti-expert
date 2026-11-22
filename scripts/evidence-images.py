@@ -93,9 +93,28 @@ def _entry(path, caption=None, host=None, captured_at=None, source_url=None,
     return e
 
 
+def _subject_host(url):
+    """The host a screenshot is EVIDENCE OF: the page's host, or for a web-archive capture
+    (web.archive.org/web/<ts>[id_|if_]/<original>) the archived page's host."""
+    try:
+        from urllib.parse import urlsplit
+        parts = urlsplit(url or "")
+        host = (parts.hostname or "").lower()
+        if host == "web.archive.org" and "/web/" in parts.path:
+            rest = parts.path.split("/web/", 1)[1].split("/", 1)
+            if len(rest) == 2:
+                inner = urlsplit(rest[1] if "://" in rest[1] else "https://" + rest[1])
+                return (inner.hostname or host).lower(), True
+        return host, False
+    except ValueError:
+        return "", False
+
+
 def _from_case(case_dir):
-    """Yield (path, host, captured_at, source_url) for a case's captured screenshots.
-    Prefer the evidence manifest (authoritative provenance); fall back to globbing."""
+    """Yield (path, host, captured_at, source_url, caption) for a case's captured screenshots.
+    Prefer the custody manifests (authoritative provenance: the evidence ledger's
+    evidence/manifest.jsonl, then the screenshot store's evidence/screenshots/manifest.json);
+    fall back to globbing, taking the host from the <host>/ folder."""
     manifest = os.path.join(case_dir, "evidence", "manifest.jsonl")
     seen = set()
     root = _repo_root(case_dir)
@@ -113,17 +132,38 @@ def _from_case(case_dir):
                 if not sp:
                     continue
                 p = sp if os.path.isabs(sp) else os.path.join(root, sp)
-                if os.path.isfile(p) and p not in seen:
-                    seen.add(p)
-                    yield (p, row.get("host"), row.get("collected_at"), row.get("source_url"))
+                if os.path.isfile(p) and os.path.realpath(p) not in seen:
+                    seen.add(os.path.realpath(p))
+                    yield (p, row.get("host"), row.get("collected_at"), row.get("source_url"), None)
+    shots = os.path.join(case_dir, "evidence", "screenshots")
+    try:
+        rows = json.load(open(os.path.join(shots, "manifest.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        rows = []
+    if isinstance(rows, dict):
+        rows = rows.get("captures") or rows.get("items") or []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not row.get("path"):
+            continue
+        p = row["path"] if os.path.isabs(row["path"]) else os.path.join(shots, row["path"])
+        if not os.path.isfile(p) or os.path.realpath(p) in seen:
+            continue
+        seen.add(os.path.realpath(p))
+        url = row.get("url") or row.get("final_url")
+        host, archived = _subject_host(url)
+        caption = row.get("label") or None
+        if not caption:
+            caption = f"{host} — web-archive capture" if archived else host
+        yield (p, host or None, row.get("captured_at"), url, caption)
     # fallback / supplement: any PNG under the case's screenshot dirs
     for pat in (os.path.join(case_dir, "screenshots", "*.png"),
-                os.path.join(case_dir, "evidence", "screenshots", "**", "*.png")):
+                os.path.join(shots, "**", "*.png")):
         for p in glob.glob(pat, recursive=True):
-            if p not in seen:
-                seen.add(p)
-                host = os.path.splitext(os.path.basename(p))[0]
-                yield (p, host, None, None)
+            if os.path.realpath(p) not in seen:
+                seen.add(os.path.realpath(p))
+                parent = os.path.basename(os.path.dirname(p))
+                host = parent if parent not in ("screenshots", "") else os.path.splitext(os.path.basename(p))[0]
+                yield (p, host, None, None, None)
 
 
 def _repo_root(case_dir):
@@ -154,8 +194,8 @@ def main(argv):
         if e:
             entries.append(e)
     if a.case:
-        for (p, host, cap_at, src) in _from_case(a.case):
-            e = _entry(p, host=host, captured_at=cap_at, source_url=src,
+        for (p, host, cap_at, src, caption) in _from_case(a.case):
+            e = _entry(p, caption=caption, host=host, captured_at=cap_at, source_url=src,
                        finding_id=a.finding, subject_id=a.subject)
             if e:
                 entries.append(e)

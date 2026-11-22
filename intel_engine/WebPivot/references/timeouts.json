@@ -1,7 +1,23 @@
 {
-  "_comment": "Per-call timeout CEILING (seconds) for every data-fetching / API / collector / renderer / subprocess call in the engine. wp_timeouts.py resolves it — an exported CTI_CALL_TIMEOUT env var first, then CTI_CALL_TIMEOUT= in the skill-root .env (or intel_engine/.env), then this file's call_timeout.value — and exports the result to child processes; wp_common installs a process-wide urllib.request.urlopen floor at that value and every subprocess runner floors its bound to it. NOT applied to raw DNS/TLS/JARM resolution probes (those keep their short fail-fast bounds by design).",
+  "_comment": "Per-call timeout CEILING and per-phase BUDGET (seconds) for the engine. wp_timeouts.py resolves both — an exported env var first, then the same key in the skill-root .env (or intel_engine/.env), then this file — and clamps every call to the time left in the active harness phase (HARNESS_PHASE_DEADLINE, epoch seconds, minus phase_deadline_margin) so no call outlives its phase. The call ceiling is exported to child processes; wp_common installs a process-wide urllib.request.urlopen floor at that value and every subprocess runner floors its bound to it. NOT applied to raw DNS/TLS/JARM resolution probes (those keep their short fail-fast bounds by design).",
   "call_timeout": {
-    "_comment": "value = the ceiling in seconds (5000 ≈ 83 min). Wrapped as a GROUP on purpose: the RULE-3 loader wp_refs.load_ref only surfaces dict/list nodes, so a bare scalar here is silently ignored and the embedded 1800 fallback wins instead.",
-    "value": 5000
+    "_comment": "value = the per-call ceiling in seconds (18000 = 5 h; env/.env key CTI_CALL_TIMEOUT). Wrapped as a GROUP on purpose: the RULE-3 loader wp_refs.load_ref only surfaces dict/list nodes, so a bare scalar here is silently ignored and the embedded fallback wins instead.",
+    "value": 18000
+  },
+  "phase_timeout": {
+    "_comment": "value = the wall-clock budget of ONE harness phase in seconds (18000 = 5 h). Env/.env overrides: HARNESS_PHASE_TIMEOUT (orchestrator) and HARNESS_CLI_TIMEOUT (CLI backend), each falling back to the other, then to this value. The CLI backend's MCP tool timeouts (codex tool_timeout_sec, omp mcp.json timeout / OMP_MCP_TIMEOUT_MS) are set from it, so the host never cuts a tool before the phase deadline.",
+    "value": 18000
+  },
+  "phase_deadline_margin": {
+    "_comment": "value = seconds kept in reserve before the phase deadline: a call started inside a phase runs at most min(call ceiling, deadline - now - margin), so it returns a timed-out result while the phase can still record it and move on.",
+    "value": 120
+  },
+  "fallback_probe_legs": {
+    "_comment": "fallback_probe.py per-leg wall-clock bounds in seconds — each leg runs on its own and a leg that exceeds its bound is reported as {leg: timed_out} while the other legs' findings are returned. Never the call ceiling: one hung archive mirror must not hold the whole probe. archive_is_request bounds each archive.today TimeMap request (two mirrors are tried); kb bounds each local KB subprocess.",
+    "crtsh": 120,
+    "wayback": 120,
+    "archive_is": 90,
+    "archive_is_request": 40,
+    "kb": 60
   }
 }

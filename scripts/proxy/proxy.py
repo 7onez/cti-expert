@@ -12,13 +12,16 @@ a shell / another tool.
 
 Store (chmod-600, gitignored): scripts/proxy/proxies.json
 (overridable via CTI_PROXY_STORE). Env always wins over the file:
-CTI_PROXIES / CTI_PROXY, CTI_PROXY_ENABLED, CTI_PROXY_ROTATION, NO_PROXY.
+CTI_PROXIES / CTI_PROXY, CTI_PROXY_ENABLED, CTI_PROXY_ROTATION, CTI_PROXY_ALLOW_DIRECT, NO_PROXY.
+`status` shows the EFFECTIVE values the opener uses and where each came from (env / .env /
+proxies.json); `status --probe` also probes each exit the way the `/cti` preflight does.
 
 Runner (zero setup, any OS): `uv run scripts/proxy/proxy.py [command]`
 Stdlib-only — plain `python3`/`py` works too.
 
 Commands:
-    proxy.py                       # status (default): pool + policy + toggles
+    proxy.py                       # status (default): effective pool + policy + toggles
+    proxy.py status --probe        # ... plus one request per exit to test_url (the /cti preflight)
     proxy.py add http://u:p@h:port [--label res-1]
     proxy.py add h:port            # bare host:port -> http:// assumed
     proxy.py remove <url|index>    # drop one entry
@@ -48,15 +51,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import cti_proxy as cp   # shared library (config, rotation, failover, test)
 
 
-def _mask(url):
-    """Hide proxy credentials in output (user:pass@ -> user:***@)."""
-    if "@" not in url:
-        return url
-    creds, host = url.split("://", 1)[-1].split("@", 1)
-    scheme = url.split("://", 1)[0] if "://" in url else "http"
-    user = creds.split(":", 1)[0]
-    return f"{scheme}://{user}:***@{host}"
-
 def _https_connect_probe(proxy_url, host, port=443, timeout=15):
     """Raw HTTPS CONNECT probe through `proxy_url` to (host, port): dials the proxy directly,
     sends CONNECT, and — only on a 200 tunnel — completes a TLS handshake through it. A plain
@@ -71,7 +65,7 @@ def _https_connect_probe(proxy_url, host, port=443, timeout=15):
     if p.scheme.startswith("socks"):
         return None, "SOCKS CONNECT probe needs PySocks + a live socket monkeypatch"
     if not p.hostname or not p.port:
-        return False, f"malformed proxy URL: {proxy_url}"
+        return False, f"malformed proxy URL: {cp.mask_proxy(proxy_url)}"
     try:
         sock = socket.create_connection((p.hostname, p.port), timeout=timeout)
     except Exception as e:
@@ -137,26 +131,21 @@ def _ensure_pysocks():
 def cmd_status(cfg, args):
     pool = cp.build_pool(cfg)
     entries = cfg.get("proxies") or []
-    print("cti-expert proxy layer")
-    print(f"  enabled      : {cp.is_enabled(cfg)}")
-    print(f"  rotation     : {cp.rotation_mode(cfg)}")
-    print(f"  allow_direct : {cp.allow_direct(cfg)}")
-    print(f"  no_proxy     : {', '.join(cp.no_proxy_hosts(cfg)) or '(none)'}")
-    print(f"  store        : {cp.STORE_PATH}")
+    print("cti-expert proxy layer — effective config")
+    rc = cp.print_status(probe=bool(getattr(args, "probe", False)), cfg=cfg)
+    print(f"no_proxy    : {', '.join(cp.no_proxy_hosts(cfg)) or '(none)'}")
     if os.environ.get("CTI_PROXIES") or os.environ.get("CTI_PROXY"):
-        print("  note         : env CTI_PROXY/CTI_PROXIES is set and OVERRIDES the file")
-    print(f"  stored proxies ({len(entries)}):")
+        print("note        : CTI_PROXY/CTI_PROXIES is set and OVERRIDES the stored proxies")
+    print(f"stored proxies ({len(entries)}):")
     for i, p in enumerate(entries):
         flag = " " if p.get("enabled", True) else "x"
         last = p.get("last_ok") or "never tested"
         label = f"  [{p['label']}]" if p.get("label") else ""
-        print(f"    [{i}]({flag}) {_mask(cp.normalize_proxy(p['url']) or p['url'])}"
+        print(f"  [{i}]({flag}) {cp.mask_proxy(cp.normalize_proxy(p['url']) or p['url'])}"
               f"{label}   last_ok={last}")
-    print(f"  effective egress pool ({len(pool)}): "
-          f"{', '.join(_mask(p) for p in pool) or '(direct — no proxy)'}")
     if cp.is_enabled(cfg) and not pool:
-        print("  WARNING      : egress is DIRECT (pool empty) — analyst IP will touch targets.")
-    return 0
+        print("WARNING     : egress is DIRECT (pool empty) — analyst IP will touch targets.")
+    return rc
 
 
 def cmd_add(cfg, args):
@@ -168,7 +157,7 @@ def cmd_add(cfg, args):
         return 2
     for p in cfg["proxies"]:
         if cp.normalize_proxy(p["url"]) == url:
-            print(f"already present: {_mask(url)}")
+            print(f"already present: {cp.mask_proxy(url)}")
             return 0
     if cp.urlsplit(url).scheme.startswith("socks"):
         _ensure_pysocks()
@@ -176,7 +165,7 @@ def cmd_add(cfg, args):
                            "enabled": True, "added": cp.now_iso(), "last_ok": None})
     cfg["enabled"] = True
     cp.save_store(cfg)
-    print(f"added: {_mask(url)}  (pool now {len(cfg['proxies'])})")
+    print(f"added: {cp.mask_proxy(url)}  (pool now {len(cfg['proxies'])})")
     return 0
 
 
@@ -197,7 +186,7 @@ def cmd_remove(cfg, args):
         return 2
     removed = entries.pop(idx)
     cp.save_store(cfg)
-    print(f"removed: {_mask(cp.normalize_proxy(removed['url']) or removed['url'])}")
+    print(f"removed: {cp.mask_proxy(cp.normalize_proxy(removed['url']) or removed['url'])}")
     return 0
 
 
@@ -259,7 +248,7 @@ def cmd_test(cfg, args):
     file_urls = {cp.normalize_proxy(p["url"]): p for p in cfg["proxies"]}
     for p in pool:
         ok, detail = cp.test_proxy(p, args.url, args.timeout)
-        print(f"  {'OK ' if ok else 'ERR'} {_mask(p)} -> {detail}")
+        print(f"  {'OK ' if ok else 'ERR'} {cp.mask_proxy(p)} -> {detail}")
         if ok and p in file_urls:
             file_urls[p]["last_ok"] = cp.now_iso()
         rc = rc or (0 if ok else 2)
@@ -268,7 +257,7 @@ def cmd_test(cfg, args):
         # report it as its own line rather than folding it into `ok` above.
         cok, cdetail = _https_connect_probe(p, probe_host, 443, args.timeout)
         clabel = "OK " if cok else ("SKIP" if cok is None else "ERR")
-        print(f"  {clabel} {_mask(p)} [https connect] -> {cdetail}")
+        print(f"  {clabel} {cp.mask_proxy(p)} [https connect] -> {cdetail}")
         if cok is False:
             rc = rc or 2
     cp.save_store(cfg)
@@ -322,7 +311,9 @@ def build_parser():
     ap = argparse.ArgumentParser(prog="proxy.py", add_help=True,
                                  description="cti-expert egress-proxy manager")
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("status")
+    st = sub.add_parser("status")
+    st.add_argument("--probe", action="store_true",
+                    help="probe each exit once against test_url (same check as the /cti preflight)")
     a = sub.add_parser("add"); a.add_argument("url"); a.add_argument("--label", default="")
     r = sub.add_parser("remove"); r.add_argument("ref")
     sub.add_parser("clear")
@@ -341,8 +332,8 @@ def build_parser():
 def main(argv):
     ap = build_parser()
     args = ap.parse_args(argv)
+    cp.load_env_file()          # .env first, exactly as install() resolves it
     cfg = cp.load_store()
-    cp.load_env_file()          # make CTI_PROXIES/CTI_PROXY visible to build_pool/status
     dispatch = {
         None: cmd_status, "status": cmd_status, "add": cmd_add, "remove": cmd_remove,
         "clear": cmd_clear, "enable": cmd_enable, "disable": cmd_disable,

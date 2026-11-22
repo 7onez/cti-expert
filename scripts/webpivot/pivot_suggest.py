@@ -6,7 +6,10 @@ suggestions, so /branch and /crossref act on concrete correlations instead of gu
 
 Deterministic rules (all offline):
   * username variants  — leet-speak (4->a, 3->e...), incremental numbering, separator
-                         (foo_bar ~ foobar), and exact cross-platform reuse
+                         (foo_bar ~ foobar), and exact cross-platform reuse — each weighted
+                         by the handle's RARITY grade (generic / moderate / rare), so a shared
+                         common handle no longer outranks real leads (techniques/username-osint.md §7.2;
+                         data: scripts/references/handle_rarity.json)
   * email<->name        — email local parts that match NO known person entity (alias lead)
   * temporal sync       — accounts/events across >=2 platforms inside one time window
   * domain clusters     — shared TLD, or shared base stem (foo-shop.top ~ fooshop.xyz)
@@ -33,6 +36,7 @@ Usage:
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
+import os
 import sys
 import re
 import json
@@ -47,6 +51,159 @@ for _s in (sys.stdout, sys.stderr):
 
 _LEET_MAP = {'4': 'a', '3': 'e', '1': 'i', '0': 'o', '5': 's', '7': 't'}
 _PRIORITY_ORDER = {'high': 0, 'medium': 1, 'low': 2}
+
+# DATA: scripts/references/handle_rarity.json. This fallback is the minimum that keeps the grade
+# working when the file is unreadable; it knows few tokens, so it grades FEWER handles generic —
+# load_ref warns loudly, and tests/test_handle_rarity.py asserts the file (not this) is in use.
+_RARITY_FALLBACK = {
+    "grades": {"rare": {"priority_cap": "high", "confidence_scale": 1.0},
+               "moderate": {"priority_cap": "medium", "confidence_scale": 0.7},
+               "generic": {"priority_cap": "low", "confidence_scale": 0.2}},
+    "limits": {"short_max_len": 4, "rare_min_len": 8, "rare_min_unknown_run": 4,
+               "max_generic_digit_suffix": 4, "min_token_len": 3,
+               "keyboard_walk_min_run": 4, "keyboard_walk_min_share": 0.6},
+    "platform_default_patterns": [r"^(user|guest|member|player)[_.-]?\d{3,}$", r"^\d+$"],
+    "common_given_names": ["john", "james", "david", "michael", "maria", "anna", "nguyen", "smith"],
+    "common_words": ["the", "dark", "shadow", "king", "love", "cat", "dog", "wolf", "game", "pro"],
+    "brand_tokens": ["binance", "telegram", "paypal", "support", "official"],
+    "keyboard_walks": ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"],
+    "public_figures": ["elon", "musk"],
+}
+_RARITY = None
+
+
+def _rarity_refs():
+    """handle_rarity.json through the engine's load_ref (one loader, loud fallback)."""
+    global _RARITY
+    if _RARITY is None:
+        tools = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              "..", "..", "intel_engine", "WebPivot", "tools"))
+        if tools not in sys.path:
+            sys.path.insert(0, tools)
+        try:
+            import wp_refs  # noqa: E402
+            doc = wp_refs.load_ref(wp_refs.ref_path(__file__, "handle_rarity.json"), _RARITY_FALLBACK)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] handle_rarity.json not loaded ({exc}); using the embedded minimum",
+                  file=sys.stderr)
+            doc = dict(_RARITY_FALLBACK)
+        lim = {**_RARITY_FALLBACK["limits"], **doc["limits"]}
+        mn = int(lim["min_token_len"])
+        brands = {t.lower() for t in doc["brand_tokens"] if len(t) >= mn}
+        figures = {t.lower() for t in doc["public_figures"] if len(t) >= mn}
+        vocab = {t.lower() for t in doc["common_given_names"] + doc["common_words"]
+                 if len(t) >= mn} | brands | figures
+        walks = [w.lower() for w in doc["keyboard_walks"] if w]
+        _RARITY = {"grades": doc["grades"], "limits": lim, "vocab": vocab,
+                   "names": {t.lower() for t in doc["common_given_names"]},
+                   "brands": brands, "figures": figures,
+                   "walks": walks + [w[::-1] for w in walks],
+                   "patterns": [re.compile(p) for p in doc["platform_default_patterns"]]}
+    return _RARITY
+
+
+def _segment(s, vocab, max_tok):
+    """Cheapest split of `s` into known tokens (cost 1) and unknown chars (cost 2 each).
+    Returns [(piece, known_bool)] with consecutive unknown chars merged into runs."""
+    n = len(s)
+    best = [(0, None)] + [(float('inf'), None)] * n
+    for i in range(1, n + 1):
+        cost, back = best[i - 1][0] + 2, (i - 1, False)
+        for j in range(max(0, i - max_tok), i - 2):
+            if s[j:i] in vocab and best[j][0] + 1 < cost:
+                cost, back = best[j][0] + 1, (j, True)
+        best[i] = (cost, back)
+    pieces, i = [], n
+    while i > 0:
+        j, known = best[i][1]
+        pieces.append((s[j:i], known))
+        i = j
+    merged = []
+    for piece, known in reversed(pieces):
+        if merged and not known and not merged[-1][1]:
+            merged[-1] = (merged[-1][0] + piece, False)
+        else:
+            merged.append((piece, known))
+    return merged
+
+
+def _keyboard_walk_share(flat, walks, min_run):
+    """Share of `flat` covered by runs of >= min_run characters read along one keyboard row or
+    column (`walks` already holds both directions). Input capped at 100 chars, so bounded work."""
+    s = flat[:100]
+    covered = [False] * len(s)
+    i = 0
+    while i < len(s):
+        j = i
+        while j < len(s) and any(s[i:j + 1] in w for w in walks):
+            j += 1
+        if j - i >= min_run:
+            covered[i:j] = [True] * (j - i)
+            i = j
+        else:
+            i += 1
+    return sum(covered) / len(s) if s else 0.0
+
+
+def handle_rarity(handle):
+    """String-only rarity grade of a handle: {'grade': generic|moderate|rare, 'reason': str}.
+    Adaptation of username-osint.md §7.2 steps 1-2 (P14 Perito et al., PETS 2011). It does not
+    see copying, squatting or bulk-generated handles, nor how many unrelated owners use the
+    string — the analyst's population check (§7.2 step 3) still decides."""
+    r = _rarity_refs()
+    lim = r["limits"]
+    raw = (handle or "").strip().lower().lstrip("@")
+    if any(p.search(raw) for p in r["patterns"]):
+        return {"grade": "generic", "reason": "platform-default / placeholder pattern"}
+    flat = _strip_separators(raw)
+    walk_share = _keyboard_walk_share(flat, r["walks"], int(lim["keyboard_walk_min_run"]))
+    if flat and walk_share >= float(lim["keyboard_walk_min_share"]):
+        return {"grade": "generic", "reason": f"keyboard walk ({walk_share:.0%} of the handle "
+                                              f"runs along a keyboard row or column)"}
+    digits = re.search(r'\d*$', flat).group()
+    base = _normalize_leet(flat[:len(flat) - len(digits)] if digits else flat)
+    if len(base) <= int(lim["short_max_len"]):
+        return {"grade": "generic", "reason": f"very short handle ({len(base)} chars before digits)"}
+    max_tok = max((len(t) for t in r["vocab"]), default=1)
+    parts = _segment(base, r["vocab"], max_tok)
+    known = [p for p, k in parts if k]
+    unknown = [p for p, k in parts if not k]
+    brand = [t for t in known if t in r["brands"]]
+    figure = [t for t in known if t in r["figures"]]
+    if (brand or figure) and all(len(u) < int(lim["rare_min_unknown_run"]) for u in unknown):
+        what = "; ".join(x for x in (
+            f"brand/platform token(s) {'+'.join(brand)}" if brand else "",
+            f"public-figure name {'+'.join(figure)}" if figure else "") if x)
+        built = "+".join(known) + (f" + {len(digits)} digits" if digits else "")
+        return {"grade": "generic", "reason": f"{what} with only generic parts ({built}) — "
+                "impersonation/fan-style handle registered by many unrelated owners"}
+    if not unknown:
+        long_suffix = len(digits) > int(lim["max_generic_digit_suffix"])
+        if len(known) == 1 and not long_suffix:
+            return {"grade": "generic", "reason": f"single common token '{known[0]}'"
+                    + (f" + {len(digits)} digits" if digits else "")}
+        if 2 <= len(known) <= 3 and all(t in r["names"] for t in known) and not long_suffix:
+            return {"grade": "generic", "reason": "personal-name skeleton " + "+".join(known)
+                    + (f" + {len(digits)} digits" if digits else "")}
+        return {"grade": "moderate", "reason": "compound of common tokens: " + "+".join(known)
+                + (f" + {len(digits)}-digit suffix" if digits else "")}
+    longest = max(len(u) for u in unknown)
+    if len(base) >= int(lim["rare_min_len"]) and longest >= int(lim["rare_min_unknown_run"]):
+        return {"grade": "rare", "reason": "uncommon token(s): " + ", ".join(
+            u for u in unknown if len(u) >= int(lim["rare_min_unknown_run"]))}
+    return {"grade": "moderate", "reason": "mostly common tokens, short uncommon part"}
+
+
+_GRADE_ORDER = {'generic': 0, 'moderate': 1, 'rare': 2}
+
+
+def _rarity_weighted(priority, confidence, rarity):
+    """Cap priority and scale confidence by the rarity grade (handle_rarity.json → grades)."""
+    g = _rarity_refs()["grades"][rarity["grade"]]
+    cap = g["priority_cap"]
+    if _PRIORITY_ORDER.get(cap, 1) > _PRIORITY_ORDER.get(priority, 1):
+        priority = cap
+    return priority, confidence * float(g["confidence_scale"])
 
 
 def _normalize_leet(u: str) -> str:
@@ -98,12 +255,14 @@ def fuzzy_match(a: str, b: str) -> float:
     return _trigram_similarity(a, b)
 
 
-def _suggestion(pivot_type, target, priority, confidence, rationale, source=""):
-    return {
+def _suggestion(pivot_type, target, priority, confidence, rationale, source="", **extra):
+    s = {
         "pivot_type": pivot_type, "target": target, "priority": priority,
         "confidence": round(confidence, 2), "confidence_pct": int(round(confidence * 100)),
         "rationale": rationale, "source": source,
     }
+    s.update(extra)
+    return s
 
 
 # --------------------------------------------------------------- detection rules
@@ -119,25 +278,38 @@ def _username_variant_rationale(a: str, b: str):
     return None
 
 
+def _rarity_note(rarity):
+    return (f' — handle rarity {rarity["grade"].upper()} ({rarity["reason"]}); a string match is '
+            f'a lead toward same controller, never a link (username-osint.md §7.1-7.2)')
+
+
 def detect_username_variants(usernames):
-    """usernames: list of (name, platform). Pairwise variant + exact-reuse detection."""
+    """usernames: list of (name, platform). Pairwise variant + exact-reuse detection, each
+    weighted by the handle's rarity grade — the less distinctive side for a variant pair."""
     out = []
     for i in range(len(usernames)):
         for j in range(i + 1, len(usernames)):
             ua, pa = usernames[i]
             ub, pb = usernames[j]
             if ua.lower() == ub.lower() and pa != pb:
+                rarity = handle_rarity(ua)
+                priority, conf = _rarity_weighted('high', 0.9, rarity)
                 out.append(_suggestion(
-                    'username_reuse', ub, 'high', 0.9,
-                    f'Exact handle reused across platforms: "{ua}" ({pa}) = "{ub}" ({pb})', ua))
+                    'username_reuse', ub, priority, conf,
+                    f'Exact handle reused across platforms: "{ua}" ({pa}) = "{ub}" ({pb})'
+                    + _rarity_note(rarity), ua, handle_rarity=rarity))
                 continue
             rat = _username_variant_rationale(ua, ub)
             if rat:
                 priority = 'high' if pa != pb else 'medium'
                 conf = 0.85 if priority == 'high' else 0.65
+                rarity = min((handle_rarity(ua), handle_rarity(ub)),
+                             key=lambda r: _GRADE_ORDER[r["grade"]])
+                priority, conf = _rarity_weighted(priority, conf, rarity)
                 out.append(_suggestion(
                     'username_variant', ub, priority, conf,
-                    f'{rat}: "{ua}" ({pa}) ~ "{ub}" ({pb})', ua))
+                    f'{rat}: "{ua}" ({pa}) ~ "{ub}" ({pb})' + _rarity_note(rarity), ua,
+                    handle_rarity=rarity))
     return out
 
 

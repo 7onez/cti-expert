@@ -159,7 +159,7 @@ Location claims        ✓ Boston area
 Current employer       ✓ TechCorp confirmed
 Prior employer         ✓ DataInc verified
 Education              ✓ BU MBA confirmed
-Account ages           ✓ 2010–2015 creation
+Account ages           ~ 2010–2015 creation (neutral alone: aged accounts are traded)
 Content patterns       ✓ Organic, no copy-paste
 Scam indicators        ✓ None detected
 ```
@@ -214,8 +214,8 @@ Step 5 of 5 — Report
 PERSON LOOKUP REPORT
 Subject: John Smith  |  Case date: 2026-03-30
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Confidence: HIGH (87%)
-Verdict:    IDENTITY CONFIRMED  ✓
+Evidence:  HIGH (87/100)
+Verdict:   VERY LIKELY the named person (L4 — username-osint §7.1)
 Risk level: LOW (2/10)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```

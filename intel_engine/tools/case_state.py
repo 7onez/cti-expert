@@ -1360,6 +1360,7 @@ def _enrichment_leads_from_raw(obj, leads):
                         "why": (f"@{handle} → numeric Telegram id + creation date (estimated from "
                                 f"the id for a user/bot, Telegram's own date for a channel/group); "
                                 f"read-only resolve on the research account, no contact import — "
+                                f"runs on its own in AUTO mode (approved_by=auto); in --review mode "
                                 f"held until the analyst approves the batch (enrich --approve telegram)")}
             elif kind in ("username", "dev_username") and piv.get("confidence") == "high":
                 handle = val.lower()
@@ -2147,7 +2148,10 @@ def frontier(case, max_new=8):
         # collected next round as IP seeds (IPPivot); co-tenants then pass the co-host guards
         "ips_pending": ips_pending,
         "origin_ips": ip_detail,                    # {ip: {hosts, sources, first/last_seen, era, hop, …}}
-        "metered_leads": list(leads.values()),
+        # an AUTO-mode lead already settled this case (state.json `metered_leads_run`: bought, or
+        # refused as preview-empty / >cap noise) is not offered again — never paid for twice
+        "metered_leads": [v for v in leads.values()
+                          if metered_lead_key(v) not in _metered_runs(st)],
         # co-tenancy held back from seeding (multi-tenant certs / shared-hosting IPs) — free to
         # check by hand, never auto-chased, and surfaced so the suppression is visible not silent.
         "co_tenancy_leads": [v for slot in deferred.values() for v in slot.values()],
@@ -2190,6 +2194,7 @@ def reopen(case, new_seeds=None):
     st["note"] = f"reopened {_now()}"
     st["dropped"] = {}          # a reopened case re-judges what an earlier Plan phase vetoed
     st.pop("leak_round", None)  # new seeds / new evidence: the harness re-runs the leak fan-out once
+    st.pop("enrich_round", None)  # … and, in auto mode, the one full enrichment pass
     if new_seeds:
         have = {h.lower() for h in st.get("pending", [])} | {h.lower() for h in st.get("consumed", [])}
         for s in new_seeds:
@@ -2322,6 +2327,221 @@ def _excluded_ids(st):
     if isinstance(dropped, dict):
         out |= {str(k) for k in dropped if k}
     return out
+
+
+# ------------------------------------------------------------ AUTO-mode deterministic leads
+# The frontier's metered leads (FOFA ip= / icon_hash=, WhoisXML reverse-WHOIS) as the cross-type
+# route that runs each one; AUTO mode executes them through the proposal path (approved_by auto).
+_FOFA_LEAD_RE = re.compile(r'^(ip|icon_hash)="([^"]+)"$')
+_RWHOIS_LEAD_RE = re.compile(r'^reverse-whois (email|phone)="([^"]+)"$')
+
+
+def metered_lead_key(lead):
+    """Stable key of one frontier metered lead: `service|query`."""
+    lead = lead if isinstance(lead, dict) else {}
+    return f"{lead.get('service') or ''}|{lead.get('query') or ''}"
+
+
+def _metered_runs(st):
+    runs = st.get("metered_leads_run") if isinstance(st, dict) else None
+    return runs if isinstance(runs, dict) else {}
+
+
+def metered_lead_candidate(lead):
+    """The Candidate that executes a frontier metered lead, or None (no route for it).
+
+    FOFA `ip="x"` → fofa.body on the raw FOFA query, rung NEIGHBOUR (co-hosted names are
+    co-tenants: facts and leads, never attribution); FOFA `icon_hash="x"` → fofa.body, rung KIT (a
+    shared favicon is kit-level); WhoisXML reverse-WHOIS → rwhois.purchase on the registrant term,
+    rung OWNER — the SAME id the SDK preview candidate carries, so a pivoted/Plan-dropped purchase
+    is recognised as one pivot."""
+    if not isinstance(lead, dict):
+        return None
+    svc, q = str(lead.get("service") or ""), str(lead.get("query") or "").strip()
+    why = str(lead.get("why") or "")
+    if svc == "FOFA":
+        m = _FOFA_LEAD_RE.match(q)
+        if m:
+            kind, val = m.groups()
+            typ, rung = ("ip", "neighbour") if kind == "ip" else ("favicon", "kit")
+            return _cand(typ, val, "fofa.body", q, metered=True, est_hits=None, rung=rung,
+                         sources=("frontier.metered_lead",), why=why, by="frontier")
+    if svc == "WhoisXML":
+        m = _RWHOIS_LEAD_RE.match(q)
+        if m:
+            kind, val = m.groups()
+            return _cand(kind, val, "rwhois.purchase", val, metered=True, est_hits=None,
+                         rung="owner", sources=("frontier.metered_lead",), why=why, by="frontier")
+    return None
+
+
+# A frontier metered lead → the api_usage ledger row (provider, action) its paid query writes, and
+# the enrichment legs (enrichment/*.json step memo) that run the same paid query for a selector.
+_LEAD_LEDGER = {"FOFA": ("fofa", "search"), "WhoisXML": ("whoisxml", "reverse-whois")}
+_LEAD_ENRICH_LEGS = {"FOFA": ("fofa",), "WhoisXML": ("reverse_whois",)}
+
+
+def _norm_q(s):
+    return " ".join(str(s or "").split()).lower()
+
+
+def _norm_sel(s):
+    """Selector form shared by leads and enrichment keys: lower-case; a phone is its digits."""
+    v = str(s or "").strip().lower()
+    digits = "".join(ch for ch in v if ch.isdigit())
+    return digits if digits and not re.search(r"[a-z@]", v) else v
+
+
+def _api_usage_log():
+    return os.environ.get("API_USAGE_LOG") or os.path.join(ROOT, "MEMORY", "api_usage.jsonl")
+
+
+def metered_lead_answered(case, lead):
+    """'' — or the source that ALREADY answered this paid query in this case, so AUTO mode never
+    pays for it twice:
+      * `api_usage ledger` — a row with this case, the lead's provider + action and the same
+        normalised query (FOFA `icon_hash="…"` / `ip="…"`; WhoisXML reverse-WHOIS on the term) and
+        ok=true (a 200 that found nothing is an answer; a rejected 402/429/5xx call is not);
+      * `enrichment <key>` — an enrichment record for the same selector whose step memo ran the
+        same leg (`reverse_whois` inside email-deep, …) to state done / status ok.
+    An errored call or leg is never an answer: the lead stays eligible."""
+    lead = lead if isinstance(lead, dict) else {}
+    svc = str(lead.get("service") or "")
+    cand = metered_lead_candidate(lead)
+    if cand is None or svc not in _LEAD_LEDGER:
+        return ""
+    prov, action = _LEAD_LEDGER[svc]
+    want_q = _norm_q(cand.query if svc == "FOFA" else cand.selector)
+    try:
+        with open(_api_usage_log(), encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(r, dict) and r.get("case") == case and r.get("ok") is True
+                        and str(r.get("provider") or "").lower() == prov
+                        and r.get("action") == action and _norm_q(r.get("query")) == want_q):
+                    return "api_usage ledger"
+    except OSError:
+        pass
+    want_sel = _norm_sel(cand.selector)
+    legs = _LEAD_ENRICH_LEGS.get(svc) or ()
+    for path in sorted(glob.glob(os.path.join(_case_dir(case), "enrichment", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        key = str((rec or {}).get("key") or "") if isinstance(rec, dict) else ""
+        if ":" not in key or _norm_sel(key.split(":", 1)[1]) != want_sel:
+            continue
+        steps = rec.get("steps")
+        for step in (steps.values() if isinstance(steps, dict) else steps or ()):
+            memo = (step or {}).get("memo") if isinstance(step, dict) else None
+            for leg in legs:
+                row = (memo or {}).get(leg) if isinstance(memo, dict) else None
+                if (isinstance(row, dict) and row.get("state") == "done"
+                        and row.get("status") == "ok"):
+                    return f"enrichment {key}"
+    if svc == "WhoisXML":
+        # a reverse-WHOIS PURCHASE whois_enrich already bought for this case (wp_casememo
+        # cases/<case>/whoisxml/*.json, key reverse_whois|<kind>|<type>|purchase|<term>, no error).
+        # A preview (mode=preview) is a count, never an answer to the purchase.
+        for path in sorted(glob.glob(os.path.join(_case_dir(case), "whoisxml", "*.json"))):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    rec = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            parts = str((rec or {}).get("key") or "").split("|") if isinstance(rec, dict) else []
+            val = rec.get("value") if isinstance(rec, dict) else None
+            if (len(parts) == 5 and parts[0] == "reverse_whois" and parts[3] == "purchase"
+                    and _norm_sel(parts[4]) == want_sel and isinstance(val, dict)
+                    and not val.get("error")):
+                return "whoisxml purchase cache"
+    return ""
+
+
+@_locked
+def record_metered_lead(case, lead, *, cand_id, outcome, round_no, approved_by="auto"):
+    """Settle one frontier metered lead for the case (state.json `metered_leads_run`, keyed by
+    metered_lead_key): the round, who approved it, the candidate id and the outcome. A settled
+    lead is never run or listed again (frontier filters it)."""
+    st = load_state(case)
+    runs = dict(_metered_runs(st))
+    runs[metered_lead_key(lead)] = {
+        "service": (lead or {}).get("service"), "query": (lead or {}).get("query"),
+        "id": str(cand_id or ""), "outcome": str(outcome or "")[:200],
+        "round": int(round_no or 0), "approved_by": str(approved_by), "at": _now()}
+    st["metered_leads_run"] = runs
+    save_state(case, st)
+    return runs[metered_lead_key(lead)]
+
+
+def frontier_attempts(case):
+    """{host: n} — how often AUTO mode queued each free-frontier host for collection."""
+    st = load_state(case)
+    att = st.get("frontier_attempts")
+    return {str(k): int(v) for k, v in att.items() if isinstance(v, int)} \
+        if isinstance(att, dict) else {}
+
+
+@_locked
+def record_frontier_attempts(case, hosts):
+    """Count one AUTO-mode collection attempt per host (state.json `frontier_attempts`)."""
+    st = load_state(case)
+    att = st.get("frontier_attempts") if isinstance(st.get("frontier_attempts"), dict) else {}
+    for h in hosts or ():
+        k = str(h or "").strip().lower()
+        if k:
+            att[k] = int(att.get(k) or 0) + 1
+    st["frontier_attempts"] = att
+    save_state(case, st)
+    return att
+
+
+def held_cotenancy_apexes(case, fr=None):
+    """Apexes the frontier HOLDS BACK as co-tenancy leads (multi-tenant certs, shared/VPS IPs,
+    reseller WHOIS terms, foreign kit siblings) minus the co-tenants an approval covers (state.json
+    `approved_cohosts`) and minus apexes the case ALREADY collected. AUTO mode never collects a held
+    apex on its own — it stays a lead. A collected apex is no longer a stranger to hold back: the
+    hold is about not fetching a box's other tenants, and this one is already in the case (its own
+    subdomains are frontier like any collected host's)."""
+    fr = fr if isinstance(fr, dict) else frontier(case, max_new=0)
+    held = set()
+    for lead in fr.get("co_tenancy_leads") or []:
+        for key in ("domains", "sample_apexes", "sample_domains"):
+            for d in lead.get(key) or ():
+                a = _frontier_apex(str(d or "").strip().lower())
+                if a:
+                    held.add(a)
+    approved = set()
+    for rec in (load_state(case).get("approved_cohosts") or {}).values():
+        if isinstance(rec, dict):
+            approved |= {_frontier_apex(str(d).lower()) for d in rec.get("domains") or () if d}
+    have = {_frontier_apex(h.lower()) for h in collected_hosts(_case_dir(case))}
+    return held - approved - have
+
+
+def recollected_hosts(case):
+    """{host: record} — hosts AUTO mode already re-collected once (state.json `recollected`)."""
+    rec = load_state(case).get("recollected")
+    return dict(rec) if isinstance(rec, dict) else {}
+
+
+@_locked
+def record_recollected(case, host, *, status, round_no, path="exit-rotation"):
+    """Mark ONE auto re-collection of `host` (state.json `recollected`): never repeated. `path`
+    (`recollect_path`) says which egress path re-collected it — the host's fetch route, never a
+    change to the case's hostile classification."""
+    st = load_state(case)
+    rec = st.get("recollected") if isinstance(st.get("recollected"), dict) else {}
+    rec[str(host).lower()] = {"status": str(status or "")[:200], "round": int(round_no or 0),
+                              "recollect_path": str(path), "at": _now()}
+    st["recollected"] = rec
+    save_state(case, st)
+    return rec[str(host).lower()]
 
 
 

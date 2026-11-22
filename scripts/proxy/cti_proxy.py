@@ -23,6 +23,11 @@ WHAT IT SUPPORTS
     fails over instead of blocking forever, plus a per-proxy failure COOLDOWN
     (CTI_PROXY_COOLDOWN, 90s) that deprioritizes a just-failed exit next request.
   - `no_proxy` host bypass and an optional `allow_direct` last resort.
+  - VENDOR fallback: when every exit refuses the tunnel to a vendor API host, or every exit is
+    dead (refused / timeout / unreachable / proxy DNS / 407), that vendor host alone goes direct
+    (scripts/proxy/vendor_hosts.json). Targets never do.
+  - `egress_preflight()`: one probe per exit to the configured test_url (a vendor, never the
+    target) so `/cti` can refuse loudly before collection when the pool is dead and direct is off.
   - HTTP/HTTPS proxies natively; SOCKS4/5 when PySocks is installed.
 
 CONFIG (merged, highest precedence first)
@@ -33,7 +38,9 @@ CONFIG (merged, highest precedence first)
            CTI_PROXY_ALLOW_DIRECT=0|1, NO_PROXY=<csv>,
            CTI_PROXY_TIMEOUT=<sec>, CTI_PROXY_COOLDOWN=<sec>.
 
-Stdlib-only. Importable AND runnable (`python3 cti_proxy.py status|pick|test`).
+Stdlib-only. Importable AND runnable
+(`python3 cti_proxy.py status [--probe]|pick|test`). `status` prints the EFFECTIVE config
+(after env / .env / proxies.json resolution) with the source of each value, credentials masked.
 FOR AUTHORIZED INVESTIGATIONS ONLY.
 """
 # /// script
@@ -45,11 +52,13 @@ import functools
 import json
 import os
 import random
+import re
 import socket
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, quote
 
@@ -111,24 +120,33 @@ _INSTALLED = False   # guard: install() is idempotent within a process
 
 
 # ───────────────────────────────────────────────────────── env / config load
-def load_env_file(path=ENV_PATH):
-    """Merge KEY=VALUE lines from the skill .env into os.environ (never clobber
-    a value already exported)."""
+def read_env_file(path=None):
+    """The non-empty KEY=VALUE pairs of the skill .env (no os.environ side effect)."""
+    out = {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path or ENV_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, _, v = line.partition("=")
                 k, v = k.strip(), v.strip().strip('"').strip("'")
-                if k and v and k not in os.environ:
-                    os.environ[k] = v
+                if k and v:
+                    out[k] = v
     except OSError:
         pass
+    return out
 
 
-def load_store(path=STORE_PATH):
+def load_env_file(path=None):
+    """Merge KEY=VALUE lines from the skill .env into os.environ (never clobber
+    a value already exported)."""
+    for k, v in read_env_file(path).items():
+        if k not in os.environ:
+            os.environ[k] = v
+
+
+def load_store(path=None):
     """Read the managed proxy store; return a normalized config dict."""
     cfg = {
         "enabled": True,
@@ -139,7 +157,7 @@ def load_store(path=STORE_PATH):
         "proxies": [],
     }
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path or STORE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             cfg.update({k: data[k] for k in cfg if k in data})
@@ -363,6 +381,19 @@ def _proxy_key(url):
     return f"{p.scheme}://{host}:{p.port}" if host else None
 
 
+_CRED_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/@\s]+@")
+
+
+def mask_proxy(url):
+    """scheme://***@host:port — a proxy URL safe to print (no user, no password)."""
+    return _CRED_RE.sub(r"\1***@", url or "")
+
+
+def mask_text(text):
+    """Mask any credentialed URL embedded in free text (exception messages, details)."""
+    return _CRED_RE.sub(r"\1***@", str(text or ""))
+
+
 def _read_health():
     """Load the persisted proxy-health map {key: last_fail_epoch}. Read fresh on
     every (typically short-lived) run — an in-memory dict would always start empty
@@ -458,13 +489,52 @@ def _fresh_request(fullurl):
 _VENDOR_DIRECT_NOTED = set()
 
 
-def _note_vendor_direct(host, exc):
+def _note_vendor_direct(host, exc, why="refuses the tunnel to"):
     if host in _VENDOR_DIRECT_NOTED:
         return
     _VENDOR_DIRECT_NOTED.add(host)
-    print(f"[cti_proxy] every exit refuses the tunnel to vendor API {host} ({str(exc)[:80]}); "
+    print(f"[cti_proxy] every exit {why} vendor API {host} ({mask_text(str(exc))[:80]}); "
           f"querying it DIRECT (vendor endpoint, not the target — see proxy/vendor_hosts.json)",
           file=sys.stderr)
+
+
+_CONN_ERRORS = (ConnectionError, TimeoutError, socket.timeout, socket.gaierror)
+_CONN_WORDS = ("refused", "timed out", "timeout", "unreachable", "name or service not known",
+               "nodename nor servname", "temporary failure in name resolution",
+               "getaddrinfo failed", "no route to host", "connection reset")
+
+
+def failure_kind(exc):
+    """Classify an exit failure: 'tunnel' (exit up, destination refused), 'auth' (407),
+    'refused' / 'timeout' / 'unreachable' / 'dns' (a connection-level failure of the exit
+    itself), or 'error' (anything else — not proof the exit is dead)."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return "auth" if exc.code == 407 else "error"
+    if is_tunnel_refusal(exc):
+        return "tunnel"
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, socket.gaierror):
+        return "dns"
+    if isinstance(reason, ConnectionRefusedError):
+        return "refused"
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return "timeout"
+    s = str(reason).lower()
+    if "refused" in s:
+        return "refused"
+    if "timed out" in s or "timeout" in s:
+        return "timeout"
+    if any(w in s for w in _CONN_WORDS[4:8]):
+        return "dns"
+    if isinstance(reason, _CONN_ERRORS) or any(w in s for w in _CONN_WORDS):
+        return "unreachable"
+    return "error"
+
+
+def is_dead_exit(exc):
+    """A connection-level failure of the exit itself (refused / timeout / unreachable / proxy DNS /
+    407) — the exit never reached the destination."""
+    return failure_kind(exc) in ("auth", "refused", "timeout", "unreachable", "dns")
 
 
 class FailoverOpener:
@@ -521,6 +591,7 @@ class FailoverOpener:
         host = _host_of(fullurl)
         order = self._order(host)
         refusals = 0                     # exits that answered the CONNECT with a refusal for THIS host
+        dead = 0                         # exits that failed at the connection level (refused/timeout/407)
         for proxy in order:
             try:
                 resp = self._opener_for(proxy).open(_fresh_request(fullurl), data, timeout)
@@ -534,6 +605,8 @@ class FailoverOpener:
                 # (that burns every exit and hammers the target from many IPs).
                 if e.code == 407:
                     _mark_bad(proxy, self._cooldown)
+                    if proxy is not None:
+                        dead += 1
                     last = e
                     continue
                 raise
@@ -544,16 +617,20 @@ class FailoverOpener:
                     # pool into cooldown for every other host.
                     refusals += 1
                 else:
+                    if proxy is not None and is_dead_exit(e):
+                        dead += 1
                     _mark_bad(proxy, self._cooldown)
                 last = e
                 continue
         proxies_tried = [p for p in order if p is not None]
-        if (proxies_tried and refusals == len(proxies_tried) and None not in order
+        if (proxies_tried and refusals + dead == len(proxies_tried) and None not in order
                 and is_vendor_host(host)):
-            # every exit refuses the tunnel to a VENDOR API host: the block is at the provider, per
-            # destination. The pool protects the analyst from the TARGET; a vendor sees a licensed
-            # key either way — go direct for this host only. Targets never take this path.
-            _note_vendor_direct(host, last)
+            # every exit refuses the tunnel to a VENDOR API host (the block is at the provider, per
+            # destination) or is dead outright. The pool protects the analyst from the TARGET; a
+            # vendor sees a licensed key either way — go direct for this host only. Targets never
+            # take this path.
+            _note_vendor_direct(host, last, "refuses the tunnel to" if not dead
+                                else "is unreachable for")
             return self._opener_for(None).open(_fresh_request(fullurl), data, timeout)
         raise last if last else urllib.error.URLError("no proxy could be reached")
 
@@ -685,12 +762,13 @@ def install(cfg=None):
     return chosen
 
 
-def test_proxy(proxy, url=None, timeout=15):
-    """Probe one proxy against an IP-echo endpoint. Returns (ok, detail)."""
+def _probe(proxy, url=None, timeout=15):
+    """One request through `proxy` to `url`. Returns (ok, detail, kind): ok is None for an
+    unprobeable SOCKS exit; kind is failure_kind() of the error ('' on success). Detail masked."""
     url = url or DEFAULT_TEST_URL
     try:
         if proxy and urlsplit(proxy).scheme.startswith("socks"):
-            return None, "SOCKS test needs PySocks + a live socket monkeypatch"
+            return None, "SOCKS test needs PySocks + a live socket monkeypatch", ""
         ph = (urllib.request.ProxyHandler({"http": proxy, "https": proxy})
               if proxy else urllib.request.ProxyHandler({}))
         opener = urllib.request.build_opener(ph)
@@ -708,44 +786,167 @@ def test_proxy(proxy, url=None, timeout=15):
         req = urllib.request.Request(url, headers=headers)
         with opener.open(req, timeout=timeout) as r:
             body = r.read(400).decode("utf-8", "replace").strip()
-        return True, body
+        return True, body, ""
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        return False, mask_text(f"{type(e).__name__}: {e}"), failure_kind(e)
+
+
+def test_proxy(proxy, url=None, timeout=15):
+    """Probe one proxy against an IP-echo endpoint. Returns (ok, detail)."""
+    ok, detail, _ = _probe(proxy, url, timeout)
+    return ok, detail
+
+
+# ───────────────────────────────────────────────────────── effective config
+def _store_raw(path=None):
+    try:
+        with open(path or STORE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _env_source(var, file_env):
+    """'env' when the process exported it, '.env' when it came from the skill .env file."""
+    v = os.environ.get(var, "").strip()
+    if not v:
+        return None
+    return ".env" if file_env.get(var, "").strip() == v else "env"
+
+
+def effective_config(cfg=None):
+    """What install() / the FailoverOpener will actually use, after env, .env and proxies.json
+    resolution, with the source of each value. Proxy URLs are returned MASKED only."""
+    load_env_file()
+    cfg = cfg or load_store()
+    file_env, raw = read_env_file(), _store_raw()
+    pool = build_pool(cfg)
+    if os.environ.get("CTI_PROXIES", "").strip():
+        pool_src = f"{_env_source('CTI_PROXIES', file_env)} CTI_PROXIES"
+    elif os.environ.get("CTI_PROXY", "").strip():
+        pool_src = f"{_env_source('CTI_PROXY', file_env)} CTI_PROXY"
+    elif pool and any(p.get("enabled", True) for p in cfg["proxies"]):
+        pool_src = "proxies.json"
+    elif pool:
+        var = next(v for v in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+                               "HTTP_PROXY", "http_proxy") if normalize_proxy(os.environ.get(v, "")))
+        pool_src = f"{_env_source(var, file_env)} {var}"
+    else:
+        pool_src = "none"
+
+    def _src(var, key):
+        s = _env_source(var, file_env)
+        if s:
+            return s
+        return "proxies.json" if key in raw else "default"
+    return {
+        "enabled": is_enabled(cfg), "enabled_source": _src("CTI_PROXY_ENABLED", "enabled"),
+        "rotation": rotation_mode(cfg), "rotation_source": _src("CTI_PROXY_ROTATION", "rotation"),
+        "allow_direct": allow_direct(cfg),
+        "allow_direct_source": _src("CTI_PROXY_ALLOW_DIRECT", "allow_direct"),
+        "pool": [mask_proxy(p) for p in pool], "pool_source": pool_src,
+        "test_url": cfg.get("test_url") or DEFAULT_TEST_URL,
+        "timeout": proxy_timeout(), "env_file": ENV_PATH, "store": STORE_PATH,
+    }
+
+
+def probe_pool(pool=None, cfg=None, url=None, timeout=None):
+    """One request per exit, in parallel, to the configured test_url (api.ipify.org by default — a
+    vendor echo endpoint, never a target), each with the exit's own timeout. Returns a list of
+    {exit (masked), ok, kind, detail (masked)} in pool order."""
+    cfg = cfg or load_store()
+    pool = build_pool(cfg) if pool is None else list(pool)
+    url = url or cfg.get("test_url") or DEFAULT_TEST_URL
+    timeout = timeout or proxy_timeout() or DEFAULT_PROXY_TIMEOUT
+    if not pool:
+        return []
+    with ThreadPoolExecutor(max_workers=min(8, len(pool))) as ex:
+        res = list(ex.map(lambda p: _probe(p, url, timeout), pool))
+    return [{"exit": mask_proxy(p), "ok": ok, "kind": kind, "detail": detail[:160]}
+            for p, (ok, detail, kind) in zip(pool, res)]
+
+
+def egress_preflight(cfg=None, probe=None):
+    """Is there ANY egress before a collection run starts? Never raises. Returns
+    {status, message, allow_direct, exits}: status is 'skipped' (proxy layer off or no pool —
+    nothing to check), 'ok' (an exit answered, or could not be probed), 'direct' (pool dead but
+    CTI_PROXY_ALLOW_DIRECT on: the run egresses direct from this host), or 'egress-unavailable'
+    (pool dead and direct off: the caller must not start collection)."""
+    try:
+        load_env_file()
+        cfg = cfg or load_store()
+        pool = build_pool(cfg)
+        direct = allow_direct(cfg)
+        if not is_enabled(cfg) or not pool:
+            return {"status": "skipped", "message": "", "allow_direct": direct, "exits": []}
+        exits = (probe or probe_pool)(pool, cfg)
+        out = {"allow_direct": direct, "exits": exits}
+        if any(e.get("ok") is not False for e in exits):
+            return dict(out, status="ok", message="")
+        kinds = "/".join(sorted({e.get("kind") or "error" for e in exits}))
+        if direct:
+            return dict(out, status="direct", message=(
+                f"WARNING: proxy pool dead ({len(exits)} exits: {kinds}) and "
+                f"CTI_PROXY_ALLOW_DIRECT is on — this run egresses DIRECT from this host"))
+        return dict(out, status="egress-unavailable", message=(
+            f"proxy pool dead ({len(exits)} exits: {kinds}), direct disabled — "
+            f"fix CTI_PROXY or run with CTI_PROXY_ALLOW_DIRECT=1"))
+    except Exception as e:  # noqa: BLE001 — a broken preflight must not abort the caller
+        return {"status": "ok", "message": f"egress preflight unavailable: {mask_text(e)}",
+                "allow_direct": None, "exits": []}
 
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def print_status(probe=False, cfg=None):
+    """The effective-config status block shared by `cti_proxy.py status` and `proxy.py status`."""
+    eff = effective_config(cfg)
+    print(f"enabled     : {eff['enabled']} (source {eff['enabled_source']})")
+    print(f"rotation    : {eff['rotation']} (source {eff['rotation_source']})")
+    print(f"allow_direct: {eff['allow_direct']} (source {eff['allow_direct_source']})")
+    print(f"pool ({len(eff['pool'])}) (source {eff['pool_source']}):")
+    for i, p in enumerate(eff["pool"]):
+        print(f"  [{i}] {p}")
+    print(f"test_url    : {eff['test_url']}")
+    print(f"env file    : {eff['env_file']}")
+    print(f"store       : {eff['store']}")
+    if not probe:
+        return 0
+    res = egress_preflight(cfg)
+    print(f"probe ({len(res['exits'])} exits -> {eff['test_url']}):")
+    for e in res["exits"]:
+        label = "OK  " if e["ok"] else ("SKIP" if e["ok"] is None else "DEAD")
+        print(f"  {label} {e['exit']} [{e['kind'] or 'ok'}] {e['detail']}")
+    print(f"egress      : {res['status']}" + (f" — {res['message']}" if res["message"] else ""))
+    return 2 if res["status"] == "egress-unavailable" else 0
+
+
 # ───────────────────────────────────────────────────────── tiny self-CLI
 def _main(argv):
     cmd = argv[0] if argv else "status"
+    load_env_file()
     cfg = load_store()
     pool = build_pool(cfg)
     if cmd == "status":
-        print(f"enabled     : {is_enabled(cfg)}")
-        print(f"rotation    : {rotation_mode(cfg)}")
-        print(f"allow_direct: {allow_direct(cfg)}")
-        print(f"pool ({len(pool)}):")
-        for i, p in enumerate(pool):
-            print(f"  [{i}] {p}")
-        print(f"store       : {STORE_PATH}")
-        return 0
+        return print_status(probe="--probe" in argv[1:], cfg=cfg)
     if cmd == "pick":
         if not pool:
             print("(no proxies configured)")
             return 1
-        print(pool[pick_start(pool, rotation_mode(cfg))])
+        print(mask_proxy(pool[pick_start(pool, rotation_mode(cfg))]))
         return 0
     if cmd == "test":
         url = argv[1] if len(argv) > 1 else None
         rc = 0
         for p in pool or [None]:
             ok, detail = test_proxy(p, url)
-            print(f"{'OK ' if ok else 'ERR'} {p or '(direct)'} -> {detail}")
+            print(f"{'OK ' if ok else 'ERR'} {mask_proxy(p) if p else '(direct)'} -> {detail}")
             rc = rc or (0 if ok else 2)
         return rc
-    print(f"unknown command: {cmd} (use status|pick|test)", file=sys.stderr)
+    print(f"unknown command: {cmd} (use status [--probe]|pick|test)", file=sys.stderr)
     return 2
 
 

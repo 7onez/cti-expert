@@ -1,6 +1,8 @@
 {
 "_comment": "Mozilla Public Suffix List, re-shaped for wp_common._registrable (eTLD+1). Rules keep the PSL syntax: a bare suffix, '*.<suffix>' (one extra label is part of the suffix), '!<name>' (exception: that name is registrable). `icann` = registry-operated suffixes (co.uk, com.vn, io.vn, sa.com …); `private` = hosting/SaaS platforms whose tenants are separately-owned sites (github.io, pages.dev, blogspot.com …). generic_labels.json → multi_part_tlds is merged on top as an analyst override. Refresh with WebPivot/tools/wp_psl_update.py — never edit by hand.",
 "source": "https://publicsuffix.org/list/public_suffix_list.dat",
+"licence": "MPL-2.0",
+"notice": "This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.",
 "fetched_utc": "2026-09-05T08:30:03Z",
 "icann": {
 "_comment": "ICANN section — registry-operated public suffixes.",

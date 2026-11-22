@@ -134,6 +134,92 @@ def fetch(url: str, timeout: int = 20, ua: str = DEFAULT_UA, proxy: str = None,
         return url, e.code, eh, _decode_body(e.read(), eh.get("content-encoding"))
 
 
+# --- HOSTILE live fetch: explicit exits, one retry through a DIFFERENT exit, never direct --------
+# A hostile host is fetched only through the egress pool. The proxy env cti_proxy installs pins ONE
+# exit per process, and `requests` has no failover, so a gateway 504 on that exit used to end the
+# live fetch for the whole run (seen on a live case: every lure host "Tunnel connection failed: 504
+# Gateway Timeout" — the CONNECT was answered by the proxy, the origin never spoke). These helpers
+# let pivot_extract name the exit explicitly, tell a proxy-side failure from an origin answer, and
+# rotate once to a different exit. Direct is never on the list.
+# DATA: references/fetch_profile.json -> hostile_exit_retry
+_HX_FALLBACK = {"hostile_exit_retry": {"proxy_side_statuses": [401, 407, 502, 503, 504],
+                                       "retry_on_timeout": True, "exit_retries": 1}}
+try:
+    _HX_REF = load_ref(ref_path(__file__, "fetch_profile.json"), _HX_FALLBACK)["hostile_exit_retry"]
+    HOSTILE_PROXY_STATUSES = frozenset(int(s) for s in (_HX_REF.get("proxy_side_statuses") or ()))
+    HOSTILE_RETRY_ON_TIMEOUT = bool(_HX_REF.get("retry_on_timeout", True))
+    HOSTILE_EXIT_RETRIES = max(0, int(_HX_REF.get("exit_retries", 1)))
+except Exception as _hx_err:  # noqa: BLE001 — a malformed tunable must not break every import
+    print(f"[wp_net] WARNING: hostile_exit_retry unreadable ({_hx_err}); using the fallback",
+          file=sys.stderr)
+    _HX_REF = dict(_HX_FALLBACK["hostile_exit_retry"])
+    HOSTILE_PROXY_STATUSES = frozenset(_HX_REF["proxy_side_statuses"])
+    HOSTILE_RETRY_ON_TIMEOUT = True
+    HOSTILE_EXIT_RETRIES = 1
+
+_TUNNEL_STATUS_RE = re.compile(
+    r"(?:tunnel connection failed|proxy connect refused):\s*(?:HTTP/\d(?:\.\d)?\s+)?(\d{3})", re.I)
+
+# A hostile collection with NO exit still analyses an archive / urlscan DOM, and the analysis may
+# fetch from the base URL (favicon). Route those through a proxy address nothing listens on (the
+# discard port on loopback) so they fail closed. None would mean direct.
+FAIL_CLOSED_PROXY = "http://127.0.0.1:9"
+
+
+def proxy_side_failure(err):
+    """Short reason when a failed live fetch failed on the PROXY side — the exit answered the
+    CONNECT with a listed status (hostile_exit_retry.proxy_side_statuses), could not be reached,
+    or the request timed out — else None. None means the origin answered (an HTTP status, a TLS
+    certificate, a challenge page): another exit would only hit the target again, so it is never
+    a reason to rotate."""
+    s = str(err or "")
+    m = _TUNNEL_STATUS_RE.search(s)
+    if m:
+        code = int(m.group(1))
+        return f"proxy {code} on CONNECT" if code in HOSTILE_PROXY_STATUSES else None
+    low = s.lower()
+    if "unable to connect to proxy" in low:
+        return "proxy unreachable"
+    if HOSTILE_RETRY_ON_TIMEOUT and ("timed out" in low or "timeout" in low):
+        return "timeout"
+    return None
+
+
+def hostile_exits(explicit=None):
+    """Ordered egress exits a HOSTILE live fetch may use; never contains direct (None).
+
+    `explicit` (the --proxy / --proxy-range pool) wins. Otherwise the cti_proxy pool when it is
+    enabled, rotated so the exit this process started on (the persisted round-robin cursor, read
+    back from the proxy env install() set) comes first. [] means there is no exit, and the caller
+    must not fetch the target live. Never raises."""
+    if explicit:
+        return [p for p in dict.fromkeys(explicit) if p]
+    cp = sys.modules.get("cti_proxy")
+    try:
+        if cp is None:
+            import cti_proxy as cp  # noqa: PLC0415 — wp_common already put scripts/proxy on the path
+        if not cp.is_enabled():
+            return []
+        pool = [p for p in cp.build_pool() if p]
+    except Exception:  # noqa: BLE001
+        return []
+    cur = next((os.environ.get(v) for v in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy")
+                if os.environ.get(v) in pool), None)
+    if cur:
+        i = pool.index(cur)
+        pool = pool[i:] + pool[:i]
+    return pool
+
+
+def mask_exit(proxy):
+    """An exit as host:port only — never its credentials (raw files are shared evidence)."""
+    try:
+        u = urlparse(proxy if "://" in str(proxy) else "http://" + str(proxy))
+        return f"{u.hostname}:{u.port}" if u.port else str(u.hostname or "")
+    except Exception:  # noqa: BLE001
+        return "exit"
+
+
 # --- CORS configuration probe ------------------------------------------------------
 # A site's CORS policy is a first-class OSINT pivot. When a browser sends a cross-origin
 # request it includes an `Origin:` header; the server answers with `Access-Control-Allow-

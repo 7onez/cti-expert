@@ -1,10 +1,13 @@
 """Process APK/installer links discovered in a case, without overwriting web evidence.
 
 Static analysis and the local copy always run. A configured ANY.RUN sandbox key authorizes
-submission only in a spending run; the sandbox client still proves private entitlement and
-checks the applied privacy. A submission without a task ID is never retried automatically:
-the POST may have succeeded even when its response was lost.
+submission only in a spending run. In review mode the sandbox client still proves private
+entitlement and checks the applied privacy; in AUTO mode (the /cti default, state.json
+approval_mode) the submission is an explicit PUBLIC task (never private), recorded with its risk
+briefing in anyrun/submissions.json and the tool-call ledger. A submission without a task ID is
+never retried automatically: the POST may have succeeded even when its response was lost.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -23,6 +26,7 @@ sys.path.append(HARNESS)
 sys.path.append(os.path.join(ROOT, "WebPivot", "tools"))
 import bp_anyrun  # noqa: E402
 import case_scope  # noqa: E402
+import audit  # noqa: E402 — harness/audit.py: auto mode (approval_mode), the tool-call ledger
 # The analyzer now runs the REA deep-static layer by default, so its subprocess gets the shared
 # per-call ceiling (CTI_CALL_TIMEOUT) instead of a fixed 300 s that would kill the whole analysis.
 from wp_timeouts import floor as _floor  # noqa: E402
@@ -387,16 +391,31 @@ def run(case, *, hostile=False, free_only=False, root=ROOT):
         if sha in ledger:
             outcomes.append(f"binary: ANY.RUN already attempted for {sha}: {ledger[sha].get('task_uuid') or 'check task history before retry'}")
             continue
+        # AUTO MODE (state.json approval_mode, the /cti default): the submission is a PUBLIC task,
+        # never private — the analyst's standing decision — and its risk briefing is recorded.
+        auto = audit.auto_mode(case, root) and "anyrun_submit" in audit.AUTO_SUBMIT
+        submit_kw = dict(audit.AUTO_SUBMIT["anyrun_submit"]) if auto else {}
         # Persist the intent before POST: a lost response or interruption must not create a second
         # public/private task on the next loop run. Reconciliation is a deliberate analyst action.
         ledger[sha] = {"source": url, "file": saved, "status": "pending; check history before retry"}
+        if auto:
+            ledger[sha].update({"approved_by": "auto", "privacy_requested": submit_kw.get("privacy"),
+                                "briefing": audit.AUTO_BRIEFING.get("anyrun_submit", "")})
         try:
             _save(ledger_path, ledger)
         except OSError as exc:
             outcomes.append(f"binary: ANY.RUN skipped for {sha}: cannot checkpoint submission ({exc})")
             continue
+        if auto:
+            audit.record("anyrun_submit", {"target": saved, "kind": "file", "confirm": True,
+                                           **submit_kw},
+                         allowed=True, reason="", classes=["outbound", "metered", "auto-approved"],
+                         case=case, phase="binary-auto",
+                         extra={"approved_by": "auto", "approved_at": datetime.datetime.now(
+                             datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                "briefing": audit.AUTO_BRIEFING.get("anyrun_submit", "")})
         try:
-            result = bp_anyrun.submit(saved, confirm=True,
+            result = bp_anyrun.submit(saved, confirm=True, **submit_kw,
                                       env_os="android" if binary.get("file_kind") == "apk" else None)
         except Exception as exc:
             result = {"error": str(exc)}

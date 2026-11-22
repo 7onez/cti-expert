@@ -126,7 +126,7 @@ project name) and **where in an Electron bundle a literal lives**. [REA](https:/
 result in.
 
 ```bash
-npm install --global rea-agents@6.7.0          # by hand, pinned — the skill never installs/updates it
+npm install --global rea-agents@6.9.0          # by hand, pinned — the skill never installs/updates it
 export REA_BIN="$(npm prefix -g)/bin/rea"      # when `rea` is not on PATH (nvm installs)
 python3 "$BP/tools/analyze_artifact.py" ./Terminal.exe --keep "$CASE/bin" --leads   # REA included
 python3 "$BP/tools/analyze_artifact.py" ./Terminal.exe --no-rea --leads              # without it
@@ -139,9 +139,16 @@ or a URL ending in a `binary_indicators.json → binary_extensions` extension �
 `analyze_artifact` tool all run REA; `--no-rea` / `rea=false` opts out. The analyzer subprocess
 runs under the shared `CTI_CALL_TIMEOUT` ceiling so a long REA parse does not kill the base
 analysis. REA resolves from `REA_BIN` (env, then `.env`) and falls back to `rea` on PATH; it is
-run with its own bin dir first on PATH, so the Node it was installed with (≥ 22) executes it even
-when the system `node` is older. Only when neither is executable does a run record
-`not_installed`.
+run with its own bin dir first on PATH, so the Node it was installed with (REA 6.9.0 needs
+`^22.23.4 || ^24.22.1 || >=26.12.1`) executes it even
+when the system `node` is older. A missing or non-executable `REA_BIN` (for example after replacing
+an nvm Node install) falls back to PATH; the result records the selected `binary`, `binary_source`
+and any `binary_notes`. Only when neither is executable does a run record `not_installed`.
+
+**Older REA stays useful.** Each command step's `min_version` in `rea.json` gates its extra `args`,
+not the command itself. `--include-string-literals` needs REA 6.9.0: on 6.8.0 it is dropped, while
+Go module inspection still runs. The run's `args_skipped` records the omitted args and reason.
+An `Unknown flag` answer triggers exactly one retry without extra args, also recorded there.
 
 **Auto-pivot: collected, never clustered.** After a case ingest, `binary_auto.register_rea_nodes`
 hands each sample's `artifacts.binary.rea.nodes` to the cross-type loop's node registry
@@ -159,16 +166,17 @@ registry; there these hosts remain frontier `related_leads`.
 | File kind | REA commands (`references/rea.json → commands`) | What lands in the result |
 |---|---|---|
 | `apk` | `identify-flutter-build`, then `inspect-dart-aot` if Flutter | `rea_flutter_libapp` (libapp.so sha256), `rea_dart_package` (first-party `package:` names minus `dart_package_noise`), Dart snapshot hash in `detail` |
-| `pe` | `inspect-managed-members`, `inspect-go-binary` | .NET `ldstr` literals → IOC sweep, cited `ldstr <token>`; `rea_managed_mvid`; Go module |
-| `elf`, `macho` | `inspect-go-binary` | `rea_go_module`, Go version and `vcs.*` build settings in `detail` |
+| `pe` | `inspect-managed-members`, `inspect-go-binary --include-string-literals` | .NET `ldstr` literals → IOC sweep, cited `ldstr <token>`; `rea_managed_mvid`; Go module and Go string literals as for `elf` |
+| `elf`, `macho` | `inspect-go-binary --include-string-literals` | `rea_go_module`, Go version and `vcs.*` build settings in `detail`; inferred Go string literals (static `(ptr, len)` headers, REA ≥ 6.9.0, capped at 2000) → IOC sweep, cited `go string @<file offset>`. A literal containing a dot is swept only with a scheme, `@`, `host/path` or `ip:port` — Go runtime names (`reflect.Value.Elem`) are not hosts; bare hosts stay with the base sweep |
 | `asar` (by file name) | `analyze-javascript-application --artifact-format asar` | string literals → IOC sweep, cited `<module>:<line>` |
 
 Rails:
 
 - **Static only.** `bp_rea._STATIC_CEILING` is the full set of REA commands that can ever run — none
   launches the sample, attaches to it or fetches anything. `rea.json` selects from it; a command
-  outside it is refused. REA's runtime capture, browser, ADB, Frida and debugger commands are never
-  reachable from here.
+  outside it is refused. `_ALLOWED_ARGS`, beside it, also refuses any unlisted extra flag or value:
+  only `--include-string-literals` and `--artifact-format asar` are permitted. REA's runtime
+  capture, browser, ADB, Frida and debugger commands are never reachable from here.
 - **Leads, not links — for every REA indicator.** REA indicators are never merged into the base
   sweep's `iocs`, whose wallet / Firebase / S3 / messenger labels are KB edges. Each kind reaches
   `artifacts.trackers` only through `references/rea.json → ioc_labels`: hosts → `app_backend_host`,

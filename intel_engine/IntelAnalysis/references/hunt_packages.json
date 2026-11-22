@@ -1,0 +1,1575 @@
+{
+  "_comment": "Hunt-package library: a LINK-ONLY index of the hunting queries in the PacktPublishing 'Advanced-Cyber-Threat-Intelligence-and-Hunting' companion repo, one entry per upstream query file, grouped by the ATT&CK tactic the hunt hypothesis tests (a technique can sit under several tactics; the tactic named is the one the hypothesis targets). No query text is copied: titles, hypotheses (ABLE form), method and false-positive notes are our own words, and the upstream_url is pinned to a commit. Every query is a STARTING POINT that must be mapped, unit-triggered and baselined in the consumer's own environment before any result is reported (workflows/wf-threat-analyst.md Phase 5, CAR rule). Baselines and lookups named under prerequisites come from the consumer's data, never from the upstream example values. attack_ids are verified against ATT&CK Enterprise at authoring time; an empty list plus attack_note means no id was recorded on purpose. telemetry uses CAR-style object/action strings (adaptation: cloudtrail/*, authentication/sign-in, kubernetes_audit/* extend the CAR objects). Hits are hunt leads for Phase 4, never attribution or same-operator edges. Read by humans only (no code loader).",
+  "source": "[PK Packt ACTIH companion repo, 2026] https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting",
+  "pinned_commit": "0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4",
+  "retrieved": "2026-11-15",
+  "license": "MIT (c) 2026 Packt",
+  "initial-access": {
+    "_comment": "Hunts for first access through exposed applications and external identities (ATT&CK TA0001).",
+    "entries": [
+      {
+        "id": "pk-ch06-api-request-anomaly",
+        "chapter": 6,
+        "title": "Per-host API request anomaly job (rare path, request burst, query-shape spread)",
+        "attack_ids": [
+          "T1190"
+        ],
+        "tactic": "initial-access",
+        "hypothesis": "A: any · B: probing or exploiting an exposed API · L: internet-facing app hosts · E: web/API request logs show paths, volumes or query shapes the host has not served before",
+        "telemetry": [
+          "http/request"
+        ],
+        "platform": "Elastic Stack",
+        "language": "Elastic ML job definition (JSON)",
+        "prerequisites": [
+          "Elastic ML licence tier that runs anomaly-detection jobs",
+          "a derived per-request query-signature field the job partitions on",
+          "several days of request history before scores mean anything"
+        ],
+        "method": "ml-anomaly (rare + high-count + high-distinct-count detectors per host)",
+        "false_positive_notes": "Releases, new client versions and scanners the consumer runs itself shift every detector; annotate deployments before reading anomalies.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-06/suspicious-api-request-ml.json",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-azure-cross-tenant-new",
+        "chapter": 16,
+        "title": "New cross-tenant (guest/external) sign-in relationships",
+        "attack_ids": [
+          "T1078.004",
+          "T1199"
+        ],
+        "tactic": "initial-access",
+        "hypothesis": "A: any · B: access through an external or partner identity · L: identity tenant · E: successful sign-ins whose home tenant differs from the resource tenant, first seen inside the last week",
+        "telemetry": [
+          "authentication/sign-in"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Entra ID sign-in logs retained for at least 30 days"
+        ],
+        "method": "first-seen (30-day history, 7-day novelty window)",
+        "false_positive_notes": "Newly onboarded partners, contractors and B2B collaboration produce exactly this shape; check against the partner onboarding record.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/azure-cross-tenant-access.kql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "execution": {
+    "_comment": "Hunts for adversary code first running on a host or cloud runtime (TA0002).",
+    "entries": [
+      {
+        "id": "pk-ch05-webserver-child-shell",
+        "chapter": 5,
+        "title": "Web-server process spawns a shell shortly after a script POST",
+        "attack_ids": [
+          "T1505.003",
+          "T1059.001",
+          "T1059.003"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: a planted web shell runs operator commands · L: IIS/PHP servers · E: a POST to a script path followed within minutes by the web-server worker starting a command shell or PowerShell",
+        "telemetry": [
+          "http/request",
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "web request telemetry and endpoint process telemetry joined on the same host identifier"
+        ],
+        "method": "sequence (request then child process, per host, short max-span)",
+        "false_positive_notes": "Admin consoles and build hooks that shell out legitimately; the upstream exclusion list of known upload endpoints must be replaced with the consumer's own.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-05/webserver-execution.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-iso-container-exec",
+        "chapter": 9,
+        "title": "Disk-image mount followed by script-host launching a shortcut or script",
+        "attack_ids": [
+          "T1553.005",
+          "T1204.002"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: payload delivered in an ISO/IMG to dodge mark-of-the-web · L: user workstations · E: an image file opened or mounted, then a script host runs a shortcut or script from the new volume",
+        "telemetry": [
+          "file/open",
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "file-open/mount events (not only file creation) from the endpoint sensor"
+        ],
+        "method": "sequence (mount then script-host execution, per host and user)",
+        "false_positive_notes": "Software installers and IT tooling distributed as disk images; vendor ISOs opened by administrators.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/container-based-execution.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-ps-encoded",
+        "chapter": 9,
+        "title": "PowerShell launched with an encoded command argument",
+        "attack_ids": [
+          "T1059.001",
+          "T1027.010"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: hiding PowerShell intent behind base64 · L: endpoints · E: process command lines carrying the encoded-command switch or its abbreviations",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Management agents and deployment tools encode commands routinely; baseline the parent process and signer before triage.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/ps-encoded-commands.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-ps-download-exec",
+        "chapter": 9,
+        "title": "PowerShell download-and-invoke primitives on the command line",
+        "attack_ids": [
+          "T1059.001",
+          "T1105"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: one-liner that fetches and runs a second stage · L: endpoints · E: command lines combining web-request and invoke-expression primitives",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Package bootstrap scripts and admin automation use the same primitives; the short alias match is very noisy without a parent/user filter.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/ps-staging.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-ps-temp-activity",
+        "chapter": 9,
+        "title": "PowerShell file activity inside the user temp directory",
+        "attack_ids": [
+          "T1059.001"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: loader drops and runs follow-on content from temp · L: endpoints · E: PowerShell file events under the per-user temp path",
+        "telemetry": [
+          "file/create",
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match on path and process",
+        "false_positive_notes": "Installers and update helpers stage in temp constantly; useful mainly as a pivot from another hit, not standalone.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/ps-temp-execution.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-ephemeral-schtask",
+        "chapter": 9,
+        "title": "Scheduled task created and deleted within a minute",
+        "attack_ids": [
+          "T1053.005"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: one-shot execution through a throwaway task · L: Windows hosts · E: task-created then task-deleted security events for the same task name within one minute",
+        "telemetry": [
+          "scheduled_task/create",
+          "scheduled_task/delete"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "Windows object-access auditing that emits task create/delete security events"
+        ],
+        "method": "sequence (create then delete, same task name)",
+        "false_positive_notes": "Software deployment and remote-management tools create transient tasks; record the creating account and task path.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/windows-scheduled-task-execution.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-ephemeral-service",
+        "chapter": 9,
+        "title": "Service installed, started and removed within a minute",
+        "attack_ids": [
+          "T1569.002",
+          "T1543.003"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: single-use service for SYSTEM execution · L: Windows hosts · E: service install, start and stop/delete system events on one service name inside a minute",
+        "telemetry": [
+          "service/create",
+          "service/start"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "System event log collection including service control manager events"
+        ],
+        "method": "sequence (install, start, removal; same service name)",
+        "false_positive_notes": "Remote admin suites and some patching tools use the same lifecycle; check the image path and installing account.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/windows-service-execution.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-lambda-chain",
+        "chapter": 16,
+        "title": "One principal exercising several serverless create/update/permission actions",
+        "attack_ids": [
+          "T1648"
+        ],
+        "tactic": "execution",
+        "hypothesis": "A: any · B: deploying a serverless backdoor · L: cloud account · E: a principal performing two or more of function create, code update, permission add and trigger mapping",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "CloudTrail management events ingested for the relevant regions"
+        ],
+        "method": "threshold (distinct action count per principal)",
+        "false_positive_notes": "CI/CD deploy roles do this on every release; exclude by role, not by principal name alone.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/lambda-creation.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "persistence": {
+    "_comment": "Hunts for footholds that survive reboot or re-login: autostarts, services, Office macros, web shells (TA0003).",
+    "entries": [
+      {
+        "id": "pk-ch05-webshell-entropy",
+        "chapter": 5,
+        "title": "High-entropy POST bodies to script endpoints",
+        "attack_ids": [
+          "T1505.003"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: delivering or driving an obfuscated web shell · L: internet-facing web servers · E: short POST bodies with high Shannon entropy sent to script extensions",
+        "telemetry": [
+          "http/request"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [
+          "request-body entropy and length fields computed at ingest (not native to most web logs)"
+        ],
+        "method": "threshold (body entropy and length)",
+        "false_positive_notes": "Legitimate binary or compressed uploads and API clients that send encoded payloads; allowlist by path and client.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-05/high-entropy-webshells.sigma",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-outlook-vba-write",
+        "chapter": 10,
+        "title": "Outlook VBA project file written by a process other than Outlook",
+        "attack_ids": [
+          "T1137"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: mail-client macro persistence · L: user profiles · E: create/modify events on the Outlook VBA project file from a non-Outlook process",
+        "telemetry": [
+          "file/create",
+          "file/modify"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [],
+        "method": "signature-match on path with process exclusion",
+        "false_positive_notes": "Profile migration and backup/restore tools rewrite the file.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/outlook-macro-persistence.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-run-key-rarity",
+        "chapter": 10,
+        "title": "Fleet-wide rarity of Run/RunOnce values",
+        "attack_ids": [
+          "T1547.001"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: autostart persistence · L: a defined workstation peer group · E: Run/RunOnce values present on very few hosts",
+        "telemetry": [
+          "registry/edit"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "host type and fleet tag fields populated so the stack runs within one peer group"
+        ],
+        "method": "rarity-baseline (stack count by host count, ascending)",
+        "false_positive_notes": "Department-specific software and freshly rolled-out agents are rare at first; re-run after deployments settle.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/run-keys-baselining.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-run-key-script-engine",
+        "chapter": 10,
+        "title": "Run/RunOnce value that invokes a script engine or shell",
+        "attack_ids": [
+          "T1547.001",
+          "T1059"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: autostart through a script interpreter · L: Windows endpoints · E: registry autostart values naming a shell or script host",
+        "telemetry": [
+          "registry/edit"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [],
+        "method": "signature-match on key path and value content",
+        "false_positive_notes": "Logon scripts and some vendor helpers call a shell directly.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/run-keys-scripted-execution.sigma",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-run-key-writable-path",
+        "chapter": 10,
+        "title": "Run/RunOnce value pointing into a user- or world-writable directory",
+        "attack_ids": [
+          "T1547.001"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: autostart of a dropped binary · L: Windows endpoints · E: autostart values whose target sits under profile, public, program-data, temp or download paths",
+        "telemetry": [
+          "registry/edit"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [],
+        "method": "signature-match on value path",
+        "false_positive_notes": "Per-user installers (chat, meeting and sync clients) autostart from the profile by design.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/suspicious-run-keys.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-service-rarity",
+        "chapter": 10,
+        "title": "Rare service name and image-path pairs across the fleet",
+        "attack_ids": [
+          "T1543.003"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: persistence via a new Windows service · L: Windows estate · E: service-install events whose name/path pair appears on five or fewer hosts in 30 days",
+        "telemetry": [
+          "service/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "30 days of service-install events from both the security and system logs"
+        ],
+        "method": "rarity-baseline (stack count by host count)",
+        "false_positive_notes": "Driver installs, niche line-of-business software and pilot rollouts.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/windows-services-baselining.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-word-template-write",
+        "chapter": 10,
+        "title": "Word global template modified by a shell or script host",
+        "attack_ids": [
+          "T1137.001"
+        ],
+        "tactic": "persistence",
+        "hypothesis": "A: any · B: template-macro persistence · L: user profiles · E: file events on the global Word template from a shell or script interpreter",
+        "telemetry": [
+          "file/modify"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [],
+        "method": "signature-match on path and writing process",
+        "false_positive_notes": "User customisation, Office repair and enterprise template-distribution scripts.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/word-template-persistence.sigma",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "privilege-escalation": {
+    "_comment": "Hunts for gaining higher integrity, SYSTEM or broader cloud/cluster rights (TA0004).",
+    "entries": [
+      {
+        "id": "pk-ch10-cross-integrity-api",
+        "chapter": 10,
+        "title": "Low/medium-integrity process calling injection APIs on a high/system process",
+        "attack_ids": [
+          "T1055"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: injecting into a more privileged process · L: endpoints · E: memory/thread API calls from low or medium integrity into high or system integrity targets, rare by host count",
+        "telemetry": [
+          "process/access"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "endpoint sensor that records API-call events with source and target integrity levels"
+        ],
+        "method": "rarity-baseline (keep combinations seen on few hosts)",
+        "false_positive_notes": "Security products, accessibility tools and debuggers cross integrity levels legitimately.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/cross-process-privesc.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-dll-sideload",
+        "chapter": 10,
+        "title": "Trusted signed process loading an unsigned or foreign-signed DLL outside system folders",
+        "attack_ids": [
+          "T1574",
+          "T1574.001"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: DLL hijack/side-load under a trusted binary · L: endpoints · E: one-off library loads where the host process is trusted-signed but the DLL is not, from a non-system path",
+        "telemetry": [
+          "module/load"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "library-load telemetry with code-signature fields for both process and DLL"
+        ],
+        "method": "rarity-baseline (single host, single occurrence)",
+        "false_positive_notes": "Third-party plug-ins and shell extensions load into signed hosts everywhere; the upstream process exclusion list is environment-specific.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/dll-hijacking.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-integrity-jump",
+        "chapter": 10,
+        "title": "Low/medium-integrity parent whose child runs as SYSTEM",
+        "attack_ids": [
+          "T1548.002",
+          "T1134"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: UAC bypass or token elevation · L: endpoints · E: a process start at low or medium integrity followed by a SYSTEM-integrity child within minutes",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "process events carrying integrity level and stable process entity ids"
+        ],
+        "method": "sequence (parent then elevated child, entity-linked)",
+        "false_positive_notes": "Installers and elevation brokers that hand off to SYSTEM services.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/elevation-privesc.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-remote-thread",
+        "chapter": 10,
+        "title": "Remote thread creation with common benign sources filtered",
+        "attack_ids": [
+          "T1055"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: code injection through a remote thread · L: Windows endpoints with Sysmon · E: remote-thread events outside the known WMI and session-manager noise",
+        "telemetry": [
+          "thread/remote_create"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [
+          "Sysmon with remote-thread events enabled"
+        ],
+        "method": "signature-match with noise filters",
+        "false_positive_notes": "Endpoint security, game anti-cheat and accessibility software create remote threads.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/process-injection-sysmon.sigma",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-aws-self-attach",
+        "chapter": 16,
+        "title": "Cloud principal attaching or putting a policy on itself",
+        "attack_ids": [
+          "T1098.003"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: identity granting itself more permissions · L: cloud account · E: policy attach/put calls where caller and target identity match",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "CloudTrail IAM management events"
+        ],
+        "method": "signature-match (caller equals target)",
+        "false_positive_notes": "Bootstrap automation and break-glass roles; the substring caller/target match can also collide on similar names.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/aws-self-escalation.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-privileged-pod",
+        "chapter": 16,
+        "title": "Privileged or host-PID pod creation in a managed cluster",
+        "attack_ids": [
+          "T1610",
+          "T1611"
+        ],
+        "tactic": "privilege-escalation",
+        "hypothesis": "A: any · B: container deployed to reach the node · L: managed Kubernetes clusters · E: pod-create audit records with a privileged security context or host PID namespace",
+        "telemetry": [
+          "kubernetes_audit/create"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Kubernetes API audit logs shipped to the workspace with request bodies"
+        ],
+        "method": "signature-match on pod spec",
+        "false_positive_notes": "Node agents, CNI/CSI drivers and monitoring daemonsets run privileged by design; allowlist by namespace and image.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/pod-creation-azure.kql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "defense-evasion": {
+    "_comment": "Hunts for proxy execution, in-memory staging and audit-log tampering (TA0005).",
+    "entries": [
+      {
+        "id": "pk-ch07-lolbin-baseline",
+        "chapter": 7,
+        "title": "30-day per-host baseline of living-off-the-land binary invocations",
+        "attack_ids": [
+          "T1218",
+          "T1127.001"
+        ],
+        "tactic": "defense-evasion",
+        "hypothesis": "A: any · B: proxy execution through built-in binaries · L: endpoints · E: binary/command pairs never or rarely seen on that host in the last 30 days",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "Elastic transform definition (JSON)",
+        "prerequisites": [
+          "a continuously running transform writing a baseline index that downstream rules query",
+          "30 days of process-start events"
+        ],
+        "method": "rarity-baseline (continuous transform producing a first-seen lookup)",
+        "false_positive_notes": "Admin scripts and software updates introduce new command lines in bursts; the lookup only helps once it covers a quiet period.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-07/transform-schema.json",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch09-rwx-alloc",
+        "chapter": 9,
+        "title": "Committed read-write-execute memory allocations outside known JIT processes",
+        "attack_ids": [
+          "T1055"
+        ],
+        "tactic": "defense-evasion",
+        "hypothesis": "A: any · B: in-memory shellcode staging · L: endpoints with the XDR memory table · E: RWX commit allocations by processes that are not known JIT runtimes",
+        "telemetry": [
+          "process/memory_alloc"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "an XDR tier that exposes memory-allocation events"
+        ],
+        "method": "signature-match with process exclusions",
+        "false_positive_notes": "JIT runtimes, browsers, IDEs and some games allocate RWX pages; extend the exclusion set from the consumer's data.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-09/defender-shellcode-injection.kql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-cloud-log-tamper",
+        "chapter": 16,
+        "title": "Cloud audit trail stopped, deleted or narrowed",
+        "attack_ids": [
+          "T1562.008"
+        ],
+        "tactic": "defense-evasion",
+        "hypothesis": "A: any · B: turning off cloud audit logging · L: cloud account · E: successful stop/delete/update trail or event-selector changes",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "CloudTrail delivered to an independent store so tampering is still recorded"
+        ],
+        "method": "signature-match on API action",
+        "false_positive_notes": "Planned logging re-architecture and trail consolidation; confirm against the change record.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/defense-evasion-cloudtrail.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "credential-access": {
+    "_comment": "Hunts for stolen sessions, tokens, hashes and keys, mostly identity-plane telemetry (TA0006).",
+    "entries": [
+      {
+        "id": "pk-ch08-aitm-session-split",
+        "chapter": 8,
+        "title": "Sign-in and Graph activity in one session from different source IPs",
+        "attack_ids": [
+          "T1557",
+          "T1539",
+          "T1550.004"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: adversary-in-the-middle token theft and replay · L: identity provider and Graph API · E: one session id whose sign-in and Graph calls arrive from different IPs within minutes",
+        "telemetry": [
+          "authentication/sign-in",
+          "http/request"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "sign-in logs and Graph activity logs both ingested with session identifiers"
+        ],
+        "method": "correlation (session-keyed join, distinct-IP count)",
+        "false_positive_notes": "Mobile clients roaming between networks, split-tunnel VPNs and IPv4/IPv6 dual stack produce two IPs per session.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-08/aitm-sessions.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch08-mfa-fatigue",
+        "chapter": 8,
+        "title": "Repeated MFA denials followed by a successful sign-in",
+        "attack_ids": [
+          "T1621"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: push-bombing until the user accepts · L: identity tenant · E: three or more MFA denials in a short bucket then a success for the same user",
+        "telemetry": [
+          "authentication/sign-in"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Entra ID sign-in logs with MFA result codes"
+        ],
+        "method": "threshold then sequence",
+        "false_positive_notes": "Users fumbling a new authenticator or lost-device scenarios; ask the user before escalating.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-08/azure-mfa-fatigue.kql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch08-oauth-grant",
+        "chapter": 8,
+        "title": "New delegated OAuth permission grants",
+        "attack_ids": [
+          "T1528"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: illicit consent grant for long-lived app access · L: identity tenant · E: directory audit records of new OAuth permission grants",
+        "telemetry": [
+          "identity_audit/consent_grant"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Entra ID audit logs",
+          "an approved-application inventory to diff against"
+        ],
+        "method": "enumeration (every grant reviewed against an approved-app list)",
+        "false_positive_notes": "Every legitimate app consent appears; the hunt value is the review against an approved-application inventory.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-08/azure-oauth-grants.kql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch08-password-spray",
+        "chapter": 8,
+        "title": "One source IP failing against many distinct users",
+        "attack_ids": [
+          "T1110.003"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: password spraying · L: identity tenant · E: invalid-credential failures from one IP across more than ten distinct users in a day",
+        "telemetry": [
+          "authentication/sign-in"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Entra ID sign-in logs with failure codes"
+        ],
+        "method": "threshold (distinct users per source IP)",
+        "false_positive_notes": "Shared egress IPs (corporate NAT, proxies) and misconfigured service accounts.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-08/azure-password-spray.kql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch08-session-multi-ip",
+        "chapter": 8,
+        "title": "One successful session id seen from more than one IP",
+        "attack_ids": [
+          "T1550.004",
+          "T1539"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: stolen session cookie replayed elsewhere · L: identity tenant · E: successful sign-ins sharing a session id across distinct IPs",
+        "telemetry": [
+          "authentication/sign-in"
+        ],
+        "platform": "Microsoft Sentinel / Defender XDR",
+        "language": "KQL",
+        "prerequisites": [
+          "Entra ID sign-in logs with session identifiers"
+        ],
+        "method": "threshold (distinct IPs per session)",
+        "false_positive_notes": "Network roaming, mobile carriers and dual-stack clients; weigh geography and user-agent change alongside IP count.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-08/azure-session-hijacking.kql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-sam-security-hive-read",
+        "chapter": 10,
+        "title": "Direct reads of the SAM or SECURITY registry hives",
+        "attack_ids": [
+          "T1003.002",
+          "T1003.004"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: offline hash or LSA-secret extraction · L: Windows endpoints and servers · E: registry query/open on SAM or SECURITY hives from unexpected processes",
+        "telemetry": [
+          "registry/read"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "registry read/open auditing (often not on by default)"
+        ],
+        "method": "signature-match with process exclusions",
+        "false_positive_notes": "Backup agents and some security tools read these hives.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/credential-dumping-registry.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch10-lsass-minidump",
+        "chapter": 10,
+        "title": "LSASS memory dump through the built-in minidump export",
+        "attack_ids": [
+          "T1003.001",
+          "T1218.011"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: credential dumping with a signed system DLL · L: Windows endpoints · E: rundll32 command lines combining the system minidump DLL with a full-dump argument",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Rare; vendor crash-diagnostics scripts occasionally use the same export.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-10/memory-dumping-comsvcs.sigma",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch11-adfs-cert-export",
+        "chapter": 11,
+        "title": "Certificate export commands on federation servers",
+        "attack_ids": [
+          "T1552.004",
+          "T1606.002"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: stealing the federation token-signing key to forge SAML tokens · L: federation servers · E: shell command lines exporting PFX certificates",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Certificate renewal and migration work by PKI administrators.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-11/adfs-certs-exfil.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-instance-role-multi-ip",
+        "chapter": 16,
+        "title": "Instance-role credentials used from more than two source IPs",
+        "attack_ids": [
+          "T1552.005",
+          "T1078.004"
+        ],
+        "tactic": "credential-access",
+        "hypothesis": "A: any · B: instance-metadata credential theft and reuse · L: cloud compute roles · E: assumed-role sessions issued to compute roles appearing from several IPs",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "CloudTrail with session issuer fields",
+          "a role naming convention or tag that identifies compute instance roles"
+        ],
+        "method": "threshold (distinct IPs per role)",
+        "false_positive_notes": "Autoscaling groups and NAT/VPC-endpoint egress can legitimately present several IPs; the upstream role-name patterns are naming-convention specific.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/aws-imds-attack.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "discovery": {
+    "_comment": "Hunts for filesystem walks and cloud reconnaissance ahead of collection (TA0007).",
+    "entries": [
+      {
+        "id": "pk-ch13-dir-walk",
+        "chapter": 13,
+        "title": "Process listing hundreds of distinct directories in minutes",
+        "attack_ids": [
+          "T1083"
+        ],
+        "tactic": "discovery",
+        "hypothesis": "A: any · B: scripted filesystem walk ahead of collection · L: file servers and endpoints · E: more than 500 distinct directory listings from one process inside five minutes",
+        "telemetry": [
+          "file/list"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "an endpoint sensor that emits directory-listing events (uncommon by default)"
+        ],
+        "method": "threshold (distinct directories in a time window)",
+        "false_positive_notes": "Backup, indexing, antivirus scans and sync clients walk trees constantly.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-file-enumeration.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-aws-rare-iam-calls",
+        "chapter": 16,
+        "title": "IAM API actions a principal used three times or fewer in 30 days",
+        "attack_ids": [
+          "T1087.004",
+          "T1069.003"
+        ],
+        "tactic": "discovery",
+        "hypothesis": "A: any · B: cloud identity reconnaissance or one-off manipulation · L: cloud account · E: per-principal IAM actions with very low 30-day counts",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "30 days of CloudTrail IAM events"
+        ],
+        "method": "rarity-baseline (per-principal action count)",
+        "false_positive_notes": "Administrators doing occasional IAM housekeeping; new principals are rare in everything.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/aws-rare-api-calls.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-s3-first-seen-principal",
+        "chapter": 16,
+        "title": "Principal-to-bucket access relationship first seen in the last week",
+        "attack_ids": [
+          "T1619",
+          "T1530"
+        ],
+        "tactic": "discovery",
+        "hypothesis": "A: any · B: a principal discovering and touching storage it never used · L: object storage · E: principal/bucket pairs whose first access falls in the recent window",
+        "telemetry": [
+          "cloudtrail/data_event"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "S3 data events enabled (they are not logged by default)"
+        ],
+        "method": "first-seen (30-day history, 7-day novelty)",
+        "false_positive_notes": "New applications, new team members and data-platform migrations.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/s3-buckets-firstseen-principals.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "lateral-movement": {
+    "_comment": "Hunts for movement between hosts, directory objects and cloud accounts (TA0008).",
+    "entries": [
+      {
+        "id": "pk-ch11-rbcd-attribute-write",
+        "chapter": 11,
+        "title": "Computer account writing the resource-based delegation attribute",
+        "attack_ids": [],
+        "tactic": "lateral-movement",
+        "hypothesis": "A: any · B: resource-based constrained delegation abuse · L: Active Directory · E: directory-change events on the delegation attribute initiated by a machine account",
+        "telemetry": [
+          "directory_object/modify"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "directory-service change auditing on the relevant OUs"
+        ],
+        "method": "signature-match on attribute and actor type",
+        "false_positive_notes": "Some provisioning flows write the attribute legitimately, usually from a user/service account rather than a machine account.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-11/rbcd-lateral-movement.eql",
+        "license": "MIT (c) 2026 Packt",
+        "attack_note": "No technique id recorded on purpose: map the follow-on (delegated ticket request and use) to the live ATT&CK matrix before writing it on the hunt record."
+      },
+      {
+        "id": "pk-ch11-smb-drop-exec",
+        "chapter": 11,
+        "title": "Executable written by the kernel SMB path then executed within seconds",
+        "attack_ids": [
+          "T1021.002",
+          "T1570",
+          "T1569.002"
+        ],
+        "tactic": "lateral-movement",
+        "hypothesis": "A: any · B: remote execution with a binary pushed over admin shares · L: Windows servers and workstations · E: an executable created by the System process followed by its execution within ten seconds",
+        "telemetry": [
+          "file/create",
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "EQL",
+        "prerequisites": [
+          "file-creation events attributed to the System process"
+        ],
+        "method": "sequence (write then execute, same host and path)",
+        "false_positive_notes": "Software distribution systems and remote admin tools behave identically; allowlist by source host.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-11/smb-remote-execution.eql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-aws-cross-account-assume",
+        "chapter": 16,
+        "title": "New cross-account role assumptions",
+        "attack_ids": [
+          "T1078.004"
+        ],
+        "tactic": "lateral-movement",
+        "hypothesis": "A: any · B: pivoting through delegated trust between cloud accounts · L: multi-account organisation · E: successful role assumptions where source and target accounts differ, first seen in the last week",
+        "telemetry": [
+          "cloudtrail/api"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "CloudTrail from every account in scope (an organisation trail)"
+        ],
+        "method": "first-seen (30-day history, 7-day novelty)",
+        "false_positive_notes": "New account vending, cross-account CI pipelines and audit tooling.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/aws-cross-activity.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "collection": {
+    "_comment": "Hunts for bulk gathering and staging of data on disk, shares and object storage (TA0009).",
+    "entries": [
+      {
+        "id": "pk-ch13-bulk-copy",
+        "chapter": 13,
+        "title": "Recursive bulk-copy utilities and copy-to-UNC",
+        "attack_ids": [
+          "T1119",
+          "T1039",
+          "T1074"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: bulk gathering of files ahead of exfiltration · L: endpoints and file servers · E: recursive copy-utility or copy-to-share command lines, ranked by volume",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match then volume ranking",
+        "false_positive_notes": "Backups, migrations and profile sync use the same switches.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-bulk-copy.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-sensitive-file-search",
+        "chapter": 13,
+        "title": "Recursive searches filtered on document, mailbox or secret keywords",
+        "attack_ids": [
+          "T1083",
+          "T1552.001",
+          "T1005"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: hunting for documents and credentials on disk · L: endpoints · E: recursive listing commands combined with sensitive extension or secret keywords",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Developers and administrators searching for config files; e-discovery tooling.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-file-searching.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-bulk-file-reads",
+        "chapter": 13,
+        "title": "One process reading hundreds of files in minutes",
+        "attack_ids": [
+          "T1005",
+          "T1119"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: scripted document harvesting · L: endpoints and file servers · E: more than 500 file reads across many paths by one process inside ten minutes",
+        "telemetry": [
+          "file/read"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "file-read events from the endpoint sensor"
+        ],
+        "method": "threshold (reads in a time window)",
+        "false_positive_notes": "Antivirus, backup, search indexers and build systems; file-read telemetry is often sampled or off.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-process-file-reads.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-smb-share-sweep",
+        "chapter": 13,
+        "title": "Account touching many SMB shares across many hosts in a day",
+        "attack_ids": [
+          "T1039",
+          "T1135"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: share sweeping for data · L: file servers · E: one user accessing more than ten distinct shares on more than three hosts in 24 hours",
+        "telemetry": [
+          "file/read"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "UNC-path file events or file-server share-access auditing"
+        ],
+        "method": "threshold (distinct shares and hosts per user)",
+        "false_positive_notes": "Service accounts for backup, inventory and vulnerability scanning.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-smb-enumeration.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-staging-writes",
+        "chapter": 13,
+        "title": "Burst of file writes into common staging directories",
+        "attack_ids": [
+          "T1074.001"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: local staging before exfiltration · L: endpoints and servers · E: more than 250 writes in ten minutes into temp, public, program-data, perf-log or recycle-bin paths",
+        "telemetry": [
+          "file/create",
+          "file/modify"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "threshold (writes per directory in a time window)",
+        "false_positive_notes": "Installers, updaters and log rotation write heavily into these paths.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/collection-staging-file-writes.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-s3-bulk-get",
+        "chapter": 16,
+        "title": "Principal retrieving more than 100 objects from one bucket in an hour",
+        "attack_ids": [
+          "T1530"
+        ],
+        "tactic": "collection",
+        "hypothesis": "A: any · B: bulk retrieval from cloud object storage · L: object storage · E: hourly per-principal per-bucket object-get counts above threshold",
+        "telemetry": [
+          "cloudtrail/data_event"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "S3 data events enabled"
+        ],
+        "method": "threshold (objects per principal per hour)",
+        "false_positive_notes": "Analytics jobs, replication and backup roles; compare distinct-key counts with the role's normal pattern.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/s3-bucket-exfil.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "command-and-control": {
+    "_comment": "Hunts for callback channels. The rarity entries are the Chapter 12 C2 patterns: few-hosts-heavy DNS, globally-rare/locally-noisy user agents, URI reuse across domains (TA0011).",
+    "entries": [
+      {
+        "id": "pk-ch04-dns-volume",
+        "chapter": 4,
+        "title": "Very high query volume against one parent domain",
+        "attack_ids": [
+          "T1071.004",
+          "T1048.003",
+          "T1572"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: DNS tunnelling for C2 or exfiltration · L: resolvers and endpoints · E: query counts against a single parent domain far above its normal volume",
+        "telemetry": [
+          "dns/query"
+        ],
+        "platform": "Generic (Sigma; convert to the consumer's SIEM backend)",
+        "language": "Sigma",
+        "prerequisites": [
+          "DNS logs with a derived parent/registrable-domain field"
+        ],
+        "method": "threshold (queries per parent domain)",
+        "false_positive_notes": "CDNs with dynamic subdomains, telemetry-over-DNS products and anti-malware lookups.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-04/dns-tunnelling.sigma",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch07-first-seen-dest",
+        "chapter": 7,
+        "title": "Host/process/destination tuple seen on exactly one day: today",
+        "attack_ids": [
+          "T1071"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: new external callback destination · L: Windows endpoints · E: outbound connection tuples absent from a 30-day history and first appearing today",
+        "telemetry": [
+          "flow/start"
+        ],
+        "platform": "Splunk",
+        "language": "SPL",
+        "prerequisites": [
+          "30 days of Sysmon network-connection events",
+          "a DNS lookup to name destinations",
+          "internal address ranges defined for exclusion"
+        ],
+        "method": "first-seen (30-day history)",
+        "false_positive_notes": "Software updates and new SaaS adoption; needs a reverse-DNS or passive-DNS lookup to be triageable.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-07/splunk-baseline.spl",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch07-beacon-interval",
+        "chapter": 7,
+        "title": "Narrow-band average inter-event interval per host/process/destination",
+        "attack_ids": [
+          "T1071.001"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: periodic beaconing over web ports · L: endpoints · E: non-browser process streams with at least eight events and a sub-hour average interval",
+        "telemetry": [
+          "flow/start"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "network events attributed to process name"
+        ],
+        "method": "periodicity (average interval; adaptation: add jitter/variance before trusting it)",
+        "false_positive_notes": "Update checkers, telemetry agents and chat clients beacon by design.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-07/suspicious-network-streams.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch12-dns-few-hosts-heavy",
+        "chapter": 12,
+        "title": "Domains resolved by at most two hosts but heavily",
+        "attack_ids": [
+          "T1071.004",
+          "T1071.001"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: implant calling a dedicated callback domain · L: a workstation peer group · E: non-browser lookups for a domain from very few hosts with high total volume",
+        "telemetry": [
+          "dns/query"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "endpoint DNS events with the querying process",
+          "host type and fleet tag fields"
+        ],
+        "method": "rarity-baseline (low host count with high volume)",
+        "false_positive_notes": "Developer tools, niche licence servers and pilots; the two-label domain extraction mis-handles multi-label public suffixes.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-12/api-dns-baselining.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch12-ua-global-frequency",
+        "chapter": 12,
+        "title": "Seven-day global frequency table of proxy user agents",
+        "attack_ids": [
+          "T1071.001"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: custom client tooling · L: web proxy · E: the global count for every user-agent string, used as the rarity reference for the paired query",
+        "telemetry": [
+          "http/request"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "7 days of proxy logs",
+          "a lookup index to hold the output"
+        ],
+        "method": "rarity-baseline (builds the lookup)",
+        "false_positive_notes": "Not a detector on its own; a baseline window that already contains the implant hides it.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-12/ua-baselining-01.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch12-ua-rare-global-noisy-local",
+        "chapter": 12,
+        "title": "User agents rare globally but noisy from one source",
+        "attack_ids": [
+          "T1071.001"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: a bespoke client calling a few destinations · L: web proxy · E: a user agent with fewer than ten 7-day sightings fleet-wide but more than fifty in 24 hours from one source",
+        "telemetry": [
+          "http/request"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "the user-agent rarity lookup produced by pk-ch12-ua-global-frequency"
+        ],
+        "method": "rarity-baseline (global rarity joined to local volume)",
+        "false_positive_notes": "Single-host appliances, scanners and scripted integrations with custom agent strings.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-12/ua-baselining-02.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch12-uri-reuse",
+        "chapter": 12,
+        "title": "Identical URI requested across three or more destination domains",
+        "attack_ids": [
+          "T1071.001"
+        ],
+        "tactic": "command-and-control",
+        "hypothesis": "A: any · B: shared C2 or kit path across rotating domains · L: web proxy · E: the same path-plus-query seen on at least three domains with at least twenty requests",
+        "telemetry": [
+          "http/request"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "proxy logs with full path and query"
+        ],
+        "method": "diversity count (distinct domains per URI)",
+        "false_positive_notes": "Generic paths (favicon, health checks, analytics beacons, CDN assets) recur across domains; suppress them first.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-12/uri-stability.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "exfiltration": {
+    "_comment": "Hunts for data leaving the estate: byte asymmetry and baseline-vs-recent shifts in duration, frequency and volume (TA0010).",
+    "entries": [
+      {
+        "id": "pk-ch13-asymmetric-out",
+        "chapter": 13,
+        "title": "Source/destination pairs sending far more than they receive",
+        "attack_ids": [
+          "T1048",
+          "T1041"
+        ],
+        "tactic": "exfiltration",
+        "hypothesis": "A: any · B: data leaving the network · L: egress · E: outbound/inbound byte ratio above five with more than 50 MB out over repeated sessions",
+        "telemetry": [
+          "flow/end"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "flow records with both byte directions"
+        ],
+        "method": "ratio threshold",
+        "false_positive_notes": "Backups to cloud, video upload, code pushes and log shipping.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/exfiltration-asymmetric-sessions.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-session-duration-shift",
+        "chapter": 13,
+        "title": "Recent session durations five times the prior baseline",
+        "attack_ids": [
+          "T1048"
+        ],
+        "tactic": "exfiltration",
+        "hypothesis": "A: any · B: long-running tunnel where short sessions were normal · L: egress · E: per-tuple recent average duration far above the preceding six-day average",
+        "telemetry": [
+          "flow/end"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "7 days of flow records with session duration"
+        ],
+        "method": "baseline-vs-recent (duration)",
+        "false_positive_notes": "Software changes that switch to persistent connections (websockets, long-poll).",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/exfiltration-session-baselining.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-session-frequency-shift",
+        "chapter": 13,
+        "title": "Daily session counts three times the prior baseline",
+        "attack_ids": [
+          "T1041",
+          "T1029"
+        ],
+        "tactic": "exfiltration",
+        "hypothesis": "A: any · B: periodic transfer channel emerging · L: egress · E: per-tuple daily session count well above its baseline daily average and above one hundred",
+        "telemetry": [
+          "flow/start"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "7 days of flow records"
+        ],
+        "method": "baseline-vs-recent (frequency)",
+        "false_positive_notes": "New integrations, monitoring probes and retry storms after an outage.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/exfiltration-session-frequency.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-volume-baseline",
+        "chapter": 13,
+        "title": "Per-pair daily outbound volume baseline for servers",
+        "attack_ids": [
+          "T1048"
+        ],
+        "tactic": "exfiltration",
+        "hypothesis": "A: any · B: (baseline builder) normal server egress · L: server segment · E: average, max and spread of daily outbound bytes per source/destination pair",
+        "telemetry": [
+          "flow/end"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "host type field identifying servers",
+          "a lookup index to hold the output"
+        ],
+        "method": "baseline builder (feeds a lookup)",
+        "false_positive_notes": "Not a detector; a baseline window that already contains exfiltration normalises it.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/exfiltration-traffic-baselining-01.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-volume-deviation",
+        "chapter": 13,
+        "title": "Today's server egress three times its daily baseline",
+        "attack_ids": [
+          "T1048",
+          "T1041"
+        ],
+        "tactic": "exfiltration",
+        "hypothesis": "A: any · B: large-volume exfiltration from servers · L: server segment · E: today's outbound bytes per pair above three times baseline and above 10 MB",
+        "telemetry": [
+          "flow/end"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "the daily-volume baseline lookup produced by pk-ch13-volume-baseline"
+        ],
+        "method": "baseline-vs-recent (volume, joined lookup)",
+        "false_positive_notes": "Month-end jobs, re-syncs and disaster-recovery tests.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/exfiltration-traffic-baselining-02.esql",
+        "license": "MIT (c) 2026 Packt"
+      }
+    ]
+  },
+  "impact": {
+    "_comment": "Hunts for encryption, wiping, recovery inhibition, mass account lockout and unauthorised OT controller work (TA0040).",
+    "entries": [
+      {
+        "id": "pk-ch13-mass-file-modify",
+        "chapter": 13,
+        "title": "Process modifying or renaming more than 1,000 files in five minutes",
+        "attack_ids": [
+          "T1486"
+        ],
+        "tactic": "impact",
+        "hypothesis": "A: any · B: ransomware encryption · L: endpoints and file servers · E: per-process modify/overwrite/rename bursts across many directories",
+        "telemetry": [
+          "file/modify"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "threshold (file changes in a time window)",
+        "false_positive_notes": "Archivers, build systems, sync clients and bulk renames by administrators.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/impact-file-encryption.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-mass-account-change",
+        "chapter": 13,
+        "title": "One subject resetting or disabling more than 100 accounts in ten minutes",
+        "attack_ids": [
+          "T1531",
+          "T1098"
+        ],
+        "tactic": "impact",
+        "hypothesis": "A: any · B: destructive mass password reset or disablement · L: Active Directory · E: account reset/disable/change events by one subject across many targets",
+        "telemetry": [
+          "user_account/modify"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "account-management auditing on domain controllers"
+        ],
+        "method": "threshold (distinct targets per subject in a time window)",
+        "false_positive_notes": "Identity-governance jobs and scheduled deprovisioning runs.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/impact-mass-credential-events.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-raw-disk-access",
+        "chapter": 13,
+        "title": "Process opening raw physical-drive or volume devices",
+        "attack_ids": [
+          "T1561.001",
+          "T1561.002",
+          "T1006"
+        ],
+        "tactic": "impact",
+        "hypothesis": "A: any · B: disk wiping or boot-record overwrite · L: endpoints and servers · E: file events against raw device paths",
+        "telemetry": [
+          "file/open"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "sensor coverage of raw device handles"
+        ],
+        "method": "signature-match on device path",
+        "false_positive_notes": "Disk imaging, encryption, backup and forensic tools.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/impact-raw-wiping.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch13-shadow-copy-delete",
+        "chapter": 13,
+        "title": "Shadow-copy deletion via built-in utilities",
+        "attack_ids": [
+          "T1490"
+        ],
+        "tactic": "impact",
+        "hypothesis": "A: any · B: inhibiting recovery before encryption · L: Windows hosts · E: command lines deleting volume shadow copies through the standard utilities",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [],
+        "method": "signature-match on command line",
+        "false_positive_notes": "Backup software rotating its own snapshots and disk-space cleanup scripts.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-13/impact-shadow-copy-deletion.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch16-ot-eng-software-off-window",
+        "chapter": 16,
+        "title": "PLC engineering software launched outside a maintenance window",
+        "attack_ids": [],
+        "tactic": "impact",
+        "hypothesis": "A: any · B: unauthorised controller programming · L: engineering workstations in the OT zone · E: rare executions of PLC engineering software with no matching maintenance window",
+        "telemetry": [
+          "process/create"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "a maintenance-window lookup table keyed by workstation",
+          "endpoint telemetry from the OT engineering segment"
+        ],
+        "method": "stack count with lookup exclusion",
+        "false_positive_notes": "Emergency maintenance not recorded in the window table; vendor support sessions.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-16/ot-plc-stack-counting.esql",
+        "license": "MIT (c) 2026 Packt",
+        "attack_note": "ICS-matrix behaviour; record a technique id only after checking the live ATT&CK for ICS matrix."
+      }
+    ]
+  },
+  "cross-tactic-ttb": {
+    "_comment": "Time-Terrain-Behavior (TTB) entity scoring: technique-agnostic, so attack_ids is empty by design. Chapter 15 is the base multiplicative diversity score; Chapter 18 adds the velocity ratio against peer-group baselines for machine-speed or agentic activity. A high score is a triage lead, never a detection or attribution.",
+    "entries": [
+      {
+        "id": "pk-ch15-ttb-diversity",
+        "chapter": 15,
+        "title": "Time-Terrain-Behavior diversity per host",
+        "attack_ids": [],
+        "tactic": "cross-tactic",
+        "hypothesis": "A: any · B: an entity operating across unusually many time contexts, sensors and action types · L: whole estate · E: per-host distinct counts of time, terrain and behaviour categories",
+        "telemetry": [
+          "multi_source/any (every event the entity produces)"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "30 days of mixed telemetry carrying module/dataset and category fields so events can be bucketed"
+        ],
+        "method": "diversity-score (Time-Terrain-Behavior, multiplicative)",
+        "false_positive_notes": "Servers, jump hosts and admin workstations are broad by role; compare within peer groups, not fleet-wide.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-15/ttb-diversity-scoring.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch15-ttb-decomposition",
+        "chapter": 15,
+        "title": "Drill-down of one entity's Time-Terrain-Behavior mix",
+        "attack_ids": [],
+        "tactic": "cross-tactic",
+        "hypothesis": "A: any · B: (triage) explain why one entity scored high · L: one entity · E: event counts per time/terrain/behaviour combination",
+        "telemetry": [
+          "multi_source/any (every event the entity produces)"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "the bucket definitions from pk-ch15-ttb-diversity"
+        ],
+        "method": "decomposition (per-bucket counts for one entity)",
+        "false_positive_notes": "The upstream file elides the classification logic and points back to the scoring query; reuse the same bucket definitions or the two will disagree.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-15/ttb-decomposition.esql",
+        "license": "MIT (c) 2026 Packt"
+      },
+      {
+        "id": "pk-ch18-ttb-velocity",
+        "chapter": 18,
+        "title": "Velocity-extended Time-Terrain-Behavior score against peer-group baselines",
+        "attack_ids": [],
+        "tactic": "cross-tactic",
+        "hypothesis": "A: any (incl. automated or agentic tooling) · B: an entity crossing time contexts far faster than its peers · L: whole estate by peer group · E: transition rate relative to the peer-group median, folded into the TTB product",
+        "telemetry": [
+          "multi_source/any (every event the entity produces)"
+        ],
+        "platform": "Elastic Stack",
+        "language": "ES|QL",
+        "prerequisites": [
+          "host-to-peer-group enrich policy populated from the consumer's asset inventory",
+          "peer-group baseline enrich policy holding median transition rates computed from the consumer's own known-clean window",
+          "30 days of mixed telemetry"
+        ],
+        "method": "diversity-score with velocity ratio vs peer-group median",
+        "false_positive_notes": "Batch jobs, CI runners and monitoring agents are machine-speed by design; a peer group that mixes them with workstations makes every workstation look slow.",
+        "upstream_url": "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-18/ttb-diversity-scoring-ai.esql",
+        "license": "MIT (c) 2026 Packt",
+        "prerequisite_files": [
+          "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-18/host_peer_group.json",
+          "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-18/peer_group_baselines.json",
+          "https://github.com/PacktPublishing/Advanced-Cyber-Threat-Intelligence-and-Hunting/blob/0f76fbc2ff505e6fcb2585b1b3d0b08ce271b1e4/chapter-18/README.md"
+        ]
+      }
+    ]
+  }
+}

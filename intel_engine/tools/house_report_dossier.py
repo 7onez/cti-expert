@@ -164,7 +164,7 @@ GLOSSARY = [
     ("Confidence (low / moderate / high)", r"\bconfidence\b", "How well the evidence supports a judgment — distinct from the probability word, which says how likely the judgment is to be true."),
     ("Assessed / observed", r"\bassessed\b|\bobserved\b", "'Observed' is a fact we saw directly; 'assessed' is a conclusion we drew from facts."),
     ("Alternative analysis", r"Alternative analysis|Alternative explanation", "Listing the innocent explanations for the evidence and stating which were ruled out and why (analysis of competing hypotheses)."),
-    ("TLP", r"\bTLP:?\s?(CLEAR|GREEN|AMBER|RED)", "Traffic Light Protocol — the sharing marking. CLEAR: may be published; GREEN: community; AMBER: recipients' organisations only; RED: named recipients only."),
+    ("TLP", r"\bTLP:?\s?(CLEAR|GREEN|AMBER\+STRICT|AMBER|RED)", "Traffic Light Protocol — the sharing marking. CLEAR: may be published; GREEN: community; AMBER: recipients' organisations and their clients, need-to-know; AMBER+STRICT: recipients' organisation only, not clients; RED: named recipients only."),
     ("Headless browser", r"headless", "A real web browser run without a window, used to render a page exactly as a visitor would see it and save the result."),
 ]
 

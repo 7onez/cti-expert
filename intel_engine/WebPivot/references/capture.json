@@ -28,7 +28,7 @@
     "_comment": "The evidence contract — the fields every captured file carries, and why. `sha256` is what makes the file quotable in a report; `fetched_at` (UTC) and `http_status` are what make it a dated observation rather than an undated copy; `final_url` records a redirect the analyst would otherwise never see; `content_type` is the SERVER's claim, kept even when it disagrees with the extension, because that disagreement is itself a finding. `capture_sha256` at the bundle level is computed over the sorted `sha256  relative_path` lines, so the whole capture has one citable digest and any later edit to any file changes it.",
     "entries": {
       "per_file": ["url", "final_url", "http_status", "content_type", "sha256", "bytes", "fetched_at", "role", "same_site", "stored_as"],
-      "per_capture": ["case", "seed_url", "host", "url_path", "path_template", "kit", "captured_at", "capture_sha256", "collector_version", "fetched_with", "rendered", "files", "skipped_for_budget", "errors"]
+      "per_capture": ["case", "seed_url", "host", "url_path", "path_template", "kit", "captured_at", "capture_sha256", "capture_version", "fetched_with", "rendered", "collector", "collector_source", "persona", "egress_ip", "egress_proxy", "egress_note", "clock_sync", "files", "skipped_for_budget", "errors"]
     }
   },
 

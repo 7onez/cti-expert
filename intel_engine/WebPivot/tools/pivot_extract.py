@@ -250,6 +250,12 @@ def main():
     ap.add_argument("--proxy-range", default=None, metavar="SPEC",
                     help="optional proxy pool to rotate through: a comma list, a file (one per "
                          "line), and/or a final-octet IP range like 10.0.0.1-10.0.0.9:8080")
+    ap.add_argument("--hostile", action="store_true",
+                    help="the target is HOSTILE: the live fetch names an egress exit explicitly "
+                         "(--proxy/--proxy-range pool, else the cti_proxy pool), retries once "
+                         "through a DIFFERENT exit on a proxy-side failure (references/"
+                         "fetch_profile.json -> hostile_exit_retry), then reads the archives only. "
+                         "Never direct: with no exit there is no live fetch at all.")
     ap.add_argument("--crawl", nargs="?", type=int, const=10, default=None, metavar="MAXPAGES",
                     help="also crawl the site's navigation/tabs/panels (same registrable domain) "
                          "and merge their artifacts. Bare flag → up to 10 pages; give a number to change.")
@@ -571,6 +577,7 @@ def main():
     intel = None
     cloak_report = None       # click-keyed cloaking probe (wp_serp) — set on the URL branch
     redirects = []  # redirect hops from the seed fetch (URL branch only)
+    hostile_fetch = None      # --hostile: exits tried + archive state → meta.hostile_fetch
     seed_ua, seed_proxy = DEFAULT_UA, None  # only used on the URL branch; reset there
 
     # Case dir from `-o cases/<id>/raw/<host>.json` when the caller did not export it (harness collects
@@ -632,72 +639,103 @@ def main():
     elif src.startswith(("http://", "https://")):
         seed_ua, seed_proxy = next_ua(), next_proxy()
         host_for_intel = strip_www(urlparse(src).netloc)
-        # --- try the live target first ---
-        try:
-            if args.render:
-                shot = None
-                if args.screenshot is not None:
-                    shot = (args.screenshot if isinstance(args.screenshot, str)
-                            else (re.sub(r"\.json$", "", args.out) + ".png" if args.out
-                                  else strip_www(urlparse(src).netloc) + ".png"))
-                base_url, html, cookies, renderer, rendered = render_dom(
-                    src, timeout=args.timeout, ua=seed_ua, proxy=seed_proxy, screenshot_path=shot)
-                if shot and os.path.isfile(shot):
-                    screenshot_file = shot
-                    print(f"[+] saved screenshot -> {shot}", file=sys.stderr)
-                if rendered:
-                    # Moli's dump already has status, headers and the redirect chain — a second
-                    # fetch would be another attributable hit, and urllib drops proxy-auth on CONNECT.
-                    headers = dict(rendered.get("headers") or {})
-                    if rendered.get("status") is not None:
-                        headers["_status"] = str(rendered["status"])
-                    redirects.extend(
-                        {"from": h.get("from_url"), "status": h.get("status"), "to": h.get("to_url")}
-                        for h in (rendered.get("redirect_chain") or []) if isinstance(h, dict))
-                else:
-                    try:
-                        _, _status, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
-                                                       proxy=seed_proxy)
-                        headers["_status"] = str(_status)      # liveness reads this; never unset it
-                    except Exception:
-                        headers = {}
-            else:
-                base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
-                                                        proxy=seed_proxy, redirects_out=redirects)
-                html = body.decode("utf-8", "ignore")
-                headers["_status"] = str(status)
-                cf_challenge = detect_cloudflare_challenge(status, headers, html)
-                if status >= 400 or len(html) < 200 or cf_challenge:
-                    raise RuntimeError(f"HTTP {status}, {len(html)} bytes"
-                                       + (f" [{cf_challenge}]" if cf_challenge else ""))
-        except Exception as e:
-            live_error = str(e)
-            html = ""
-            renderer = None
-            if isinstance(e, RenderChallenged):
-                # A Moli render cannot clear a managed challenge: record it and escalate below
-                # (raw fetch → Chromium via --solve-cf → archive), like a raw fetch that hit it.
-                cf_challenge = e.label
-        # A failed RENDER is not a dead target: degrade to the plain fetch (rendered → raw → archive).
-        # Without this step a Chromium/proxy hiccup discards a live page for an archive copy.
-        if not html and args.render:
+        # HOSTILE: the exit is named, never inherited from the proxy env (one exit per process,
+        # no failover), and None (direct) is never on the list. A proxy-side failure rotates ONCE
+        # to a different exit; an origin answer stops the walk (another exit = another hit).
+        live_exits = [seed_proxy]
+        if args.hostile:
+            _exits = hostile_exits(proxy_pool)
+            live_exits = _exits[:1 + HOSTILE_EXIT_RETRIES]
+            hostile_fetch = {"attempts": [], "direct": "never"}
+            if not live_exits:
+                # Fail CLOSED for everything after this point too (favicon / asset fetches of a
+                # recovered DOM): a proxy address nothing listens on, never None, which is direct.
+                seed_proxy = FAIL_CLOSED_PROXY
+                live_error = "no proxy exit available (direct fetch of a hostile host refused)"
+                print(f"[!] {live_error}; reading the archives only", file=sys.stderr)
+        for _attempt, _exit in enumerate(live_exits):
+            if args.hostile:
+                seed_proxy = _exit
+                base_url, headers, html, cookies = "", {}, "", None
+                live_error = cf_challenge = renderer = None
+                del redirects[:]
+            # --- try the live target first ---
             try:
-                base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
-                                                        proxy=seed_proxy, redirects_out=redirects)
-                raw_cf = detect_cloudflare_challenge(status, headers, body.decode("utf-8", "ignore"))
-                if status < 400 and len(body) >= 200 and not raw_cf:
+                if args.render:
+                    shot = None
+                    if args.screenshot is not None:
+                        shot = (args.screenshot if isinstance(args.screenshot, str)
+                                else (re.sub(r"\.json$", "", args.out) + ".png" if args.out
+                                      else strip_www(urlparse(src).netloc) + ".png"))
+                    base_url, html, cookies, renderer, rendered = render_dom(
+                        src, timeout=args.timeout, ua=seed_ua, proxy=seed_proxy, screenshot_path=shot)
+                    if shot and os.path.isfile(shot):
+                        screenshot_file = shot
+                        print(f"[+] saved screenshot -> {shot}", file=sys.stderr)
+                    if rendered:
+                        # Moli's dump already has status, headers and the redirect chain — a second
+                        # fetch would be another attributable hit, and urllib drops proxy-auth on CONNECT.
+                        headers = dict(rendered.get("headers") or {})
+                        if rendered.get("status") is not None:
+                            headers["_status"] = str(rendered["status"])
+                        redirects.extend(
+                            {"from": h.get("from_url"), "status": h.get("status"), "to": h.get("to_url")}
+                            for h in (rendered.get("redirect_chain") or []) if isinstance(h, dict))
+                    else:
+                        try:
+                            _, _status, headers, _ = fetch(base_url, timeout=args.timeout, ua=seed_ua,
+                                                           proxy=seed_proxy)
+                            headers["_status"] = str(_status)      # liveness reads this; never unset it
+                        except Exception:
+                            headers = {}
+                else:
+                    base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
+                                                            proxy=seed_proxy, redirects_out=redirects)
                     html = body.decode("utf-8", "ignore")
                     headers["_status"] = str(status)
-                    cf_challenge = None
-                    print(f"[!] render failed ({live_error}); collected the plain fetch instead",
-                          file=sys.stderr)
-                    live_error = None
-                else:
-                    # an unusable raw response that is not itself a CF page (5xx, stub, other
-                    # block) must not erase the challenge a Moli render already saw
-                    cf_challenge = raw_cf or cf_challenge
-            except Exception as e2:
-                live_error = f"{live_error}; plain fetch: {e2}"
+                    cf_challenge = detect_cloudflare_challenge(status, headers, html)
+                    if status >= 400 or len(html) < 200 or cf_challenge:
+                        raise RuntimeError(f"HTTP {status}, {len(html)} bytes"
+                                           + (f" [{cf_challenge}]" if cf_challenge else ""))
+            except Exception as e:
+                live_error = str(e)
+                html = ""
+                renderer = None
+                if isinstance(e, RenderChallenged):
+                    # A Moli render cannot clear a managed challenge: record it and escalate below
+                    # (raw fetch → Chromium via --solve-cf → archive), like a raw fetch that hit it.
+                    cf_challenge = e.label
+            # A failed RENDER is not a dead target: degrade to the plain fetch (rendered → raw → archive).
+            # Without this step a Chromium/proxy hiccup discards a live page for an archive copy.
+            if not html and args.render:
+                try:
+                    base_url, status, headers, body = fetch(src, timeout=args.timeout, ua=seed_ua,
+                                                            proxy=seed_proxy, redirects_out=redirects)
+                    raw_cf = detect_cloudflare_challenge(status, headers, body.decode("utf-8", "ignore"))
+                    if status < 400 and len(body) >= 200 and not raw_cf:
+                        html = body.decode("utf-8", "ignore")
+                        headers["_status"] = str(status)
+                        cf_challenge = None
+                        print(f"[!] render failed ({live_error}); collected the plain fetch instead",
+                              file=sys.stderr)
+                        live_error = None
+                    else:
+                        # an unusable raw response that is not itself a CF page (5xx, stub, other
+                        # block) must not erase the challenge a Moli render already saw
+                        cf_challenge = raw_cf or cf_challenge
+                except Exception as e2:
+                    live_error = f"{live_error}; plain fetch: {e2}"
+            if not args.hostile:
+                break
+            _why = None if html else proxy_side_failure(live_error)
+            hostile_fetch["attempts"].append(
+                {"exit": mask_exit(_exit),
+                 "result": "ok" if html else f"failed ({_why or 'not proxy-side, no rotation: ' + str(live_error)[:200]})"})
+            if html or not _why:
+                break
+            if _attempt + 1 < len(live_exits):
+                print(f"[!] live fetch failed on exit {mask_exit(_exit)} ({_why}); retrying once "
+                      f"through a different exit", file=sys.stderr)
 
         # --- Cloudflare escalation: try to SOLVE the live challenge before going passive ---
         # (weak→strong; a plain UA swap can't beat a managed challenge, a real browser can)
@@ -780,6 +818,8 @@ def main():
         if not html and not args.no_fallback:
             print(f"[!] live fetch failed ({live_error}); falling back to Wayback + urlscan",
                   file=sys.stderr)
+            if hostile_fetch is not None:   # tri-state: a tripped breaker is "not read", never "none"
+                hostile_fetch["archive_breaker"] = wp_wayback_guard.blocked() or ""
             snap_url, ts = wayback_closest(src, ua=seed_ua)
             if snap_url:
                 # `id_` mode returns the ORIGINAL bytes — no archive toolbar, no rewritten URLs, no
@@ -867,8 +907,11 @@ def main():
     else:
         ap.error("source must be a URL, an existing file, or '-'")
 
+    # A hostile host whose live fetch failed is never probed afterwards (TLS / HTTP / MX probes of
+    # the origin): with an archive or urlscan DOM in hand there is nothing live left to read.
+    _target_probes = not (hostile_fetch is not None and live_error)
     result = analyze(src, html, base_url, headers, seed_ua, extra_cookies=cookies,
-                     proxy=seed_proxy,
+                     proxy=seed_proxy, probe_tls=_target_probes, probe_http=_target_probes,
                      extra_artifacts=({"email_headers": email_art} if email_art else None))
 
     # Dead / blocked live target with no recoverable content: still RECORD the intended
@@ -1001,6 +1044,27 @@ def main():
         result["meta"]["renderer"] = renderer
     if dom_undecodable:
         result["meta"]["dom_undecodable"] = dom_undecodable
+    if hostile_fetch is not None:
+        # What the frontier/assessment must read: archive-only with the live failure, never
+        # "collected live". `meta.source` stays the source URL; `content_source` says where the DOM
+        # came from (live | archive | none).
+        _att = hostile_fetch["attempts"]
+        if not live_error:
+            result["meta"]["live_fetch"] = ("ok" if len(_att) < 2 else
+                                           f"ok (exit rotated after: {_att[0]['result']})")
+            result["meta"]["content_source"] = "live"
+        else:
+            _fails = "; ".join(f"{a['exit']}: {a['result']}" for a in _att) or live_error
+            result["meta"]["live_fetch"] = f"failed ({_fails})"
+            result["meta"]["content_source"] = "archive" if recovered_via else "none"
+            _brk = hostile_fetch.pop("archive_breaker", "")
+            hostile_fetch["archive"] = (
+                recovered_via if recovered_via
+                else "not read (--no-fallback)" if args.no_fallback
+                else f"skipped (wayback breaker: {_brk}); no usable urlscan DOM" if _brk
+                else "none (no Wayback capture, no usable urlscan DOM)")
+        hostile_fetch.pop("archive_breaker", None)
+        result["meta"]["hostile_fetch"] = hostile_fetch
     if urlscan_dom_gate:
         result["meta"]["urlscan_dom_skipped"] = urlscan_dom_gate
     if wb_submitted and wb_submitted.get("snapshot"):

@@ -10,8 +10,8 @@ the map, and the rules that keep the two from drifting.
 - `SKILL.md` — the single skill entrypoint (there is exactly one SKILL.md in the repo)
 - `scripts/` — collectors (`scripts/webpivot/`), the backend dispatcher (`scripts/backend/`), report generators,
   `register.sh` (Claude Code) + `register_agents.py` (`/cti` for every other coding agent)
-- `scripts/cti_report_sections.py` (shared report-section spec + anti-inflation check), `scripts/references/report_metrics.json`, `email_spoofability.json`, `stealer_triage.json`
-- `scripts/osint/references/phone_osint.json`, `exposure_executive.json`, `agentic_signatures.json`
+- `scripts/cti_report_sections.py` (shared report-section spec + anti-inflation check), `scripts/references/report_metrics.json`, `email_spoofability.json`, `stealer_triage.json`, `handle_rarity.json` (pivot_suggest handle-rarity grade)
+- `scripts/osint/references/phone_osint.json`, `exposure_executive.json`, `exposure_organisation.json` (organisation risk-by-domain model, weight-engine §8), `exposure_actor.json` (actor Threat Score model, §9), `severity_tiers.json` (Severity Tier Matrix, §10; operator reference `handbook/severity-tiers.md`), `agentic_signatures.json`
 - `scripts/osint/references/dork_builder.json`, `username_enum.json`
 - `techniques/`, `handbook/`, `connectors/`, `analysis/`, `validation/`, `experience/`, `guides/`,
   `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
@@ -20,8 +20,9 @@ the map, and the rules that keep the two from drifting.
   indicator classification + the shared collector core (`collect_core`). **Local-only:** gitignored,
   never pushed (same for `intel_engine/tests/`, `intel_engine/tools/eval/` and every `test_*.py`)
 - `scripts/audit.sh` — structural drift + leak gate (DISPATCH resolves, shims are re-exports and
-  match the table below, collection HTTP goes through `wp_http` / `wp_ua` with exceptions listed in
-  `scripts/references/http_allowlist.json`, `@tool` count matches CLAUDE.md, compile, tests, every
+  match the table below, collection HTTP goes through `wp_http` / `wp_ua`, and the vendored
+  JS/markup under `scripts/vendor/` makes no network calls and loads no remote resources, with
+  exceptions listed in `scripts/references/http_allowlist.json`, `@tool` count matches CLAUDE.md, compile, tests, every
   registered hook resolves);
   `scripts/install-hooks.sh` wires `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via
   `.github/workflows/audit.yml`
@@ -58,13 +59,21 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
   (GrayHatWarfare per-apex exposure → `cases/<id>/grayhatwarfare/`, facts only),
   `kb/*` (KB + correlation + `ingest_typed.py` + `references/rungs.json`), `cert_overlap`,
   `case_store`, …
-- `intel_engine/tools/masked_hint.py` (masked recovery-hint correlation), `report_sections.py` (analyst report block + sources-checked), `house_report_sections.py` (house-report renderers for the report block), `tools/kb/references/masked_hint.json`, `report_sections.json`
+- `intel_engine/tools/masked_hint.py` (masked recovery-hint correlation), `report_sections.py` (analyst report block + sources-checked; `attack_coverage()`, `tactic_rank()`, `priority_label()`, actor-profile lint), `house_report_sections.py` (house-report renderers for the report block, incl. the "Actor Profile" chapter), `house_report_exposure_charts.py` (infected-computer charts by year / country / stealer family for the affiliate-exposure section, counts only), `tools/kb/references/masked_hint.json`, `report_sections.json`; `scripts/cti_report_sections.py` `actor_blocks()` is the chapter structure shared by the HTML and DOCX generators
 - `intel_engine/WebPivot/` — engine collector helpers (`wp_*`) + de-dup shims (see below)
 - `intel_engine/WebPivot/tools/wp_ua.py` — the one User-Agent source (`DEFAULT_UA`, `UA_POOL` from `WebPivot/references/fetch_profile.json → ua_pool`; side-effect free, re-exported by `wp_common`); the service-required exceptions are listed in `fetch_profile.json → ua_exceptions`
 - `intel_engine/WebPivot/tools/wp_http.py` — the one transport for API calls (`request()` → `Response`, never raises; opt-in retry policy in `WebPivot/references/http_client.json`). `wp_net.fetch` stays the target-page fetcher
 - `intel_engine/WebPivot/tools/wp_pgp.py` (keyless PGP keyserver pivot), `wp_container.py` (public container-registry OSINT), `wp_takedown.py` (RDAP hold / DNS sinkhole + successor leads), `WebPivot/references/pgp.json`, `container_registry.json`, `takedown.json`
 - `intel_engine/WebPivot/tools/wp_corp.py` (global company/officer registry pivot), `wp_google.py` (GHunt wrapper: Google-account leads), `wp_telegram.py` (Telegram phone/username lookup, confirm-gated), `wp_revimg.py` (reverse-image search); `WebPivot/references/corp_registry.json`, `google_account.json`, `telegram.json`, `reverse_image.json`
 - `intel_engine/BinaryPivot/tools/bp_git.py` (embedded .git + module identifiers in leaked archives/dirs), `bp_archive_time.py` (archive timestamp forensics, packer UTC offset), `bp_keys.py` (keys/certs deduped by SPKI SHA-256), `intel_engine/BinaryPivot/references/leak_forensics.json`
+- `intel_engine/WebPivot/tools/wp_suppliers.py` (supplier map from case raws → `cases/<id>/suppliers.json`, KB facts only, single-layer CLI), `wp_custody.py` (custody log, seal, working copy, fixity sample); `WebPivot/references/suppliers.json`, `custody.json`
+- `intel_engine/WebPivot/tools/wp_appliance.py` (passive edge-appliance scan: InternetDB / keyed Shodan host + Censys → product + version → CISA KEV (cached `cache/kev.json`) → patch lag + "no reboot since"; `cases/<id>/appliances.json`, KB facts only, single-layer CLI); `WebPivot/references/appliance.json`
+- `intel_engine/IntelGraph/scripts/card_map.py` — relationship card map (hub, trunk, panels, Admiralty badges) from a JSON spec; stdlib SVG, PNG/PDF via the existing render chain; `IntelGraph/references/card_map.json` (tunables), `card_map_example.json` (synthetic spec)
+- `intel_engine/IntelGraph/scripts/operator_tempo.py` — lead-only operator tempo read behind `case_timeline --tempo` (event filter, UTC-offset working-window scan, two-rhythm check, confounders; no KB writes); `IntelGraph/references/operator_tempo.json` (floor, windows, offsets, event kinds, automated issuers, bot patterns, confounders)
+- `intel_engine/IntelAnalysis/references/hunt_packages.json` — link-only hunt-package library (67 upstream queries, no query text, URLs pinned to commit 0f76fbc; ABLE hypothesis, CAR telemetry, prerequisites, method, FP notes per entry); read by people, not code — procedure in `workflows/wf-threat-analyst.md` Phase 5
+- `intel_engine/IntelAnalysis/references/hunt_rules_yamato.json` — GENERATED link-only index of Yamato Security detection content by ATT&CK technique: hayabusa-rules @73f990f and suzaku-rules @b5b2e1b (DRL 1.1; per technique the rule count, top 5 rule refs with verbatim author, directories for the rest; every Sigma rule id in `sources.<repo>.rule_ids`; correlation files indexed per document as `kind: correlation` / `kind: base`) and Senrigan hunts @8d92511 — CloudTrail, Suzaku-timeline and VPC Flow Log (`senrigan-vpcflow-…`, telemetry `vpcflow/<column>`) — (AGPL-3.0, metadata + links only); totals in the top-level `counts`; no detection logic; read by people and by `report_sections.py` (hunt_package_ref lint) — procedure in `workflows/wf-threat-analyst.md` Phase 5
+- `intel_engine/IntelAnalysis/scripts/build_yamato_index.py` — stdlib generator that rebuilds `hunt_rules_yamato.json` from local clones at their HEAD commit (deterministic; `--per-technique N`)
+- `intel_engine/IntelAnalysis/references/telemetry_baselines.json` — Windows telemetry need → audit subcategory / defaults / baseline settings / log sizes (Yamato Security EventLog-Baseline-Guide, MIT, pinned 9a253a39); valid `telemetry_priorities[].baseline_ref` keys
 - `intel_engine/IntelGraph|IntelReport|BinaryPivot|IntelAnalysis|Engage|IntelHarness|IntelShare/` —
   render, analysis, engagement and dissemination skills (their `SKILL.reference.md` are docs, not skill entrypoints —
   the repo has exactly one `SKILL.md`, at the root)

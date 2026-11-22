@@ -149,7 +149,7 @@ One central account followed by dozens of low-quality amplifier accounts that re
 
 ### L-01: Phrase Reuse Across Accounts
 
-Build 4-gram fingerprints per account. Compute Jaccard coefficient across combined post corpora. Jaccard > 0.35 → strong authorship link.
+Build 4-gram fingerprints per account (boilerplate, quotes and templates stripped). Compute Jaccard coefficient across combined post corpora and use it to **rank a stated candidate set** — a lead, never an authorship verdict. Requires several samples per author in comparable context and an explicit "no attribution" outcome; P12 shows accuracy collapses as the candidate population grows and across contexts, and does not validate short posts, translated or AI-written text. Thresholds such as Jaccard > 0.35 are uncalibrated triage cut-offs. Full standard: [`techniques/username-osint.md`](../techniques/username-osint.md) §7.3 [P12 Narayanan et al., IEEE S&P 2012].
 
 ### L-02: Capitalization and Punctuation Habits
 
@@ -160,7 +160,9 @@ Machine-distinctive personal style markers (regex examples):
 
 ### L-03: Non-Native Language Markers
 
-| Construction | Probable L1 |
+Weak leads only: each construction can be imitated, appears among many L1 groups, and can come from translation tools. Require several independent markers before noting a possible L1, and never use L1 alone toward attribution.
+
+| Construction | Possible L1 (lead) |
 |---|---|
 | "I am agree" | Russian / Slavic |
 | "very much thank" | CJK |
@@ -247,6 +249,11 @@ THEN classify = AUTONOMOUS_AGENT_TOOLING   # kit rung — names a tool, never a 
 ---
 
 ## Confidence Reference
+
+> These percentages are **uncalibrated priors**, not measured accuracy: no population, base rate
+> or validation set stands behind them. Never report them as a probability; translate the judgment
+> into a likelihood term ([`handbook/analytic-standards.md`](../handbook/analytic-standards.md) §1)
+> and state the base rate when one exists ([`docs/evaluation-hygiene.md`](../docs/evaluation-hygiene.md), P18 base-rate fallacy).
 
 | Signature | Confidence | Key Booster |
 |---|---|---|

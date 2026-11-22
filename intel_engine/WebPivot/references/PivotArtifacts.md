@@ -38,11 +38,14 @@ Confidence = how strongly a shared value implies **same operator**.
 | **Tech fingerprint** | headers + markers | Low | CMS/framework/jQuery version → narrows the population | ✅ `tech_fingerprint` |
 | **Cookie names** | `Set-Cookie`, JS | Low-Medium | session/tracking cookie name-sets can fingerprint a kit/platform | ✅ `cookie_names` |
 | **Server / X-Powered-By / CSP** | response headers | Low | infra + CSP `report-uri` / allowed hosts leak related domains | ✅ `server_headers` |
+| **CNAME chains** | recursive-resolver CNAME lookups of the actual collected host; `cname_probe_labels` (`www`/`sso`/`mail`/`status` under an apex, `references/suppliers.json`) are additionally queried **only for organisation cases** (`scope.json` `subject_type=org` via `WP_CASE_DIR`). These DNS queries may reach and are visible to the target's authoritative NS; no target web/TLS connection is made. Missing/unreadable/non-organisation scope disables guessed-label probes, not the collected host's chain. | Low (as a link) | supplier context: a CNAME into a SaaS/CDN target names a **supplier of the subject** (`wp_suppliers`, medium confidence) — never an operator link, never ingested as an edge, never a frontier source | ✅ `cnames` (`[{host, chain}]`) |
 
 ## Pivot logic
 
 1. **Rank by confidence.** Favicon hash and shared analytics/ad IDs (and private SaaS
-   tokens) are the strongest same-operator signals. Start there.
+   tokens) are the strongest *page-level* pivots for finding siblings — start sibling discovery
+   there. Same-operator strength is set by the SKILL.md rung table: registrant / verification-token
+   rungs (1–3) outrank them; a favicon or tracker overlap alone is a kit-level link.
 2. **A shared artifact is a lead, not proof.** Trackers can be copied, favicons reused
    by templates. Require **≥2 independent artifacts** overlapping before asserting a cluster.
 3. **Compose queries.** Combine artifacts on one engine when possible

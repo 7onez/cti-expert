@@ -1,0 +1,147 @@
+{
+  "_comment": "HANDLE RARITY grade for scripts/webpivot/pivot_suggest.py :: handle_rarity — the string-only half of techniques/username-osint.md §7.2 (an adaptation of Perito et al., PETS 2011: a handle built from common tokens is shared by many unrelated people, so reusing it says little). The grade sets how hard pivot_suggest pushes a username_reuse / username_variant pivot; it is a PIVOT PRIORITY, never a linkage or identity score. A RARE handle is a lead toward 'same controller' (claim ladder L2), still not L2. Brand/platform plus generic-part handles, public-figure names and keyboard walks are GENERIC. The grade still cannot detect deliberate copying of a distinctive handle, squatting or bulk generation, and does not run the population check (§7.2 step 3) — the analyst does. Tuning direction: ADDING a common token or pattern makes the tool MORE conservative (more handles graded GENERIC); removing one manufactures stronger leads.",
+  "grades": {
+    "_comment": "Per grade: priority_cap = the highest priority a username pivot may carry; confidence_scale multiplies the rule's base confidence (exact reuse 0.9, cross-platform variant 0.85, same-platform variant 0.65). GENERIC carries no linkage weight per username-osint §7.2, so it is capped at low.",
+    "rare": {"priority_cap": "high", "confidence_scale": 1.0},
+    "moderate": {"priority_cap": "medium", "confidence_scale": 0.7},
+    "generic": {"priority_cap": "low", "confidence_scale": 0.2}
+  },
+  "limits": {
+    "_comment": "short_max_len: a normalised base this short is GENERIC. rare_min_len + rare_min_unknown_run: RARE needs a base at least this long containing an uncommon run at least this long. max_generic_digit_suffix: name/word + up to this many trailing digits stays GENERIC (P14: trailing digits often look like a birth year — a lead, not a DOB). min_token_len: shorter vocabulary entries are ignored when segmenting (two-letter tokens cover random strings too easily). keyboard_walk_min_run: a run of at least this many characters read along one keyboard_walks sequence (either direction) counts as a walk; keyboard_walk_min_share: a handle whose separator-stripped string is at least this share walk runs is GENERIC.",
+    "short_max_len": 4,
+    "rare_min_len": 8,
+    "rare_min_unknown_run": 4,
+    "max_generic_digit_suffix": 4,
+    "min_token_len": 3,
+    "keyboard_walk_min_run": 4,
+    "keyboard_walk_min_share": 0.6
+  },
+  "platform_default_patterns": {
+    "_comment": "Regexes (Python re, matched against the lower-cased raw handle) for platform-assigned or placeholder handles. A match is GENERIC: the platform, not the person, chose the string.",
+    "values": [
+      "^(user|guest|member|player|account|id|fb|tiktok|tg|anon|anonymous|unknown|default|test)[_.-]?\\d{3,}$",
+      "^\\d+$",
+      "^[a-z]{1,3}\\d{6,}$",
+      "^[a-z]+[_.-]?[0-9a-f]{8,}$",
+      "^[0-9a-f]{10,}$"
+    ]
+  },
+  "common_given_names": {
+    "_comment": "Common given and family names (lower-case, Latin script). name, name+name and name+digits are GENERIC. Extend with the populations your cases touch; transliterated names are a known blind spot (P14 restricted itself to a-z).",
+    "values": [
+      "john", "james", "robert", "michael", "william", "david", "richard", "joseph", "thomas", "charles",
+      "chris", "christopher", "daniel", "matthew", "anthony", "mark", "donald", "steven", "paul", "andrew",
+      "joshua", "kevin", "brian", "george", "edward", "ronald", "timothy", "jason", "jeffrey", "ryan",
+      "jacob", "gary", "nicholas", "eric", "jonathan", "stephen", "larry", "justin", "scott", "brandon",
+      "benjamin", "samuel", "frank", "gregory", "raymond", "alexander", "patrick", "jack", "dennis", "jerry",
+      "tyler", "aaron", "jose", "adam", "henry", "nathan", "douglas", "zachary", "peter", "kyle",
+      "walter", "ethan", "jeremy", "harold", "keith", "christian", "roger", "noah", "gerald", "carl",
+      "terry", "sean", "austin", "arthur", "lawrence", "jesse", "dylan", "bryan", "joe", "jordan",
+      "billy", "bruce", "albert", "willie", "gabriel", "logan", "alan", "juan", "wayne", "roy",
+      "ralph", "randy", "eugene", "vincent", "russell", "elijah", "louis", "bobby", "philip", "johnny",
+      "mary", "patricia", "jennifer", "linda", "elizabeth", "barbara", "susan", "jessica", "sarah", "karen",
+      "nancy", "lisa", "betty", "margaret", "sandra", "ashley", "kimberly", "emily", "donna", "michelle",
+      "dorothy", "carol", "amanda", "melissa", "deborah", "stephanie", "rebecca", "sharon", "laura", "cynthia",
+      "kathleen", "amy", "shirley", "angela", "helen", "anna", "brenda", "pamela", "nicole", "emma",
+      "samantha", "katherine", "christine", "debra", "rachel", "catherine", "carolyn", "janet", "ruth", "maria",
+      "heather", "diane", "virginia", "julie", "joyce", "victoria", "olivia", "kelly", "christina", "lauren",
+      "joan", "evelyn", "judith", "megan", "cheryl", "andrea", "hannah", "martha", "jacqueline", "frances",
+      "gloria", "ann", "teresa", "kathryn", "sara", "janice", "jean", "alice", "madison", "doris",
+      "abigail", "julia", "judy", "grace", "denise", "amber", "marilyn", "beverly", "danielle", "theresa",
+      "sophia", "marie", "diana", "brittany", "natalie", "isabella", "charlotte", "rose", "alexis", "kayla",
+      "alex", "sam", "max", "ben", "tom", "dan", "tim", "jim", "bob", "mike",
+      "nick", "matt", "dave", "steve", "tony", "andy", "luke", "leo", "ivan", "igor",
+      "dmitry", "sergey", "alexey", "vladimir", "olga", "natasha", "ali", "mohamed", "mohammed", "ahmed",
+      "omar", "hassan", "fatima", "wang", "zhang", "liu", "chen", "yang", "huang", "zhao",
+      "zhou", "sun", "zhu", "guo", "lin", "luo", "nguyen", "tran", "pham", "hoang",
+      "huynh", "phan", "dang", "bui", "ngo", "duong", "minh", "anh", "linh", "huy",
+      "duc", "tuan", "hung", "thanh", "lan", "mai", "hoa", "kim", "lee", "park",
+      "choi", "jung", "kang", "cho", "yoon", "jang", "lim", "han", "seo", "shin",
+      "kwon", "song", "hwang", "ahn", "yoo", "hong", "jeon", "moon", "son", "bae",
+      "baek", "heo", "nam", "sim", "noh", "kwak", "sung", "cha", "joo", "woo",
+      "koo", "min", "ryu", "jin", "hiroshi", "takeshi", "yuki", "kenji", "satoshi", "sato",
+      "suzuki", "takahashi", "tanaka", "watanabe", "ito", "yamamoto", "nakamura", "kobayashi", "kato", "garcia",
+      "rodriguez", "martinez", "hernandez", "lopez", "gonzalez", "perez", "sanchez", "ramirez", "torres", "flores",
+      "rivera", "gomez", "diaz", "smith", "johnson", "williams", "brown", "jones", "miller", "davis",
+      "wilson", "anderson", "taylor", "moore", "jackson", "martin", "thompson", "white", "harris", "clark",
+      "lewis", "robinson", "walker", "young", "allen", "king", "wright", "hill", "green", "adams",
+      "baker", "nelson", "carter", "mitchell", "roberts", "turner", "phillips", "campbell", "parker", "evans",
+      "edwards", "collins", "stewart", "morris", "murphy", "cook", "rogers", "morgan", "cooper", "peterson",
+      "bailey", "reed", "howard", "cox", "ward", "richardson", "watson", "brooks", "wood", "bennett",
+      "gray", "hughes", "price", "sanders", "myers", "long", "ross", "foster", "muller", "schmidt",
+      "schneider", "fischer", "weber", "meyer", "wagner", "becker", "schulz", "hoffmann", "ivanov", "petrov",
+      "smirnov", "kuznetsov", "popov", "wei", "fang", "jing", "xin", "hui", "yan", "ying",
+      "jun", "hao", "lei", "tao", "ming", "qiang", "yong", "jie", "ping", "van",
+      "thi", "ngoc", "quang", "thu", "hai", "khanh", "trang", "phuong", "dung", "hieu"
+    ]
+  },
+  "common_words": {
+    "_comment": "Common English words and handle-building tokens (lower-case). A handle made only of these is at most MODERATE (a compound of common tokens). Leet is normalised before lookup (4->a, 3->e, 1->i, 0->o, 5->s, 7->t).",
+    "values": [
+      "the", "and", "you", "are", "not", "all", "new", "one", "top", "big", "old", "real", "true", "pro",
+      "official", "team", "club", "fan", "fans", "love", "life", "live", "world", "king", "queen", "lord",
+      "boss", "master", "man", "men", "girl", "boy", "guy", "lady", "baby", "kid", "papa", "mama",
+      "sister", "brother", "bro", "dad", "mom", "family", "friend", "best", "good", "bad", "cool", "hot",
+      "sexy", "sweet", "cute", "happy", "sad", "crazy", "mad", "wild", "free", "fast", "speed", "super",
+      "mega", "ultra", "hyper", "power", "star", "stars", "sun", "moon", "sky", "night", "day", "dark",
+      "light", "black", "white", "red", "blue", "green", "gold", "silver", "pink", "purple", "shadow",
+      "ghost", "devil", "angel", "demon", "god", "death", "dead", "blood", "fire", "ice", "storm",
+      "thunder", "lightning", "wind", "rain", "snow", "water", "ocean", "sea", "river", "stone", "rock",
+      "metal", "iron", "steel", "wolf", "fox", "cat", "dog", "lion", "tiger", "bear", "eagle", "hawk",
+      "dragon", "snake", "shark", "panda", "monkey", "bird", "bunny", "kitty", "puppy", "horse", "rabbit",
+      "tech", "code", "coder", "dev", "hacker", "hack", "cyber", "net", "web", "data", "info", "news",
+      "media", "music", "game", "games", "gamer", "gaming", "play", "player", "plays", "art", "artist",
+      "photo", "design", "style", "fashion", "beauty", "food", "chef", "travel", "sport", "sports",
+      "football", "soccer", "ball", "fit", "gym", "yoga", "shop", "store", "market", "sale", "deal",
+      "money", "cash", "crypto", "coin", "bitcoin", "trade", "trader", "invest", "pay", "bank", "support",
+      "help", "admin", "service", "center", "online", "digital", "smart", "mobile", "phone", "android",
+      "apple", "iphone", "pixel", "home", "house", "city", "town", "street", "road", "land", "earth",
+      "space", "planet", "rocket", "ninja", "samurai", "warrior", "hunter", "killer", "sniper", "soldier",
+      "knight", "pirate", "rider", "racer", "runner", "walker", "maker", "builder", "writer", "reader",
+      "blogger", "vlog", "channel", "show", "film", "movie", "crew", "squad", "gang", "mafia", "women",
+      "kids", "lover", "lovers", "forever", "always", "never", "only", "just", "simply", "mrs", "miss",
+      "sir", "doctor", "prof", "captain", "chief", "agent", "spy", "secret", "hidden", "lost", "alone",
+      "lonely", "silent", "quiet", "loud", "xxx", "zero", "two", "three", "four", "five", "seven", "ten",
+      "first", "last", "final", "end", "start", "young", "little", "small", "tiny", "great", "grand",
+      "high", "low", "max", "mini", "micro", "nano", "alpha", "beta", "gamma", "delta", "omega", "prime",
+      "zone", "point", "line", "link", "lab", "labs", "hub", "box", "bot", "bots", "app", "apps",
+      "system", "soft", "software", "cloud", "host", "server", "mail", "email", "user", "guest", "test",
+      "demo", "account", "profile", "page", "fake", "boy", "her", "his", "she", "him", "its", "our",
+      "get", "got", "let", "now", "out", "way", "who", "why", "how", "what", "this", "that", "with",
+      "from", "your", "my", "mister", "lucky", "magic", "dream", "dreams", "soul", "heart", "mind",
+      "spirit", "sound", "beat", "beats", "rap", "rapper", "dance", "dancer", "queen", "prince",
+      "princess", "royal", "legend", "hero", "boss", "chill", "vibe", "vibes", "life", "official"
+    ]
+  },
+  "brand_tokens": {
+    "_comment": "Brands, platforms and role words that scam and impersonation handles are built from (lower-case). A handle made of one of these plus only common tokens, digits or a short uncommon part (binance_support, telegram, paypal_help, metamask2024) is GENERIC: it is the modal handle of impersonation cases, re-registered by many unrelated operators, so a match on it says nothing about the controller. A brand token next to a long uncommon run is still graded on that run. Extend with the brands your cases impersonate.",
+    "values": [
+      "binance", "coinbase", "metamask", "trustwallet", "kraken", "bybit", "okx", "kucoin", "bitget",
+      "huobi", "htx", "gateio", "mexc", "bitfinex", "bitstamp", "gemini", "crypto", "blockchain",
+      "ledger", "trezor", "phantom", "exodus", "uniswap", "pancakeswap", "opensea", "tether", "usdt",
+      "usdc", "ethereum", "solana", "telegram", "whatsapp", "wechat", "zalo", "viber", "discord",
+      "facebook", "instagram", "messenger", "tiktok", "youtube", "twitter", "google", "gmail", "paypal",
+      "venmo", "cashapp", "zelle", "revolut", "payoneer", "skrill", "apple", "icloud", "microsoft",
+      "outlook", "amazon", "netflix", "steam", "roblox", "shopee", "lazada", "momo", "dhl",
+      "fedex", "usps", "support", "official", "admin", "help", "helpdesk", "service", "customer",
+      "security", "verify", "verified", "wallet", "airdrop", "giveaway", "promo", "bonus",
+      "recovery", "refund", "team", "staff", "moderator", "agent", "manager"
+    ]
+  },
+  "keyboard_walks": {
+    "_comment": "Keyboard rows and columns (lower-case), read in either direction. A run of keyboard_walk_min_run+ characters along one of these (qwerty, asdf, zxcv, 1qaz2wsx, 7654) is a keyboard walk; a handle that is mostly walk runs (keyboard_walk_min_share) is GENERIC — thousands of people type the same walk. Matched on the separator-stripped handle BEFORE leet normalisation, so digit columns (1qaz) still match.",
+    "values": [
+      "1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm", "azertyuiop", "qsdfghjklm", "wxcvbn",
+      "qwertzuiop", "yxcvbnm", "1qaz2wsx3edc4rfv5tgb6yhn7ujm8ik9ol0p", "qazwsxedcrfvtgbyhnujmikolp",
+      "zaqxswcdevfrbgtnhymju", "1q2w3e4r5t6y7u8i9o0p", "q1w2e3r4t5y6u7i8o9p0"
+    ]
+  },
+  "public_figures": {
+    "_comment": "Name tokens of widely impersonated public figures (lower-case) — crypto founders, tech CEOs, politicians, athletes and celebrities that fan, parody and giveaway-scam accounts are named after. A handle made of these plus only common tokens, digits or a short uncommon part (elonmusk, elon_musk_official) is GENERIC: fans and impersonators register the same string across platforms, so a match says nothing about one controller. Kept short on purpose: only names whose handles are mass-registered; a person's own handle being a famous name is still for the analyst's population check.",
+    "values": [
+      "elon", "musk", "elonmusk", "vitalik", "buterin", "saylor", "nakamoto", "changpeng", "trump",
+      "biden", "obama", "putin", "zelensky", "ronaldo", "cristiano", "messi", "neymar", "mbappe",
+      "beyonce", "rihanna", "kardashian", "mrbeast", "zuckerberg", "bezos", "billgates", "cathiewood"
+    ]
+  }
+}

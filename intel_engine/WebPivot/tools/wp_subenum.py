@@ -40,7 +40,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))            # intel_engine
 SKILL = os.path.abspath(os.path.join(ROOT, ".."))                 # skill root (holds .env)
 
 # Per-call ceiling for the subfinder/amass enumeration subprocess — ONE resolver (wp_timeouts:
-# env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 5000s / ~83 min).
+# env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 18000s / 5 h).
 sys.path.insert(0, HERE)
 from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
 

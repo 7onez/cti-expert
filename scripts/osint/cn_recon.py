@@ -55,21 +55,41 @@ def _get(url, timeout=20, as_json=True):
         return None, type(e).__name__
 
 
+# The only keyless ICP mirror wired in. Its host is DEAD: api.vvhan.com returned NXDOMAIN from
+# public DNS on 2026-11-17 (the parent www.vvhan.com still serves the author's blog, which still
+# links the dead host; the sibling api.4ce.cn answers every path, /api/icp included, with a
+# placeholder banner and no ICP fields). No replacement was verified, so the call is kept — it
+# costs one failed DNS lookup and picks the mirror back up if the host returns — and a failure is
+# reported as "unavailable", never as an empty success.
+VVHAN_ICP = "https://api.vvhan.com/api/icp?url="
+VVHAN_DEAD = "api.vvhan.com no longer resolves (NXDOMAIN, checked 2026-11-17)"
+
+
 def icp_mirror(domain):
-    """Keyless community mirrors of the MIIT register. They go stale — corroborate before use."""
-    out = {}
-    d, err = _get("https://api.vvhan.com/api/icp?url=" + urllib.parse.quote(domain))
-    if d and not err and isinstance(d, dict):
+    """Keyless community mirror of the MIIT register. It goes stale — corroborate before use.
+
+    status is one of: "ok" (the mirror returned a filing), "empty" (the mirror answered with no
+    filing — still not evidence that none exists), "unavailable" (no mirror answered)."""
+    try:
+        d, err = _get(VVHAN_ICP + urllib.parse.quote(domain))
+    except Exception as e:  # noqa: BLE001 — a dead mirror must degrade, never abort the run
+        d, err = None, type(e).__name__
+    if d is not None and not err and isinstance(d, dict):
         info = d.get("info") or d.get("data") or {}
         if isinstance(info, dict) and (info.get("icp") or info.get("name")):
             out = {"status": "ok", "source": "vvhan mirror",
                    "licence": info.get("icp"), "entity": info.get("name"),
                    "nature": info.get("nature"), "title": info.get("title")}
-    if not out:
-        out = {"status": f"no mirror answered ({err or 'empty'})"}
+        else:
+            out = {"status": "empty", "source": "vvhan mirror",
+                   "reason": "the mirror answered with no filing for this domain"}
+    else:
+        out = {"status": "unavailable", "source": None, "tried": ["vvhan mirror"],
+               "reason": VVHAN_DEAD, "error": err or "unparseable response"}
     out["caveat"] = ("community MIRROR of beian.miit.gov.cn, not the register itself. Mirrors go "
                      "stale and drop revoked filings — treat a hit as a LEAD and confirm at "
-                     "beian.miit.gov.cn (CAPTCHA, manual) before asserting the entity.")
+                     "beian.miit.gov.cn (CAPTCHA, manual) before asserting the entity. An empty "
+                     "or unavailable result is an absence of collection, not an absence of filing.")
     return out
 
 

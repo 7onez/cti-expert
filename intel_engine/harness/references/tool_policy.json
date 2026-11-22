@@ -39,7 +39,8 @@
       "grayhatwarfare",
       "deep_profile",
       "case_enrich",
-      "osint_industries"
+      "osint_industries",
+      "appliance_scan"
     ]
   },
 
@@ -88,9 +89,25 @@
   },
 
   "budget": {
-    "_comment": "Per-run guard rails. max_metered_calls_per_run caps how many credit-spending calls ONE run may make before the gate starts denying them with an instruction to re-call free_only=true — the backstop against an agent loop that keeps re-querying FOFA on every round. Set generously: it exists to stop runaway loops, not to ration normal collection. Override at runtime with HARNESS_METERED_BUDGET. max_arg_chars truncates long argument values in the ledger so one HTML blob cannot bloat the audit trail.",
+    "_comment": "Per-run guard rails. The metered-call COUNT denies only when an operator opts in with HARNESS_METERED_BUDGET=<n>, and only in review mode (`--review`); auto mode (auto_mode below) never denies on count — project decision: no CTI-wide local usage caps, a vendor's HTTP 402/429 is the limit and stops that vendor. max_metered_calls_per_run is the suggested opt-in value, not an active cap. max_arg_chars truncates long argument values in the ledger so one HTML blob cannot bloat the audit trail.",
     "max_metered_calls_per_run": 60,
     "max_arg_chars": 200
+  },
+
+  "auto_mode": {
+    "_comment": "AUTO MODE — the `/cti` default (harness/audit.py resolve_approval_mode; recorded per case in state.json `approval_mode`). Resolution order: `--review` (CLI `intel.py cti --review`, MCP cti review=true, `harness open|continue --review`) → a seedless `continue` inherits the mode state.json recorded → scope.json `auto_approve` (true/false) → `default` here. In auto mode the cross-type loop AUTO-APPROVES every proposal item each round (metered / oversized / unknown-size corpus routes, enrich.host, rwhois.purchase, vps co-tenancy collects, telegram.resolve / telegram.phone, any other kind) through the same digest-bound proposal.json mechanism — approved_by 'auto', a timestamp and the digest are written to proposal.json (`auto_log`) and to the tool-call ledger — then resumes in-run; the metered-call count never denies, and the loop-active 'only approved items may spend' denial is lifted (the proposal-gated pivot tools still need their auto-approved item). `gated_tools` are NEVER auto-approved: a proposal item routed to one is held and listed in the hand-back (state.json `pending_gated`), and a harness phase calling one for real (anything beyond its briefing) is denied. `auto_submit` lists approval-required tools auto mode may run WITHOUT their env var, each with the arguments the call must carry (anyrun_submit: PUBLIC tasks only, never private); `briefings` is the risk briefing recorded in the ledger next to each such auto-approval. Hostile egress (passive/proxy against hostile infrastructure) is never relaxed. The embedded fallback is review mode with nothing auto-submitted (fail-closed).",
+    "default": true,
+    "gated_tools": ["engage_account", "webamon_scan", "misp_publish", "misp_push"],
+    "frontier_max_attempts": {
+      "_comment": "AUTO MODE free-frontier collection (harness/orchestrator.py _auto_free_frontier): before any hand-back (plan-veto / gated-only / no-frontier) auto mode collects, free-only, the uncollected cluster peers / infra hosts the proposer cannot offer. A host is queued at most this many times per case (state.json `frontier_attempts`); a host queued once whose collection FAILED (collection_outcomes.json error / timed_out / skipped_policy) is never re-queued and is reported as failed in the hand-back. Bounds the loop; the round cap still applies. Embedded fallback 1.",
+      "value": 2
+    },
+    "auto_submit": {
+      "anyrun_submit": {"privacy": "public", "allow_public": true}
+    },
+    "briefings": {
+      "anyrun_submit": "AUTO MODE ANY.RUN submission (analyst default for /cti): the task is PUBLIC and world-readable (file, hash, screenshots, network log); a URL detonation fetches the live target from ANY.RUN's published egress, so the operator can learn they are being sandboxed; nothing can be recalled. Never send victim PII or a case id in tags or filenames. Opt out with /cti --review."
+    }
   },
 
   "proposal_gated_tools": {
@@ -114,7 +131,7 @@
   },
 
   "free_only_capable_tools": {
-    "_comment": "Metered tools whose handler HONOURS free_only (has a keyless mode): pivot_extract → the collector's --free-only, reverse_whois → free preview count only, deep_profile / case_enrich → their own free-only legs, corpus_search → keyless urlscan + metered routes skipped. The gate classes a free_only call as not-metered and lets it through, so every OTHER metered tool refuses free_only=true instead of spending (harness/tools.py _free_only_refusal). Add a tool here only after its handler really honours the flag.",
-    "values": ["pivot_extract", "reverse_whois", "deep_profile", "case_enrich", "corpus_search", "search_pivot", "quarry"]
+    "_comment": "Metered tools whose handler HONOURS free_only (has a keyless mode): pivot_extract → the collector's --free-only, reverse_whois → free preview count only, deep_profile / case_enrich → their own free-only legs, corpus_search → keyless urlscan + metered routes skipped, appliance_scan → InternetDB + KEV only (Shodan host / Censys skipped). The gate classes a free_only call as not-metered and lets it through, so every OTHER metered tool refuses free_only=true instead of spending (harness/tools.py _free_only_refusal). Add a tool here only after its handler really honours the flag.",
+    "values": ["pivot_extract", "reverse_whois", "deep_profile", "case_enrich", "corpus_search", "search_pivot", "quarry", "appliance_scan"]
   }
 }

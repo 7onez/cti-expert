@@ -1,0 +1,158 @@
+{
+  "_comment": "SUPPLIER MAP (wp_suppliers.build): evidence pattern -> the SaaS / infrastructure SUPPLIER a subject organisation uses, with a category. Feeds cases/<id>/suppliers.json (contract C3) for the third-party-risk step in techniques/fx-supplier-exposure.md. A supplier is a RELATIONSHIP OF THE SUBJECT, never an operator link: thousands of unrelated customers share every row below, so nothing here may ever become a KB edge or a cluster key. Mail exchangers are NOT listed here — they reuse mail_providers.json -> mx_providers through wp_recon._classify_mx, and an SPF include matching no row below falls back to that same table, so add a mail provider there, not here. Matching is case-insensitive. Add a row when a token/host shows up unclassified in a run; check the vendor's own documentation for the exact record shape first.",
+  "txt_tokens": {
+    "_comment": "Apex TXT record PREFIX (lowercase, matched at the start of the record) -> {supplier, category}. Each prefix is a vendor's domain-verification record: the subject proved control of the domain to that vendor, so the vendor holds an account for it. A dormant record may outlive the account (stale).",
+    "entries": {
+      "ms=": {"supplier": "Microsoft 365", "category": "email & productivity"},
+      "mscid=": {"supplier": "Microsoft 365", "category": "email & productivity"},
+      "google-site-verification=": {"supplier": "Google (Search Console / Workspace)", "category": "web & productivity"},
+      "atlassian-domain-verification=": {"supplier": "Atlassian", "category": "collaboration & ticketing"},
+      "docusign=": {"supplier": "DocuSign", "category": "e-signature"},
+      "salesforce-domain-verification=": {"supplier": "Salesforce", "category": "CRM"},
+      "zoom-domain-verification=": {"supplier": "Zoom", "category": "conferencing"},
+      "zoom_verify_": {"supplier": "Zoom", "category": "conferencing"},
+      "okta-verification=": {"supplier": "Okta", "category": "identity provider"},
+      "adobe-idp-site-verification=": {"supplier": "Adobe", "category": "identity & documents"},
+      "adobe-sign-verification=": {"supplier": "Adobe", "category": "e-signature"},
+      "apple-domain-verification=": {"supplier": "Apple", "category": "device & identity"},
+      "facebook-domain-verification=": {"supplier": "Meta Business", "category": "marketing"},
+      "dropbox-domain-verification=": {"supplier": "Dropbox", "category": "file sharing"},
+      "webexdomainverification.": {"supplier": "Cisco Webex", "category": "conferencing"},
+      "cisco-ci-domain-verification=": {"supplier": "Cisco Webex", "category": "conferencing"},
+      "zscaler-verification": {"supplier": "Zscaler", "category": "secure access / proxy"},
+      "workday-domain-verification=": {"supplier": "Workday", "category": "HR & finance"},
+      "globalsign-domain-verification=": {"supplier": "GlobalSign", "category": "certificate authority"},
+      "stripe-verification=": {"supplier": "Stripe", "category": "payments"},
+      "hubspot-developer-verification=": {"supplier": "HubSpot", "category": "marketing & CRM"},
+      "mandrill_verify.": {"supplier": "Mailchimp Transactional (Mandrill)", "category": "email delivery"},
+      "onetrust-domain-verification=": {"supplier": "OneTrust", "category": "privacy & consent"},
+      "knowbe4-site-verification=": {"supplier": "KnowBe4", "category": "security awareness"},
+      "miro-verification=": {"supplier": "Miro", "category": "collaboration"},
+      "teamviewer-sso-verification=": {"supplier": "TeamViewer", "category": "remote access"},
+      "have-i-been-pwned-verification=": {"supplier": "Have I Been Pwned", "category": "breach monitoring"},
+      "amazonses:": {"supplier": "Amazon SES", "category": "email delivery"},
+      "brevo-code:": {"supplier": "Brevo", "category": "email delivery"},
+      "yandex-verification:": {"supplier": "Yandex", "category": "web"}
+    }
+  },
+  "spf_includes": {
+    "_comment": "SPF include: host -> {supplier, category}. A signature beginning with '.' matches as a SUFFIX; '~' as a SUBSTRING (use it for hosts that start with '_', e.g. '~_spf.example-vendor.com', because the reference loader treats any key beginning with '_' as documentation and drops it); otherwise the host matches exactly or as a parent domain. An include matching nothing here falls back to mail_providers.json mx_providers (Google Workspace, Microsoft 365, Zoho ...), so those are deliberately absent. An include authorises the vendor to SEND as the subject — a phishing-relevant trust.",
+    "entries": {
+      "~_spf.salesforce.com": {"supplier": "Salesforce", "category": "CRM"},
+      "mail.zendesk.com": {"supplier": "Zendesk", "category": "customer support"},
+      "servers.mcsv.net": {"supplier": "Mailchimp", "category": "email marketing"},
+      "spf.mandrillapp.com": {"supplier": "Mailchimp Transactional (Mandrill)", "category": "email delivery"},
+      "sendgrid.net": {"supplier": "SendGrid (Twilio)", "category": "email delivery"},
+      "mailgun.org": {"supplier": "Mailgun", "category": "email delivery"},
+      "amazonses.com": {"supplier": "Amazon SES", "category": "email delivery"},
+      "~_spf.atlassian.net": {"supplier": "Atlassian", "category": "collaboration & ticketing"},
+      "spf.mtasv.net": {"supplier": "Postmark", "category": "email delivery"},
+      ".hubspotemail.net": {"supplier": "HubSpot", "category": "marketing & CRM"},
+      ".pphosted.com": {"supplier": "Proofpoint", "category": "email security"},
+      "~_netblocks.mimecast.com": {"supplier": "Mimecast", "category": "email security"},
+      "spf.brevo.com": {"supplier": "Brevo", "category": "email delivery"},
+      "spf.sendinblue.com": {"supplier": "Brevo", "category": "email delivery"},
+      "~_spf.elasticemail.com": {"supplier": "Elastic Email", "category": "email delivery"},
+      "spf.smtp2go.com": {"supplier": "SMTP2GO", "category": "email delivery"}
+    }
+  },
+  "cname_probe_labels": {
+    "_comment": "Subdomain labels whose CNAME chain the collector resolves only when collecting an APEX in an organisation case (scope.json subject_type=org, read via WP_CASE_DIR; wp_recon.detect_cnames -> artifacts.cnames). The apex itself is rarely a CNAME; vendor-served names usually sit on these labels. Every actual collected host, including www, still gets its own chain regardless of scope. Missing, unreadable or non-organisation scope means no guessed-label probes. Queries go through the recursive resolver, but cache misses and guessed labels are visible to the target's authoritative NS — not invisible passive collection; no web/TLS connection is made to the target.",
+    "values": ["www", "sso", "mail", "status"]
+  },
+  "cname_limits": {
+    "_comment": "CNAME resolution bounds: max_hops stops a looping chain; timeout is seconds per dig/nslookup query.",
+    "max_hops": 8,
+    "timeout": 4
+  },
+  "cname_targets": {
+    "_comment": "CNAME target host -> {supplier, category}. '.'-prefixed = suffix match, else exact or parent domain. A subject subdomain aliased onto a vendor host means the vendor serves that name (and a CNAME left pointing at a cancelled account is a takeover risk worth noting).",
+    "entries": {
+      ".okta.com": {"supplier": "Okta", "category": "identity provider"},
+      ".oktapreview.com": {"supplier": "Okta", "category": "identity provider"},
+      ".atlassian.net": {"supplier": "Atlassian", "category": "collaboration & ticketing"},
+      ".statuspage.io": {"supplier": "Atlassian Statuspage", "category": "status page"},
+      ".zendesk.com": {"supplier": "Zendesk", "category": "customer support"},
+      ".service-now.com": {"supplier": "ServiceNow", "category": "IT service management"},
+      ".force.com": {"supplier": "Salesforce", "category": "CRM"},
+      ".salesforce.com": {"supplier": "Salesforce", "category": "CRM"},
+      ".freshdesk.com": {"supplier": "Freshworks", "category": "customer support"},
+      ".zoom.us": {"supplier": "Zoom", "category": "conferencing"},
+      ".azurewebsites.net": {"supplier": "Microsoft Azure", "category": "cloud hosting"},
+      ".cloudapp.azure.com": {"supplier": "Microsoft Azure", "category": "cloud hosting"},
+      ".cloudfront.net": {"supplier": "Amazon Web Services", "category": "CDN / cloud"},
+      ".elb.amazonaws.com": {"supplier": "Amazon Web Services", "category": "cloud hosting"},
+      ".github.io": {"supplier": "GitHub Pages", "category": "web hosting"},
+      ".herokudns.com": {"supplier": "Heroku", "category": "cloud hosting"},
+      ".myshopify.com": {"supplier": "Shopify", "category": "e-commerce"},
+      ".wpengine.com": {"supplier": "WP Engine", "category": "web hosting"},
+      ".akamaiedge.net": {"supplier": "Akamai", "category": "CDN"},
+      ".edgekey.net": {"supplier": "Akamai", "category": "CDN"},
+      ".fastly.net": {"supplier": "Fastly", "category": "CDN"},
+      ".cdn.cloudflare.net": {"supplier": "Cloudflare", "category": "CDN"}
+    }
+  },
+  "ns_hosts": {
+    "_comment": "Authoritative nameserver host -> {supplier, category}. '.'-prefixed = suffix match; '~'-prefixed = substring (for providers whose NS hosts sit on many registrable domains, e.g. awsdns-NN); otherwise exact or parent domain.",
+    "entries": {
+      ".ns.cloudflare.com": {"supplier": "Cloudflare", "category": "DNS hosting"},
+      "~awsdns-": {"supplier": "Amazon Route 53", "category": "DNS hosting"},
+      "~.azure-dns.": {"supplier": "Azure DNS", "category": "DNS hosting"},
+      "~ns-cloud-": {"supplier": "Google Cloud DNS", "category": "DNS hosting"},
+      ".nsone.net": {"supplier": "NS1", "category": "DNS hosting"},
+      "~ultradns.": {"supplier": "UltraDNS", "category": "DNS hosting"},
+      ".akam.net": {"supplier": "Akamai", "category": "DNS hosting"},
+      ".dnsmadeeasy.com": {"supplier": "DNS Made Easy", "category": "DNS hosting"},
+      ".domaincontrol.com": {"supplier": "GoDaddy", "category": "DNS hosting"}
+    }
+  },
+  "cert_issuers": {
+    "_comment": "Lowercase SUBSTRING of a certificate's issuer string -> {supplier, category}. Only the subject's own hosts count; a CDN often obtains the certificate on the subject's behalf, so this is medium confidence at most.",
+    "entries": {
+      "digicert": {"supplier": "DigiCert", "category": "certificate authority"},
+      "entrust": {"supplier": "Entrust", "category": "certificate authority"},
+      "sectigo": {"supplier": "Sectigo", "category": "certificate authority"},
+      "globalsign": {"supplier": "GlobalSign", "category": "certificate authority"},
+      "let's encrypt": {"supplier": "Let's Encrypt", "category": "certificate authority"},
+      "google trust services": {"supplier": "Google Trust Services", "category": "certificate authority"},
+      "amazon": {"supplier": "Amazon Trust Services", "category": "certificate authority"},
+      "godaddy": {"supplier": "GoDaddy", "category": "certificate authority"},
+      "microsoft": {"supplier": "Microsoft", "category": "certificate authority"}
+    }
+  },
+  "document_keywords": {
+    "_comment": "Whole-word keyword (lowercase) found in a hosted document's metadata (producer / creator tool / software / title) -> {supplier, category}. A mention only says the tool touched one file; it never proves an account, so it is always LOW confidence.",
+    "entries": {
+      "docusign": {"supplier": "DocuSign", "category": "e-signature"},
+      "acrobat sign": {"supplier": "Adobe", "category": "e-signature"},
+      "adobe sign": {"supplier": "Adobe", "category": "e-signature"},
+      "salesforce": {"supplier": "Salesforce", "category": "CRM"},
+      "servicenow": {"supplier": "ServiceNow", "category": "IT service management"},
+      "workday": {"supplier": "Workday", "category": "HR & finance"},
+      "confluence": {"supplier": "Atlassian", "category": "collaboration & ticketing"},
+      "sharepoint": {"supplier": "Microsoft 365", "category": "email & productivity"},
+      "zendesk": {"supplier": "Zendesk", "category": "customer support"}
+    }
+  },
+  "confidence": {
+    "_comment": "Evidence kind -> confidence when seen on the subject's OWN apex ('apex') vs one of its subdomains ('subdomain'). A supplier takes the highest confidence across its evidence. 'document' is always low.",
+    "entries": {
+      "txt_verification": {"apex": "high", "subdomain": "medium"},
+      "spf_include": {"apex": "high", "subdomain": "medium"},
+      "mx": {"apex": "high", "subdomain": "medium"},
+      "ns": {"apex": "high", "subdomain": "medium"},
+      "cname": {"apex": "medium", "subdomain": "medium"},
+      "cert_issuer": {"apex": "medium", "subdomain": "medium"},
+      "document": {"apex": "low", "subdomain": "low"}
+    }
+  },
+  "caveats": {
+    "_comment": "Fixed caveat lines written into every suppliers.json so the reader of the file alone sees the limits.",
+    "values": [
+      "A supplier is a third-party relationship of the subject, never an operator link or an attribution edge.",
+      "A shared SaaS vendor does not mean compromise; a vendor breach is a risk to the subject only where the subject's data or access was in scope.",
+      "A dormant verification TXT record may outlive the account it verified (stale); corroborate with MX, SPF or a live login page before asserting current use.",
+      "A document mention shows one file passed through a tool; it does not prove an account (low confidence)."
+    ]
+  }
+}

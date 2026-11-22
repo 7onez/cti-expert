@@ -35,7 +35,14 @@ USAGE
   python3 case_timeline.py CASE/out/*.json --stem CASE/timeline \\
       --title "Infrastructure lifecycle — <n> domains" \\
       [--history CASE/out/wayback_*.json] [--markdown CASE/timeline.md] \\
-      [--lang vi] [--source "..."] [--grading B2] [--no-figure]
+      [--lang vi] [--source "..."] [--grading B2] [--no-figure] [--tempo]
+
+  --tempo adds the OPERATOR TEMPO read (operator_tempo.py, LEAD ONLY): only operator-chosen
+  timestamps (non-bot commit author times, `operator_events` post/message/panel rows, manually
+  issued certificates, registrations) go into an hour x weekday UTC histogram, every candidate UTC
+  offset is scored for its local working-window share, and a second activity rhythm is flagged.
+  Below the event floor it says `insufficient`. It is written to the ledger as `operator_tempo`
+  and never feeds correlations, clustering or the knowledge base.
 
 Writes  <stem>_hires.png / <stem>.svg / <stem>_thumb.png   (figure, needs matplotlib)
         <stem>_events.json                                 (evidence ledger + correlations)
@@ -868,6 +875,39 @@ def resolve_inputs(inputs, roots=None):
     return paths, missing
 
 
+def tempo_sidecars(paths, missing=(), roots=None):
+    """--tempo only: `operator_events` files a case keeps OUTSIDE raw/. Collectors whose output is
+    not a host collection (wp_telegram `resolve --messages` → cases/<case>/telegram/*.json) stay
+    out of raw/ so the KB ingest, convergence and exports never read them as a host. For each case
+    an input points into (a `raw/` or `out/` path or glob, matched or not), return that case's
+    telegram/*.json files that carry operator_events and were not already given."""
+    roots = roots or _input_roots()
+    case_dirs = []
+    for tok in [*paths, *missing]:
+        d = os.path.dirname(os.path.expanduser(str(tok)))
+        if os.path.basename(d) not in ("raw", "out"):
+            continue
+        for base in ([""] if os.path.isabs(d) else roots):
+            case = os.path.abspath(os.path.dirname(os.path.join(base, d) if base else d))
+            if os.path.isdir(case) and case not in case_dirs:
+                case_dirs.append(case)
+                break
+    given = {os.path.abspath(p) for p in paths}
+    out = []
+    for case in case_dirs:
+        for p in sorted(glob.glob(os.path.join(case, "telegram", "*.json"))):
+            if os.path.abspath(p) in given or p in out:
+                continue
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    doc = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            if isinstance(doc, dict) and doc.get("operator_events"):
+                out.append(p)
+    return out
+
+
 # --------------------------------------------------------------------- CLI
 def main():
     ap = argparse.ArgumentParser(
@@ -890,16 +930,26 @@ def main():
     ap.add_argument("--source", default="", help="caption source line")
     ap.add_argument("--grading", default="", help="caption Admiralty grading")
     ap.add_argument("--no-figure", action="store_true", help="ledger + correlations only")
+    ap.add_argument("--tempo", action="store_true",
+                    help="add the OPERATOR TEMPO read (lead only): hour x weekday histogram of "
+                         "operator-chosen timestamps, UTC-offset scan, second-rhythm check — see "
+                         "operator_tempo.py / references/operator_tempo.json")
     args = ap.parse_args()
 
     inputs, missing = resolve_inputs(args.inputs)
+    if args.tempo:
+        side = tempo_sidecars(inputs, missing)
+        if side:
+            print(f"  tempo: + {len(side)} operator_events file(s) from the case's telegram/",
+                  file=sys.stderr)
+        inputs += side
     for tok in missing:
         print(f"  skip {tok}: no such file (tried CWD, $INTEL_HOME, engine root)", file=sys.stderr)
     history, hist_missing = resolve_inputs(args.history) if args.history else ([], [])
     for tok in hist_missing:
         print(f"  history skipped {tok}: no such file", file=sys.stderr)
 
-    analyses, hosts = [], set()
+    analyses, hosts, docs = [], set(), []
     for p in inputs:
         try:
             d = json.load(open(p, encoding="utf-8"))
@@ -907,11 +957,13 @@ def main():
             print(f"  skip {p}: {exc}", file=sys.stderr)
             continue
         for a in (d if isinstance(d, list) else [d]):
+            if isinstance(a, dict):
+                docs.append(a)
             if isinstance(a, dict) and (a.get("artifacts") or a.get("pivots")):
                 a["_mtime"] = os.path.getmtime(p)
                 analyses.append(a)
                 hosts.add(_host_of(a))
-    if not analyses:
+    if not analyses and not (args.tempo and docs):
         print("no pivot_extract JSON could be read — nothing to time", file=sys.stderr)
         return 2
 
@@ -933,17 +985,21 @@ def main():
         for rec in (h if isinstance(h, list) else [h]):
             history_events(rec, events)
     events = [e for e in events if e]
-    if not events:
+    if not events and not args.tempo:
         print("no dated facts in these inputs — collect WHOIS/CT/passive DNS first "
               "(pivot_extract --whois; a keyless run still yields RDAP dates + CT)", file=sys.stderr)
         return 3
 
-    corr = correlate(events)
+    corr = correlate(events) if events else {}
+    tempo = None
+    if args.tempo:
+        import operator_tempo                                # lead-only; writes nothing itself
+        tempo = operator_tempo.analyze(events, docs)
     observed_now = datetime.now(timezone.utc)
 
     outs = []
     dropped_lanes = []
-    if not args.no_figure:
+    if not args.no_figure and events:
         try:
             outs, dropped_lanes = render(events, args.stem, args.title, args.subtitle,
                                          lang=args.lang, source=args.source,
@@ -966,6 +1022,8 @@ def main():
                    for e in sorted(events, key=lambda x: x["_start"])],
         "correlations": corr,
     }
+    if tempo is not None:
+        payload["operator_tempo"] = tempo
     with open(ledger, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
     outs.append(ledger)
@@ -974,12 +1032,16 @@ def main():
         md_path = args.markdown or (args.stem + ".md")
         with open(md_path, "w", encoding="utf-8") as fh:
             fh.write(markdown(events, corr, args.title, observed_now))
+            if tempo is not None:
+                fh.write(operator_tempo.markdown(tempo))
         outs.append(md_path)
 
     print(f"timeline: {len(events)} dated facts across {len(hosts)} host(s)", file=sys.stderr)
     for key, rows in corr.items():
         if rows:
             print(f"  {key}: {len(rows)}", file=sys.stderr)
+    if tempo is not None:
+        print(f"  operator tempo [{tempo['status']}, lead only]: {tempo['finding']}", file=sys.stderr)
     if dropped_certs:
         print(f"  note: {dropped_certs} older cert(s) omitted by --max-certs "
               f"{args.max_certs} (raise it to see the full issuance chain)", file=sys.stderr)

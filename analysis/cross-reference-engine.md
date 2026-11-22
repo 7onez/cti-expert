@@ -27,6 +27,13 @@ node_A ──[w=0.25]── node_C   (propagated: 0.95 × 0.61 × decay)
 | Phone number (normalized) | E.164 format, strip country prefixes | 0.93 |
 | Profile image (perceptual hash) | pHash distance ≤ 4 | 0.88 |
 
+Username weights here and in §2 measure string agreement only. Neither establishes common control.
+Grade the handle first (`techniques/username-osint.md` §7.2): a GENERIC handle carries no
+linkage weight; a RARE handle is a lead toward L2 on the §7.1 claim ladder, not an edge.
+`scripts/webpivot/pivot_suggest.py` applies the string-only half of that grade to its own pivot
+priority (`handle_rarity`; data `scripts/references/handle_rarity.json`): exact reuse stays
+high/0.9 only for a RARE handle, MODERATE is capped at medium (×0.7), GENERIC at low (×0.2).
+
 Email normalization:
 ```python
 def normalize_email(raw):
@@ -92,6 +99,10 @@ def content_cross_reference(text_A, text_B):
 | Network proximity (degree-1) | Direct follow | 0.40 |
 | Network proximity (degree-2) | Mutual connection | 0.25 |
 
+Username, profile-image, bio and network-proximity rows are *support*, not edges. Handles need
+the §7.2 rarity grade; photos and bios are copyable; contact overlap produces false matches inside
+dense communities (`techniques/username-osint.md` §6, §7.4, §7.5).
+
 ---
 
 ## 3. Composite Cross-Reference Score
@@ -111,11 +122,17 @@ def cross_reference_score(subject_A, subject_B, findings):
     return weighted_sum  # 0.0–1.0
 ```
 
+**Independence first.** Inputs that share an origin are one piece of evidence, not two: an email
+built from the handle, content reposted from the same account, or two feeds republishing one source
+count once (at their strongest value) before weighting [B05 Heuer, Ch 10 — redundant sources]. The
+score ranks how much to investigate; it is not a probability and never by itself an identity link —
+grade the result on the claim ladder in [`techniques/username-osint.md`](../techniques/username-osint.md) §7.1.
+
 ### Interpretation
 
 | Score | Classification | Recommended Action |
 |---|---|---|
-| 0.90–1.00 | Confirmed same subject | Merge nodes; treat as single subject |
+| 0.90–1.00 | Strong same-controller evidence (L2) | Merge only after independence check + claim ladder; person/identity claims need ACH |
 | 0.75–0.89 | Highly probable match | Deep verification before merge |
 | 0.55–0.74 | Probable connection | Investigate connection type |
 | 0.35–0.54 | Possible link | Expand findings before concluding |

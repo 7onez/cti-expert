@@ -56,7 +56,7 @@ import urllib.error
 import urllib.request
 
 from sh_export import (BUDGET, ENDPOINTS, POLICY, REPORTING,
-                       _dist_entry, _repo_root, _utcnow, leak_scan)
+                       _dist_entry, _repo_root, _utcnow, leak_scan, tlp_recheck)
 
 try:                                    # the licensed-API ledger, when the full repo is present
     sys.path.append(os.path.join(_repo_root(), "WebPivot", "tools"))
@@ -404,7 +404,8 @@ def put_event_report(event_id, report: dict, existing_reports: dict | None = Non
 
 
 def push(source, *, confirm: bool = False, event_id=None, case: str = "",
-         dry_run: bool = False, publish: bool = False, distribution: int = 0) -> dict:
+         dry_run: bool = False, publish: bool = False, distribution: int = 0,
+         root: str | None = None) -> dict:
     """Create or update the event on the instance. ALWAYS stages first: organisation-only and
     unpublished, whatever distribution the export requested.
 
@@ -421,6 +422,15 @@ def push(source, *, confirm: bool = False, event_id=None, case: str = "",
     if meta.get("refusal"):
         return {"ok": False, "sent": False, "refused": meta["refusal"],
                 "note": "The export refused itself; nothing to push."}
+    # The case's TLP is re-read at STAGING, not trusted from the file: a stale export, or one
+    # built before the case marking tightened, is judged against the marking as it is NOW.
+    gate = meta.get("tlp_gate") if isinstance(meta.get("tlp_gate"), dict) else {}
+    case_dir = ("" if (gate.get("case_dir") and not root)
+                else os.path.join(root or _repo_root(), "cases", case) if case else "")
+    tlp_refusal = tlp_recheck(export, case_dir)
+    if tlp_refusal:
+        return {"ok": False, "sent": False, "refused": tlp_refusal,
+                "note": "The case's TLP marking does not authorise this event; nothing to push."}
     if not event.get("Attribute"):
         return {"ok": False, "sent": False,
                 "note": "The event carries no attributes — nothing to share. Check the export's "

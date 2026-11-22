@@ -379,6 +379,8 @@ def query_for(route: str, type_: str, selector: str):
             from selector_types import tracker_label
             if not (tracker_label(sel) or re.fullmatch(r"[A-Za-z0-9_.:/\-]{10,}", sel)):
                 return None
+        if r == "ghw.short_handle":
+            return _short_handle_query(t, sel)
         return sel
 
     if r in _IDENTITY_ROUTES:
@@ -441,6 +443,20 @@ def _identity_query(r, t, sel, spec):
 def _is_tme(v):
     low = v.lower()
     return low.startswith(("t.me/", "telegram.me/")) or "://t.me/" in low or "://telegram.me/" in low
+
+
+def _short_handle_query(t, sel):
+    """ghw.short_handle takes a Telegram handle written as one (@h, t.me/h) or a WhatsApp number
+    (+digits, wa.me/n). A `telegram`-typed node stores the bare handle (`example_handle`), so it is
+    written as `@handle` here; anything wp_buckets would still refuse is not a query (None)."""
+    q = sel.strip()
+    if t == "telegram" and not _is_tme(q):
+        q = "@" + q.lstrip("@")
+    try:
+        import wp_buckets as GB
+        return q if GB._handle(q)[0] else None
+    except Exception:  # noqa: BLE001 — collector not importable: the route cannot run either
+        return None
 
 
 # ---------------------------------------------------------------- count

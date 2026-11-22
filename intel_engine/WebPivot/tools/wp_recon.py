@@ -1020,7 +1020,96 @@ def detect_mail_provider(host: str, timeout: int = 8):
         # apex TXT verification tokens, each checked against its provider's own zone
         # (owner | provider_constant | unchecked) — ingest edges only "owner"
         "txt_verifications": classify_txt_verifications(apex_txt, mx_hosts, timeout=timeout),
+        # raw apex TXT values, kept for the supplier map (wp_suppliers: short-form vendor tokens
+        # such as MS=ms…). Context only — no ingester or scorer reads this key, so it never
+        # becomes a KB edge or a correlation signal.
+        "txt_records": apex_txt,
     }
+
+# CNAME chains for the supplier map (wp_suppliers reads artifacts.cnames). DATA:
+# references/suppliers.json -> cname_probe_labels / cname_limits. Resolver lookups are visible
+# to the target's authoritative NS; guessed labels are restricted to organisation cases.
+# A CNAME target is CONTEXT about who serves a name: no ingester, scorer or frontier source reads
+# artifacts.cnames, so a shared SaaS/CDN target can never become an edge or a seed (RULE 5).
+_CNAME_FALLBACK = {"cname_probe_labels": ["www", "sso"], "cname_limits": {"max_hops": 8, "timeout": 4}}
+_CNAME_REF = load_ref(ref_path(__file__, "suppliers.json"), _CNAME_FALLBACK)
+CNAME_PROBE_LABELS = tuple(str(x).lower() for x in _CNAME_REF["cname_probe_labels"])
+_CNAME_LIMITS = _CNAME_REF["cname_limits"]
+
+
+def _cname_record(name: str, timeout: int = 4):
+    """The one CNAME target of `name` (lowercase, no trailing dot) or None, via dig then nslookup."""
+    dig = shutil.which("dig")
+    if dig:
+        try:
+            txt = subprocess.run([dig, "+short", "CNAME", name], capture_output=True,
+                                 text=True, timeout=timeout).stdout
+            for ln in txt.splitlines():
+                if ln.strip() and not ln.lstrip().startswith(";"):
+                    return ln.strip().rstrip(".").lower()
+            return None
+        except Exception:
+            pass
+    if shutil.which("nslookup"):
+        try:
+            txt = subprocess.run([shutil.which("nslookup"), "-type=CNAME", name],
+                                 capture_output=True, text=True, timeout=timeout).stdout
+            m = re.search(r"canonical name\s*=\s*(\S+?)\.?\s*$", txt, re.I | re.M)
+            if m:
+                return m.group(1).lower()
+        except Exception:
+            pass
+    return None
+
+
+def cname_chain(name: str, lookup=None, max_hops: int | None = None, timeout: int | None = None):
+    """Follow `name`'s CNAME chain → [target1, target2, …] (empty when `name` is not an alias).
+    `lookup(name) -> target|None` is the resolver seam (default _cname_record). Loops stop."""
+    hops = int(max_hops or _CNAME_LIMITS.get("max_hops") or 8)
+    t = int(timeout or _CNAME_LIMITS.get("timeout") or 4)
+    lookup = lookup or (lambda n: _cname_record(n, timeout=t))
+    chain, cur = [], str(name or "").lower().rstrip(".")
+    while cur and len(chain) < hops:
+        nxt = lookup(cur)
+        if not nxt or nxt == cur or nxt in chain or nxt == name:
+            break
+        chain.append(nxt)
+        cur = nxt
+    return chain
+
+
+def _cname_organisation_case():
+    """Collector scope comes from WP_CASE_DIR (also derived by pivot_extract from -o .../raw/).
+    The intake's organisation flag is subject_type=org, not target_class (scam/victim/etc.).
+    Missing or unreadable scope never authorises guessed-label queries."""
+    cdir = os.environ.get("WP_CASE_DIR")
+    if not cdir:
+        return False
+    try:
+        with open(os.path.join(cdir, "scope.json"), encoding="utf-8") as fh:
+            scope = json.load(fh)
+        return isinstance(scope, dict) and scope.get("subject_type") == "org"
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def detect_cnames(host: str, lookup=None, timeout: int | None = None):
+    """CNAME chains for the actual collected host → [{"host", "chain": [...]}] (aliases only).
+    Only an organisation case's apex also resolves cname_probe_labels. Resolver queries may
+    reach the target's authoritative NS. None means no resolver (not 'no CNAMEs')."""
+    host = (host or "").strip().split(":")[0].rstrip(".").lower()
+    try:
+        ipaddress.ip_address(host)
+        return None  # an IP has no CNAME
+    except ValueError:
+        pass
+    if not host or (lookup is None and not (shutil.which("dig") or shutil.which("nslookup"))):
+        return None
+    names = [host] + ([f"{lbl}.{host}" for lbl in CNAME_PROBE_LABELS]
+                      if _registrable(host) == host and _cname_organisation_case() else [])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        chains = list(ex.map(lambda n: cname_chain(n, lookup=lookup, timeout=timeout), names))
+    return [{"host": n, "chain": c} for n, c in zip(names, chains) if c]
 
 
 __all__ = [_n for _n in dir() if not _n.startswith("__")]

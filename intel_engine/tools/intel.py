@@ -112,10 +112,11 @@ def _read_domains(path):
 
 
 # No pipeline sub-step may hang the whole run: each is bounded, and a timeout degrades to a logged
-# rc-124 skip. The DEFAULT bound is the shared per-call ceiling (collect_core.CALL_TIMEOUT = 5000s /
-# ~83 min, env CTI_CALL_TIMEOUT) instead of the old 600, so a step that makes no explicit request gets
-# the ceiling. INTEL_STEP_TIMEOUT overrides the default to ANY value, and a caller may still pass an
-# explicit per-step timeout (e.g. a fast bound in a test) — both are honoured.
+# rc-124 skip. The DEFAULT bound is the shared per-call ceiling (collect_core.CALL_TIMEOUT, resolved by
+# wp_timeouts: env CTI_CALL_TIMEOUT → .env → references/timeouts.json → 18000s / 5 h) instead of the
+# old 600, so a step that makes no explicit request gets the ceiling. INTEL_STEP_TIMEOUT overrides the
+# default to ANY value, and a caller may still pass an explicit per-step timeout (e.g. a fast bound in
+# a test) — both are honoured.
 _STEP_TIMEOUT = int(os.environ.get("INTEL_STEP_TIMEOUT") or collect_core.CALL_TIMEOUT)
 
 
@@ -302,8 +303,11 @@ def cmd_open(a):
         extra.append("--whois-reverse")
     if a.fofa_full and not PIVOT_IS_CTI:
         extra.append("--fofa-full")   # engine-only flag; cti-expert's collector doesn't take it
-    if a.render_extract:
-        extra.append("--render")      # post-JS DOM — unlocks SaaS/analytics tokens
+    if a.render_extract or getattr(a, "screenshots", False):
+        # post-JS DOM — unlocks SaaS/analytics tokens. `--screenshots` keeps its documented
+        # "implies per-host --render": the shot is now a separate custody pass, so the flag
+        # asks for the rendered DOM here explicitly instead of riding on the screenshot flags.
+        extra.append("--render")
     # The ADVERTISING layer is opt-in per RUN, not per host, because it is the one layer here that
     # spends a SerpApi search on every host it touches: on by default it would quietly multiply a
     # batch's cost by the host count. Without it the pipeline could never reach the Ads Transparency
@@ -1867,7 +1871,7 @@ def _cti_harness_eligible(a, quick):
                 or _cti_in_harness())
 
 
-def _cti_via_harness(case, case_dir, target, *, deep, passive, free_only, depth=None):
+def _cti_via_harness(case, case_dir, target, *, deep, passive, free_only, depth=None, review=False):
     """Run the cross-type harness loop on the target through the dispatcher (which resolves the
     venv and keeps backend failover). Returns summary fields, or None when no backend could run
     AND nothing was collected (the caller falls back to the pipeline). A failure after collection
@@ -1876,15 +1880,18 @@ def _cti_via_harness(case, case_dir, target, *, deep, passive, free_only, depth=
     rounds = int(depth or (6 if deep else 3))
     cmd = [sys.executable, os.path.join(skill, "scripts", "backend", "intel.py"),
            "harness", "open", case, target, "--depth", str(rounds)]
+    if review:                           # per-round analyst approval; default = auto mode
+        cmd.append("--review")
     if passive:                          # unreachable via cmd_cti (passive → pipeline); kept so a
         cmd.append("--hostile")          # direct caller still gets egress-gated collection
     if free_only:
         cmd.append("--no-spend")
     raw_before = set(os.listdir(os.path.join(case_dir, "raw"))) if os.path.isdir(
         os.path.join(case_dir, "raw")) else set()
-    print(f"   engine: cross-type harness loop ({rounds} round(s)) — `--pipeline` for the old path")
-    # A terminal keeps stdin so the analyst can answer the approval prompt; anything else (cron,
-    # an agent's shell, MCP) gets DEVNULL so the run checkpoints instead of blocking on input.
+    print(f"   engine: cross-type harness loop ({rounds} round(s)) — `--pipeline` for the old path"
+          f" · approval: {'REVIEW (stops at awaiting-approval)' if review else 'AUTO (default; --review to opt out)'}")
+    # A terminal keeps stdin so the analyst can answer a --review approval prompt; anything else
+    # (cron, an agent's shell, MCP) gets DEVNULL so the run checkpoints instead of blocking on input.
     rc = subprocess.run(cmd, cwd=skill,
                         stdin=None if sys.stdin.isatty() else subprocess.DEVNULL).returncode
     sys.path.insert(0, HERE)
@@ -1896,7 +1903,10 @@ def _cti_via_harness(case, case_dir, target, *, deep, passive, free_only, depth=
         return None
     status = st.get("status") or ("error" if rc else "expanding")
     out = {"engine": "harness", "status": status, "converged": status == "converged",
-           "harness_exit": rc}
+           "harness_exit": rc, "approval_mode": st.get("approval_mode") or ("review" if review else "auto")}
+    if st.get("pending_gated"):
+        out["pending_gated"] = [f"{g.get('tool')}:{g.get('selector')}" for g in st["pending_gated"]
+                                if isinstance(g, dict)]
     if status == "awaiting-approval":
         out["next"] = ["approve", "report"]
         out["open_leads"] = [f"proposal pending: cases/{case}/proposal.json — "
@@ -1941,6 +1951,21 @@ def _quarry_holds(qres):
 
 
 
+def _cti_egress_preflight():
+    """Egress check before any `cti` collection (scripts/proxy/cti_proxy.egress_preflight): with a
+    pool configured, one probe per exit to the configured test_url (a vendor echo endpoint, never
+    the target). Returns its result dict; never raises."""
+    try:
+        _px = os.path.join(os.path.dirname(os.path.dirname(HERE)), "scripts", "proxy")
+        if _px not in sys.path:
+            sys.path.append(_px)
+        import cti_proxy
+        return cti_proxy.egress_preflight()
+    except Exception as e:  # noqa: BLE001 — a broken preflight costs the check, not the run
+        return {"status": "ok", "message": f"egress preflight unavailable ({type(e).__name__})",
+                "exits": []}
+
+
 
 def _cti_intake(a, case):
     """Resolve and persist the case scope for `cti`. Interactive only at a terminal (stdin AND
@@ -1964,8 +1989,9 @@ def _cti_intake(a, case):
 def cmd_cti(a):
     """The `cti` driver: one call that sequences the whole cold-start path over the EXISTING
     tools — it reimplements none of them. recall -> (stop if already attributed, unless --extend)
-    -> HARNESS-FIRST: the cross-type harness loop on any seed type (LLM phases, per-round approval
-    of metered pivots; see _cti_via_harness) -> else the pipeline: collect (`open` for a domain/
+    -> HARNESS-FIRST: the cross-type harness loop on any seed type (LLM phases; AUTO mode by
+    default — paid/oversized pivots auto-approved except gated tools, `--review` = per-round
+    approval; see _cti_via_harness) -> else the pipeline: collect (`open` for a domain/
     URL; the type-matched dispatcher op for anything else) -> enrich -> read frontier/convergence
     -> `loop` when unconverged and posture allows. A machine-readable summary JSON is the LAST line
     of stdout, so an agent or cron can resume without re-parsing prose. The pipeline path makes
@@ -1996,6 +2022,35 @@ def cmd_cti(a):
         print(f"   already attributed to '{attributed}' — stop (pass --extend to continue anyway)")
         print(json.dumps(summary, sort_keys=True))
         return
+    # Step 0.1 — egress preflight: a dead proxy pool with direct disabled makes every request fail
+    # with a bare "Connection refused"; refuse loudly here instead of starting a run that collects
+    # nothing. A nested run (inside the harness this driver started) inherits the outer check.
+    if not _cti_in_harness():
+        eg = _cti_egress_preflight() or {}
+        sys.path.insert(0, HERE)
+        import case_state as cs
+        if eg.get("status") == "egress-unavailable":
+            summary.update(status="egress-unavailable", next=["cti-proxy"],
+                           egress={k: eg.get(k) for k in ("status", "message", "exits")})
+            summary["open_leads"].append(eg.get("message") or "egress unavailable")
+            st = cs.load_state(case_dir)      # the case dir under ROOT, the same file `case` names
+            if st.get("case") in (None, "", case_dir):
+                st["case"] = case
+            st["status"] = "egress-unavailable"
+            st["egress"] = summary["egress"]
+            cs.save_state(case_dir, st)
+            print(f"   egress: REFUSED — {eg.get('message')}")
+            print(json.dumps(summary, sort_keys=True))
+            return
+        if eg.get("status") == "direct":
+            print(f"   egress: {eg.get('message')}")
+        if eg.get("status") in ("ok", "direct") and eg.get("exits"):
+            summary["egress"] = {"status": eg["status"], "message": eg.get("message") or ""}
+            st = cs.load_state(case_dir)
+            if st.get("status") == "egress-unavailable":     # a refused earlier run; egress is back
+                st["status"] = "expanding"
+                st.pop("egress", None)
+                cs.save_state(case_dir, st)
     # Step 0.25 — intake: target class + purpose, persisted to scope.json BEFORE any collection
     # (Quarry included). Asked only at a terminal; a scripted run uses --class/--purpose or the
     # reference default and says so — it never blocks on input.
@@ -2054,12 +2109,14 @@ def cmd_cti(a):
 
 
     # Step 1 — harness-first: the cross-type harness loop (typed nodes for ANY seed type, a
-    # read-only Plan phase, per-round approval of every metered pivot) is the default engine.
+    # read-only Plan phase, auto-approved paid pivots — or per-round approval with --review) is
+    # the default engine.
     # The deterministic pipeline below is the fallback: `--pipeline` / `--quick`, a call from inside
     # a harness phase (no recursion), or no usable LLM backend before anything was collected.
     if _cti_harness_eligible(a, quick):
         hres = _cti_via_harness(case, case_dir, target, deep=deep, passive=passive,
-                                free_only=free_only, depth=getattr(a, "depth", None))
+                                free_only=free_only, depth=getattr(a, "depth", None),
+                                review=bool(getattr(a, "review", False)))
         if hres is not None:
             summary.update(hres)
             summary["leak_coverage"] = _leak_coverage_summary(case_dir)
@@ -2172,7 +2229,8 @@ def main():
     o.add_argument("--screenshots", action="store_true",
                    help="capture a full-page PNG of each host (evidence backup for findings; "
                         "implies per-host --render, needs Chromium (install --headless); auto-skipped on hostile "
-                        "targets without a proxy). PNGs land in cases/<case>/screenshots/ and are "
+                        "targets without a proxy). PNGs land in cases/<case>/evidence/screenshots/"
+                        "<host>/<UTC>.png (hashed, custody-logged, sealed) and are "
                         "embedded into reports via scripts/evidence-images.py")
     o.add_argument("--serp", action="store_true",
                    help="run the ADVERTISING layer on every host: Google Ads Transparency — the "
@@ -2300,6 +2358,10 @@ def main():
                      help="use Quarry for this case: wait for its scan before collecting")
     ct.add_argument("--no-quarry", action="store_true",
                      help="do not use Quarry for this case, whatever QUARRY_ENABLED says")
+    ct.add_argument("--review", action="store_true",
+                     help="per-round analyst approval: stop at awaiting-approval for paid / "
+                          "oversized pivots (default: AUTO mode — every proposal auto-approved "
+                          "except engage_account / webamon_scan / misp_publish / misp_push)")
     ct.add_argument("--class", dest="target_class", default=None,
                      help="intake: target class (see `harness/case_scope.py questions`); "
                           "skips the interactive prompt")

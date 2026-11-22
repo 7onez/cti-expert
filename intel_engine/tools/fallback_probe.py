@@ -19,9 +19,14 @@ keyless, always-available corners that survive a dead/parked front page:
                      "don't re-investigate, show the prior verdict".
 
 Then it renders a VERDICT: PIVOTABLE (a lead survived), NO-PIVOT-YET (genuinely cold — here are
-the explicit next moves) or INCONCLUSIVE-CT-DEGRADED (cold, but crt.sh was unreachable so the CT
-corner was not really swept). Keyless throughout, so it works even when the paid APIs are out of
-credits.
+the explicit next moves) or INCONCLUSIVE-CT-DEGRADED (cold, but crt.sh was unreachable or its leg
+timed out, so the CT corner was not really swept). Keyless throughout, so it works even when the
+paid APIs are out of credits.
+
+Every leg runs under its OWN wall-clock bound (references/timeouts.json → fallback_probe_legs),
+never the per-call ceiling: a leg that overruns is reported as {"timed_out": True} and listed in
+`timed_out`, while the other legs' findings are returned as usual. (Seen live: an archive.today
+TimeMap request that never answered held the whole probe — and its collect phase — for hours.)
 
 Usage:
   python3 tools/fallback_probe.py example.com --kb knowledge [--json]
@@ -29,23 +34,31 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import json
 import os
-import subprocess
 import sys
+import threading
+import time
 import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Per-call ceiling — ONE resolver (WebPivot/tools/wp_timeouts: env CTI_CALL_TIMEOUT → .env →
-# references/timeouts.json → 5000s / ~83 min). Stdlib sibling; floors every call this module makes.
+# references/timeouts.json → 18000s). The legs below do NOT use it: each has its own bound.
 sys.path.insert(0, os.path.join(ROOT, "WebPivot", "tools"))
-from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+from wp_timeouts import CALL_TIMEOUT, floor as _floor  # noqa: E402,F401
 import wp_ct  # noqa: E402 — the one CT client
 from wp_ua import DEFAULT_UA as UA  # noqa: E402 — the one User-Agent source (Android Chrome)
 import wp_http  # noqa: E402 — the one transport
+from wp_refs import load_ref, ref_path  # noqa: E402 — the RULE 3 loader
+import collect_core  # noqa: E402 — the one bounded subprocess runner (process-group kill)
+
+_LEG_FALLBACK = {"fallback_probe_legs": {"crtsh": 120, "wayback": 120, "archive_is": 90,
+                                         "archive_is_request": 40, "kb": 60}}
+LEGS = load_ref(ref_path(os.path.join(ROOT, "WebPivot", "tools", "wp_timeouts.py"), "timeouts.json"),
+                _LEG_FALLBACK)["fallback_probe_legs"]
 
 
 def _host(s: str) -> str:
@@ -55,9 +68,41 @@ def _host(s: str) -> str:
     return s.split("/")[0].lower()
 
 
-def _get(url: str, timeout: int = None) -> str:
-    r = wp_http.request(url, timeout=_floor(timeout))
-    return r.raise_for_status().body.decode("utf-8", "ignore")   # raises, as before, on any failure
+def _get(url: str, timeout: float) -> str:
+    """One bounded GET: `timeout` is honoured exactly (bounded=True — the unfloored urlopen, still
+    through the proxy opener). Raises on any failure, as before."""
+    r = wp_http.request(url, timeout=timeout, bounded=True)
+    return r.raise_for_status().body.decode("utf-8", "ignore")
+
+
+def _legs(jobs: dict, bounds: dict) -> tuple[dict, list]:
+    """Run each leg in its own daemon thread and wait at most its own bound (all concurrently).
+    Returns ({leg: result | {"ok": False, "timed_out": True, ...}}, [timed-out legs]). A leg that
+    overruns is abandoned — a daemon thread never holds the process at exit."""
+    box: dict = {}
+
+    def _go(name, fn):
+        try:
+            box[name] = fn()
+        except Exception as e:  # noqa: BLE001 — one broken leg never sinks the probe
+            box[name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    threads = {n: threading.Thread(target=_go, args=(n, fn), daemon=True, name=f"leg-{n}")
+               for n, fn in jobs.items()}
+    t0 = time.monotonic()
+    for t in threads.values():
+        t.start()
+    out, late = {}, []
+    for n, t in threads.items():
+        t.join(max(0.0, float(bounds[n]) - (time.monotonic() - t0)))
+        if n in box:
+            out[n] = box[n]
+        else:
+            late.append(n)
+            out[n] = {"ok": False, "timed_out": True,
+                      "error": f"{n} leg timed out after {float(bounds[n]):g}s",
+                      "note": f"NOT swept (leg timed out after {float(bounds[n]):g}s) — re-run"}
+    return out, late
 
 
 # ------------------------------------------------------------------ 1. CT logs
@@ -95,12 +140,14 @@ def crtsh(domain: str) -> dict:
 # ---------------------------------------------------------------- 2. Wayback CDX
 def wayback(domain: str) -> dict:
     """Full capture timeline from the Wayback index — first seen, last seen, count.
-    A parked domain with 400 captures over 3 years had content worth pivoting on."""
-    import wp_wayback  # noqa: E402 (WebPivot/tools already on sys.path, line 44)
+    A parked domain with 400 captures over 3 years had content worth pivoting on. Each attempt is
+    bounded by the leg bound; the shared Wayback breaker (wayback_guard.json fail_limit, 20)
+    skips the archive once it has failed more than its limit — reported as a gap below."""
+    import wp_wayback  # noqa: E402 (WebPivot/tools already on sys.path)
     rows, err = wp_wayback.index([
         ("url", domain), ("matchType", "domain"), ("output", "json"),
         ("fl", "timestamp,original,statuscode"), ("collapse", "timestamp:6"), ("limit", "500")],
-        ua=UA)
+        ua=UA, timeout=float(LEGS["wayback"]))
     if err:
         # a skip/non-answer is a GAP, never "never archived"
         return {"ok": False, "skipped": err, "skipped_kind": "breaker",
@@ -116,10 +163,12 @@ def wayback(domain: str) -> dict:
 # ------------------------------------------------------------------ 3. archive.is
 def archive_is(domain: str) -> dict:
     """archive.today mirror — the fallback when Wayback is empty. TimeMap is a plain
-    link list; presence of any memento = a stored copy to pull the DOM from."""
+    link list; presence of any memento = a stored copy to pull the DOM from. Each request is
+    bounded by fallback_probe_legs.archive_is_request (the mirrors are known to hang)."""
+    per = float(LEGS["archive_is_request"])
     for base in ("https://archive.ph", "https://archive.is"):
         try:
-            body = _get(f"{base}/timemap/https://{domain}", timeout=20)
+            body = _get(f"{base}/timemap/https://{domain}", timeout=per)
             mementos = [ln for ln in body.splitlines() if "rel=\"memento\"" in ln or "/http" in ln]
             if mementos:
                 return {"ok": True, "mementos": len(mementos), "newest": f"{base}/newest/https://{domain}"}
@@ -145,33 +194,40 @@ def dorks(domain: str) -> list[str]:
 
 # ----------------------------------------------------------------------- 5. KB
 def kb_lookup(domain: str, kb_dir: str) -> dict:
-    """Is this already in our own store? A hit = prior verdict, don't re-investigate."""
+    """Is this already in our own store? A hit = prior verdict, don't re-investigate. Each KB
+    subprocess is bounded by fallback_probe_legs.kb (process group killed on overrun)."""
+    late = []
+
     def run(cmd):
-        try:
-            r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=CALL_TIMEOUT)
-            return (r.stdout or "").strip()
-        except Exception as e:
-            return f"(error: {e})"
+        r = collect_core.run(cmd, ROOT, LEGS["kb"], exact=True)
+        if r.timed_out:
+            late.append(os.path.basename(cmd[1]))
+            return ""
+        return (r.stdout or "").strip()
     ent = run([sys.executable, os.path.join("tools", "kb", "query.py"),
                "--kb", kb_dir, "--entity", domain])
     op = run([sys.executable, os.path.join("tools", "kb", "operator_registry.py"), "find", domain])
     known = bool(ent) and "no record" not in ent.lower() and "not found" not in ent.lower()
     attributed = bool(op) and "not attributed" not in op.lower()
-    return {"known": known, "attributed": attributed,
-            "operator": op[:400] if attributed else None,
-            "kb_facts": ent[:600] if known else None}
+    out = {"known": known, "attributed": attributed,
+           "operator": op[:400] if attributed else None,
+           "kb_facts": ent[:600] if known else None}
+    if late:
+        out.update(timed_out=True, error=f"kb lookup timed out after {LEGS['kb']}s: {', '.join(late)}")
+    return out
 
 
 def probe(domain: str, kb_dir: str) -> dict:
     domain = _host(domain)
-    # crt.sh / wayback / archive.is are independent network I/O — run them concurrently.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-        f = {"crtsh": ex.submit(crtsh, domain),
-             "wayback": ex.submit(wayback, domain),
-             "archive_is": ex.submit(archive_is, domain)}
-        res = {k: v.result() for k, v in f.items()}
-    res["dorks"] = dorks(domain)
+    # crt.sh / wayback / archive.is are independent network I/O — run concurrently, each under
+    # its own bound; an overrunning leg is reported as timed out, never waited for.
+    res, late = _legs({"crtsh": lambda: crtsh(domain), "wayback": lambda: wayback(domain),
+                       "archive_is": lambda: archive_is(domain)}, LEGS)
     res["kb"] = kb_lookup(domain, kb_dir)
+    if res["kb"].get("timed_out"):
+        late.append("kb")
+    res["timed_out"] = late
+    res["dorks"] = dorks(domain)
 
     # ---- verdict: did ANY corner survive? ----
     leads = []
@@ -197,12 +253,13 @@ def probe(domain: str, kb_dir: str) -> dict:
     if leads:
         res["verdict"] = "PIVOTABLE"
         res["leads"] = leads
-    elif res["crtsh"].get("crtsh_status") == "degraded":
+    elif res["crtsh"].get("crtsh_status") == "degraded" or res["crtsh"].get("timed_out"):
         res["verdict"] = "INCONCLUSIVE-CT-DEGRADED"
         res["leads"] = []
         res["next_steps"] = [
-            f"CT was not fully swept — {res['crtsh'].get('completeness_line')}. Older certificates "
-            "(and their SAN siblings) are invisible until crt.sh answers: this is not a cold seed yet.",
+            f"CT was not fully swept — {res['crtsh'].get('completeness_line') or res['crtsh'].get('error')}. "
+            "Older certificates (and their SAN siblings) are invisible until crt.sh answers: this is "
+            "not a cold seed yet.",
             "Re-run fallback_probe when crt.sh is reachable (or install psycopg for its PostgreSQL fallback).",
             "Run the emitted search dorks manually / via web search for off-site mentions.",
         ]
@@ -215,6 +272,9 @@ def probe(domain: str, kb_dir: str) -> dict:
             "Run the emitted search dorks manually / via web search for off-site mentions.",
             "If a registrant email/name leaked in partial WHOIS, reverse-WHOIS it in the correlate phase.",
         ]
+    if late and not leads:
+        res["next_steps"].insert(0, f"Leg(s) timed out — NOT swept, so not evidence of absence: "
+                                    f"{', '.join(late)}. Re-run fallback_probe for them.")
     return {"domain": domain, **res}
 
 
@@ -234,7 +294,9 @@ def _human(r: dict) -> str:
     a = r["archive_is"]
     out.append(f"  archive.is : {('%d mementos → %s' % (a['mementos'], a.get('newest'))) if a.get('mementos') else a.get('note','—')}")
     k = r["kb"]
-    out.append(f"  local KB   : {'ATTRIBUTED — '+ (k.get('operator') or '').splitlines()[0] if k.get('attributed') else ('known indicators on file' if k.get('known') else 'not in KB')}")
+    out.append(f"  local KB   : {'ATTRIBUTED — '+ (k.get('operator') or '').splitlines()[0] if k.get('attributed') else ('known indicators on file' if k.get('known') else (k.get('error') or 'not in KB'))}")
+    if r.get("timed_out"):
+        out.append("  TIMED OUT  : " + ", ".join(r["timed_out"]) + " (not swept — re-run)")
     out.append("  dorks      : " + " | ".join(r["dorks"][:3]) + " …")
     if r.get("leads"):
         out.append("  LEADS:")

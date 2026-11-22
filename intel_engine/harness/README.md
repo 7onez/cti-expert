@@ -218,7 +218,8 @@ server-side `emit_result` tool validated against the `Assessment` schema; sessio
 - Note: some reasoning models (e.g. `deepseek-reasoner`) don't do tool-calling, so the tool-driven
   phases stay on a chat model (e.g. `deepseek-chat`). Use for cost control or air-gapped/local runs.
 - Metered-call counting is on the ledger; a per-run **denial** on count is opt-in only
-  (`HARNESS_METERED_BUDGET=<n>`) — project decision: vendor 402/429 responses are the limit.
+  (`HARNESS_METERED_BUDGET=<n>`) and only in `--review` mode — project decision: vendor 402/429
+  responses are the limit (auto mode never denies on count).
 
 ## Reactive fan-out + adversarial verify (`--fanout`, `--no-verify`)
 Two quality levers on top of the base loop:
@@ -244,9 +245,17 @@ Every selector type (`domain`, `email`, `phone`, `wallet`, `ip`, `hash`, `string
    hits run automatically. Metered, oversized, or unknown-count pivots land in digest-bound
    `cases/<case>/proposal.json`. `audit.gate` denies `proposal_gated_tools` (`corpus_search`,
    `reverse_whois`, …) while the loop is active unless the pivot id was approved for this digest.
-4. **Approve once per round** via `harness approve CASE [--only ids|--all] [--reject ids] [--show]`,
-   the MCP `case_approve` tool (ANALYZE; briefing then confirm), or a TTY prompt when a run stops
-   at awaiting-approval. Approvals bind pivot ids + state digest; a stale digest is refused.
+4. **Approval — AUTO by default.** In AUTO mode (the `/cti` default; `audit.resolve_approval_mode`:
+   `--review` → a seedless `continue` keeps the recorded mode → `scope.json` `auto_approve` →
+   `tool_policy.json` `auto_mode.default`; recorded in `state.json` `approval_mode`) the loop
+   approves every proposal item itself (`proposal.approve(..., by="auto")`: `approved_by: auto`,
+   timestamp and digest in `proposal.json` `auto_log` and `tool_calls.jsonl`) and runs it in the
+   same round. Items routed to `auto_mode.gated_tools` (`engage_account`, `webamon_scan`,
+   `misp_publish`, `misp_push`) are held, listed in the hand-back (`state.json` `pending_gated`) and
+   never approved; the per-run metered count never denies. **`--review`** restores per-round
+   approval via `harness approve CASE [--only ids|--all] [--reject ids] [--show]`, the MCP
+   `case_approve` tool (ANALYZE; briefing then confirm), or a TTY prompt when a run stops at
+   awaiting-approval. Approvals bind pivot ids + state digest; a stale digest is refused.
 5. **Dispatcher op `corpus-search`** / MCP `corpus_search` runs one `pivot_map.json` route
    (urlscan fields, Wayback collection search, FOFA, PublicWWW, …) into typed hits.
 6. **Collecting ≠ attributing.** Owner-rung hits may edge/cluster; kit and neighbour hits are
@@ -476,15 +485,16 @@ cases/<case>/
                                           WHEN (collected_at, UTC), WHAT WAS ARCHIVED (dom/screenshot
                                           paths, Wayback flag), reused_cache
     master_pivots.csv                 ← every pivot (kind/value/query), dedup'd, --case tagged
-  dom/<host>.html   screenshots/<host>.png
+  dom/<host>.html   evidence/screenshots/<host>/<UTC>.png  (hashed, custody-logged, sealed)
 ```
 
 Collection captures evidence **by default** (not the model's choice): `pivot_extract` runs with
 `--archive-missing` (submits a Wayback Save-Page-Now snapshot so the copy survives takedown),
 `--master` (appends to the case evidence ledger), and always `--save-dom`. Each pivot JSON carries
-`meta.collected_at` (UTC). Knobs: `HARNESS_SCREENSHOT=1` adds a browser screenshot (visual evidence,
-routed through the playwright python); `HARNESS_NO_ARCHIVE=1` disables Wayback+ledger; `HARNESS_NO_ENRICH=1`
-(smoke) skips all of it.
+`meta.collected_at` (UTC). Screenshots are **on by default**: every host collected live, or recovered
+from a Wayback capture, gets one full-page PNG through the custody path (`HARNESS_SCREENSHOT=0`
+disables them; defaults in `WebPivot/references/screenshot.json → collection`). `HARNESS_NO_ARCHIVE=1`
+disables Wayback+ledger; `HARNESS_NO_ENRICH=1` (smoke) skips all of it.
 
 ## TLS cert / SAN-overlap as a correlation signal
 The Correlate phase has a **`cert_overlap`** tool (`tools/cert_overlap.py`, keyless, through the
@@ -571,8 +581,12 @@ What it denies (everything else is allowed — and still logged):
   outbound collector, not only the one that implemented its own refusal (`pivot_extract`'s
   internal check stays, as defence in depth);
 - **`anyrun_submit` without `HARNESS_ALLOW_SUBMIT=1`** — outbound, attributable, irreversible;
-- **a metered call past the run's credit budget** (`budget.max_metered_calls_per_run`, override
-  with `HARNESS_METERED_BUDGET`) — the backstop against a loop re-querying FOFA every round.
+  in AUTO mode (case `approval_mode: auto`) a PUBLIC submission (`privacy=public`,
+  `allow_public=true`) is auto-approved and ledgered with its briefing; private/owner is refused;
+- **a gated tool** (`auto_mode.gated_tools`: `engage_account`, `webamon_scan`, `misp_publish`,
+  `misp_push`) called for real from a harness phase of an AUTO-mode case — never auto-approved;
+- **a metered call past an opt-in credit budget** (`HARNESS_METERED_BUDGET`, review mode only) —
+  the backstop against a loop re-querying FOFA every round.
 
 A denial is returned **to the model** as text, so it adapts (`passive=true`, `free_only=true`)
 instead of the run dying. The lists, budget and approval env-vars are DATA —

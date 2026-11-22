@@ -38,5 +38,15 @@
     "intel_engine/WebPivot/tools/whois_enrich.py": "the WHOIS client strings (RDAP and WhoisXML): owner decision",
     "intel_engine/IntelShare/tools/sh_misp.py": "the MISP API client string (env MISP_USER_AGENT overrides it)",
     "scripts/osint/msft_recon.py": "the Autodiscover protocol client string"
+  },
+  "vendor_js_network": {
+    "_comment": "The vendored JavaScript and markup under scripts/vendor/ (*.js, *.mjs, *.cjs, *.html, *.css, *.svg), audit.sh §3b second check. A network call (fetch, XMLHttpRequest, http(s).request/get, a require/import of node:http, https, net, dns, tls, undici, dns.lookup, WebSocket, sendBeacon, EventSource) or a remote resource in emitted markup (<link href>, <script src>, <img src>, CSS @import / url() to http(s)://) must be listed here as {path, pattern, reason}: `pattern` is a regex searched in the flagged source line, and every flagged line in that file needs a covering entry. XML-namespace and JSON-schema URIs and data: URLs are never flagged. An entry that covers no flagged line fails the audit.",
+    "entries": [
+      {
+        "path": "scripts/vendor/archify/renderers/shared/brand-marks.mjs",
+        "pattern": "from 'node:(dns/promises|http|https|net)';$",
+        "reason": "remote brand-mark capture: every DNS lookup and HTTP(S) request goes through checkedFetch, which refuses unless the caller sets ARCHIFY_BRAND_REMOTE=1 (cti-expert local change, see VENDOR.md); default rendering is network-free"
+      }
+    ]
   }
 }

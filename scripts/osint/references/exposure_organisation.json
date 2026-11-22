@@ -1,0 +1,71 @@
+{
+  "_comment": "ORGANISATION risk-by-domain model for scripts/osint/exposure_score.py (--model organisation), documented in analysis/weight-engine.md §8. ANALYST-SCORED, never automatic: each domain is rated exploitability 0-3 x harm 0-3 by an analyst, the pair is mapped onto 0-10 through score_matrix, and the overall score is the mean of the RATED domains. A score is analyst judgement on a fixed scale, NOT a probability. Vocabulary and thresholds only, never case data (RULE 1).",
+  "settings": {
+    "_comment": "rating_max bounds both axes. rationale_required_harm: a domain rated at this harm or above MUST carry <d>_rationale. min_coverage_ratio: below this share of rated domains the output carries a coverage warning. decimals: rounding of every score (half-up).",
+    "rating_max": 3,
+    "score_max": 10,
+    "decimals": 1,
+    "rationale_required_harm": 3,
+    "min_coverage_ratio": 0.5,
+    "overall_method": "mean of rated domains"
+  },
+  "domains": {
+    "_comment": "id -> {name, guide}. Order is the report order. Extensible: add an id here and it becomes ratable and counts towards coverage.total.",
+    "entries": {
+      "affiliates": {"name": "Affiliate, member and partner compromise",
+                     "guide": "member or affiliate organisations whose own exposure gives a path into, or harm to, the organisation"},
+      "impersonation": {"name": "Impersonation and fraud industry",
+                        "guide": "lookalike domains, fake profiles and apps, brand abuse, fraud kits and campaigns using the organisation's name"},
+      "edge": {"name": "Network edge and remote access",
+               "guide": "internet-facing VPN, RDP, mail, admin panels, unpatched edge appliances with public exploits"},
+      "insider": {"name": "Insider and channel abuse",
+                  "guide": "staff or contractor misuse, abuse of support / sales / partner channels, data sold from inside"},
+      "personnel": {"name": "Key personnel and leadership",
+                    "guide": "executives and key staff whose public exposure enables targeting, pretexting or coercion"},
+      "actors": {"name": "State actors and criminal markets",
+                 "guide": "documented interest of state actors, ransomware crews or access brokers in the organisation or its sector"},
+      "credentials": {"name": "Staff credentials",
+                      "guide": "staff identifiers and passwords in breach corpora and infostealer logs, credential reuse"},
+      "suppliers": {"name": "Suppliers and partners",
+                    "guide": "third-party services and vendors inferable from DNS, mail and documents, and their known compromises"},
+      "mail_dns": {"name": "Certificates, email and domains",
+                   "guide": "SPF / DMARC / DKIM posture, spoofability, dangling records, certificate and registrar hygiene"},
+      "code_docs": {"name": "Code, apps and documents",
+                    "guide": "public repositories, secrets in code, mobile apps, document metadata and leaked internal files"}
+    }
+  },
+  "score_matrix": {
+    "_comment": "exploitability (row key) -> [score at harm 0, 1, 2, 3]. Default = (e x h) / 9 x 10, rounded to one decimal. Edit a cell to re-weight a combination; every row must have rating_max + 1 cells within 0..score_max.",
+    "entries": {
+      "0": [0.0, 0.0, 0.0, 0.0],
+      "1": [0.0, 1.1, 2.2, 3.3],
+      "2": [0.0, 2.2, 4.4, 6.7],
+      "3": [0.0, 3.3, 6.7, 10.0]
+    }
+  },
+  "bands": {
+    "_comment": "Lower bound (inclusive) -> level, evaluated highest first: >= 8.0 Critical, >= 6.0 High, >= 4.0 Medium, below 4.0 Low.",
+    "entries": {"8.0": "Critical", "6.0": "High", "4.0": "Medium", "0": "Low"}
+  },
+  "priorities": {
+    "_comment": "Remediation priority -> deadline, as printed in the report.",
+    "entries": {"P1": "7 days", "P2": "30 days", "P3": "90 days"}
+  },
+  "rubric": {
+    "_comment": "What each rating level means, printed by --list and mirrored in analysis/weight-engine.md §8.",
+    "entries": {
+      "exploitability": {
+        "0": "not reachable from the internet, or no known way to use it",
+        "1": "reachable only with prior access or insider position; no public tooling; no known in-the-wild use",
+        "2": "reachable from the internet with effort; public tooling or technique exists; sporadic in-the-wild use",
+        "3": "directly reachable from the internet; commodity tooling; active in-the-wild use against similar targets"
+      },
+      "harm": {
+        "0": "no meaningful effect on data, operations, partners or reputation",
+        "1": "limited: low-sensitivity data, brief local disruption, minor reputational noise",
+        "2": "significant: personal or business data exposed, service disruption, partners affected, media attention",
+        "3": "severe: large-scale or sensitive data loss, prolonged outage, partner or member compromise, lasting reputational damage"
+      }
+    }
+  }
+}
