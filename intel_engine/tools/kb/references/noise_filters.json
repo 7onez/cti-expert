@@ -529,6 +529,39 @@
       "12345678901"
     ]
   },
+  "placeholder_email_domains": {
+    "_comment": "Placeholder domains a site's own copy uses in example addresses (localised 'example' and 'your company'), seen as scraped page 'emails'. Exact domains only. RFC 2606 example.com/.org/.net are deliberately NOT here: synthetic fixtures use them as stand-ins for real registrants.",
+    "values": [
+      "exemplo.com",
+      "ejemplo.com",
+      "exemple.com",
+      "voorbeeld.com",
+      "beispiel.de",
+      "beispiel.com",
+      "esempio.it",
+      "esempio.com",
+      "contoh.com",
+      "ornek.com",
+      "doe.com",
+      "team.acme.com",
+      "votreentreprise.com",
+      "deinefirma.com",
+      "tuempresa.com",
+      "tuaazienda.com",
+      "suaempresa.com",
+      "jouwbedrijf.com",
+      "perusahaananda.com",
+      "sirketiniz.com"
+    ]
+  },
+  "error_tracker_ingest_suffixes": {
+    "_comment": "Error-tracker ingest hosts: `<key>@o123.ingest.sentry.io` is a client DSN baked into page JS, not a mailbox. Suffix match on the e-mail domain.",
+    "values": [
+      "ingest.sentry.io",
+      "ingest.us.sentry.io",
+      "ingest.de.sentry.io"
+    ]
+  },
   "phone_length": {
     "_comment": "A phone shorter than min or longer than max digits cannot be a real MSISDN (E.164 caps at 15).",
     "min_digits": 7,

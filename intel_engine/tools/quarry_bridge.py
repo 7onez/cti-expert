@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -36,12 +37,15 @@ for _p in (HERE, WP, KB_TOOLS):
 import case_state as cs                      # noqa: E402 — case dir + co-tenancy caps
 import wp_quarry as q                        # noqa: E402 — the MCP client
 
-try:                                         # registrable-apex reducer, shared with the collectors
-    from wp_common import _registrable       # noqa: E402
+try:                                         # registrable-apex reducer + TLD check, shared with the collectors
+    from wp_common import _registrable, has_known_tld  # noqa: E402
 except Exception:                            # noqa: BLE001
     def _registrable(host):
         parts = (host or "").strip(".").lower().split(".")
         return ".".join(parts[-2:]) if len(parts) >= 2 else (host or "")
+
+    def has_known_tld(_host):
+        return True
 
 try:
     from noise_filters import (              # noqa: E402 — the shared denylist
@@ -277,11 +281,57 @@ def build_row_groups(bundle, *, target, rung_cap=""):
     return groups, notes
 
 
+# the findings keys _page_rows reads (also Quarry's summary keys for them), and the other finding
+# kinds Quarry is known to send (counted or skipped on purpose — never a sign of a moved layout)
+_PARSED_KINDS = ("emails", "phones", "crypto", "tracking_ids", "social", "ips", "ip_address")
+_KNOWN_KINDS = frozenset(_PARSED_KINDS) | {"secrets", "hardcoded_secrets", "git_secrets", "phishing",
+                                           "sensitive_urls", "outgoing_link", "technology"}
+
+
+def _export_parts(content):
+    """(findings, summary, whois_history) from either export layout. Older exports put the finding
+    lists at content.findings and WHOIS at content.whois; current ones nest them as
+    content.findings.findings (+ .summary counts) and content.infra.sources.whois_data."""
+    f = content.get("findings") or {}
+    summary = {}
+    if isinstance(f, dict) and isinstance(f.get("findings"), dict):
+        summary = f.get("summary") if isinstance(f.get("summary"), dict) else {}
+        f = f["findings"]
+    w = content.get("whois")
+    hist = w.get("whois_history") if isinstance(w, dict) else None
+    if hist is None:
+        infra = content.get("infra") if isinstance(content.get("infra"), dict) else {}
+        src = infra.get("sources") if isinstance(infra.get("sources"), dict) else {}
+        wd = src.get("whois_data") if isinstance(src.get("whois_data"), dict) else {}
+        hist = wd.get("whois_history")
+    return (f if isinstance(f, dict) else {}), summary, (hist if isinstance(hist, list) else [])
+
+
+_ESCAPE_PREFIX = re.compile(r"^(?:\\?u003[ce])+", re.I)     # a JSON-escaped `<`/`>` left on a scrape
+_TG_URL = re.compile(r"^(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(?:s/)?@?([A-Za-z0-9_]{4,32})\b", re.I)
+_DATE_SHAPED = re.compile(r"(?<!\d)(?:\d{1,2}[-/.]){1,2}(?:19|20)\d{2}(?!\d)|(?<!\d)(?:19|20)\d{2}[-/.]\d{1,2}(?!\d)")
+
+
+def _val(f) -> str:
+    """A finding's value, trimmed, with a leftover escape prefix (`u003econtact@…`) removed."""
+    return _ESCAPE_PREFIX.sub("", str((f or {}).get("value") or "").strip())
+
+
+def _tg_handle(v: str) -> str:
+    """A Telegram value as the bare handle the rest of the KB keys on (`t.me/x` -> `x`)."""
+    m = _TG_URL.match(v)
+    return m.group(1) if m else v.lstrip("@")
+
+
+def _not_phone_shaped(v: str) -> bool:
+    """A scraped "phone" that is a date (`08-15-2026-08`) or decimal coordinates (`084.449 1.781`,
+    SVG path data): dots mixed with spaces or hyphens, or a date pattern."""
+    return bool(_DATE_SHAPED.search(v)) or ("." in v and (" " in v or "-" in v))
+
+
 def _page_rows(content, notes, rung_cap):
     rows = []
-    findings = content.get("findings") or {}
-    if not isinstance(findings, dict):
-        return rows
+    findings, summary, whois_history = _export_parts(content)
     rung_of = q.FINDING_RUNGS or {}
 
     def add(type_, value, rung_class, evidence=None, coin=""):
@@ -290,20 +340,22 @@ def _page_rows(content, notes, rung_cap):
             rows.append(_row(type_, value, rc, "quarry", evidence, coin))
 
     for f in findings.get("emails") or []:
-        v = str((f or {}).get("value") or "").strip().lower()
-        if not v or is_noise_email(v):
+        v = _val(f).lower()
+        dom = v.rpartition("@")[2]
+        if not v or is_noise_email(v) or not has_known_tld(dom):
             notes["dropped_noise"] += 1
             continue
         add("email", v, rung_of.get("emails", "page.email"),
             {"subtype": (f or {}).get("subtype") or ""})
     for f in findings.get("phones") or []:
-        v = str((f or {}).get("value") or "").strip()
-        if not v or is_noise_phone(v):
+        v = _val(f)
+        if (not v or is_noise_phone(v) or _not_phone_shaped(v)
+                or str((f or {}).get("confidence") or "").lower() == "low"):
             notes["dropped_noise"] += 1
             continue
         add("phone", v, rung_of.get("phones", "page.phone"))
     for f in findings.get("crypto") or []:
-        v = str((f or {}).get("value") or "").strip()
+        v = _val(f)
         if not v:
             continue
         sub = str((f or {}).get("subtype") or "").lower()
@@ -316,7 +368,7 @@ def _page_rows(content, notes, rung_cap):
             rc = "wallet.token_contract"
         add("wallet", v, rc, coin=coin)
     for f in findings.get("tracking_ids") or []:
-        v = str((f or {}).get("value") or "").strip()
+        v = _val(f)
         rc = _tracker_rung(v)
         if not rc:
             notes["dropped_noise"] += 1
@@ -324,17 +376,16 @@ def _page_rows(content, notes, rung_cap):
         add("string", v, rc)
     for f in findings.get("social") or []:
         sub = str((f or {}).get("subtype") or "").lower()
-        v = str((f or {}).get("value") or "").strip().lstrip("@")
-        if sub == "telegram" and v:
+        v = _tg_handle(_val(f)) if sub == "telegram" else ""
+        if v:
             add("telegram", v, "telegram.username")
     for f in findings.get("ip_address") or findings.get("ips") or []:
-        v = str((f or {}).get("value") or "").strip()
+        v = _val(f)
         if v and not cs._is_cdn_ip(v) and not cs._is_social_ip(v):
             add("ip", v, "ip.cotenant")
 
-    whois = content.get("whois") or {}
     seen = set()
-    for era in whois.get("whois_history") or []:
+    for era in whois_history:
         reg = (era or {}).get("registrant") or {}
         email = str(reg.get("email") or "").strip().lower()
         if email and email not in seen and not is_noise_email(email):
@@ -351,6 +402,14 @@ def _page_rows(content, notes, rung_cap):
                                    ("secrets", "hardcoded_secrets", "git_secrets"))
     leaks = content.get("leaks") or {}
     notes["leak_records"] = _count_leaf_records(leaks)
+    # Quarry says it found page indicators, or sent findings under no kind we know, yet none were
+    # read: the export layout moved under us. "0 rows" must never pass for "Quarry found nothing".
+    claimed = sum(int(v) for k in _PARSED_KINDS for v in [summary.get(k)] if isinstance(v, (int, float)))
+    unknown = bool(findings) and not (set(findings) & _KNOWN_KINDS)
+    if not any(findings.get(k) for k in _PARSED_KINDS) and (claimed or unknown):
+        notes["unparsed"] = ((f"Quarry's summary counts {claimed} page finding(s)" if claimed else
+                              f"Quarry's findings carry only {sorted(findings)[:6]}")
+                             + " but none could be read from the export — export layout not recognised")
     return rows
 
 
@@ -661,6 +720,8 @@ def _import(case, bundle, domain, scope, log):
     _say(log, f"imported {imported.get('ingested', 0)} rows, "
               f"{imported.get('nodes_added', 0)} new nodes, "
               f"{len(imported.get('owner_domains') or [])} owner-linked domains")
+    if notes.get("unparsed"):
+        _say(log, f"WARNING: {notes['unparsed']}")
     if notes["co_tenancy"]:
         _say(log, f"{len(notes['co_tenancy'])} shared fingerprints over the co-tenancy cap — "
                   "kept as leads, not links")

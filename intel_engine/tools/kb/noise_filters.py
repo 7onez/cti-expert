@@ -71,6 +71,8 @@ _FALLBACK = {
     "registry_email_labels": ["nic"],
     "privacy_proxy_phones": [],
     "placeholder_phones": ["0000000000", "5555555555", "1234567890"],
+    "placeholder_email_domains": ["exemplo.com"],
+    "error_tracker_ingest_suffixes": ["ingest.sentry.io"],
     "phone_length": {"min_digits": 7, "max_digits": 15},
     "shared_infra_apexes": ["google.com", "googleusercontent.com", "discordapp.com",
                             "mediafire.com", "cloudflare.com", "amazonaws.com", "gmail.com",
@@ -177,6 +179,14 @@ WHOIS_NOTICE_PHRASES = tuple(str(x).strip().lower() for x in _REF["whois_notice_
 # address. Never a delegated TLD (.zip/.mov/.map are real) — see the group's _comment.
 ASSET_FILENAME_EXTENSIONS = frozenset(str(x).strip().lower().lstrip(".")
                                       for x in _REF["asset_filename_extensions"])
+# Placeholder domains in localised form / documentation copy (`voce@exemplo.com`,
+# `alice@deinefirma.com`) — exact domains only. RFC 2606 example.* is deliberately absent: the
+# skill's synthetic fixtures use it as a stand-in for real registrants.
+PLACEHOLDER_EMAIL_DOMAINS = frozenset(str(x).strip().lower() for x in _REF["placeholder_email_domains"])
+# Error-tracker ingest hosts: `<key>@o123.ingest.sentry.io` is a client DSN baked into a page's JS,
+# not anybody's mailbox.
+ERROR_TRACKER_INGEST_SUFFIXES = tuple(str(x).strip().lower().lstrip(".")
+                                      for x in _REF["error_tracker_ingest_suffixes"])
 
 
 def is_whois_notice(value) -> bool:
@@ -452,6 +462,9 @@ def is_noise_email(email: str) -> bool:
         return False
     local, _, dom = e.partition("@")
     if _is_provider_email_domain(dom) or local in REGISTRAR_ROLE_LOCALPARTS:
+        return True
+    if dom in PLACEHOLDER_EMAIL_DOMAINS or any(dom == s or dom.endswith("." + s)
+                                               for s in ERROR_TRACKER_INGEST_SUFFIXES):
         return True
     if local in ROLE_EMAIL_LOCALPARTS or local.startswith("abuse"):
         return any(s in REGISTRY_EMAIL_LABELS
