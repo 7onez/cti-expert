@@ -32,7 +32,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 
 1. Normalize domain — strip `www.`, scheme, trailing slash
 2. Query primary sources (Tranco, Cloudflare, Umbrella) in parallel
-3. Query secondary sources (CrUX, Majestic, NetAPI) for corroboration
+3. Query secondary sources (CrUX, Majestic) for corroboration, and NetAPI as a second aggregated list next to Tranco (not independent of them, see Limitations)
 4. Query tertiary signals (Wayback, crt.sh) for activity confirmation
 5. Apply scoring formula — compute weighted composite score (0–100)
 6. Assign tier from composite score
@@ -169,6 +169,8 @@ Composite = sum(source_score × weight)
 - **CrUX threshold**: < ~1000 monthly Chrome users → no record; absence ≠ zero traffic
 - **Majestic**: Measures inbound links; popular link farms can score falsely high
 - **Tranco lag**: Updated weekly; recent popularity changes not immediately reflected
+- **Aggregated lists are not independent**: Tranco averages Umbrella, Majestic, Farsight, CrUX and Cloudflare Radar over 30 days; the NetAPI Top 1M merges Majestic, DNS query popularity and CrUX daily with reciprocal rank fusion and drops domains registered less than 30 days ago. Both are built from the sources above, so a domain absent from both is one finding read twice, not two confirmations, and neither corroborates Majestic or CrUX
+- **Malformed answers**: a 200 without the documented fields (an error object, a missing rank) is "not collected", never "unranked"
 - **Cloudflare rate limits**: Free tier has undocumented soft limits; space queries 1–2 s apart
 
 ---

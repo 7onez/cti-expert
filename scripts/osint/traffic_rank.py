@@ -5,13 +5,26 @@ Backs /traffic. SKILL.md promised "traffic estimation, ranking, audience data". 
 audience demographics come only from paid panels (SimilarWeb, Semrush) and their numbers for
 low-traffic domains are modelled guesses, not measurements — reporting them as fact about a scam
 site would be inventing evidence. So this returns the figures that are free and real: the Tranco
-rank, a research list aggregating several popularity sources, and the NetAPI Top 1M rank, a second
-daily list built from link-graph and traffic signals.
+rank and the NetAPI Top 1M rank, two aggregated top-1M lists (how they relate is below).
 
 THE ANALYTIC POINT IS USUALLY THE ABSENCE. A funnel domain that has been "operating for years"
 according to its own copy, and is unranked in a 1M-entry list, is contradicting itself. That
-inference is what this supports. Two lists that both leave the domain out make it firmer than one.
-A domain ranked in one list and absent from the other is a borderline case, not a contradiction.
+inference is what this supports. A domain ranked in one list and absent from the other is a
+borderline case, not a contradiction.
+
+THE TWO LISTS ARE NOT INDEPENDENT. Tranco averages five provider lists (Cisco Umbrella, Majestic,
+Farsight, CrUX, Cloudflare Radar) over the past 30 days with the Dowdall rule. The NetAPI Top 1M
+is rebuilt every day from the Majestic Million link-graph ranking, DNS query popularity and CrUX,
+merged with reciprocal rank fusion, reduced to registrable domains, with domains registered less
+than 30 days ago dropped (https://netapi.com/top-1-mln-websites/). Their inputs overlap, so
+"absent from both" is one finding read twice, not two confirmations. What the second list does
+add: a daily snapshot next to a 30-day average (a site that rose or fell this month shows in one
+before the other), a different aggregation, and an answer when the other API is rate-limited.
+
+ONLY A WELL-FORMED ANSWER COUNTS. A response that is not the documented shape (an error object,
+a missing or mistyped field, a body that is not a JSON object) is reported as
+"unavailable (malformed response: ...)", never as "unranked": a malformed 200 is absence of
+collection, not evidence of absence.
 
 Keyless. Passive — Tranco and NetAPI are queried, never the target.
 
@@ -50,34 +63,64 @@ def _get(url, timeout=20):
         return None, type(e).__name__
 
 
+def _malformed(why):
+    """A 200 that is not the documented shape: absence of collection, never "unranked"."""
+    return {"status": f"unavailable (malformed response: {why})"}
+
+
+def _is_rank(v):
+    """A list position: a real integer >= 1 (bool is an int subclass in Python and is refused)."""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 1
+
+
+def _date(v):
+    return v if isinstance(v, str) and v else None
+
+
 def tranco(domain):
     d, err = _get("https://tranco-list.eu/api/ranks/domain/" + urllib.parse.quote(domain))
-    if err or d is None:
+    if err:
         return {"status": f"unavailable ({err})"}
-    ranks = d.get("ranks") or []
+    if not isinstance(d, dict):
+        return _malformed("not a JSON object")
+    ranks = d.get("ranks")
+    if not isinstance(ranks, list):
+        return _malformed('no "ranks" list')
     if not ranks:
         return {"status": "ok", "ranked": False, "latest_rank": None,
                 "meaning": ("not in the Tranco list. The list covers roughly the top 1M domains, "
                             "so this means low or no measurable popularity — NOT that the domain "
                             "is malicious, and not that it has no visitors.")}
-    latest = ranks[0]
-    hist = [{"date": r.get("date"), "rank": r.get("rank")} for r in ranks[:10]]
-    return {"status": "ok", "ranked": True, "latest_rank": latest.get("rank"),
-            "latest_date": latest.get("date"), "history": hist,
+    hist = []
+    for r in ranks[:10]:
+        if not isinstance(r, dict) or not _is_rank(r.get("rank")):
+            return _malformed('a "ranks" entry without an integer rank >= 1')
+        hist.append({"date": _date(r.get("date")), "rank": r["rank"]})
+    return {"status": "ok", "ranked": True, "latest_rank": hist[0]["rank"],
+            "latest_date": hist[0]["date"], "history": hist,
             "meaning": "present in the Tranco top-1M; lower number = more popular"}
 
 
 def netapi(domain):
     d, err = _get("https://netapi.com/api-json/?method=domain-rank&domain=" + urllib.parse.quote(domain))
-    if err or d is None:
+    if err:
         return {"status": f"unavailable ({err})"}
-    if not d.get("in_top_1m"):
+    if not isinstance(d, dict):
+        return _malformed("not a JSON object")
+    listed = d.get("in_top_1m")
+    if not isinstance(listed, bool):
+        return _malformed('no boolean "in_top_1m"')
+    if not listed:
+        if d.get("rank") is not None:
+            return _malformed('"in_top_1m" is false but a rank is given')
         return {"status": "ok", "ranked": False, "latest_rank": None,
-                "latest_date": d.get("snapshot_date"),
+                "latest_date": _date(d.get("snapshot_date")),
                 "meaning": ("not in the NetAPI Top 1M. Same reading as an unranked Tranco result: "
                             "low or no measurable popularity, NOT maliciousness.")}
-    return {"status": "ok", "ranked": True, "latest_rank": d.get("rank"),
-            "latest_date": d.get("snapshot_date"),
+    if not _is_rank(d.get("rank")):
+        return _malformed('"in_top_1m" is true without an integer rank >= 1')
+    return {"status": "ok", "ranked": True, "latest_rank": d["rank"],
+            "latest_date": _date(d.get("snapshot_date")),
             "meaning": "present in the NetAPI Top 1M, rebuilt daily. Lower number = more popular"}
 
 
