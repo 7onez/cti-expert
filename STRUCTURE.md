@@ -16,6 +16,7 @@ the map, and the rules that keep the two from drifting.
 - `techniques/`, `handbook/`, `connectors/`, `analysis/`, `validation/`, `experience/`, `guides/`,
   `workflows/`, `engine/` (case data-model design docs — distinct from the `intel_engine/` pipeline),
   `assets/`, `output/`
+- `handbook/command-reference.md`, `report-export.md`, `technique-activation.md`, `architecture-reference.md`, `case-pipeline-detail.md` — reference moved out of `SKILL.md` (full command rows, Deliver steps + report JSON, auto-fire matrix, directory tree, §2 pipeline detail); `SKILL.md` links each with when to read it
 - `tests/` — zero-dep regression tests (`python3 tests/test_*.py`, no pytest needed): RULE 5
   indicator classification + the shared collector core (`collect_core`). **Local-only:** gitignored,
   never pushed (same for `intel_engine/tests/`, `intel_engine/tools/eval/` and every `test_*.py`)
@@ -26,6 +27,10 @@ the map, and the rules that keep the two from drifting.
   registered hook resolves);
   `scripts/install-hooks.sh` wires `scripts/leakcheck.sh` as a pre-commit hook. Both run in CI via
   `.github/workflows/audit.yml`
+- `scripts/backup-local-suites.sh` — encrypted (`gpg` AES-256) archive of the local-only suites
+  to a directory outside the repository and outside any Git work tree; `--verify` restores it to a
+  temporary directory and compiles it. The file list comes from the same pattern the no-tests
+  hooks enforce (`TEST_RE` in `install-hooks.sh`)
 - `hooks/` + `.claude-plugin/plugin.json` — the **Claude Code harness layer**. `plugin.json`
   bundles the skill, `commands/`, the `intel` MCP server and `hooks/hooks.json` into one
   installable plugin, so a machine gets all four by installing one thing instead of running
@@ -81,6 +86,11 @@ archive; that archive is **read-only**, cti-expert never writes back to it):
   `test_tool_gate` submission approval, `test_engage`, …); `run_eval.py` puts both this
   directory and the repo-root `tests/` on the path so neither suite silently stops running.
   Local-only, like `tests/`
+- `intel_engine/tools/notice_pack.py` (drafts registrar / host / CDN / platform / bank / referral / compromise notices from stored case artifacts → `cases/<id>/notices/`; no network, nothing sent; subjects limited to the seed and owner-rung cluster members), `tools/kb/references/notice_templates.json`, `case_disposition.json` (closing outcomes behind `case_state.close()` / `log_action()`)
+- `intel_engine/tools/watchlist.py` (watch-list over `ct_monitor` / `wp_impersonate` / `wp_takedown` / `case_drift`: due-run, leads only, state in `MEMORY/watchlist.json` + `MEMORY/watch/<id>/`), `tools/kb/references/watchlist.json`
+- `intel_engine/WebPivot/tools/wp_kitsig.py` (named kit-signature matcher → `artifacts.kit_matches`, kit-rung facts; nested all/any/not terms), `wp_iok.py` (converter from phish.report IOK's Sigma rules to matcher rules), `scripts/kit_rules_import.py` (`uv run … update|status`: downloads IOK, ODbL-1.0, into the git-ignored `intel_engine/cache/kit_rules/iok.json` — never redistributed), `wp_emvqr.py` (EMVCo / VietQR payment-QR parser, CRC-verified → `artifacts.payment_accounts`), `WebPivot/references/kit_signatures.json` (tracked rules: one synthetic example; real kit rules come from the import or the reference ledger), `payment_rails.json`, `drainer_markers.json` (connect-library / approval-harvest / legitimate-app markers behind `artifacts.web3`)
+- `intel_engine/tools/kb/references/route_yield.json` (how measured vendor yield is used by `case_state.propose`; the measurement itself is `MEMORY/route_yield.json`, written by `api_usage.py report --yield`), `harness/references/context_budget.json → batch` (list-argument lookups); `tool_outcomes.jsonl` beside each `tool_calls.jsonl` records what a tool call returned
+- **Local patches an upstream re-sync must keep** (added with the measured-improvement work): `harness/audit.py` (`record_outcome`, analyst-only tools), `harness/tools.py` (outcome row and `INTEL_CASE` tag in `_governed`, batched lookups, `case_close` / `notice_draft` / `watchlist`), `harness/mcp_server.py` (`set_context` before the handler), `tools/case_state.py` (`close`, `log_action`, yield tie-breaker), `tools/intel.py` (`close`, `action-log`, `notice`, closed-case stops), `harness/orchestrator.py` and `harness/cli.py` (closed-case stops, lifecycle in status), `tools/kb/query.py` (repeatable `--entity` / `--cluster`), `WebPivot/tools/api_usage.py` (`report --yield`), `WebPivot/tools/whois_enrich.py` (RDAP abuse contact)
 - `intel_engine/knowledge/` + `intel_engine/cases/` — **local runtime data, gitignored** (a fresh KB; the old data stays in the archive)
 
 ## Anti-drift rule — single source per collector (do NOT create a second copy)

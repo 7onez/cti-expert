@@ -1,0 +1,19 @@
+{
+  "_comment": "How measured vendor yield is USED when ranking proposed pivots (case_state.propose). This file holds policy only. The measurements are computed on each machine from its own usage ledger by `api_usage.py report --yield`, which writes route_yield.json beside the ledger (MEMORY/); that file is never tracked. Yield is a tie-breaker and a note: among candidates that are equal on selector boost, corroboration and rung, a route measured as low-yield sorts later and its `why` says so. It never removes a route from the map and never changes a rung. Where an existing per-type cap already has to choose between tied candidates, the low-yield one is the one left out. With no measurement file, or one older than stale_after_days, ranking is exactly what it was before this file existed.",
+  "thresholds": {
+    "_comment": "min_samples: answered calls with a recorded result count needed before a rate is trusted. low_yield_zero_rate: share of those calls that returned nothing, at or above which the route is called low-yield. stale_after_days: a measurement file older than this is ignored.",
+    "min_samples": 30,
+    "low_yield_zero_rate": 0.85,
+    "stale_after_days": 45
+  },
+  "route_ledger": {
+    "_comment": "Pivot-map route -> the `provider:action` its calls are recorded under in the usage ledger. A key ending in a dot is a prefix and covers every route that starts with it. A route with no entry here is never yield-ranked. Add a row only after confirming the action name in a real ledger row AND that the action carries only that kind of query: `urlscan:search` and `fofa:search` also carry the per-host collection searches, so the urlscan.* and fofa.body routes stay unmapped until their route searches are logged under an action of their own.",
+    "entries": {
+      "rwhois.purchase": "whoisxml:reverse-whois",
+      "anyrun.lookup": "anyrun:ti_lookup",
+      "ghw.git_code": "grayhatwarfare:git_code",
+      "ghw.git_committers": "grayhatwarfare:git_committers",
+      "ghw.short_handle": "grayhatwarfare:short_handle"
+    }
+  }
+}

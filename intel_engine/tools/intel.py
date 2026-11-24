@@ -20,6 +20,10 @@ Zero third-party dependencies — stdlib + the repo's own tools.
 Subcommands:
     open <case> <domains-file>   full pipeline (extract -> ingest -> shared [-> graph])
     status <case>                audit an existing case: which hosts have raw JSON / are in KB
+    close <case> --outcome X     close with a disposition; loop / cti / harness refuse it until reopen
+    action-log <case> --notice F --sent-at D [--ref ID] [--result R --result-at D]
+                                 record a drafted notice as sent / its result (contacts nobody)
+    notice <case>                draft action notices from stored artifacts (no network, nothing sent)
 
 Common flags for `open`:
     --jobs N            parallel extractions (default 4; archive.org rate-limits above ~4)
@@ -280,7 +284,21 @@ def _risk_signals(raw_files):
               "; ".join(f"{s['host']}[{','.join(s['escalate'])}]" for s in esc[:10]))
 
 
+def _refuse_closed(case):
+    """True — after printing why — when `case` is CLOSED (case_state.closed_refusal). The ONE
+    closed-case gate for every pipeline entry point that collects, enriches or expands: open,
+    enrich (_run_enrichment), loop and cti. Nothing is collected, proposed or spent past it."""
+    import case_state as cs
+    msg = cs.closed_refusal(case, os.path.join(ROOT, "cases", case))
+    if msg:
+        print(msg)
+        return True
+    return False
+
+
 def cmd_open(a):
+    if _refuse_closed(a.case):
+        return
     _load_env()
     _run_started = time.time()   # (#6) anything a KB entity gains AT/AFTER this is THIS run's own
     case_dir = os.path.join(ROOT, "cases", a.case)
@@ -511,6 +529,8 @@ def cmd_open(a):
 
 def _run_enrichment(case, free_only=False, passive=False, defer_metered=False,
                     reopen_legacy=False, leak_only=False, approve=()):
+    if _refuse_closed(case):     # `enrich <case>` (CLI / case_enrich) spends: a closed case never does
+        return
     _load_env()   # CLI/MCP enrich path never enters cmd_open/cmd_loop; without this the root
                   # .env keys (the /apikeys setup) are invisible and every keyed lead reads unavailable
     os.environ["INTEL_CASE"] = case   # (#23) standalone `enrich <case>` never calls _export_run_env
@@ -1010,6 +1030,14 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
     comps = _components(kb, KB, max_prevalence, restrict, noise_ips=noise_ips, allow_edge=allow_edge)
     noise_ip_inds = {f"ip:{ip}" for ip in noise_ips}
     shared = kb.shared_indicators(1)          # count in-cluster below; keep KB-wide as prevalence
+    # The relations EACH domain itself holds to each indicator. `rels` on a binding is the union
+    # over every domain sharing it, so a domain that only shows_email an address another domain is
+    # registered_by would read as a registrant; consumers that grade a single domain (notice_pack)
+    # need that domain's own relations — written per binding as `rels_by_domain`.
+    own_rels: dict = {}
+    for e in kb.edges():
+        if e.get("src_type") == "domain" and e.get("dst_type") in ("indicator", "email", "person", "org"):
+            own_rels.setdefault((e["dst_type"], e["dst"]), {}).setdefault(e["src"], set()).add(e["rel"])
     # The reported binding must be the edges that ACTUALLY formed the component, so it is filtered
     # by the same strong-edge rules _components uses — boilerplate rels (shared cache-plugin CSS /
     # HTML comment / DOM skeleton), reference-benign values, and over-prevalent indicators. Without
@@ -1056,6 +1084,10 @@ def _write_clusters(case_dir, case, hosts=None, min_shared=2, max_prevalence=8):
             binding.append({"indicator": f"{s['indicator_type']}:{s['indicator']}",
                             "display": f"{s['indicator_type']}:{s.get('display') or s['indicator']}",
                             "rels": strong_rels, "domains_in_cluster": inside,
+                            "rels_by_domain": {
+                                d: sorted(r for r in own_rels.get((s["indicator_type"], s["indicator"]), {})
+                                          .get(d, ()) if r not in NOISE_RELS)
+                                for d in inside},
                             "kb_wide_domains": s["domain_count"]})
         # most distinctive first: rare KB-wide, but binding many of this cluster's domains
         binding.sort(key=lambda b: (b["kb_wide_domains"], -len(b["domains_in_cluster"])))
@@ -1472,6 +1504,9 @@ def cmd_loop(a):
     import case_state as cs
     case = a.case
     case_dir = os.path.join(ROOT, "cases", case)
+    # A CLOSED case is never expanded: no collection, no frontier, no spend until it is reopened.
+    if _refuse_closed(case):
+        return
     os.makedirs(os.path.join(case_dir, "raw"), exist_ok=True)
     _export_run_env(case_dir)
 
@@ -1749,6 +1784,10 @@ def cmd_status(a):
         sys.exit(f"no such case: {os.path.relpath(case_dir, ROOT)}")
     raw = sorted(f[:-5] for f in os.listdir(raw_dir) if f.endswith(".json"))
     print(f"case '{a.case}': {len(raw)} raw host file(s)")
+    import case_state as cs
+    st = cs.load_state(case_dir) if os.path.isfile(cs.state_path(case_dir)) else {}
+    for line in cs.lifecycle_lines(st):
+        print(f"   {line}")
     for h in raw:
         print(f"   raw  {h}")
     for extra in ("shared.txt", "clusters.json", "case_graph.json", "network.html"):
@@ -1757,6 +1796,69 @@ def cmd_status(a):
     for row in _enrichment_rows(case_dir):
         print(f"   enrichment [{row['outcome']}] {row['key']}: {row['summary']}"
               + (f" (enrichment/{row['file']})" if row["file"] else ""))
+    if os.path.isfile(os.path.join(case_dir, "notices", "index.json")):
+        print("   notices          notices/index.json (drafts; `intel.py action-log` marks one sent)")
+
+
+def cmd_close(a):
+    """Close a case with a disposition outcome (case_disposition.json). A closed case is never
+    expanded by `loop`, `cti` or the harness until `case_state.py reopen`."""
+    import case_state as cs
+    case_dir = os.path.join(ROOT, "cases", a.case)
+    try:
+        st = cs.close(case_dir, a.outcome, note=a.note)
+    except ValueError as e:
+        sys.exit(f"close: {e}")
+    d = st["disposition"]
+    print(f"closed '{a.case}' — disposition {d['outcome']} at {d['closed_at']}"
+          + (f" ({len(d['actions'])} action(s) on record)" if d["actions"] else "")
+          + f". Reopen with: python3 tools/case_state.py reopen {a.case}")
+
+
+def cmd_action_log(a):
+    """Record what was done with a drafted notice: --sent-at/--ref marks it sent and appends to
+    state.json disposition.actions; --result/--result-at records the outcome. Contacts nobody."""
+    import case_state as cs
+    import notice_pack as np_
+    case_dir = os.path.join(ROOT, "cases", a.case)
+    if not a.sent_at and not a.result:
+        sys.exit("action-log: pass --sent-at DATE [--ref ID] to mark a notice sent, and/or "
+                 "--result held|suspended|moved|none --result-at DATE to record its outcome")
+    name = os.path.basename(a.notice)
+    entry = next((n for n in (np_.load_index(case_dir).get("notices") or [])
+                  if isinstance(n, dict) and n.get("file") == name), None)
+    if entry is None:
+        sys.exit(f"action-log: no notice '{name}' in {a.case}/notices/index.json — draft notices "
+                 f"first (intel.py notice {a.case})")
+    if entry.get("status") == "withdrawn":
+        sys.exit(f"action-log: '{name}' was withdrawn ({entry.get('withdrawn_reason')}) — the current "
+                 f"assessment no longer supports it; re-draft with intel.py notice {a.case}")
+    try:
+        action = cs.log_action(case_dir, notice=name, recipient_class=entry.get("class"),
+                               recipient=entry.get("recipient"), sent_at=a.sent_at, ref=a.ref,
+                               result=a.result, result_at=a.result_at)
+        fields = {"result": action.get("result"), "result_at": action.get("result_at")}
+        if a.sent_at:
+            fields.update(status="sent", sent_at=action["sent_at"], ref=a.ref)
+        np_.update_notice(case_dir, name, **fields)
+    except ValueError as e:
+        sys.exit(f"action-log: {e}")
+    days = cs.action_days(action)
+    print(f"action-log '{a.case}': {name} → {entry.get('class')} {entry.get('recipient')}: "
+          f"sent {action.get('sent_at')}"
+          + (f", ref {action['ref']}" if action.get("ref") else "")
+          + (f", result {action['result']} on {action['result_at']} ({days} day(s))"
+             if action.get("result") else ", no result yet")
+          + ". Nothing was sent by this command.")
+
+
+def cmd_notice(a):
+    """Draft the action notices the stored case supports (tools/notice_pack.py). Local read and
+    write only: no network call, nothing sent. Exit 2 with the reason when the rails refuse."""
+    import notice_pack
+    rc = notice_pack.run(os.path.join(ROOT, "cases", a.case))
+    if rc:
+        sys.exit(rc)
 
 
 # --------------------------------------------------------------------------- `cti` driver (#27)
@@ -2007,6 +2109,12 @@ def cmd_cti(a):
         kind = "binary"
     case = a.case or _default_case_for(target)
     case_dir = os.path.join(ROOT, "cases", case)
+    # A CLOSED case is never expanded (no recall-driven collection, Quarry, harness or loop) until
+    # it is reopened; the summary stays the last stdout line so callers parse it as usual.
+    if _refuse_closed(case):
+        print(json.dumps({"case": case, "target": target, "kind": kind, "status": "closed",
+                          "converged": False, "open_leads": [], "next": ["reopen"]}, sort_keys=True))
+        return
     os.makedirs(os.path.join(case_dir, "raw"), exist_ok=True)
 
     quick, deep, passive = bool(a.quick), bool(a.deep), bool(a.passive)
@@ -2335,6 +2443,25 @@ def main():
     s = sub.add_parser("status", help="audit an existing case's persisted outputs")
     s.add_argument("case")
     s.set_defaults(func=cmd_status)
+    cl = sub.add_parser("close", help="close a case with a disposition (no further expansion until reopen)")
+    cl.add_argument("case")
+    cl.add_argument("--outcome", required=True,
+                    help="reported | taken-down | referred | monitoring | no-action | benign | duplicate "
+                         "(tools/kb/references/case_disposition.json)")
+    cl.add_argument("--note", default=None, help="one line on why the case is closed")
+    cl.set_defaults(func=cmd_close)
+    al = sub.add_parser("action-log", help="record a drafted notice as sent and/or its result (contacts nobody)")
+    al.add_argument("case")
+    al.add_argument("--notice", required=True, help="notice file name from notices/index.json")
+    al.add_argument("--sent-at", default=None, help="date the analyst sent it (YYYY-MM-DD)")
+    al.add_argument("--ref", default=None, help="the recipient's ticket / reference id")
+    al.add_argument("--result", default=None, help="held | suspended | moved | none")
+    al.add_argument("--result-at", default=None, help="date the result was observed (YYYY-MM-DD)")
+    al.set_defaults(func=cmd_action_log)
+    nt = sub.add_parser("notice", help="draft registrar/host/CDN/platform/bank/referral/compromise notices "
+                                       "from the stored case (no network, nothing sent)")
+    nt.add_argument("case")
+    nt.set_defaults(func=cmd_notice)
     ct = sub.add_parser("cti", help="recall -> collect -> enrich -> frontier/loop -> JSON summary")
     ct.add_argument("target", help="domain, URL, email, phone, IP, hash or wallet")
     ct.add_argument("--case", default=None, help="default: derived from the target")

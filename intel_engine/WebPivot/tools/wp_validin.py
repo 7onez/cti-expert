@@ -109,10 +109,10 @@ def _headers():
             "Authorization": "Bearer %s" % (validin_key() or "")}
 
 
-def _record(action, results, ok=True):
+def _record(action, results, ok=True, query=None):
     if api_usage:
         try:
-            api_usage.record("validin", action, credits=1, query=action, results=results, ok=ok)
+            api_usage.record("validin", action, credits=1, query=query, results=results, ok=ok)
         except Exception:                    # noqa: BLE001
             pass
 
@@ -281,7 +281,7 @@ def domain_lookup(domain, timeout=25):
     dns = dns if isinstance(dns, list) else []
     hosts = _uniq(r.get("rrname") for r in dns
                   if isinstance(r, dict) and r.get("rrname") and r.get("rrname") != domain)
-    _record("combined", len(dns))
+    _record("combined", len(dns), query=domain)
     return {"total": len(dns),
             "dns": [{"rrname": r.get("rrname"), "rrtype": r.get("rrtype"), "rdata": r.get("rdata"),
                      "first": r.get("time_first"), "last": r.get("time_last")}
@@ -300,7 +300,7 @@ def subdomains(domain, timeout=25):
         return err
     subs = ((data or {}).get("records") or {}).get("subdomains") or []
     hosts = _uniq(s.get("value") for s in subs if isinstance(s, dict))
-    _record("subdomains", len(hosts))
+    _record("subdomains", len(hosts), query=domain)
     return {"total": len(hosts), "hosts": hosts}
 
 
@@ -314,7 +314,7 @@ def certificates(domain, timeout=25):
     if err:
         return err
     certs = _rows(data)
-    _record("certificates", len(certs))
+    _record("certificates", len(certs), query=domain)
     return {"total": len(certs), "certs": certs}
 
 
@@ -328,7 +328,7 @@ def reputation(domain, timeout=25):
     if err:
         return err
     anns = (data or {}).get("annotations") or []
-    _record("reputation", len(anns))
+    _record("reputation", len(anns), query=domain)
     return {"annotations": anns}
 
 
@@ -353,7 +353,7 @@ def _hash_hosts(sha1, category, bucket, timeout):
         return err
     rows = _rows(data, category)
     hosts = _uniq(r.get("value") for r in rows if isinstance(r, dict))
-    _record("hash_pivots", len(hosts))
+    _record("hash_pivots", len(hosts), query=sha1)
     return {"total": len(hosts), "hosts": hosts}
 
 
@@ -379,7 +379,7 @@ def ip_lookup(ip, timeout=25):
     rows = _rows(data)
     domains = _uniq(r.get("value") or r.get("key") for r in rows
                     if isinstance(r, dict) and (r.get("value_type") == "dom" or r.get("value")))
-    _record("ip_dns_history", len(domains))
+    _record("ip_dns_history", len(domains), query=ip)
     return {"total": len(domains), "domains": domains}
 
 
@@ -397,7 +397,7 @@ def lookalikes(domain, timeout=25):
             "first_seen": r.get("first_seen"), "registrar": r.get("rar"),
             "registered": r.get("reg"), "recent_dns": r.get("recent_dns")}
            for r in recs if isinstance(r, dict)]
-    _record("lookalike", len(out))
+    _record("lookalike", len(out), query=domain)
     return {"total": len(out), "records": out}
 
 

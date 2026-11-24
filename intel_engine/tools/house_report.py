@@ -999,6 +999,33 @@ def _is_ip_name(name: str) -> bool:
         return False
 
 
+def notices_md(c: dict) -> str:
+    """Recommendations: the action notices drafted for this case (tools/notice_pack.py →
+    notices/index.json) as a link table — file, class, status, subject count — so the report points
+    at the notices instead of repeating their recipients and contacts. A `withdrawn` draft (the
+    current assessment no longer supports it) is never linked. '' when there is nothing to link,
+    so the section renders exactly as before."""
+    idx = _load_json(os.path.join(c["dir"], "notices", "index.json"), {}) or {}
+    rows = [n for n in (idx.get("notices") or []) if isinstance(n, dict) and n.get("file")
+            and n.get("status") != "withdrawn"]
+    if not rows:
+        return ""
+    L = ["Action notices for this case are drafted in its notices index (`notices/index.json`). Each "
+         "notice names its recipient, the contact used and where that contact came from, and lists its "
+         "evidence with capture time and hash; they are not repeated here. Hosts the evidence does not "
+         "tie to the operator are excluded from every notice and listed in the index with the reason.",
+         "", "| Notice | Class | Status | Subjects |", "|:--|:--|:--|:--|"]
+    for n in rows:
+        status = str(n.get("status") or "drafted")
+        if n.get("sent_at"):
+            status += f" {n['sent_at']}"
+        if n.get("result"):
+            status += f", result {n['result']}" + (f" {n['result_at']}" if n.get("result_at") else "")
+        L.append(f"| `{n['file']}` | {_md_escape(str(n.get('class') or '—'))} | {_md_escape(status)} | "
+                 f"{len(n.get('subjects') or [])} |")
+    return "\n".join(L)
+
+
 # public source CLASS per origin-history source (Rule 12: never the product name) and its grade
 _ORIGIN_SOURCE_CLASS = {"live_dns": ("live DNS", "A2"), "urlscan_hostname": ("public web-scan data", "B2"),
                         "urlscan_scans": ("public web-scan data", "B2")}
@@ -1461,6 +1488,9 @@ def compose(c: dict, figs: dict, classification: str, observed: str) -> str:
     rec = find_section(secs, "recommendation")
     if rec:
         L += [demote_headings(scrub(rec)), ""]
+    notices = notices_md(c)
+    if notices:
+        L += ["## Action notices", "", notices, ""]
     nxt = [x for x in (a.get("next_pivots") or []) if isinstance(x, str)]
     if nxt:
         L += ["## Next pivots", ""] + [f"- {scrub(x)}" for x in nxt] + [""]

@@ -176,6 +176,7 @@ There is no formatter, linter, or lockfile in the repo; `audit.sh` is the only g
 | File | Why it matters |
 |---|---|
 | `SKILL.md` | analyst contract: §2.5 reference checks, RULE numbering, command catalog, Deliver contract |
+| `handbook/command-reference.md`, `report-export.md`, `technique-activation.md`, `architecture-reference.md`, `case-pipeline-detail.md` | reference moved out of `SKILL.md`, which links each one and says when to read it: full command rows, Deliver steps + report JSON, auto-fire matrix, directory tree, §2 pipeline detail |
 | `CLAUDE.md` | contributor Rules 1–6 (case data, single case store, `@tool`+dispatch+doc, shims, classification tests, hooks) |
 | `scripts/backend/intel.py` | op → script `DISPATCH` map; `--dry-run` prints the resolved command |
 | `intel_engine/tools/intel.py` | `cmd_open` (collect → ingest → clusters → graph → assessment → sidecar → MO-neighbours), `cmd_loop` |

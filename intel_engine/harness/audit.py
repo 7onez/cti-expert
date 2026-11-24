@@ -107,9 +107,10 @@ _POLICY_FALLBACK = {
     "route_metered_tools": {"corpus_search": "route"},
     # Tools that spend only when an argument is truthy (search_pivot run=true -> SerpApi fallback).
     # Conservative minimum = the one known entry, so a missing data file never under-counts it.
-    "arg_metered_tools": {"search_pivot": "run"},
-    # The analyst's consent step; never callable from a harness phase.
-    "operator_only_tools": ["case_approve"],
+    "arg_metered_tools": {"search_pivot": "run", "watchlist": "allow_metered"},
+    # Analyst-only actions; never callable from a harness phase. Conservative = the complete list:
+    # an unreadable data file must not let a phase close a case, draft a notice or edit the watch-list.
+    "operator_only_tools": ["case_approve", "case_close", "notice_draft", "watchlist"],
     # Metered tools whose handler honours free_only (a keyless mode). Every OTHER metered tool
     # refuses free_only rather than spend (tools._free_only_refusal). Conservative = empty.
     "free_only_capable_tools": [],
@@ -321,15 +322,31 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
     if hostile is None:
         hostile = bool((_CTX.get() or {}).get("hostile", _ENV_HOSTILE))
 
-    # Operator-only tools (case_approve): the analyst's consent step. A harness PHASE calling it
-    # would be the loop approving its own spend, so any non-interactive phase is denied.
+    # Operator-only tools: the analyst's own actions. A harness PHASE calling case_approve would be
+    # the loop approving its own spend; a phase closing a case, drafting notices for third parties
+    # or editing the watch-list would be the loop deciding what the analyst does next. Any
+    # non-interactive phase is denied.
     ph = phase if phase is not None else (_CTX.get() or {}).get("phase")
     if t in OPERATOR_ONLY and ph not in (None, "", "interactive"):
+        if t == "case_approve":
+            return (False,
+                    f"{t} is the ANALYST's consent step and cannot be called from a harness phase "
+                    f"({ph}). Stop and hand the proposal back; the analyst approves it with "
+                    f"`harness approve` or this tool in an interactive session.", classes)
         return (False,
-                f"{t} is the ANALYST's consent step and cannot be called from a harness phase "
-                f"({ph}). Stop and hand the proposal back; the analyst approves it with "
-                f"`harness approve` or this tool in an interactive session.", classes)
+                f"{t} is an ANALYST action and cannot be called from a harness phase ({ph}). "
+                f"Say what you would recommend and stop; the analyst runs it in an interactive "
+                f"session or from the CLI.", classes)
     _case = case or (_CTX.get() or {}).get("case")
+    # Reopening a case the ANALYST closed is the analyst's decision too: a phase that could reopen
+    # it would undo the closure and then expand it. A cold or converged case is still reopenable
+    # from a phase, as before.
+    if t == "case_reopen" and ph not in (None, "", "interactive") \
+            and _case_closed(args.get("case") or _case):
+        return (False,
+                f"{t}: this case was CLOSED by the analyst and cannot be reopened from a harness "
+                f"phase ({ph}). Say why you would reopen it and stop; the analyst reopens it in an "
+                f"interactive session or with `intel.py reopen`.", classes)
     auto = auto_mode(_case)
     env_on = bool(APPROVAL_REQUIRED.get(t)) and \
         os.environ.get(APPROVAL_REQUIRED[t], "").strip().lower() in ("1", "true", "yes", "on")
@@ -419,6 +436,33 @@ def decide(tool_name: str, args: dict, *, hostile: bool | None = None,
                     f"next proposal. Do not retry unchanged.", classes)
 
     return True, "", classes
+
+
+def _case_state_file(case) -> str:
+    """The state.json `case_state.py` would open for this `case` argument, resolved the way it
+    resolves it (`case_state._case_dir`): a path-shaped value is used as given - relative to ROOT,
+    the directory every tool subprocess runs in - and a bare id is ROOT/cases/<id>. The gate must
+    read the SAME file as the tool it guards: a second, stricter idea of what names a case is how
+    `cases/<id>` or an absolute path would name a closed case without looking closed."""
+    c = str(case)
+    if os.path.isabs(c):
+        return os.path.join(c, "state.json")
+    if os.sep in c or (os.altsep and os.altsep in c):
+        return os.path.join(ROOT, c, "state.json")
+    return os.path.join(ROOT, "cases", c, "state.json")
+
+
+def _case_closed(case) -> bool:
+    """True when the case's state.json has status `closed`. Absent or unreadable state is not
+    closed: a case nobody closed keeps today's behaviour."""
+    if case in (None, ""):
+        return False
+    try:
+        with open(_case_state_file(case), encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(st, dict) and st.get("status") == "closed"
 
 
 def _ledger_path(case: str | None) -> str:
@@ -553,6 +597,47 @@ def record(tool_name: str, args: dict, *, allowed: bool, reason: str, classes: l
             print(f"[audit] WARNING: tool-call ledger unwritable ({e}); the run continues but "
                   f"its actions are NOT being recorded.", file=sys.stderr)
             record._warned = True                      # type: ignore[attr-defined]
+
+OUTCOME_LEDGER = "tool_outcomes.jsonl"
+
+
+def record_outcome(tool_name: str, *, ok: bool, duration_ms: int, result_chars: int,
+                   error: str | None = None) -> None:
+    """Append what a tool call RETURNED to tool_outcomes.jsonl, beside the gate ledger.
+
+    record() is written by the gate BEFORE the handler runs, so it cannot say whether the call
+    succeeded, how long it took or how much text it handed back. This is a separate file on
+    purpose: every reader of tool_calls.jsonl expects one row per gate decision.
+
+    Written ONLY for a call made through a front-end that bound its context (set_context: the
+    stdio MCP server per tools/call, the orchestrator per phase). A handler invoked directly — a
+    test, a script — has no backend bound and leaves no row: otherwise every test run would file
+    phantom successes in the real ledger and create a case directory for each `case` it invented.
+    Case, phase and backend are that bound context. Never raises."""
+    ctx = _CTX.get() or {}
+    if not ctx.get("backend"):
+        return
+    case = ctx.get("case")
+    rec = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "case": case, "phase": ctx.get("phase"), "backend": ctx["backend"],
+        "tool": bare(tool_name), "ok": bool(ok),
+        "duration_ms": int(duration_ms), "result_chars": int(result_chars),
+    }
+    if error:
+        rec["error"] = str(error)[:200]
+    path = os.path.join(os.path.dirname(_ledger_path(case)), OUTCOME_LEDGER)
+    try:
+        line = _ledger_line(rec)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with _LOCK:
+            with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+                f.write(line + "\n")
+    except Exception as e:  # noqa: BLE001 — an outcome row must never fail the call it describes
+        if not getattr(record_outcome, "_warned", False):
+            print(f"[audit] WARNING: tool-outcome ledger unwritable ({e}); the run continues but "
+                  f"tool results are NOT being measured.", file=sys.stderr)
+            record_outcome._warned = True              # type: ignore[attr-defined]
 
 
 def gate(tool_name: str, args: dict, *, case: str | None = None, phase: str | None = None,

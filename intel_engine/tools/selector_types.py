@@ -2,8 +2,8 @@
 """Typed selector model for the cross-type auto-pivot harness path.
 
 Stdlib only. Classifies raw seeds into node types (domain|email|phone|wallet|ip|hash|
-string|filename|telegram|onion), loads pivot routes + rung table from reference JSON, and
-defines the frozen Candidate record the proposer/planner exchange.
+string|filename|telegram|onion|bank_account), loads pivot routes + rung table from reference
+JSON, and defines the frozen Candidate record the proposer/planner exchange.
 
 intel.py's `_classify_selector` / `_SELECTOR_OP` stay untouched — this module is the
 harness-side classifier. Regex patterns are COPIED from intel.py (importing intel.py
@@ -64,7 +64,80 @@ _KINDS = frozenset({
     # identity/estate kinds no regex can tell apart from a string: set by a collector hint, a KB
     # entity type (org) or propose()'s case-artifact readers (image_url, masked_hint, namespace)
     "org", "image_url", "namespace", "masked_hint",
+    # a receiving bank account (VietQR/EMVCo payload, or a checksum-valid IBAN) — kit rung: a mule
+    # account is rented and shared, so reuse across cases is a lead, never an owner link
+    "bank_account",
 })
+
+# ---------------------------------------------------------------- bank accounts
+# KB key: bank:<country>:<bank-id>:<account>, or bank:<country>:iban:<IBAN>. The account keeps
+# [0-9A-Za-z] (an EMVCo account field is alphanumeric); only whitespace and separators are dropped.
+# The IBAN check is scripts/iban_analyze.py's (ISO 13616 shape + length, ISO 7064 mod-97) — loaded
+# from that file, never re-implemented here. Without it an IBAN is simply not recognised.
+_BANK_KEY_RE = re.compile(r'^bank:([a-z]{2}):([0-9a-z]+):(.+)$', re.I)
+_IBAN_HINT_RE = re.compile(r'^[A-Za-z]{2}\d{2}[A-Za-z0-9 .\-]{9,45}$')   # cheap gate before the check
+_IBAN_MOD = None
+
+
+def _iban_analyze():
+    """scripts/iban_analyze.py as a module (None when this engine ships without the skill root)."""
+    global _IBAN_MOD
+    if _IBAN_MOD is None:
+        _IBAN_MOD = False
+        try:
+            import importlib.util
+            path = os.path.join(os.path.dirname(_ROOT), "scripts", "iban_analyze.py")
+            spec = importlib.util.spec_from_file_location("_cti_iban_analyze", path)
+            if spec and spec.loader and os.path.exists(path):
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _IBAN_MOD = mod
+        except Exception:                                      # noqa: BLE001 — degrade: no IBANs
+            _IBAN_MOD = False
+    return _IBAN_MOD or None
+
+
+def valid_iban(value: str):
+    """The canonical IBAN when `value` passes iban_analyze's check, else None.
+
+    Two guards on top of it: a DOMAIN is never tested (iban_analyze strips dots, so one domain in 97
+    shaped like `ab12example.com` would pass mod-97), and the country LENGTH check must pass — a
+    country with no length entry is accepted by mod-97 alone there, which is not an IBAN here."""
+    v = str(value or "").strip()
+    if not _IBAN_HINT_RE.match(v) or _is_domain(v.rstrip(".")):
+        return None
+    mod = _iban_analyze()
+    if mod is None:
+        return None
+    try:
+        r = mod.analyze(v)
+    except Exception:                                          # noqa: BLE001
+        return None
+    length_ok = str((r.get("checks") or {}).get("length") or "").startswith("pass")
+    return r.get("iban") if r.get("valid") and length_ok else None
+
+
+def bank_account_key(value: str, country: str = "", bank_id: str = ""):
+    """Normalise a bank account to its KB key, or None.
+
+    Accepts `bank:<cc>:<bank-id>:<account>`, `bank:<cc>:iban:<iban>`, a bare checksum-valid IBAN,
+    or a bare account number with `country` and `bank_id`. The account keeps [0-9A-Za-z] — spaces,
+    dots and dashes are how pages format it, not part of it. An IBAN must pass valid_iban."""
+    v = str(value or "").strip()
+    m = _BANK_KEY_RE.match(v)
+    if m:
+        country, bank_id, v = m.group(1), m.group(2), m.group(3)
+    if str(bank_id).lower() == "iban" or (not m and not bank_id):
+        iban = valid_iban(v)
+        return f"bank:{iban[:2].lower()}:iban:{iban}" if iban else None
+    cc = str(country or "").strip().lower()
+    bid = re.sub(r"[^0-9a-z]", "", str(bank_id or "").lower())
+    acct = re.sub(r"[^0-9A-Za-z]", "", v)
+    if not (re.fullmatch(r"[a-z]{2}", cc) and bid and acct):
+        return None
+    return f"bank:{cc}:{bid}:{acct}"
+
+
 #: an onion has no routes of its own yet; it inherits the STRING routes — corpus searches of the
 #: literal (urlscan text, Wayback/news, FOFA body, …), none of which resolve or fetch the name.
 _ROUTE_TYPE_ALIAS = {"onion": "string"}
@@ -96,7 +169,7 @@ _RUNG_CLASSES_KIT = {
     "page.email": "kit", "page.phone": "kit",
     "html_id": "kit", "telegram.username": "kit", "bank_account": "kit",
     "username": "kit", "string": "kit", "filename": "kit", "hash": "kit",
-    "title": "kit", "favicon": "kit", "tx_id": "kit",
+    "title": "kit", "favicon": "kit", "tx_id": "kit", "wallet.drainer_contract": "kit",
     "ip.cotenant": "kit",
 }
 _RUNGS_JSON = os.path.join(_ROOT, "tools", "kb", "references", "rungs.json")
@@ -308,8 +381,8 @@ def classify(raw, hint=None) -> str:
     """Classify a raw selector into one node type.
 
     Order (hint always wins; filename BEFORE bare-domain fallback; `domain:` forces domain):
-      hint → domain: prefix → onion (bare or URL host) → URL scheme → IP → email → hash →
-      wallet → phone → telegram (t.me/…) → filename → bare domain → string
+      hint → domain: prefix → bank: prefix → onion (bare or URL host) → URL scheme → IP → email →
+      IBAN → hash → wallet → phone → telegram (t.me/…) → filename → bare domain → string
     """
     if hint is not None:
         h = str(hint).strip().lower()
@@ -325,6 +398,10 @@ def classify(raw, hint=None) -> str:
     # Analyst force-type: domain:<value> (ambiguous TLDs like .zip / .app / .mov)
     if v.lower().startswith("domain:"):
         return "domain"
+
+    # A typed bank-account key (bank:<cc>:<bank-id>:<account> / bank:<cc>:iban:<iban>)
+    if v.lower().startswith("bank:") and bank_account_key(v):
+        return "bank_account"
 
     _host = (urlparse(v).hostname or "") if _URL_SCHEME_RE.match(v) else v
     if _ONION_RE.match(_host.rstrip(".")):
@@ -347,6 +424,10 @@ def classify(raw, hint=None) -> str:
 
     if "@" in v and _is_domain(v.rsplit("@", 1)[-1]):
         return "email"
+
+    # A checksum-valid IBAN (scripts/iban_analyze.py) — before hash/phone, which never start CCnn
+    if valid_iban(v):
+        return "bank_account"
 
     if _HASH_HEX_RE.match(v):
         return "hash"
@@ -467,6 +548,9 @@ def kb_key(type_: str, value: str, *, coin: str = "") -> tuple:
     if t == "wallet":
         c = _COIN_ALIAS.get((coin or "").strip().lower(), (coin or "").strip().lower())
         return "indicator", f"wallet:{c or wallet_coin(v)}:{v}"
+    if t == "bank_account":
+        key = bank_account_key(v)
+        return "indicator", key or f"bank_account:{v}"
     if t == "telegram":
         return "indicator", f"social:telegram:{_telegram_handle(v)}"
     if t == "string":
@@ -560,6 +644,9 @@ def node_from_kb(etype: str, value: str):
     prefix, rest = v.split(":", 1)
     if prefix == "image_url" and rest:
         return {"type": "image_url", "selector": rest, "rung_class": "image.avatar"}
+    if prefix == "bank" and bank_account_key(v):
+        # a node (not fact-only), kit rung: no route pivots it yet, and it never clusters
+        return {"type": "bank_account", "selector": v, "rung_class": "bank_account"}
     if prefix == "namespace" and rest:
         return {"type": "namespace", "selector": rest, "rung_class": "code.namespace"}
     if prefix == "wallet" and ":" in rest:
@@ -584,6 +671,7 @@ def auto_max_hits() -> int:
 __all__ = [
     "Candidate",
     "auto_max_hits",
+    "bank_account_key",
     "candidate_id",
     "classify",
     "kb_key",

@@ -357,7 +357,7 @@ def state_path(cdir):
 def _fresh_state(case):
     return {
         "version": STATE_VERSION, "case": case, "created": _now(), "updated": _now(),
-        "status": "expanding",          # expanding | converged | cold | awaiting-analyst | error
+        "status": "expanding",          # expanding | converged | cold | awaiting-analyst | error | closed
         "round": 0, "depth_limit": None,
         "collected": [], "pending": [], "consumed": [],
         "metered_leads": [], "history": [], "reopen_count": 0, "note": None,
@@ -2187,8 +2187,17 @@ def convergence_verdict(case, stale=2):
 
 def reopen(case, new_seeds=None):
     """Cold-case reopen: flip status back to expanding, merge any new seeds into pending, and let
-    the next loop re-mine the frontier against the CURRENT KB (cross-case breakthroughs included)."""
+    the next loop re-mine the frontier against the CURRENT KB (cross-case breakthroughs included).
+    A closed case's disposition block moves into `disposition.history`, so the record of what was
+    done about the case survives the reopen."""
     st = load_state(case)
+    if isinstance(st.get("disposition"), dict):
+        d = _disposition(st)
+        prior = {k: v for k, v in d.items() if k != "history"}
+        if prior.get("outcome") or prior.get("actions"):
+            prior["reopened_at"] = _now()
+            d = dict(_new_disposition(), history=d["history"] + [prior])
+        st["disposition"] = d
     st["status"] = "expanding"
     st["reopen_count"] = st.get("reopen_count", 0) + 1
     st["note"] = f"reopened {_now()}"
@@ -2203,6 +2212,186 @@ def reopen(case, new_seeds=None):
                 st.setdefault("pending", []).append(h)
     save_state(case, st)
     return st
+
+
+# ------------------------------------------------------------------------- closure / disposition
+# A case ends with a RECORD of what was done about it: status `closed` plus a `disposition` block
+# {outcome, closed_at, note, actions[], history[]}. A closed case is never expanded — the loop, the
+# harness and `cti` refuse it until `reopen`, which archives the block into `history`. The block is
+# created only by close()/log_action(): a case that was never closed keeps its state.json shape.
+# Vocabulary is reference DATA (tools/kb/references/case_disposition.json); the fallback is the
+# conservative minimum — only `no-action` closes, only `none` records a result.
+CLOSED = "closed"
+_DISP_FALLBACK = {"outcomes": ["no-action"], "action_results": ["none"]}
+try:
+    import kb_refs as _kb_refs_disp   # tools/kb/kb_refs.py
+    _DISP_REF = _kb_refs_disp.load_ref(
+        _kb_refs_disp.ref_path(_kb_refs_disp.__file__, "case_disposition.json"), _DISP_FALLBACK)
+except Exception:  # noqa: BLE001
+    _DISP_REF = dict(_DISP_FALLBACK)
+DISPOSITION_OUTCOMES = tuple(str(x) for x in (_DISP_REF.get("outcomes") or _DISP_FALLBACK["outcomes"]))
+ACTION_RESULTS = tuple(str(x) for x in (_DISP_REF.get("action_results") or _DISP_FALLBACK["action_results"]))
+
+
+def _new_disposition():
+    return {"outcome": None, "closed_at": None, "note": None, "actions": [], "history": []}
+
+
+def _disposition(st):
+    """The state's disposition block, backfilled to the current shape (never None)."""
+    d = st.get("disposition") if isinstance(st.get("disposition"), dict) else {}
+    d = dict(d)
+    for k, v in _new_disposition().items():
+        d.setdefault(k, v)
+    for k in ("actions", "history"):
+        if not isinstance(d.get(k), list):
+            d[k] = []
+    return d
+
+
+def is_closed(case_or_state):
+    """True when the case (id/path or an already-loaded state dict) has status `closed`."""
+    st = case_or_state if isinstance(case_or_state, dict) else load_state(case_or_state)
+    return st.get("status") == CLOSED
+
+
+def closed_message(case, st=None):
+    """The one refusal line every expansion entry point prints for a closed case."""
+    st = st if isinstance(st, dict) else load_state(case)
+    outcome = (st.get("disposition") or {}).get("outcome") if isinstance(st.get("disposition"), dict) else None
+    return (f"case '{case}' is CLOSED (disposition: {outcome or '—'}) — nothing collected, proposed "
+            f"or spent. Reopen it first: python3 tools/case_state.py reopen {case} [new-seed …]")
+
+
+def closed_refusal(case, cdir=None):
+    """The ONE closed-case check every expansion entry point shares (intel.py open / enrich / loop /
+    cti, the harness orchestrator, pivot_routes.execute): the refusal message when the case is
+    closed, else None. A case with no state.json is open.
+
+    Looks at BOTH the caller's `cdir` and the directory this module resolves `case` to. A caller
+    that builds its own ROOT/cases/<case> and then hands `case` to load_state / save_state /
+    frontier is working on two directories when `case` is path-shaped (`cases/<id>`): checking
+    only the caller's would let a path alias expand - and un-close - a closed case."""
+    for d in dict.fromkeys(x for x in (cdir, _case_dir(case)) if x):
+        if not os.path.isfile(state_path(d)):
+            continue
+        st = load_state(d)
+        if st.get("status") == CLOSED:
+            return closed_message(os.path.basename(os.path.normpath(str(case))), st)
+    return None
+
+
+def _valid_date(s, label):
+    v = str(s or "").strip()
+    try:
+        datetime.fromisoformat(v[:10])
+    except ValueError:
+        raise ValueError(f"{label} must be a date (YYYY-MM-DD), got {s!r}") from None
+    return v
+
+
+def _load_named(case):
+    """load_state(case) with a bare case id in `case` even when `case` is a path (a state.json
+    created here must not record the directory as the case name)."""
+    st = load_state(case)
+    if st.get("case") == case and (os.sep in str(case) or os.path.isabs(str(case))):
+        st["case"] = os.path.basename(os.path.normpath(str(case)))
+    return st
+
+
+@_locked
+def close(case, outcome, note=None):
+    """Close a case with a disposition outcome from case_disposition.json. Refuses an unknown
+    outcome, a missing case and an already-closed case (reopen first, so no record is lost)."""
+    if outcome not in DISPOSITION_OUTCOMES:
+        raise ValueError(f"outcome must be one of {', '.join(DISPOSITION_OUTCOMES)}, got {outcome!r}")
+    if not os.path.isdir(_case_dir(case)):
+        raise ValueError(f"no such case: {case}")
+    st = _load_named(case)
+    if st.get("status") == CLOSED:
+        raise ValueError(f"case '{case}' is already closed — reopen it before closing it again")
+    d = _disposition(st)
+    d.update(outcome=outcome, closed_at=_now(), note=(str(note).strip() or None) if note else None)
+    st["disposition"] = d
+    st["status"] = CLOSED
+    save_state(case, st)
+    return st
+
+
+@_locked
+def log_action(case, *, notice, recipient_class, recipient, sent_at=None, ref=None,
+               result=None, result_at=None, type_="notice"):
+    """Record one action against the case's disposition. With `sent_at` a NEW action is appended
+    (and may carry its result at once); without it the latest action for `notice` gets the result —
+    looked up in the current block, then in the most recent `history` entry (a notice sent before a
+    reopen still has its result arriving afterwards; the record stays where it was archived).
+    Nothing is contacted — this only writes state.json. Returns the action dict."""
+    if result is not None and result not in ACTION_RESULTS:
+        raise ValueError(f"result must be one of {', '.join(ACTION_RESULTS)}, got {result!r}")
+    if result is not None and not result_at:
+        raise ValueError("a result needs its date (--result-at YYYY-MM-DD)")
+    if not os.path.isdir(_case_dir(case)):
+        raise ValueError(f"no such case: {case}")
+    st = _load_named(case)
+    d = _disposition(st)
+    if sent_at:
+        action = {"type": type_, "notice": notice, "recipient_class": recipient_class,
+                  "recipient": recipient, "sent_at": _valid_date(sent_at, "sent_at"),
+                  "ref": ref, "result": None, "result_at": None, "logged_at": _now()}
+        d["actions"].append(action)
+    else:
+        def _latest(actions):
+            return next((a for a in reversed(actions or [])
+                         if isinstance(a, dict) and a.get("notice") == notice), None)
+        action = _latest(d["actions"])
+        if action is None and d["history"] and isinstance(d["history"][-1], dict):
+            action = _latest(d["history"][-1].get("actions"))
+        if action is None:
+            raise ValueError(f"no sent action recorded for {notice} — log it with --sent-at first")
+    if result is not None:
+        action["result"] = result
+        action["result_at"] = _valid_date(result_at, "result_at")
+    st["disposition"] = d
+    save_state(case, st)
+    return action
+
+
+def action_days(action):
+    """Whole days from an action's sent_at to its result_at, or None when either is missing."""
+    try:
+        s = datetime.fromisoformat(str(action.get("sent_at") or "")[:10])
+        r = datetime.fromisoformat(str(action.get("result_at") or "")[:10])
+    except (ValueError, AttributeError):
+        return None
+    return (r - s).days
+
+
+def lifecycle_lines(st):
+    """Status-output lines: lifecycle status, disposition outcome, and per action with a result
+    the days it took. Shared by `case_state.py status`, `intel.py status` and `harness status`."""
+    st = st if isinstance(st, dict) else {}
+    d = st.get("disposition") if isinstance(st.get("disposition"), dict) else {}
+    lines = [f"lifecycle  : {st.get('status') or '—'}"]
+    disp = d.get("outcome") or "—"
+    if d.get("closed_at"):
+        disp += f"   (closed {d['closed_at']})"
+    if d.get("note"):
+        disp += f"   note: {d['note']}"
+    lines.append(f"disposition: {disp}")
+    for a in d.get("actions") or []:
+        if not isinstance(a, dict):
+            continue
+        who = f"{a.get('recipient_class') or '?'} {a.get('recipient') or '?'}"
+        if a.get("result"):
+            days = action_days(a)
+            lines.append(f"  action   : {who} — {a['result']} after "
+                         f"{days if days is not None else '?'} day(s) "
+                         f"(sent {a.get('sent_at')}, result {a.get('result_at')})")
+        else:
+            lines.append(f"  action   : {who} — sent {a.get('sent_at')}, no result yet")
+    if d.get("history"):
+        lines.append(f"  history  : {len(d['history'])} earlier disposition(s) kept from before a reopen")
+    return lines
 
 
 def _done_map(st):
@@ -2787,16 +2976,23 @@ def _case_no_spend(case):
 
 class _ProbeRoutes:
     """pivot_routes with every count probe forced free_only on a no_spend case: metered routes
-    answer unknown (no reverse-WHOIS preview is sent) and urlscan counts go keyless."""
+    answer unknown (no reverse-WHOIS preview is sent) and urlscan counts go keyless. The case
+    directory rides along so a count already answered for another case is reused, not re-asked."""
 
-    def __init__(self, mod, free_only):
+    def __init__(self, mod, free_only, case_dir=None):
         self._mod, self._free = mod, bool(free_only)
+        try:                              # a stub module's count() may not take the scope
+            import inspect
+            scoped = "case_dir" in inspect.signature(mod.count).parameters
+        except (AttributeError, TypeError, ValueError):
+            scoped = False
+        self._scope = {"case_dir": case_dir} if scoped and case_dir else {}
 
     def query_for(self, *a, **k):
         return self._mod.query_for(*a, **k)
 
     def count(self, route, query, free_only=False):
-        return self._mod.count(route, query, free_only=bool(free_only) or self._free)
+        return self._mod.count(route, query, free_only=bool(free_only) or self._free, **self._scope)
 
     def runnable(self, route):
         """pivot_routes.route_runnable — False when the route's credential is absent. A stub
@@ -2807,7 +3003,8 @@ class _ProbeRoutes:
 
 def _probe_routes(case):
     mod = _pivot_routes_mod()
-    return None if mod is None else _ProbeRoutes(mod, _case_no_spend(case))
+    return None if mod is None else _ProbeRoutes(mod, _case_no_spend(case),
+                                                 os.path.abspath(_case_dir(case)))
 
 
 def _offerable(c, pr):
@@ -2843,6 +3040,74 @@ def _findings_from_case(cdir):
                 if h:
                     findings["social"].append({"username": str(h), "platform": str(net)})
     return findings
+
+
+# Measured vendor yield as a ranking tie-breaker. The POLICY is reference data
+# (tools/kb/references/route_yield.json); the MEASUREMENT is this machine's own, written beside
+# the usage ledger by `api_usage.py report --yield`. The fallback maps no route, so a missing
+# reference file means no yield ranking at all.
+_YIELD_FALLBACK = {"thresholds": {"min_samples": 0, "low_yield_zero_rate": 2.0, "stale_after_days": 0},
+                   "route_ledger": {}}
+try:
+    _YIELD_REF = _kb_refs.load_ref(_kb_refs.ref_path(_kb_refs.__file__, "route_yield.json"),
+                                   _YIELD_FALLBACK)
+except Exception:
+    _YIELD_REF = dict(_YIELD_FALLBACK)
+_YIELD_THRESHOLDS = _YIELD_REF.get("thresholds") or _YIELD_FALLBACK["thresholds"]
+_YIELD_ROUTE_LEDGER = _YIELD_REF.get("route_ledger") or {}
+
+
+def _yield_measurement_path():
+    """route_yield.json beside the usage ledger — the path api_usage.yield_path() writes."""
+    return os.path.join(os.path.dirname(_api_usage_log()), "route_yield.json")
+
+
+def low_yield_routes(now=None):
+    """Mapped route (or dot-prefix) → {ledger, zero_rate, counted} for every route this machine has
+    measured as low-yield. Empty when there is no measurement, it is stale, or nothing crosses the
+    thresholds — and then propose() ranks exactly as it did before yield existed."""
+    try:
+        with open(_yield_measurement_path(), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        made = datetime.strptime(doc["generated"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        age_days = ((now or datetime.now(timezone.utc)) - made).total_seconds() / 86400
+        if age_days > float(_YIELD_THRESHOLDS.get("stale_after_days") or 0):
+            return {}
+        need = int(_YIELD_THRESHOLDS.get("min_samples") or 0)
+        floor = float(_YIELD_THRESHOLDS.get("low_yield_zero_rate"))
+        measured = doc.get("routes") or {}
+        out = {}
+        for route, ledger in _YIELD_ROUTE_LEDGER.items():
+            m = measured.get(ledger) or {}
+            rate, n = m.get("zero_rate"), int(m.get("counted") or 0)
+            if isinstance(rate, (int, float)) and n > 0 and n >= need and rate >= floor:
+                out[route] = {"ledger": ledger, "zero_rate": rate, "counted": n}
+        return out
+    except Exception:
+        return {}
+
+
+def _low_yield_for(route, low):
+    """The low-yield entry covering `route`: its own key, else the longest matching dot-prefix."""
+    route = str(route or "")
+    if route in low:
+        return low[route]
+    hit = max((k for k in low if k.endswith(".") and route.startswith(k)), key=len, default=None)
+    return low[hit] if hit else None
+
+
+def _note_low_yield(cands, low):
+    """Say on the candidate itself why it sorted later (`why` is what a proposal shows)."""
+    from dataclasses import replace
+    out = []
+    for c in cands:
+        m = _low_yield_for(c.tool, low)
+        if m:
+            note = (f"low measured yield: {m['ledger']} returned nothing in "
+                    f"{m['zero_rate']:.0%} of {m['counted']} calls")
+            c = replace(c, why=f"{c.why} · {note}" if c.why else note)
+        out.append(c)
+    return out
 
 
 def _pivot_suggest_boosts(cdir):
@@ -3590,14 +3855,17 @@ def propose(case, *, extra=(), max_per_type=None, probe=True):
             by="frontier",
         ))
 
-    # rank key — boost desc, corroboration desc, rung owner>kit>neighbour, id (steps 2 and 5)
+    # rank key — boost desc, corroboration desc, rung owner>kit>neighbour, then a route this
+    # machine measured as low-yield after its equals, id (steps 2 and 5)
     boosts = _pivot_suggest_boosts(cdir)
+    low_yield = low_yield_routes()
 
     def _key(c):
         return (
             -(boosts.get((c.selector or "").lower(), 0) or 0),
             -len(c.sources or ()),
             _RUNG_RANK.get(c.rung, 9),
+            1 if _low_yield_for(c.tool, low_yield) else 0,
             c.id,
         )
 
@@ -3671,8 +3939,10 @@ def propose(case, *, extra=(), max_per_type=None, probe=True):
     #    sources on collision; never offer an unrunnable / type-excluded route (_offerable)
     cands = [c for c in _dedup_cands(cands, pivoted) if _offerable(c, pr)]
 
-    # 5) rank: boost desc, corroboration desc, rung owner>kit>neighbour, id
+    # 5) rank: boost desc, corroboration desc, rung owner>kit>neighbour, low-yield last, id
     cands.sort(key=_key)
+    if low_yield:
+        cands = _note_low_yield(cands, low_yield)
     # 5b) per-route rules: approval:always never sized; round_cap per route (pivot_map.json)
     cands = _apply_route_rules(cands, routes_meta)
 
@@ -3705,6 +3975,8 @@ def _print_status(case):
     v = convergence_verdict(case)
     print(f"# Case state — {case}")
     print(f"  status   : {st.get('status')}   (round {st.get('round')}, reopened×{st.get('reopen_count', 0)})")
+    for line in lifecycle_lines(st):
+        print(f"  {line}")
     print(f"  collected: {len(collected_hosts(cdir))} host(s) on disk")
     print(f"  pending  : {len(st.get('pending', []))}  consumed: {len(st.get('consumed', []))}")
     print(f"  converge : {v['verdict']}  ({v.get('rounds', 0)} round(s); "

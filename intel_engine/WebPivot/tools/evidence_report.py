@@ -53,6 +53,14 @@ except Exception:
     def _classify_ip(ip):
         return {"ip": ip, "cdn": None, "provider": None, "kind": "unknown"}
 
+# The one wording for the drainer verdict (an untested heuristic, and every rendering says so).
+try:
+    from wp_extract import web3_verdict_label as _web3_label  # type: ignore
+except Exception:
+    def _web3_label(verdict):
+        return ("suspected drainer pattern (untested heuristic)" if verdict == "suspected-drainer"
+                else "web3 site (wallet-connect library only)")
+
 # --------------------------------------------------------------------------- estimative language
 # ICD 203 mandates a standard lexicon for likelihood ("words of estimative probability")
 # and requires it be kept distinct from analytic CONFIDENCE (how solid the sourcing is).
@@ -479,6 +487,7 @@ def render_cia_report(result: dict,
         L += ["## Certificate Transparency — completeness", ""] + WR.ct_md(ct_sum)
     if related:
         L += ["## Related hosts (unverified)", ""] + WR.related_md(related)
+    L += _tradecraft_section([result])
 
     L.append("## Intelligence Gaps & Recommended Collection")
     L.append("")
@@ -928,6 +937,49 @@ def _origin_history_section(results):
     return L
 
 
+def _tradecraft_section(results) -> list:
+    """Markdown: kit siblings NAMED by their kit signature, and the wallet-drainer heuristic.
+
+    Neither is a judgment (SKILL.md RULE 5). Hosts that match one named kit are kit siblings —
+    kits are sold, shared and cloned — so the rows name the kit and never an operator; a commodity
+    kit is labelled noise context. The drainer verdict is an untested heuristic and reads so."""
+    kits, drainers = {}, []
+    for r in results:
+        host = _norm((r.get("meta") or {}).get("host") or "")
+        art = r.get("artifacts") or {}
+        for m in art.get("kit_matches") or []:
+            if not isinstance(m, dict) or not m.get("rule_id"):
+                continue
+            k = kits.setdefault(m["rule_id"], {"name": m.get("name") or m["rule_id"],
+                                               "kind": m.get("kind") or "kit",
+                                               "prevalence": m.get("prevalence") or "commodity",
+                                               "hosts": set()})
+            k["hosts"].add(host)
+        w3 = art.get("web3")
+        if isinstance(w3, dict) and w3.get("verdict") == "suspected-drainer":
+            drainers.append((host, w3))
+    L = []
+    if kits:
+        L += ["## Kit Siblings — named kit signatures (same KIT, not same operator)", "",
+              "Hosts in one row share a named kit. A kit is lineage: it is sold, shared and cloned, "
+              "so a row never names an operator. A commodity kit is noise context, not a pivot.", "",
+              "| Kit | Kind | Prevalence | Kit siblings |", "|---|---|---|---|"]
+        for rid, k in sorted(kits.items(), key=lambda kv: (-len(kv[1]["hosts"]), kv[0])):
+            prev = k["prevalence"] + (" — noise context, not a pivot"
+                                      if k["prevalence"] == "commodity" else "")
+            L.append(f"| {k['name']} (`{rid}`) | {k['kind']} | {prev} | "
+                     f"{', '.join(sorted(k['hosts']))} |")
+        L.append("")
+    if drainers:
+        L += ["## Web3 Surface — wallet-drainer heuristic", "",
+              "| Host | Verdict | Why |", "|---|---|---|"]
+        for host, w3 in drainers:
+            why = "; ".join(str(x) for x in (w3.get("reasons") or [])[:6]).replace("|", "\\|")
+            L.append(f"| {host} | {_web3_label('suspected-drainer')} | {why} |")
+        L.append("")
+    return L
+
+
 def _md_link(url: str, width: int = 90) -> str:
     """A table-safe markdown link: pipes/spaces escaped, the destination in <> so parentheses survive."""
     u = str(url or "").replace("|", "%7C").replace(" ", "%20").replace(">", "%3E")
@@ -1292,6 +1344,8 @@ def render_cluster_report(results: list,
     # Pivot hits: hosts sharing a cert / favicon / tracking ID — graded, never hosting or abuse
     if related:
         L += ["## Related hosts (unverified)", ""] + WR.related_md(related)
+    # Kit siblings named by their kit signature + the drainer heuristic (facts, never judgments)
+    L += _tradecraft_section(results)
 
     # Discovered infrastructure
     if discovered:

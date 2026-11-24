@@ -60,7 +60,7 @@ Let the pipeline choose paths. Do not pass `-o cases/...` by hand.
 
 When you add a tool, publish it through the one typed surface both front-ends share:
 `intel_engine/harness/tools.py` → the SDK orchestrator **and** the stdio
-`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (105 today). Do NOT leave a
+`intel_engine/harness/mcp_server.py`, which auto-discovers every `@tool` (108 today). Do NOT leave a
 new capability reachable only as a raw `python3 …` bash line.
 
 - **New CLI tool** (`intel_engine/tools/*.py`, `intel_engine/WebPivot/tools/*.py`): wrap it as an
@@ -69,8 +69,10 @@ new capability reachable only as a raw `python3 …` bash line.
   reaches it. Keep the description one tight paragraph — it is context cost paid on every turn.
 - **New mode of an existing tool** (e.g. a bare-IP source for `pivot_extract`): no new `@tool` —
   extend the existing description so the model knows the new input/flag.
-- **New command in `SKILL.md` §3**: it must map to a real `DISPATCH` op or an `@tool`. A documented
-  command with no implementation is worse than no command.
+- **New command (`handbook/command-reference.md` + the `SKILL.md` §3 index)**: it must map to a real
+  `DISPATCH` op or an `@tool`. A documented command with no implementation is worse than no command.
+  Add its full row to `handbook/command-reference.md` AND its line to the `SKILL.md` §3 command
+  index in the same commit.
 - **Smoke-check:** `.venv/bin/python intel_engine/harness/mcp_server.py`, send a `tools/list`
   JSON-RPC, confirm the tool is listed. In Claude Code, check `/mcp`.
 
@@ -176,7 +178,13 @@ this runs under Claude Code. Treat them as load-bearing.
   and friends spend FOFA / WhoisXML / urlscan / IPinfo / Shodan credits and make **zero** Anthropic
   calls. They are logged by `api_usage.record(...)` to `intel_engine/MEMORY/api_usage.jsonl`
   (override with `$API_USAGE_LOG`) and reported via the `api_usage` MCP tool or
-  `intel.py api-usage`.
+  `intel.py api-usage`. `intel.py api-usage report --yield` prints what each endpoint returned
+  (failure, zero-result and repeat-query rates) and refreshes `MEMORY/route_yield.json`, which
+  `case_state.propose()` reads as a ranking tie-breaker.
+- **What a tool call returned** is a third file: `tool_outcomes.jsonl`, beside the gate ledger
+  `tool_calls.jsonl` (`cases/<case>/` or `MEMORY/`). One row per finished call with `ok`,
+  `duration_ms`, `result_chars` and an `error` label, written by the governor wrapper in
+  `harness/tools.py`. The gate ledger still holds exactly one row per gate decision.
 
 State the split when reporting cost; never imply `total_cost_usd` covers API credits.
 
@@ -242,6 +250,11 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
   after cloning.
 - **Tests are local-only — never commit or push them.** `tests/`, `intel_engine/tests/`,
   `intel_engine/tools/eval/` and every `test_*.py` are gitignored; never `git add -f` one.
+- **Back the local-only suites up, outside Git.** They exist on one disk. After changing a test, a
+  fixture or a benchmark label run `bash scripts/backup-local-suites.sh <dir-outside-the-repo>`
+  (add `--with-labels` for `cases/*/ground_truth.json` and `MEMORY/bench/`), then
+  `--verify <archive>`. Keep the archive on offline or removable storage: never a synced folder,
+  never a Git remote. The archive is always encrypted; a lost passphrase loses it.
 
 - If a tool needs case-specific behaviour, take it as a **parameter or CLI arg** — never bake the
   case into the code.
@@ -253,5 +266,6 @@ its own location, so only the registration is per-machine. Same for `.env`, `.ve
   Until 2026-08-28 `intel_engine/tests/` ran nowhere, which is how 15 `@tool`s sat outside the
   context governor for two commits while the audit stayed green. If you add an engine test, add
   it to §9 or §10 and run `bash scripts/audit.sh` locally before pushing.
-- Changed a collector's flags, a `DISPATCH` op, or a `/command`? Update `SKILL.md` §3 in the same
+- Changed a collector's flags, a `DISPATCH` op, or a `/command`? Update its row in
+  `handbook/command-reference.md` AND its line in the `SKILL.md` §3 command index in the same
   commit — a stale command reference is the most common way this skill breaks for other people.

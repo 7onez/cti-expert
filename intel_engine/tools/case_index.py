@@ -18,6 +18,7 @@ Usage:
   python3 tools/case_index.py site-a.example          # a domain
   python3 tools/case_index.py favicon:123456789       # an indicator
   python3 tools/case_index.py --json wallet:eth:0x...
+  python3 tools/case_index.py bank:vn:<bank-id>:<account>   # a receiving bank account (any spacing)
 """
 from __future__ import annotations
 
@@ -37,6 +38,25 @@ except Exception:  # noqa: BLE001
     def _indicators_from_raw(_obj):
         return set()
 import case_abstract  # noqa: E402 — tools/case_abstract.py: each case's short summary
+try:
+    from selector_types import bank_account_key  # the one bank-account key (kit rung, never clusters)
+except Exception:  # noqa: BLE001
+    def bank_account_key(_value, country="", bank_id=""):
+        return None
+
+
+def _payment_keys(obj) -> set:
+    """`bank:<cc>:<bank-id>:<account>` keys of a raw's typed payment accounts (wp_extract
+    payment_accounts). Indexed for cross-case lookup only: a shared account is a lead (kit rung) —
+    rented mule accounts are reused across crews — never a clustering link."""
+    keys = set()
+    for a in ((obj.get("artifacts") or {}).get("payment_accounts") or []):
+        if isinstance(a, dict):
+            k = bank_account_key(a.get("account") or "", country=a.get("country") or "",
+                                 bank_id=a.get("bank_id") or "")
+            if k:
+                keys.add(k)
+    return keys
 
 
 def _host(s: str) -> str:
@@ -71,14 +91,18 @@ def abstracts(cases, cases_root=None) -> dict:
 def lookup(artifact: str, cases_root=None) -> dict:
     """Return the case(s) an artifact appears in, each with its abstract. `artifact` is a
     domain/URL, or an indicator string like 'favicon:<h>', 'ga:<id>', 'wallet:<coin>:<addr>',
-    'email:<addr>', 'social:...'. `cases_root` defaults to the engine's cases/."""
+    'email:<addr>', 'social:...', 'bank:<cc>:<bank-id>:<account>'. `cases_root` defaults to the
+    engine's cases/."""
     art = artifact.strip()
     is_indicator = ("://" not in art) and (":" in art)
+    bank = bank_account_key(art) if "://" not in art else None
+    if bank:                                         # bank:… in any spacing, or a bare valid IBAN
+        art, is_indicator = bank, True
 
     if is_indicator:
         locs = []  # (case, host)
         for case, host, obj in _iter_raw(cases_root):
-            if art in _indicators_from_raw(obj):
+            if art in _indicators_from_raw(obj) or art in _payment_keys(obj):
                 locs.append({"case": case, "host": host})
         cases = sorted({l["case"] for l in locs})
         return {"artifact": art, "kind": "indicator", "cases": cases,

@@ -1,0 +1,10 @@
+{
+  "_comment": "Cross-case vendor answer cache POLICY (wp_respcache). An endpoint is cached only when it is listed here; the loader's fallback is an empty list, so an unreadable file means no caching at all. LIST ONLY an answer that never becomes a dated sighting in the knowledge base, or that describes something that no longer changes: the KB dates every fact from the raw file it was read from, so a cached live-search answer written into today's raw would be ingested as observed today. Do NOT add a search endpoint (urlscan search, FOFA, IntelX, Hunter.how, DNSlytics) without first teaching the ingest to keep the cached observation date. Turn the cache off for one run with CTI_RESPONSE_CACHE=0. Entries live under <INTEL_HOME>/cache/vendor/ (gitignored) and each keeps observed_at, the time the vendor really answered.",
+  "endpoints": {
+    "_comment": "Key = `provider.action`, the names the usage ledger records. ttl_hours: how long an answer is reused. empty_ttl_hours: how long an EMPTY or INCOMPLETE answer is reused (it may fill in); 0 = never keep one. min_subject_age_hours: the thing described must be at least this old by the vendor's own timestamp before its answer is kept - an unknown age is treated as too young. urlscan.count is the size=1 search that only sizes a proposed pivot: it never reaches a raw file. Only a count ABOVE pivot_map.json auto_max_hits is ever kept or served (the caller passes that threshold): a count at or below it decides that a pivot runs without approval, so it is always asked fresh, and a zero is never kept. urlscan.result is the verdict of ONE finished scan by uuid; engines can still add a verdict for a while after the scan, so only a scan older than two days is kept, and a keyed answer with no engine verdict counts as incomplete (the key may lack the Pro product). Answers are stored per API key (a short fingerprint, never the key) and apart from keyless ones.",
+    "entries": {
+      "urlscan.count": {"ttl_hours": 24, "empty_ttl_hours": 0},
+      "urlscan.result": {"ttl_hours": 168, "empty_ttl_hours": 24, "min_subject_age_hours": 48}
+    }
+  }
+}

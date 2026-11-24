@@ -136,8 +136,10 @@ def main():
     ap.add_argument("--stats", action="store_true")
     ap.add_argument("--shared", action="store_true", help="indicators shared by >= --min domains")
     ap.add_argument("--min", type=int, default=2)
-    ap.add_argument("--entity", help="dump one entity's facts + edges")
-    ap.add_argument("--cluster", help="domains sharing an indicator with this domain")
+    ap.add_argument("--entity", action="append",
+                    help="dump one entity's facts + edges (repeatable: one `## <value>` section each)")
+    ap.add_argument("--cluster", action="append",
+                    help="domains sharing an indicator with this domain (repeatable, sectioned)")
     ap.add_argument("--strong", action="store_true",
                     help="with --cluster: exclude boilerplate edges (shared CSS/comment/DOM "
                          "template) AND indicators shared by > --max-prevalence domains (generic "
@@ -213,23 +215,28 @@ def main():
                 key_note = f"   [key: {e['value']}]" if shown != e["value"] else ""
                 print(f"  {shown}{key_note}   ({len(e['facts'])} facts)")
 
-    if args.entity:
+    # --entity / --cluster are repeatable so a caller can read N values with ONE KB load. One value
+    # of a flag prints exactly what it always did; two or more get a `## <value>` header each.
+    entities, clusters = args.entity or [], args.cluster or []
+    all_ents = list(kb.all_entities()) if entities else []
+    for entity in entities:
+        if len(entities) > 1:
+            print(f"\n## {entity}")
         # find it across types; exact match first, then normalised (lowercase/scheme/trailing dot)
         # and www./bare-apex variants (#25) — a KB entity is stored bare-lowercase by ingest, so
         # `--entity https://WWW.Example.com/` missed silently and printed nothing before this.
-        all_ents = list(kb.all_entities())
-        found = [e for e in all_ents if e["value"] == args.entity]
+        found = [e for e in all_ents if e["value"] == entity]
         if not found:
-            for cand in _entity_variants(args.entity):
-                if cand == args.entity:
+            for cand in _entity_variants(entity):
+                if cand == entity:
                     continue
                 found = [e for e in all_ents if e["value"] == cand]
                 if found:
                     break
         if not found:
-            print(f"not in KB: {args.entity} (KB has {len(all_ents)} entities)")
+            print(f"not in KB: {entity} (KB has {len(all_ents)} entities)")
             if args.prior_cases:
-                _print_prior_cases(kb, args.kb, None, _normalize_entity_value(args.entity))
+                _print_prior_cases(kb, args.kb, None, _normalize_entity_value(entity))
         for e in found:
             shown = kb.display_value(e["type"], e["value"])
             key_note = f"   [key: {e['value']}]" if shown != e["value"] else ""
@@ -247,9 +254,10 @@ def main():
                 for dt, dv, rel, conf in nb:
                     print(f"    -{rel}-> {dt}:{kb.display_value(dt, dv)}   (conf {conf})")
 
-    if args.cluster:
+    for target in clusters:
+        if len(clusters) > 1:
+            print(f"\n## {target}")
         # 1-hop through shared indicators: domains that share any indicator with target
-        target = args.cluster
         # Boilerplate relations — shared page-template/cache-plugin artifacts (WP Rocket CSS,
         # HTML comments, DOM skeleton) that many UNRELATED operators emit. They create false
         # same-operator edges; --strong drops them so only owner-set indicators remain.

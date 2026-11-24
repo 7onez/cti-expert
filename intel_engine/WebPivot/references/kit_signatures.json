@@ -1,0 +1,91 @@
+{
+  "_comment": "NAMED KIT SIGNATURES — declarative rules that put a NAME on a page's kit (wp_kitsig.match, written by pivot_extract as artifacts.kit_matches and ingested as a kit_link-rung FACT, never an edge, never a cluster member, never an operator lead). A named kit is lineage, not ownership: resellers and affiliates deploy the same kit, so a match answers 'which template is this' and never 'who runs it'. THE TRACKED LIBRARY IS UNSEEDED: the one rule below is SYNTHETIC (it matches only the placeholder string site-kit.example, which no real page contains) and exists to prove the matcher end to end. Real-world rules come from the public phish.report IOK rule set (ODbL-1.0), which is NEVER copied into this repository: `uv run scripts/kit_rules_import.py update` downloads it into the git-ignored cache and converts the rules the matcher can express (group `iok_import`); match() reads tracked rules, then that cache, then the local reference ledger. Seeding rule: a rule naming a real-world kit may be added ONLY when its fields come from a public source you fetched yourself, the rule cites that source_url, and the source's licence allows the reuse (add the notice row to THIRD_PARTY_NOTICES.md). Never add a rule built from a case artifact (a case favicon hash, DOM hash, title or path): those are investigation data (CLAUDE.md RULE 1) and belong in the git-ignored reference ledger instead — `tools/kb/reference.py add --value favicon:<mmh3> --verdict signal --label '<kit name>' --tag kit`, which the matcher reads after these rules.",
+
+  "rules": {
+    "_comment": "One object per rule: {id, name, kind, match: {all: [term], any: [term]}, min_any, prevalence, source_url, added}. A term is a LEAF {field, op, value} or a GROUP: {\"all\": [term, ...]} (every term hits), {\"any\": [term, ...], \"min\": n} (at least n hit, default 1) or {\"not\": term} (the term misses). Every top-level `all` term must hit and at least `min_any` of the top-level `any` terms (default 1 when `any` is non-empty); a rule with no terms never matches, a rule with an unknown field, op, malformed group or uncompilable regex ANYWHERE (including under `not`) never matches, and a rule whose hit contains no positive leaf (e.g. only `not` terms held) never matches. `matched` lists the positive leaves that hit; leaves under `not` are never reported. FIELDS and what each reads from a stored pivot: path_template = meta.path_template; dom_skeleton_sha1; favicon_mmh3; title = artifacts.title; form_fields = every form input name; asset_tail = the file name of every script/stylesheet the page loads; html_comment = artifacts.html_comments; js_marker and js = the JavaScript texts the caller passes (pivot_extract: inline <script> bodies + every JavaScript file the capture bundle stored), else the page document's inline scripts + the capture bundle's stored JS; html and dom = the ONE page document the engine holds — the HTML the caller passes (`html=`), else the capture bundle's stored DOM (meta.capture.dir, manifest role dom), else meta.raw_dom_file (--save-dom); it is the server response, or the rendered DOM when the page was fetched through a renderer (meta.renderer), so both fields read the same text (capped at matcher.max_doc_bytes) — there is no separate before/after-JavaScript pair; css = inline <style> blocks of the page document + the stylesheets the capture bundle stored (manifest role css); requests = the URLs the stored evidence shows the page loading: artifacts.script_srcs + artifacts.stylesheets, resource URLs in the page document (src / data-src / poster attributes, <link href>) and CSS url() references in the css field, absolutised against meta.final_url — run-time XHR/fetch/beacon requests are NOT observed; cookies = `name=value` parsed from the stored Set-Cookie response header (artifacts.http.response_headers) plus `name=` for a cookie known only by name (artifacts.cookie_names, e.g. from a renderer); headers = `Name: value` for each stored response header (artifacts.http.response_headers, else artifacts.server_headers), names in canonical Name-Case; hostname = the host of meta.final_url (else meta.host). No field is wholly unavailable; requests, cookies and dom are PARTIAL as described. op: equals (exact) | iequals (case-insensitive equality) | contains | startswith | endswith | regex (all four case-insensitive) | contains_cs | startswith_cs | endswith_cs | regex_cs (case-sensitive; what IOK runs). A regex longer than matcher.regex_max_pattern never matches, and a regex is applied to the first matcher.regex_max_text characters of a value only. prevalence: commodity = a mass-market or stock kit — recorded as noise context, never offered as a pivot; limited = sold or shared among a bounded set of crews; private = seen with one crew only (never assigned to an imported rule). `added` is the ISO date the rule was written: kits change quickly, so read an old rule's miss as staleness, not absence.",
+    "values": [
+      {
+        "id": "example-kit",
+        "name": "Example Kit (synthetic placeholder)",
+        "kind": "phishing",
+        "match": {
+          "all": [
+            {"field": "html_comment", "op": "contains", "value": "site-kit.example"}
+          ],
+          "any": [
+            {"field": "asset_tail", "op": "equals", "value": "site-kit-example.js"},
+            {"field": "form_fields", "op": "equals", "value": "site_kit_example_token"},
+            {"field": "title", "op": "regex", "value": "site-kit\\.example\\s+demo"},
+            {"field": "js_marker", "op": "contains", "value": "SITE_KIT_EXAMPLE_CONFIG"}
+          ]
+        },
+        "min_any": 1,
+        "prevalence": "limited",
+        "source_url": "https://site-kit.example/",
+        "added": "2026-11-23"
+      }
+    ]
+  },
+  "matcher": {
+    "_comment": "Evaluation bounds (wp_kitsig). Imported regexes come from the internet and run over attacker-controlled pages; upstream IOK evaluates them with Go RE2 (linear time), Python's `re` backtracks. regex_problem() — run at import AND before any pattern is evaluated, so a hand-edited cache cannot bypass it — refuses: a pattern longer than regex_max_pattern; Go/RE2-only syntax Python would reject or read differently (POSIX classes [[:x:]], \\Q…\\E, \\p/\\P Unicode classes, \\z, \\C, \\x{…}, (?U), mid-pattern global flags, (?<name>…)); syntax RE2 rejects (lookaround, backreferences, atomic groups, possessive repeats, \\Z, Python-only flags); nested quantifiers (a quantified group whose body contains a quantifier); a repeat count above max_repeat_count; more than max_broad_unbounded_repeats unbounded wildcard repeats (.* .+ [^x]* \\S* …). When the optional `re2` module is importable it evaluates every regex instead and only RE2-compilability is required. A regex is applied to the first regex_max_text characters of a value, or regex_max_text_wildcard when it holds an unbounded wildcard repeat (one .* still costs quadratic time on a backtracking engine). max_doc_bytes caps the bytes read from the stored page document and from each stored JS/CSS file. imported_cache_path is where the IOK import is read from (relative to $INTEL_HOME, default intel_engine/; the CTI_KIT_RULES_CACHE environment variable overrides it, e.g. for tests); a missing cache means zero imported rules, an unparseable one zero imported rules, a malformed row is dropped — never an exception into the matcher. The fallback is the smaller bound.",
+    "regex_max_pattern": 512,
+    "regex_max_text": 262144,
+    "regex_max_text_wildcard": 32768,
+    "max_broad_unbounded_repeats": 1,
+    "max_repeat_count": 1000,
+    "max_doc_bytes": 4194304,
+    "imported_cache_path": "cache/kit_rules/iok.json"
+  },
+  "iok_import": {
+    "_comment": "phish.report IOK importer (wp_iok.convert_rule / convert_tarball, scripts/kit_rules_import.py). Upstream https://github.com/phish-report/IOK — ODbL-1.0; the rules are downloaded into the git-ignored cache (matcher.imported_cache_path) and NEVER redistributed in this repository. source_url = the one download (the repository tarball, parsed in memory; only regular files directly under indicators/ are read, nothing is extracted to disk). rule_url_template = a rule's GitHub page, the source_url of a rule without `references`. Size caps: max_tarball_bytes (download), max_unpacked_bytes (bytes the archive may inflate to — read as a bounded stream, so a decompression bomb or giant header fails the update and leaves the cache untouched), max_members (tar entries read), max_rules (imported), max_rule_bytes (one YAML file), max_value_len (one value), max_values_per_key (one field's value list), max_leaves (terms in one converted rule). field_map = IOK field -> wp_kitsig field (an IOK field absent here is refused as unknown); unavailable_fields = IOK fields the engine cannot populate at all (refused). Prevalence (never private; commodity always wins): a rule is commodity when its id (the indicator file stem) matches commodity_rule_ids or ANY tag matches commodity_tags; else limited when any tag matches limited_tags (a specific named kit); else commodity (generic techniques, cloakers, form backends, hosting/builders, unknown or no tags). Drainers (crypto_drainer.*) are commodity: they are rented to many affiliates (drainer_markers.json: contracts are shared across affiliates). commodity_rule_ids holds kit-tagged rules that match the impersonated brand's OWN markup (any crew that saves the real page shares it) — seeded with the generic-* pattern only; the ANALYST EXTENDS IT with id globs as such rules are met, never with case data. Tag patterns are fnmatch globs. kind_tags: first [pattern, kind] whose pattern matches a tag names the rule's kind, else default_kind. The fallback imports nothing (empty field_map) and maps every tag to commodity.",
+    "source_url": "https://codeload.github.com/phish-report/IOK/tar.gz/refs/heads/main",
+    "rule_url_template": "https://github.com/phish-report/IOK/blob/main/indicators/{file}",
+    "licence": "ODbL-1.0",
+    "attribution": "Contains information from phish.report IOK (https://phish.report/IOK, https://github.com/phish-report/IOK), made available under the Open Database License v1.0 (https://opendatacommons.org/licenses/odbl/1-0/).",
+    "timeout_seconds": 60,
+    "max_tarball_bytes": 16777216,
+    "max_unpacked_bytes": 67108864,
+    "max_members": 5000,
+    "max_rules": 2000,
+    "max_rule_bytes": 32768,
+    "max_value_len": 4096,
+    "max_values_per_key": 64,
+    "max_leaves": 128,
+    "field_map": {
+      "title": "title",
+      "hostname": "hostname",
+      "html": "html",
+      "dom": "dom",
+      "js": "js",
+      "css": "css",
+      "cookies": "cookies",
+      "headers": "headers",
+      "requests": "requests"
+    },
+    "unavailable_fields": [],
+    "limited_tags": ["kit"],
+    "commodity_tags": [
+      "website_builder",
+      "website_builder.*",
+      "template_service",
+      "template_service.*",
+      "cloaking",
+      "anti-analysis",
+      "cloning",
+      "exfiltration",
+      "scam",
+      "malware",
+      "malware.*",
+      "crypto_drainer",
+      "crypto_drainer.*"
+    ],
+    "commodity_rule_ids": ["generic-*"],
+    "kind_tags": [
+      ["crypto_drainer.*", "drainer"],
+      ["malware", "malware"],
+      ["malware.*", "malware"],
+      ["scam", "scam"]
+    ],
+    "default_kind": "phishing"
+  }
+}

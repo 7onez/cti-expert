@@ -460,8 +460,9 @@ def _short_handle_query(t, sel):
 
 
 # ---------------------------------------------------------------- count
-def count(route: str, query: str, *, free_only: bool = False):
-    """Cheap hit-count probe. Returns int or None (unknown → forces approval). Never raises."""
+def count(route: str, query: str, *, free_only: bool = False, case_dir: str = None):
+    """Cheap hit-count probe. Returns int or None (unknown → forces approval). Never raises.
+    `case_dir` lets the urlscan probe reuse a recent count across cases (wp_respcache)."""
     r = (route or "").strip()
     q = str(query or "").strip()
     if not r or not q:
@@ -483,7 +484,9 @@ def count(route: str, query: str, *, free_only: bool = False):
     try:
         if r.startswith("urlscan."):
             import wp_recon as WR
-            return WR.urlscan_count(q, free_only=free_only)
+            # only a count that sends the pivot to approval may be a reused one (see urlscan_count)
+            return WR.urlscan_count(q, free_only=free_only, case_dir=case_dir,
+                                    cache_above=int(load_pivot_map().get("auto_max_hits") or 0))
 
         if r in _WAYBACK_ROUTE_COLLECTION:
             import wp_wayback_search as WS
@@ -1355,6 +1358,13 @@ def execute(route: str, query: str, *, case: str, origin_type: str = "string",
     edge, and never becomes owner evidence for the case."""
     if not case:
         return {"error": "execute needs case= so ingest provenance and nodes are scoped"}
+    try:                      # a CLOSED case is never expanded (case_state.closed_refusal)
+        import case_state as _cs_closed  # noqa: E402
+        _closed = _cs_closed.closed_refusal(case, _cdir(case))
+    except Exception:  # noqa: BLE001 — an unreadable state is not a closure
+        _closed = None
+    if _closed:
+        return {"error": _closed}
     free_only = bool(free_only) or _case_no_spend(case)
     res = run(route, query, case=case, free_only=free_only, hostile=hostile)
     if not isinstance(res, dict) or res.get("error") or res.get("skipped"):

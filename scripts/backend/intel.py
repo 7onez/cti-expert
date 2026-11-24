@@ -104,6 +104,12 @@ DISPATCH = {
     "corpus-search": ("tools/pivot_routes.py",        []),            # one pivot_map route → typed
                                                                       # rows into KB + case nodes
     "reopen":        ("tools/case_state.py",          ["reopen"]),    # re-open on new seeds
+    "close":         ("tools/intel.py",               ["close"]),     # close with a disposition; no
+                                                                      # expansion until reopen
+    "action-log":    ("tools/intel.py",               ["action-log"]),  # notice sent / its result
+                                                                        # (contacts nobody)
+    "notice":        ("tools/intel.py",               ["notice"]),    # draft action notices from the
+                                                                      # stored case (no network)
     "enrichment-done": ("tools/case_state.py",         ["enrichment-done"]),  # close leak/breach/dork leads
     "approve-cohost": ("tools/case_state.py",         ["approve-cohost"]),  # analyst OK to seed + link an
                                                                             # origin IP's co-tenants
@@ -191,6 +197,7 @@ DISPATCH = {
     "vn-corp":       ("WebPivot/tools/wp_vncorp.py",          []),  # keyless VN business registry (MST / company)
     "crossref":      ("../scripts/osint/kb_crossref.py",     []),  # identifiers across CASES
     "drift":         ("../scripts/osint/case_drift.py",      []),  # what changed between runs
+    "watch":         ("tools/watchlist.py",                   []),  # watch-list: add|list|run|rm (leads only)
     "signatures":    ("../scripts/osint/signature_scan.py",  []),  # behavioural signature catalog
     "email-deep":    ("../scripts/osint/deep_profile.py",    []),  # sends keyed lookups; --case dedups
     "osint-industries": ("../scripts/osint/osint_industries.py", []),  # account existence (1 credit; --case memo)
@@ -310,6 +317,9 @@ BLURB = {
     "loop": "collect → assess repeatedly until the case converges",
     "frontier": "unresolved gaps: free next seeds + deferred metered leads",
     "reopen": "re-open a converged case on newly discovered seeds",
+    "close": "close a case with a disposition (reported|taken-down|referred|monitoring|no-action|benign|duplicate); loop/cti/harness refuse it until reopen",
+    "action-log": "record a drafted notice as sent (--sent-at --ref) and its result (--result --result-at); contacts nobody",
+    "notice": "draft registrar/host/CDN/platform/bank/referral/compromise notices from the stored case — no network, nothing sent",
     "enrichment-done": "close leak/breach/OSINT/dork leads (suppress from frontier once run)",
     "approve-cohost": "approve a cloud/VPS origin IP's co-tenants (seeded + linked next round)",
     "enrich": "execute case-matched identity/OSINT leads + the mandatory leak fan-out (--leak-only); writes enrichment/leak_coverage.json",
@@ -373,6 +383,7 @@ BLURB = {
     "vn-corp": "keyless VN business-registry lookup (MST tax code or company name) — corroborates a WHOIS registrant org/phone",
     "crossref": "identifiers appearing across MORE THAN ONE case (strongest operator signal)",
     "drift": "what changed in a case between two collections",
+    "watch": "watch-list over the CT / lookalike / takedown / drift monitors: add|list|run|rm — a run reports what is NEW, opens no case and collects nothing",
     "signatures": "evaluate observations against analysis/signature-catalog.md",
     "email-deep": "email profile: sends Hudson Rock, ZoneCruncher, one IntelX search, reverse-WHOIS preview, OSINT Industries when keyed",
     "osint-industries": "OSINT Industries account-existence lookup: email|phone|username|name|wallet → registered platforms, self-declared names, masked hints, HIBP + WHOIS rows (1 credit; `credits` free; --case memo) — leads only, never attribution",
@@ -729,6 +740,9 @@ _CASE_ARG = {
     "clusters":        lambda r: r[0] if r else None,
     "frontier":        lambda r: r[0] if r else None,
     "reopen":          lambda r: r[0] if r else None,
+    "close":           lambda r: r[0] if r else None,
+    "action-log":      lambda r: r[0] if r else None,
+    "notice":          lambda r: r[0] if r else None,
     "enrichment-done": lambda r: r[0] if r else None,
     "enrich":          lambda r: r[0] if r else None,
     "cti":             lambda r: None,   # `cti <target>` derives its OWN case; --case is explicit

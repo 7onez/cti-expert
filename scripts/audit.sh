@@ -420,6 +420,7 @@ for t in tests/test_collect_core.py tests/test_indicator_classification.py tests
          tests/test_exposure_organisation.py tests/test_suppliers.py tests/test_appliance_scan.py tests/test_telemetry_baseline_render.py \
          tests/test_audit_js_network.py tests/test_phase_budget.py \
          tests/test_hostile_exit_retry.py tests/test_collect_screenshot.py tests/test_snapshot_citations.py \
+         tests/test_notice_pack.py \
          tests/test_evidence_images_manifest.py tests/test_house_report_ledger_links.py; do
   if python3 "$t" >/tmp/audit_t 2>&1; then note "PASS $t"; else cat /tmp/audit_t; bad "$t"; fi
   # EXIT CONTRACT: a §6 file is only a gate if a failure makes it exit nonzero. A file written in the
@@ -455,10 +456,11 @@ else
   bad "hooks/hooks.json missing — the RULE 1 write-time gate and the outbound gate are not wired"
 fi
 
-echo "== 8. registered command count matches commands/ across SKILL.md + the 3 READMEs (RULE 3, command layer) =="
+echo "== 8. registered command count matches commands/ across SKILL.md + the 3 READMEs + command reference (RULE 3, command layer) =="
 # The drift this catches: a new commands/*.md ships but a doc still advertises the old count or never
 # names it (exactly how /cti-proxy slipped past all three READMEs). Compare the architecture-tree
-# count and every command basename against each README, and each /slash-name against SKILL.md.
+# count and every command basename against each README, and each /slash-name against SKILL.md and
+# handbook/command-reference.md (the full command rows moved there; SKILL.md keeps the index).
 n_cmd="$(ls commands/*.md 2>/dev/null | wc -l | tr -d ' ')"
 cmd_ok=1
 for f in README.md README.vi.md README.zh-CN.md; do
@@ -471,8 +473,18 @@ done
 for c in commands/*.md; do
   s="/$(basename "$c" .md)"
   grep -qF "$s" SKILL.md || { bad "SKILL.md never documents $s"; cmd_ok=0; }
+  grep -qF "$s" handbook/command-reference.md || { bad "handbook/command-reference.md never documents $s"; cmd_ok=0; }
 done
-[ "$cmd_ok" = 1 ] && note "all $n_cmd commands referenced in SKILL.md + all 3 READMEs"
+[ "$cmd_ok" = 1 ] && note "all $n_cmd commands referenced in SKILL.md + handbook/command-reference.md + all 3 READMEs"
+# SKILL.md loads in full on every invocation; reference material lives in linked files. Raise the
+# ceiling only by moving text out, never by deleting a rule.
+skill_max=95000
+skill_bytes="$(wc -c < SKILL.md | tr -d ' ')"
+if [ "$skill_bytes" -le "$skill_max" ]; then
+  note "SKILL.md is $skill_bytes bytes (ceiling $skill_max)"
+else
+  bad "SKILL.md is $skill_bytes bytes, over the $skill_max ceiling — move reference text to handbook/command-reference.md, handbook/report-export.md, handbook/technique-activation.md, handbook/architecture-reference.md, handbook/case-pipeline-detail.md or scripts/platform-setup.md instead of growing SKILL.md"
+fi
 
 echo "== 9. vendored-engine tests (stdlib-only subset) =="
 # These 15 live in intel_engine/tests/ and ran NOWHERE in CI until 2026-08-28. That gap let 15

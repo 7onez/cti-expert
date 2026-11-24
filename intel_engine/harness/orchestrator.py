@@ -176,10 +176,12 @@ def _prompt(name: str, **kw: object) -> str:
     """Load a phase TASK prompt from harness/prompts/<name>.md — the single editable source
     of truth for what each phase instructs (the phase system_prompt still comes from the SKILL
     body via _skill). Placeholders are {{token}}, filled from kwargs; a token with no matching
-    kwarg is left intact. Plain { } and $ are NOT special, so the prose can be edited freely."""
+    kwarg is left intact. Plain { } and $ are NOT special, so the prose can be edited freely.
+    {{batch_max}} is always filled: the most values one batched lookup call accepts
+    (context_budget.json → batch.max_values), so a prompt can state the limit without copying it."""
     with open(os.path.join(HERE, "prompts", name + ".md"), encoding="utf-8") as f:
         body = f.read().rstrip("\n")
-    for k, v in kw.items():
+    for k, v in {"batch_max": T.BATCH.get("max_values", 1), **kw}.items():
         body = body.replace("{{" + k + "}}", str(v))
     return body
 
@@ -1884,6 +1886,20 @@ def _hand_back(case: str, stop: str, *, rounds: int, seeds: list[str], depth: in
         _log(f"  (next_actions prompt skipped: {e})")
 
 
+def _refuse_closed(case: str) -> bool:
+    """True — after saying why — when the case is CLOSED (tools/case_state.py close): the harness
+    never collects, proposes or spends on a closed case until `case_state.py reopen`."""
+    try:
+        import case_state as cs
+        msg = cs.closed_refusal(case, os.path.join(ROOT, "cases", case))
+        if msg:
+            _log(msg)
+            return True
+    except Exception as e:  # noqa: BLE001 — an unreadable state is not a closure
+        _log(f"  (closed-case check skipped: {e})")
+    return False
+
+
 async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
                    stale: int, max_new: int, collect_conc: int = 1,
                    resume: bool = False, approval: str | None = None) -> Assessment | None:
@@ -1897,6 +1913,8 @@ async def run_case(seeds: list[str], case: str, *, hostile: bool, depth: int,
     awaiting-approval. collect_conc>1 fans collect out per seed (collect_fanout). `approval`
     "auto" | "review" | None (resolve: audit.resolve_approval_mode) is recorded in state.json."""
     import case_state as cs
+    if _refuse_closed(case):
+        return None
     domains = cs.register_seed_nodes(case, seeds)
     _record_seeds(case, domains)
     _set_approval_mode(case, approval, resume=resume)
@@ -2347,6 +2365,8 @@ async def run_case_parallel(seeds: list[str], case: str, *, hostile: bool, max_c
     per round. Then partition into same-operator clusters and judge each ONCE, in parallel; clusters
     already fully attributed skip the LLM entirely (their prior verdict is reused), and so do IP-only
     clusters with no owner evidence (_no_owner_verdict: a fixed inconclusive verdict)."""
+    if _refuse_closed(case):
+        return []
     _log(f"\n===== PARALLEL CASE · {len(seeds)} seeds · collect≤{max_conc} · judge≤{judge_conc}"
          f"{' · continue depth ' + str(depth) if depth > 1 else ''} =====")
     import case_state as cs
@@ -2665,6 +2685,8 @@ def _main() -> None:
     # forbids touching the target, the egress denial the tool gate enforces), the ownership rule
     # the collectors cluster by, and the premise the assessment must answer.
     case = argv[0]
+    if _refuse_closed(case):          # before intake: a closed case's scope is not rewritten either
+        return
     scope = _scope_from_argv(argv, case)
     seeds = argv[1:]
     resume = not seeds and cont

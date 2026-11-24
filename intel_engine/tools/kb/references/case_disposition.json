@@ -1,0 +1,13 @@
+{
+  "_comment": "Case closure vocabulary for tools/case_state.py close() / log_action() and `intel.py close` / `intel.py action-log`. A closed case carries status `closed` plus a `disposition` block in state.json ({outcome, closed_at, note, actions[], history[]}); `reopen` moves that block into history. Edit a list here to add an outcome or an action result without touching Python. The loader fallback is the conservative minimum: only `no-action` closes a case and only `none` records a result, so a broken file can never invent a takedown that did not happen. RULE 1: vocabulary only, never case data.",
+
+  "outcomes": {
+    "_comment": "What finally happened to the case, chosen by the analyst at close time. reported = notices were sent and no result is known yet; taken-down = the subject went offline after action; referred = handed to law enforcement or another team; monitoring = left under watch; no-action = closed with nothing sent; benign = the premise was wrong; duplicate = the same estate is worked in another case.",
+    "values": ["reported", "taken-down", "referred", "monitoring", "no-action", "benign", "duplicate"]
+  },
+
+  "action_results": {
+    "_comment": "What a sent notice achieved, recorded with `intel.py action-log --result X --result-at DATE` after the analyst read it off takedown-watch or the recipient's reply. held = registry/registrar hold; suspended = account or hosting suspended; moved = the subject relocated (successor host, new registrar); none = no visible effect.",
+    "values": ["held", "suspended", "moved", "none"]
+  }
+}

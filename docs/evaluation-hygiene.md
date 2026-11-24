@@ -30,6 +30,7 @@ operating rule, not a claim made by the source.
 | Frontier goldens | `cases/frontier_golden/CASE-*.json` (`test_frontier_golden`) | `frontier()` output is byte-identical after a refactor |
 | Unit modules | `unit_mods` list in `run_eval.py`; `tests/test_*.py` (e.g. `test_phish_domain_survival.py`) | pure functions behave as specified on hand-built inputs |
 | Metered-spend guard | ledger length check in `run_eval.py` | the gate reached no paid API |
+| Cluster benchmark (opt-in) | `intel_engine/tools/eval/bench_replay.py` over analyst-labelled cases (`cases/<id>/ground_truth.json`), `run_eval.py --bench` | no false merge the baseline did not have. Cases that predate the rule freeze are development data and give an in-sample figure only; a validation rate needs five cases captured after the freeze and labelled blind (P3), checked by `claim_scorer.registration_check` |
 
 The golden set is a **regression gate**: it proves a decision we already made still holds. It is
 **not** a performance estimate. Fixtures are chosen cases (a QR funnel, a parking page, a

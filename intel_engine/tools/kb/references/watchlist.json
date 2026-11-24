@@ -1,0 +1,17 @@
+{
+  "_comment": "Policy for the watch-list (tools/watchlist.py — `intel.py watch add|list|run|rm`). A watch entry names a brand keyword, a domain or a case and is re-checked when it is DUE; a run starts nothing by itself (the analyst's own cron or timer calls `intel.py watch run`). Every hit is a LEAD printed for the analyst: a run never opens a case, never collects a host and never writes to the knowledge base (SKILL.md RULE 5 — collecting is not attributing, and here nothing is even collected).",
+  "defaults": {
+    "_comment": "interval_hours: how long after a run an entry is due again when it sets no interval of its own. timeout_seconds: the longest one source may run for one entry before it is recorded as timed out. max_entries: the most entries the list accepts; a watch-list nobody reads is noise.",
+    "interval_hours": 24,
+    "timeout_seconds": 900,
+    "max_entries": 50
+  },
+  "sources_by_kind": {
+    "_comment": "Which monitors an entry of each kind runs when it names none. `ct` = certificate-transparency poll for newly issued names (keyless). `impersonation` = lookalike permutations checked against CT and DNS (keyless; the FOFA / urlscan sweeps run only with --allow-metered). `takedown` = RDAP hold / DNS sinkhole status and successor leads on the last known addresses (keyless; co-tenant pages are fetched only with --fetch). `drift` = what changed between two stored collections of a case (offline). A source not listed for a kind is refused for it.",
+    "entries": {
+      "brand": ["ct"],
+      "domain": ["ct", "impersonation", "takedown"],
+      "case": ["takedown", "drift"]
+    }
+  }
+}

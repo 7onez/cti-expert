@@ -1,0 +1,128 @@
+{
+  "_comment": "Action-package policy and text for tools/notice_pack.py (`intel.py notice <case>`, the notice_draft tool). The generator reads ONLY stored case artifacts and drafts notices under cases/<case>/notices/; nothing is sent. Every group here is analyst-tunable DATA: the refusal thresholds, the map that decides which cluster binding counts as an owner link, the recipient report pages and the English text per recipient class. The loader fallback is the conservative minimum: confidence `high` required, a contradicted / not_supported premise and a benign_check intake refused, an empty binding map (so every member is excluded rather than accused) and plain fallback text. RULE 1: classes, public provider pages and placeholder text only, never case data.",
+
+  "policy": {
+    "_comment": "Refusal thresholds. min_confidence: the lowest assessment confidence (low < moderate < high) a notice may be drafted on. A value that is not in confidence_order refuses every draft. Lowering it lets a weaker judgment name a party in a notice sent outside the team; raise, never lower, without the case owner's agreement.",
+    "min_confidence": "high"
+  },
+
+  "refuse_attribution_levels": {
+    "_comment": "assessment.json attribution_level values that never produce a notice. same-kit says the sites share a toolkit, not an owner, and inconclusive says nothing was established; a notice on either would name a party the evidence does not support.",
+    "values": ["inconclusive", "same-kit"]
+  },
+
+  "refuse_premise_verdicts": {
+    "_comment": "assessment.json premise_verdict values (harness/schemas.py: supported, partially_supported, not_supported, contradicted, inconclusive) that refuse the whole draft. A run whose own collection contradicts, or does not support, the claim it was given must not turn that claim into a notice.",
+    "values": ["contradicted", "not_supported"]
+  },
+
+  "refuse_target_classes": {
+    "_comment": "scope.json target_class values (WebPivot/references/intake.json target_classes: confirmed_scam, suspected_scam, threat_actor_infra, victim_host, benign_check, unknown) that refuse the whole draft. benign_check is a legitimacy question about a business, not an accusation; an abuse notice out of it is exactly the unfounded fraud verdict that class warns against.",
+    "values": ["benign_check"]
+  },
+
+  "confidence_order": {
+    "_comment": "Assessment confidence scale, weakest first (harness/schemas.py Assessment.confidence). A value missing from this list is treated as below every threshold, so the generator refuses.",
+    "values": ["low", "moderate", "high"]
+  },
+
+  "binding_rel_classes": {
+    "_comment": "clusters.json binding indicator RELATION -> rungs.json identifier class (then selector_types.rung_for decides owner/kit/neighbour). Graded PER HOST on the relations that host itself holds to the indicator (binding `rels_by_domain`, else the host's own edges in the knowledge base) — never on the union `rels`, which merges every domain sharing it; a host whose own relation cannot be established is excluded. A key `rel|type` is tried first (type = the part of the indicator before the first colon: email, phone, org, person, indicator), then the bare `rel`, then binding_prefix_classes. A binding that maps to no class is kit (rung_for default), so an unmapped relation can only EXCLUDE a member, never admit one. A member is a notice subject only when an owner-graded binding it holds is also held, owner-graded, by another member, linking it to the seed inside the seed's cluster.",
+    "entries": {
+      "registered_by|email": "whois.registrant_email",
+      "registered_by|phone": "whois.registrant_phone",
+      "registered_by|org": "whois.registrant_org",
+      "registered_via_privacy_customer": "whois.privacy_customer",
+      "uses_txt_verification": "txt.verification",
+      "uses_verification": "txt.verification",
+      "uses_wallet": "wallet.operator",
+      "signed_by": "app.apple_team",
+      "hosted_on": "ip.cotenant",
+      "shows_email": "page.email",
+      "uses_contact": "username",
+      "uses_favicon": "favicon",
+      "uses_publisher_account": "ads.adsense",
+      "uses_theme": "string",
+      "same_template": "string",
+      "same_inline_css": "hash",
+      "same_comment": "string",
+      "same_bundle": "hash"
+    }
+  },
+
+  "binding_prefix_classes": {
+    "_comment": "Indicator PREFIX (the label inside an `indicator:<prefix>:<value>` binding) -> rungs.json identifier class, used when the relation itself is not mapped above. Tracker labels are the ingest_webpivot relation keys (selector_types._TRACKER_RUNG); ads ids stay kit.",
+    "entries": {
+      "google_analytics_ua": "analytics.ga",
+      "google_analytics_ga4": "analytics.ga",
+      "google_tag_manager": "analytics.gtm",
+      "gtag": "analytics.gtag",
+      "facebook_pixel": "analytics.fb_pixel",
+      "tiktok_pixel": "analytics.tiktok",
+      "yandex_metrica": "analytics.metrica",
+      "adsense": "ads.adsense",
+      "wallet": "wallet.operator",
+      "apple_team": "app.apple_team",
+      "ip": "ip.cotenant",
+      "favicon": "favicon",
+      "social": "username"
+    }
+  },
+
+  "platform_report_pages": {
+    "_comment": "Social network / app store -> the platform's public help or reporting page, printed on each platform checklist. Keys are the social_platforms.json names wp_extract writes under artifacts.socials, plus google_play / app_store for artifacts.app_downloads. A platform with no entry prints `the platform's own reporting page`; add it here when you meet it.",
+    "entries": {
+      "telegram": "https://telegram.org/support",
+      "facebook": "https://www.facebook.com/help",
+      "instagram": "https://help.instagram.com",
+      "twitter": "https://help.x.com",
+      "x": "https://help.x.com",
+      "youtube": "https://support.google.com/youtube",
+      "tiktok": "https://support.tiktok.com",
+      "whatsapp": "https://faq.whatsapp.com",
+      "google_play": "https://support.google.com/googleplay",
+      "app_store": "https://reportaproblem.apple.com"
+    }
+  },
+
+  "cdn_abuse_contacts": {
+    "_comment": "Edge / CDN provider name as dns.ip_classification[].provider spells it (lower-cased) -> the provider's public abuse-report page. A provider with no entry gets a notice with no contact and says so; the analyst finds the page by hand.",
+    "entries": {
+      "cloudflare": "https://abuse.cloudflare.com"
+    }
+  },
+
+  "templates": {
+    "_comment": "English text per recipient class: {title, body}. Placeholders are filled by notice_pack.py; an unknown placeholder is left verbatim. {case} case id, {recipient} recipient name, {subjects} bulleted subject list, {evidence} bulleted evidence list (capture time + SHA-256), {attribution_level} / {confidence} from assessment.json, {bluf} the assessment's bottom line — REFERRAL PACK ONLY: analyst prose is not written for a registrar, host, CDN, bank or platform, and notice_pack fills it for no other class. {report_page} platform page, {checklist} platform items, {accounts} payment accounts, {timeline} dated events, {ioc_bundle} IOC files, {excluded} a one-line COUNT of hosts deliberately left out (their names live only in notices/index.json, and every excluded host and its subdomains is replaced in every notice). Keep the compromise text free of any takedown request: its recipient is a victim.",
+    "entries": {
+      "registrar": {
+        "title": "Abuse report: domain registration(s) at {recipient}",
+        "body": "To the abuse team of {recipient},\n\nWe report the domain name(s) below, registered through your service. Our assessment of them: {attribution_level}, {confidence} confidence.\n\nDomain(s):\n{subjects}\n\nEvidence (capture time and SHA-256 of the stored record):\n{evidence}\n\nWe ask you to review the registration(s) under your abuse policy and, where your policy allows, to suspend them or place them on hold. Please preserve the registration and account records in case a law-enforcement request follows.\n\nOur reference: {case}"
+      },
+      "host": {
+        "title": "Abuse report: content served from your network ({recipient})",
+        "body": "To the abuse team of {recipient},\n\nThe site(s) below were served from address(es) on your network at the time of collection. Our assessment of them: {attribution_level}, {confidence} confidence.\n\nSite(s) and address(es):\n{subjects}\n\nEvidence (capture time and SHA-256 of the stored record):\n{evidence}\n\nWe ask you to review the service under your acceptable-use policy and to preserve customer and access records in case a law-enforcement request follows.\n\nOur reference: {case}"
+      },
+      "cdn": {
+        "title": "Notice: site(s) behind your edge service ({recipient})",
+        "body": "To the trust and safety team of {recipient},\n\nThe site(s) below are served through your edge / proxy service. You do not host the origin server and we do not ask you to act on it. Our assessment of them: {attribution_level}, {confidence} confidence.\n\nSite(s):\n{subjects}\n\nEvidence (capture time and SHA-256 of the stored record):\n{evidence}\n\nWe ask you to review the customer account behind these site(s) under your acceptable-use policy and to preserve account and origin records in case a law-enforcement request follows.\n\nOur reference: {case}"
+      },
+      "platform": {
+        "title": "Platform report checklist: {recipient}",
+        "body": "Report each item below through the platform's reporting page: {report_page}\n\n{checklist}\n\nThese items are listed because the subject site(s) link to them:\n{subjects}\n\nA link from a site does not prove the account belongs to the site's operator. Describe each one as linked from the site, not as owned by it.\n\nOur reference: {case}"
+      },
+      "bank": {
+        "title": "Fraud report: payment account(s) at {recipient}",
+        "body": "To the fraud team of {recipient},\n\nThe site(s) below display the payment account(s) listed here to collect money from visitors. Our assessment of the sites: {attribution_level}, {confidence} confidence.\n\nAccount(s):\n{accounts}\n\nSite(s):\n{subjects}\n\nEvidence (capture time and SHA-256 of the stored record):\n{evidence}\n\nWe ask you to review the account(s) under your fraud procedures and to preserve the records. A displayed account may be a rented or mule account; we make no claim about its holder.\n\nOur reference: {case}"
+      },
+      "referral": {
+        "title": "Referral pack: {case}",
+        "body": "Summary ({attribution_level}, {confidence} confidence): {bluf}\n\nSubjects:\n{subjects}\n\nTimeline:\n{timeline}\n\nEvidence index (capture time and SHA-256):\n{evidence}\n\nIOC bundle:\n{ioc_bundle}\n\n{excluded}"
+      },
+      "compromise": {
+        "title": "Security notice: your site appears to serve content you did not publish",
+        "body": "To the owner of the site(s) below,\n\nWhile examining a fraud or phishing operation we found pages on your site(s) that appear to have been placed there by someone else. We believe your site is a victim, not the operator.\n\nSite(s):\n{subjects}\n\nEvidence (capture time and SHA-256 of the stored record):\n{evidence}\n\nWe recommend that you remove the injected pages, review accounts and credentials for the site, its hosting panel and its DNS, and check for further changes. We are not asking anyone to take your site down.\n\nOur reference: {case}"
+      }
+    }
+  }
+}

@@ -149,7 +149,7 @@ def _input_schema(sdk_schema: dict, optional: dict | None = None) -> dict:
     props = {k: {"type": _JSON_TYPE.get(v, "string")} for k, v in (sdk_schema or {}).items()}
     required = list(props.keys())
     for name, spec in (optional or {}).items():
-        extra = {k: v for k, v in spec.items() if k in ("type", "description", "enum")}
+        extra = {k: v for k, v in spec.items() if k in ("type", "description", "enum", "items")}
         if name in props:
             # A REQUIRED param keeps its declared type but still gains the description and the
             # `enum` — censys.mode is required and accepts exactly six values, and without the
@@ -226,6 +226,11 @@ async def _call_tool(name: str, arguments: dict) -> dict:
     if not allowed:
         return {"content": [{"type": "text", "text": f"[BLOCKED by harness policy] {why}"}],
                 "isError": True}
+    # The handler's outcome row (audit.record_outcome) reads the ambient context; bind the same
+    # case/phase/backend the gate row just got. asyncio.run gives every tools/call its own copy.
+    audit.set_context(case=(arguments or {}).get("case") or _ENV_CASE,
+                      phase=os.environ.get("HARNESS_PHASE") or "interactive",
+                      backend=os.environ.get("HARNESS_BACKEND") or "claude-code")
     try:
         res = await tool.handler(arguments or {})
     except Exception as e:  # noqa: BLE001 — surface tool faults to the model, keep the server alive

@@ -115,7 +115,15 @@ quotas, Netlas plan, SecurityTrails/DNSLytics usage, IntelX `/authenticate/info`
 measured `free` on urlscan skips the Pro calls that would 403. **Bought once per case, not once per
 host:** the collector runs one process per host, so per-origin reverse-IP verification, IntelX
 selectors, SecurityTrails reverse-WHOIS terms and the Censys cert search are memoised on disk under
-the case (`mo_neighbours/`, `intelx/`, `securitytrails/`, `censys_search.json`). Each hit is attached
+the case (`mo_neighbours/`, `intelx/`, `securitytrails/`, `censys_search.json`). **Reused across
+cases, for two answers only** (`wp_respcache`, policy `references/response_cache.json`): the
+urlscan count probe that sizes a proposed pivot (24 h, and only a count above the auto-run
+threshold — a smaller count decides that a pivot runs without approval, so it is always asked
+fresh) and the verdict of a urlscan scan that is at least two days old (7 days; 24 h when it
+carries no engine verdict). Answers are stored per API key. A hit makes no request and appears in
+`api-usage report --yield` under `cached`. No live search is cached: the knowledge base dates a
+sighting from the day it is collected, so a reused search answer would be recorded as seen today.
+`CTI_RESPONSE_CACHE=0` turns the reuse off for a run. Each hit is attached
 to the pivot as `live_results` and shown inline in `--leads`. See
 [`techniques/web-pivot.md`](../techniques/web-pivot.md) § Premium tier. No keys → keyless mode,
 identical to before; `--free-only` / a `no_spend` posture keeps every metered leg off.

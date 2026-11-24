@@ -702,7 +702,7 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 /cti-expert      # nạp skill trước — bốn lệnh dưới là lệnh quy ước
 /onboard         # hướng dẫn chạy lần đầu tương tác
 /capabilities    # lớp bằng chứng nào đang thiếu + đường miễn phí thay thế; báo REA lỗi thời/thiếu kèm lệnh npm + REA_BIN để sửa
-/backend         # xác nhận MCP có kiểu Tier-1 (105 công cụ) đang chạy, không phải Tier-3 stateless
+/backend         # xác nhận MCP có kiểu Tier-1 (108 công cụ) đang chạy, không phải Tier-3 stateless
 /apikeys status  # không key vẫn chạy; thêm key free/trả phí để mở khóa reverse pivot
 ```
 
@@ -771,13 +771,13 @@ Trước vụ việc thật đầu tiên, chạy các lệnh này một lần tr
 
 ### 7 &mdash; Full pipeline & full harness (chế độ sâu nhất)
 
-`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 105 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
+`/cti` là lối vào hằng ngày. Với một **vụ việc có phiên bản, được lưu bền** chạy đến hội tụ và tương quan xuyên mọi vụ việc trước, hãy dùng lớp sâu. Chạy `/backend` trước — nó báo tầng (Tier-1 MCP kiểu `intel-harness` = 108 tool → Tier-2 CLI → Tier-3 phi trạng thái); trình cài đặt đi kèm đã cung cấp sẵn (`SELF`, trong repo, không cần thiết lập ngoài).
 
 > **`/case` vốn đã lưu bền một vụ việc có phiên bản — và bước lưu KHÔNG phát sinh thêm egress.** Khi `/backend` đang chạy (Tier 1/2), một lượt `/case` **tái sử dụng các pivot vừa thu thập** (nó **không** tải lại): ghi chúng vào `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/` và chạy pipeline tất định ở chế độ tái sử dụng — `intel.py pipeline open <CASE-ID> <seeds> --no-collect` — bỏ qua bước tải trực tiếp và chạy toàn bộ chuỗi (ingest → recall → risk → clusters → `case_graph.json` → `assessment.md` theo ICD-203) trên dữ liệu thô đó. Vụ việc có phiên bản hoàn chỉnh nằm tại `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` (**không phải CWD của bạn**) và được tương quan xuyên mọi vụ việc trước. **Nếu vụ việc chưa hội tụ** (`intel.py convergence <ID>` báo trạng thái ≠ `converged`, hoặc `/frontier` vẫn liệt kê lead còn mở) **và** posture đang chủ động, `/case` sẽ **tự động nâng cấp lên vòng đào sâu `/harness`** — ưu tiên không-key (dùng chính model của CLI), egress bị **chặn cứng** với hạ tầng thù địch (`audit.py` của harness từ chối thu thập ra ngoài khi `hostile=True`), dùng `--no-harness` để tắt. `/pipeline open` thuần (không có `--no-collect`) và `/cti-case` vẫn **thu thập** — chúng tải lại trực tiếp mọi seed — nên chỉ chạy tay hai lệnh này cho một vụ việc **mới** chưa từng thu thập, sau khi đã đặt posture egress (`/scope`, `/cti-proxy`, hoặc `--passive` cho hạ tầng thù địch). Tier 3 / không có seed host → `/case` âm thầm bỏ qua bước chuyển giao.
 
 ```bash
 /cti-expert                           # nạp skill trước (các lệnh bên dưới là lệnh quy ước)
-/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 105 MCP tool)
+/backend                              # xác nhận lớp sâu đang chạy (Tier-1 = 108 MCP tool)
 
 # A — pipeline TẤT ĐỊNH đầy đủ (không cần LLM key, tái lập được, lưu vào cases/<ID>/)
 printf "example.com\nsibling.com\n" > seeds.txt
@@ -977,7 +977,7 @@ Mọi cuộc điều tra đều đi qua bốn pha tự động:
 
 ### Sơ đồ quy trình
 
-**Luồng công cụ &amp; skill đầu-cuối** — một lệnh gọi `/cti` chạy recall, tiếp nhận (intake), tái sử dụng Quarry (tùy chọn), thu thập, vòng làm giàu đa kiểu (mặc định tự duyệt pivot tính phí; `--review` để duyệt theo từng vòng), đánh giá và bàn giao qua cả hai lớp: 9 lệnh đã đăng ký và 59 kỹ thuật ở Lớp 1, cùng 105 `@tool` của harness trên `intel_engine` được vendor (backend claude, codex, omp hoặc bất kỳ backend tương thích OpenAI nào):
+**Luồng công cụ &amp; skill đầu-cuối** — một lệnh gọi `/cti` chạy recall, tiếp nhận (intake), tái sử dụng Quarry (tùy chọn), thu thập, vòng làm giàu đa kiểu (mặc định tự duyệt pivot tính phí; `--review` để duyệt theo từng vòng), đánh giá và bàn giao qua cả hai lớp: 9 lệnh đã đăng ký và 59 kỹ thuật ở Lớp 1, cùng 108 `@tool` của harness trên `intel_engine` được vendor (backend claude, codex, omp hoặc bất kỳ backend tương thích OpenAI nào):
 
 <div align="center">
 <img src="assets/workflow-skills.svg" alt="Luồng công cụ và skill đầu-cuối của cti-expert — sơ đồ tuần tự qua cả hai lớp" width="900">
@@ -1374,7 +1374,7 @@ cti-expert/
 │
 │  ── LAYER 2 · Deep pipeline — vendored, self-contained ──────────────
 └── intel_engine/               Collect → Correlate → Assess pipeline + knowledge base
-    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (105 @tool)
+    ├── harness/                Pipeline brain — orchestrator.py · mcp_server.py · tools.py (108 @tool)
     ├── tools/                  intel.py (deterministic pipeline) · house_report*.py · case_state · kb/ (KB + correlation)
     ├── WebPivot/               Canonical collector — pivot_extract · wp_* vendor clients · enrich_live
     ├── IntelGraph/             Publication-quality case-graph rendering (PNG/SVG)

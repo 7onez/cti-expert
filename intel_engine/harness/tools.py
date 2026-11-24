@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # harness/ on path for sdk_compat
@@ -120,7 +121,11 @@ def _run(cmd: list[str], timeout: int = 180) -> collect_core.RunResult:
     """collect_core.run under ROOT: floored to the call ceiling, clamped to the active phase
     deadline, process group killed on timeout; never raises (r.status: ok | error | timed_out).
     Synchronous by design — the stdio MCP server runs every tools/call in its executor thread
-    (mcp_server._handle), so a long call never blocks the stdin loop."""
+    (mcp_server._handle), so a long call never blocks the stdin loop. When the running tool call
+    named a case, the child gets INTEL_CASE so its usage-ledger rows carry it."""
+    case = _CURRENT_CASE.get()
+    if case:
+        return collect_core.run(cmd, ROOT, timeout, env={"INTEL_CASE": case})
     return collect_core.run(cmd, ROOT, timeout)
 
 
@@ -172,6 +177,7 @@ _CTX_FALLBACK = {
                            "reverse_whois", "intelx_search", "censys"],
     "transcript_budget": {"max_total_chars": 360000, "max_tool_result_chars": 24000,
                           "keep_recent_rounds": 6},
+    "batch": {"max_values": 1, "min_share_chars": 600},     # 1 = batching off
 }
 _CTX = _load_ref(_ref_path(__file__, "context_budget.json"), _CTX_FALLBACK)
 
@@ -188,6 +194,7 @@ OPTIONAL_PARAMS = _load_ref(_ref_path(__file__, "tool_params.json"),
 RESULT_BUDGET = dict(_CTX["result_budget"])
 LARGE_RESULT_TOOLS = set(_CTX["large_result_tools"])
 TRANSCRIPT_BUDGET = dict(_CTX["transcript_budget"])
+BATCH = dict(_CTX.get("batch") or _CTX_FALLBACK["batch"])
 # Per-run override without a code edit or a data edit (e.g. a cheap smoke run on a small model).
 _BUDGET_ENV = os.environ.get("HARNESS_RESULT_CHARS")
 
@@ -198,6 +205,35 @@ _BUDGET_ENV = os.environ.get("HARNESS_RESULT_CHARS")
 # every tool is governed by NAME without editing ~60 _ok() call sites.
 _CURRENT_TOOL: contextvars.ContextVar = contextvars.ContextVar("harness_current_tool",
                                                                default=None)
+# The case a tool call was made FOR, when its arguments name one. Read by _run() so the vendor
+# rows a collector subprocess writes to the usage ledger carry that case (api_usage.record falls
+# back to INTEL_CASE). A ContextVar, never os.environ: parallel calls for different cases share
+# this process.
+_CURRENT_CASE: contextvars.ContextVar = contextvars.ContextVar("harness_current_case",
+                                                               default=None)
+_CASE_TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}")
+
+
+def _case_tag(args) -> str | None:
+    """The `case` argument when it is a plain case id; a path or any other shape tags nothing."""
+    c = args.get("case") if isinstance(args, dict) else None
+    return c if isinstance(c, str) and _CASE_TAG_RE.fullmatch(c) else None
+
+
+def _record_outcome(name: str, res, fault: str | None, started: float) -> None:
+    """One row per finished call in tool_outcomes.jsonl (audit.record_outcome): ok or error,
+    duration, result size. Never raises — measuring a call must not change its result."""
+    try:
+        import audit as _a  # harness/audit.py — the ledger owner
+        content = (res.get("content") or []) if isinstance(res, dict) else []
+        is_err = bool(isinstance(res, dict) and res.get("is_error"))
+        _a.record_outcome(
+            name, ok=(fault is None and isinstance(res, dict) and not is_err),
+            duration_ms=int((time.monotonic() - started) * 1000),
+            result_chars=sum(len(c.get("text") or "") for c in content if isinstance(c, dict)),
+            error=fault or ("tool-error" if is_err else None))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _budget_for(tool: str | None) -> int:
@@ -224,12 +260,23 @@ def _governed(t):
 
     async def _wrapped(args, _h=h, _n=name):
         token = _CURRENT_TOOL.set(_n)
+        case_token = _CURRENT_CASE.set(_case_tag(args))
+        started = time.monotonic()
+        res, fault = None, None
         try:
             refused = _free_only_refusal(_n, args)
             if refused:
-                return _err(refused)
-            return await _h(args)
+                fault = "free-only"
+                res = _err(refused)
+                return res
+            res = await _h(args)
+            return res
+        except BaseException as e:
+            fault = type(e).__name__
+            raise
         finally:
+            _record_outcome(_n, res, fault, started)
+            _CURRENT_CASE.reset(case_token)
             _CURRENT_TOOL.reset(token)
 
     try:
@@ -1249,33 +1296,103 @@ def _as_of(value: Any) -> list[str]:
     return ["--as-of", v] if v else []
 
 
+def _batch(first: Any, more: Any, single: str, plural: str, norm=str) -> tuple[list[str], str]:
+    """(values, refusal). `first` is the handler's `single` argument and `more` its optional list
+    `plural`; the HANDLER reads both from its args so every read stays visible to the schema
+    check. Returned in order, de-duplicated. A bare string in `more` is one value, never split
+    (an entity value may contain commas). More than batch.max_values is REFUSED rather than
+    trimmed: a silently shortened list reads as 'the rest had no record'."""
+    more = list(more) if isinstance(more, (list, tuple)) else ([more] if more else [])
+    out: list[str] = []
+    for v in [first, *more]:
+        v = norm(v) if v not in (None, "") else ""
+        if v and v not in out:
+            out.append(v)
+    cap = int(BATCH.get("max_values", 1))
+    if len(out) > cap:
+        return out, (f"{len(out)} values in one call; the limit is {cap} "
+                     f"(context_budget.json → batch.max_values). Split the list.")
+    return out, ("" if out else f"needs `{single}` (or the list `{plural}`).")
+
+
+def _split_sections(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """A batched result → (preamble, [(value, body)]), split on its `## <value>` headers."""
+    parts = re.split(r"(?m)^## ", text or "")
+    secs = []
+    for p in parts[1:]:
+        name, _, body = p.partition("\n")
+        secs.append((name.strip(), body.strip("\n")))
+    return parts[0].strip("\n"), secs
+
+
+def _sections(text: str, budget: int) -> str:
+    """Give each `## <value>` section an equal share of `budget` and NAME every value that was
+    cut, so the model knows which one to look up alone instead of reading a short section as a
+    short record. The whole text stays inside `budget`, capped at what the transcript layer lets
+    one tool message keep: past either limit a later cut removes the MIDDLE, and whole sections
+    vanish without being named."""
+    head, secs = _split_sections(text)
+    if not secs:
+        return text
+    budget = min(int(budget), int(TRANSCRIPT_BUDGET.get("max_tool_result_chars", budget)))
+    # everything that is not section body. A value's name appears three times — its header, its
+    # cut marker (reserved whether or not it is cut) and the closing `truncated:` line.
+    overhead = len(head) + sum(3 * len(name) + 70 for name, _ in secs) + 16
+    share = max(int(BATCH.get("min_share_chars", 600)), (budget - overhead) // len(secs))
+    out, cut = ([head] if head else []), []
+    for name, body in secs:
+        if len(body) > share:
+            body = (body[:share].rstrip()
+                    + f"\n[TRUNCATED: {len(body) - share:,} more chars for {name} — look it up alone]")
+            cut.append(name)
+        out.append(f"## {name}\n{body}")
+    if cut:
+        out.append("truncated: " + ", ".join(cut))
+    return "\n\n".join(out)
+
+
 @tool(
     "kb_cluster",
     "Peers of ONE domain — the domains sharing an indicator with it (its cluster neighborhood). "
     "PREFER this over kb_query_shared: it returns only the seed's subgraph, not the whole KB, so "
-    "it is far cheaper.",
-    {"domain": str},   # as_of:str optional -> args.get() (tool_params.json)
+    "it is far cheaper. Pass `domains` (a list) to read several in ONE call: one section per domain.",
+    {"domain": str},   # as_of:str, domains:list optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def kb_cluster(args: dict[str, Any]) -> dict[str, Any]:
-    r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--cluster", _host(args["domain"]), *_as_of(args.get("as_of"))])
-    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no peers"}],
-            "is_error": r.returncode != 0}
+    doms, refused = _batch(args.get("domain"), args.get("domains"), "domain", "domains", _host)
+    if refused:
+        return _err(f"kb_cluster: {refused}")
+    cmd = [PY, os.path.join("tools", "kb", "query.py"), "--kb", KB_DIR]
+    for d in doms:
+        cmd += ["--cluster", d]
+    r = _run(cmd + _as_of(args.get("as_of")))
+    text = r.stdout or r.stderr or "no peers"
+    if len(doms) > 1:
+        text = _sections(text, int(RESULT_BUDGET.get("large_chars", 40000)))
+    return {"content": [{"type": "text", "text": text}], "is_error": r.returncode != 0}
 
 
 @tool(
     "kb_entity",
     "One entity's facts + edges + provenance (a domain, email, indicator, or operator). "
-    "A focused lookup — cheaper than dumping the whole KB.",
-    {"value": str},   # as_of:str optional -> args.get() (tool_params.json)
+    "A focused lookup — cheaper than dumping the whole KB. Pass `values` (a list) to read several "
+    "entities in ONE call: one section each, and any section cut for length is named.",
+    {"value": str},   # as_of:str, values:list optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def kb_entity(args: dict[str, Any]) -> dict[str, Any]:
-    r = _run([PY, os.path.join("tools", "kb", "query.py"),
-              "--kb", KB_DIR, "--entity", args["value"], *_as_of(args.get("as_of"))])
-    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no record"}],
-            "is_error": r.returncode != 0}
+    vals, refused = _batch(args.get("value"), args.get("values"), "value", "values")
+    if refused:
+        return _err(f"kb_entity: {refused}")
+    cmd = [PY, os.path.join("tools", "kb", "query.py"), "--kb", KB_DIR]
+    for v in vals:
+        cmd += ["--entity", v]
+    r = _run(cmd + _as_of(args.get("as_of")))
+    text = r.stdout or r.stderr or "no record"
+    if len(vals) > 1:
+        text = _sections(text, int(RESULT_BUDGET.get("large_chars", 40000)))
+    return {"content": [{"type": "text", "text": text}], "is_error": r.returncode != 0}
 
 
 @tool(
@@ -1535,16 +1652,24 @@ async def capability_check(args: dict[str, Any]) -> dict[str, Any]:
     "same-operator link. Returns BENIGN (a globally common logo/CDN/CSS-framework artifact — a "
     "FALSE POSITIVE, do NOT cluster on it), SIGNAL (a distinctive fingerprint from a prior case — "
     "pivot on it, and see which case), or UNKNOWN. Pass the indicator string (e.g. favicon:123, "
-    "css_hash:ab12, urlscan_resource:<h>) or a keyword. Read-only.",
-    {"value": str},
+    "css_hash:ab12, urlscan_resource:<h>) or a keyword. Pass `values` (a list) to check several "
+    "in ONE call. Read-only.",
+    {"value": str},   # values:list optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def reference_check(args: dict[str, Any]) -> dict[str, Any]:
-    val = str(args["value"])
-    chk = _run([PY, os.path.join("tools", "kb", "reference.py"), "--kb", KB_DIR, "check", val])
-    srch = _run([PY, os.path.join("tools", "kb", "reference.py"), "--kb", KB_DIR, "search", val])
-    return _ok((chk.stdout or chk.stderr or "").rstrip() + "\n--- related reference entries ---\n"
-               + (srch.stdout or "").rstrip())
+    vals, refused = _batch(args.get("value"), args.get("values"), "value", "values")
+    if refused:
+        return _err(f"reference_check: {refused}")
+    blocks = []
+    for val in vals:
+        chk = _run([PY, os.path.join("tools", "kb", "reference.py"), "--kb", KB_DIR, "check", val])
+        srch = _run([PY, os.path.join("tools", "kb", "reference.py"), "--kb", KB_DIR, "search", val])
+        blocks.append((chk.stdout or chk.stderr or "").rstrip() + "\n--- related reference entries ---\n"
+                      + (srch.stdout or "").rstrip())
+    if len(vals) == 1:
+        return _ok(blocks[0])
+    return _ok(_sections("\n\n".join(f"## {v}\n{b}" for v, b in zip(vals, blocks)), _budget_for(None)))
 
 
 @tool(
@@ -1604,14 +1729,24 @@ async def reference_add(args: dict[str, Any]) -> dict[str, Any]:
     "wallet:<coin>:<addr>, email:<addr>, social:<net>:<handle>), report which CASE(S) it already "
     "appears in across the cases/ store. Call this before pivoting on a known artifact — a hit "
     "means it carries prior case context (don't treat it as new); an indicator seen across "
-    "MULTIPLE cases is a cross-case link worth surfacing. Read-only.",
-    {"artifact": str},
+    "MULTIPLE cases is a cross-case link worth surfacing. Pass `artifacts` (a list) to look up "
+    "several in ONE call. Read-only.",
+    {"artifact": str},   # artifacts:list optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def which_cases(args: dict[str, Any]) -> dict[str, Any]:
-    r = _run([PY, os.path.join("tools", "case_index.py"), str(args["artifact"])])
-    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
-            "is_error": r.returncode != 0}
+    arts, refused = _batch(args.get("artifact"), args.get("artifacts"), "artifact", "artifacts")
+    if refused:
+        return _err(f"which_cases: {refused}")
+    runs = [_run([PY, os.path.join("tools", "case_index.py"), a]) for a in arts]
+    if len(arts) == 1:
+        text = runs[0].stdout or runs[0].stderr or "no output"
+    else:
+        text = _sections("\n\n".join(f"## {a}\n{(r.stdout or r.stderr or 'no output').strip()}"
+                                     for a, r in zip(arts, runs)),
+                         int(RESULT_BUDGET.get("default_chars", 12000)))
+    return {"content": [{"type": "text", "text": text}],
+            "is_error": any(r.returncode != 0 for r in runs)}
 
 
 @tool(
@@ -1619,21 +1754,32 @@ async def which_cases(args: dict[str, Any]) -> dict[str, Any]:
     "The PRIOR verdict for a domain already in the store: which CASE(S) it appears in, who it's "
     "attributed to (operator registry) + its known KB facts/edges. Call this before treating a "
     "seed as new — if it's already resolved or belongs to a known case, show that instead of "
-    "re-investigating.",
-    {"domain": str},
+    "re-investigating. Pass `domains` (a list) for several in ONE call.",
+    {"domain": str},   # domains:list optional -> args.get() (tool_params.json)
     annotations=READONLY,
 )
 async def domain_verdict(args: dict[str, Any]) -> dict[str, Any]:
-    d = _host(args["domain"])
-    op = _run([PY, os.path.join("tools", "kb", "operator_registry.py"), "find", d])
-    kb = _run([PY, os.path.join("tools", "kb", "query.py"), "--kb", KB_DIR, "--entity", d])
-    ci = _run([PY, os.path.join("tools", "case_index.py"), d])
-    verdict = (op.stdout or "").strip() or "not attributed to any known operator"
-    facts = (kb.stdout or "").strip() or "no KB record for this domain"
-    cases = (ci.stdout or "").strip() or f"{d} (domain): NOT seen in any existing case."
-    collected = bool(_find_cached_raw(d))
-    return _ok(f"VERDICT for {d}  (pivot data on file: {'yes' if collected else 'no'})\n"
-               f"[cases] {cases}\n[operator] {verdict}\n[KB] {facts}")
+    doms, refused = _batch(args.get("domain"), args.get("domains"), "domain", "domains", _host)
+    if refused:
+        return _err(f"domain_verdict: {refused}")
+    cmd = [PY, os.path.join("tools", "kb", "query.py"), "--kb", KB_DIR]
+    for d in doms:
+        cmd += ["--entity", d]
+    kb = _run(cmd)                                     # one KB load for the whole list
+    facts_by = dict(_split_sections(kb.stdout or "")[1]) if len(doms) > 1 else {doms[0]: kb.stdout or ""}
+    blocks = []
+    for d in doms:
+        op = _run([PY, os.path.join("tools", "kb", "operator_registry.py"), "find", d])
+        ci = _run([PY, os.path.join("tools", "case_index.py"), d])
+        verdict = (op.stdout or "").strip() or "not attributed to any known operator"
+        facts = (facts_by.get(d) or "").strip() or "no KB record for this domain"
+        cases = (ci.stdout or "").strip() or f"{d} (domain): NOT seen in any existing case."
+        collected = bool(_find_cached_raw(d))
+        blocks.append(f"VERDICT for {d}  (pivot data on file: {'yes' if collected else 'no'})\n"
+                      f"[cases] {cases}\n[operator] {verdict}\n[KB] {facts}")
+    if len(doms) == 1:
+        return _ok(blocks[0])
+    return _ok(_sections("\n\n".join(f"## {d}\n{b}" for d, b in zip(doms, blocks)), _budget_for(None)))
 
 
 @tool(
@@ -1642,8 +1788,10 @@ async def domain_verdict(args: dict[str, Any]) -> dict[str, Any]:
     "ledger every collection writes. Pass case=<ID> to scope to one case, since=YYYY-MM-DD to bound "
     "by date, last=<N> to also list the most recent calls. Shows estimated units per cost class "
     "(free / quota / metered — WebPivot/references/api_cost_classes.json) and per provider / day / case. "
-    "Read-only — use it to answer 'how many credits did this case/run cost'.",
-    {},   # all optional: case, since (str), last (int) via args.get()
+    "Read-only — use it to answer 'how many credits did this case/run cost'. yield=true prints "
+    "instead what each vendor endpoint RETURNED: failure, zero-result and repeat-query rates per "
+    "provider:action, each with the number of calls it was measured over.",
+    {},   # all optional: case, since (str), last (int), yield (bool) via args.get()
     annotations=READONLY,
 )
 async def api_usage(args: dict[str, Any]) -> dict[str, Any]:
@@ -1654,6 +1802,8 @@ async def api_usage(args: dict[str, Any]) -> dict[str, Any]:
         cmd += ["--since", str(args["since"])]
     if args.get("last"):
         cmd += ["--last", str(int(args["last"]))]
+    if _flag(args, "yield"):
+        cmd += ["--yield", "--no-save"]     # read-only here: the CLI refreshes the measurement file
     r = _run(cmd)
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}
@@ -2056,9 +2206,10 @@ async def case_enrich(args: dict[str, Any]) -> dict[str, Any]:
 
 @tool(
     "case_reopen",
-    "Cold-case reopen: flip a finished (converged/cold) case back to 'expanding' and optionally "
+    "Cold-case reopen: flip a finished (converged/cold/closed) case back to 'expanding' and optionally "
     "merge NEW seeds, so the next case_loop re-mines its frontier against the CURRENT knowledge base "
-    "— an old case benefits from breakthroughs made in other cases since it closed. Pass seeds as a "
+    "— an old case benefits from breakthroughs made in other cases since it closed. A closed case's "
+    "disposition moves into disposition.history. Pass seeds as a "
     "space/comma list of new domains, or omit to just reopen for re-mining.",
     {"case": str},
     annotations=ToolAnnotations(readOnlyHint=False),
@@ -2068,6 +2219,107 @@ async def case_reopen(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, os.path.join("tools", "case_state.py"), "reopen", str(args["case"]), *seeds])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
             "is_error": r.returncode != 0}
+
+
+@tool(
+    "case_close",
+    "Close a case with a DISPOSITION — the record of what was done about it. `outcome` is one of "
+    "reported | taken-down | referred | monitoring | no-action | benign | duplicate "
+    "(tools/kb/references/case_disposition.json); `note` is one optional line on why. Sets "
+    "state.json status `closed` plus disposition {outcome, closed_at, note, actions[], history[]}. "
+    "A closed case is never expanded: case_loop, cti and the harness refuse it (nothing collected, "
+    "proposed or spent) until case_reopen, which moves the disposition into history. Refuses an "
+    "unknown outcome or an already-closed case. Close only when the analyst says the case is done.",
+    {"case": str, "outcome": str},  # note: str optional (tool_params.json)
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def case_close(args: dict[str, Any]) -> dict[str, Any]:
+    cmd = [PY, os.path.join("tools", "intel.py"), "close", str(args["case"]),
+           "--outcome", str(args["outcome"])]
+    if args.get("note"):
+        cmd += ["--note", str(args.get("note"))]
+    r = _run(cmd)
+    return {"content": [{"type": "text", "text": r.stdout or r.stderr or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "notice_draft",
+    "DRAFT the action notices a case supports — registrar, host (origin IP abuse contact), CDN / "
+    "edge (never asked to act on the origin), platform checklist (linked social / app-store "
+    "accounts), bank or e-wallet (only when the raws carry payment_accounts), a law-enforcement "
+    "referral pack (summary, timeline, evidence index with hashes, IOC bundle paths) and, for a "
+    "compromised (victim_host) site, a security notice to the victim instead of any takedown. "
+    "Reads ONLY stored case artifacts: no network call, nothing is sent, uploaded or submitted. "
+    "REFUSES (is_error, reason given; unsent earlier drafts withdrawn) with no assessment, an "
+    "inconclusive or same-kit attribution, a contradicted / not_supported premise, a benign_check "
+    "intake, or confidence below the template's min_confidence (default high). Subjects are the "
+    "seed (only as a member of the assessment's cluster; a one-host case notices the seed alone) "
+    "plus the cluster members joined to it, in its clusters.json component, by indicators each "
+    "host ITSELF holds at an OWNER rung; kit siblings, neighbours, mentions, related hosts, "
+    "kit/neighbour-only, unestablished and previous-owner-era hosts are excluded, listed with the "
+    "reason in cases/<case>/notices/index.json and masked in every notice. A sent notice is never "
+    "rewritten. The analyst sends the drafts and records them with `intel.py action-log`.",
+    {"case": str},
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def notice_draft(args: dict[str, Any]) -> dict[str, Any]:
+    r = _run([PY, os.path.join("tools", "intel.py"), "notice", str(args["case"])])
+    return {"content": [{"type": "text", "text": (r.stdout or "") + (r.stderr or "") or "no output"}],
+            "is_error": r.returncode != 0}
+
+
+@tool(
+    "watchlist",
+    "The WATCH-LIST: brand keywords, domains and cases that are re-checked when DUE with the "
+    "monitors already here — new certificate names (CT, keyless), lookalike domains (permutations "
+    "against CT + DNS), takedown status with successor leads, and case drift. mode=list shows the "
+    "entries; mode=add needs kind (brand|domain|case) + value, optional sources (comma-separated) "
+    "and interval_hours; mode=rm needs id; mode=run runs every due entry once (id=<entry> for one, "
+    "all=true for every entry) and prints only what is NEW since that entry's last run. LEADS "
+    "ONLY: a run never opens a case, never collects a host and never writes to the knowledge base; "
+    "an entry's first run is a baseline; a closed case is skipped unless its disposition is "
+    "`monitoring`. A source that FAILED or answered DEGRADED (crt.sh down, RDAP silent) is printed "
+    "as such — never as 'nothing new' — and is retried on the next run: read those lines before "
+    "telling the analyst a watch was quiet. Free sources by default — allow_metered=true adds the "
+    "FOFA / urlscan lookalike sweeps and is gated as a metered call. From this tool the takedown "
+    "source never fetches co-tenant pages. No scheduler: the analyst's cron calls `intel.py watch run`.",
+    {"mode": str},  # kind, value, id, sources: str; interval_hours: number; all, allow_metered: bool
+    annotations=ToolAnnotations(readOnlyHint=False),
+)
+async def watchlist(args: dict[str, Any]) -> dict[str, Any]:
+    mode = str(args.get("mode") or "list").strip().lower()
+    cmd = [PY, os.path.join("tools", "watchlist.py")]
+    if mode == "list":
+        cmd.append("list")
+    elif mode == "add":
+        kind, value = str(args.get("kind") or "").strip(), str(args.get("value") or "").strip()
+        if not kind or not value:
+            return _err("watchlist mode=add needs kind (brand|domain|case) and value.")
+        cmd += ["add", kind, value]
+        if args.get("sources"):
+            cmd += ["--sources", str(args["sources"])]
+        if args.get("interval_hours"):
+            cmd += ["--interval", str(args["interval_hours"])]
+    elif mode == "rm":
+        if not args.get("id"):
+            return _err("watchlist mode=rm needs id (see mode=list).")
+        cmd += ["rm", str(args["id"])]
+    elif mode == "run":
+        cmd.append("run")
+        if args.get("id"):
+            cmd += ["--id", str(args["id"])]
+        if _flag(args, "all"):
+            cmd.append("--all")
+        if _flag(args, "allow_metered"):
+            cmd.append("--allow-metered")
+    else:
+        return _err("watchlist mode must be list, add, rm or run.")
+    r = _run(cmd, timeout=1800)
+    text = ((r.stdout or "") + (r.stderr or "")).strip() or "no output"
+    # exit 3 = the run finished but a source failed or was degraded: the text says which, and
+    # the leads it did find are real, so it is a result to read, not a tool fault
+    return _ok(text) if r.returncode in (0, 3) else _err(text)
 
 
 @tool(
@@ -4326,6 +4578,7 @@ ANALYZE_SERVER = create_sdk_mcp_server(
                       reverse_whois, cert_overlap, reference_check, reference_add, reference_mirrors,
                       which_cases, domain_verdict, api_usage, tool_calls, case_scope,
                       case_clusters, case_frontier, case_loop, case_enrich, case_reopen, case_approve,
+                      case_close, notice_draft, watchlist,
                       email_permute,
                       render_diagram, case_timeline, render_report, victim_profile,
                       collection_gaps, origin_history,
@@ -4380,6 +4633,8 @@ ANALYZE_TOOLS = ["mcp__analyze__kb_cluster", "mcp__analyze__kb_entity",
                  "mcp__analyze__case_clusters", "mcp__analyze__case_frontier",
                  "mcp__analyze__case_loop", "mcp__analyze__case_enrich",
                  "mcp__analyze__case_reopen", "mcp__analyze__case_approve",
+                 "mcp__analyze__case_close", "mcp__analyze__notice_draft",
+                 "mcp__analyze__watchlist",
                  "mcp__analyze__email_permute",
                  "mcp__analyze__render_diagram", "mcp__analyze__case_timeline",
                  "mcp__analyze__render_report", "mcp__analyze__victim_profile",

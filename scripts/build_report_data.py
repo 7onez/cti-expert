@@ -7,8 +7,8 @@
 build_report_data.py — deterministic case -> flat report-JSON converter.
 
 THE MISSING BRIDGE. The report generators (generate-cti-html.py, generate-cti-iocs.py,
-generate-cti-docx-hybrid.py) all consume the flat "report JSON" documented in SKILL.md
-§8 (subjects[]/findings[]/connections[]/timeline[]/indicators[]/…). Nothing produced it:
+generate-cti-docx-hybrid.py) all consume the flat "report JSON" documented in
+handbook/report-export.md (subjects[]/findings[]/connections[]/timeline[]/indicators[]/…). Nothing produced it:
 the deterministic pipeline (`intel.py pipeline open`) writes assessment.md, assessment.json
 (engine schema), shared.txt, clusters.json and case_graph.json — but NOT that flat JSON.
 So every /cti (= /case) Deliver step depended on an agent hand-authoring a large JSON by
@@ -1372,7 +1372,7 @@ def _csv_cell(v):
 
 
 def write_csv(report, path):
-    """The base bundle's CSV (SKILL.md Step A row 3): every finding, then every indicator, one row
+    """The base bundle's CSV (handbook/report-export.md Step A row 3): every finding, then every indicator, one row
     each with a `kind` column, under a credit + handling-caveat comment line. Written from the
     finished report, so it carries the same withholding and credential stripping as the JSON."""
     import csv  # noqa: PLC0415
@@ -1389,7 +1389,7 @@ def write_csv(report, path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="case dir -> flat report JSON (SKILL.md §8); or, with "
+    ap = argparse.ArgumentParser(description="case dir -> flat report JSON (handbook/report-export.md); or, with "
                                  "--from-report, a finalized REPORT.json -> the bundle CSV")
     ap.add_argument("case_dir", nargs="?")
     ap.add_argument("-o", "--out", default=None, help="output path (default: <case>/report-data.json)")

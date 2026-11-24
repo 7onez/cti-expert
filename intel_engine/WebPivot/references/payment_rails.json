@@ -1,0 +1,21 @@
+{
+  "_comment": "PAYMENT RAILS for EMVCo merchant-presented QR payloads (wp_emvqr.parse, fed by wp_extract from every QR payload a page carries). An EMVCo payload names its rail by a globally unique identifier (GUID / application identifier) in sub-tag 00 of a merchant-account template (tags 26-51); this file maps that identifier to the rail and says where inside the template the acquirer id and the account number sit. Include ONLY values you are certain of, each from a public scheme specification — a wrong entry turns an unrelated payload into a bank account selector. A payload whose identifier is not listed here is still parsed (amount, currency, CRC) but yields no account, so nothing is clustered or searched on a guess. The conservative fallback is EMPTY: with this file broken no payload becomes a payment account.",
+
+  "rails": {
+    "_comment": "GUID / application identifier (upper-case, as it appears in sub-tag 00) -> {rail, name, country, acquirer_path, account_path}. The two paths are sub-tag sequences inside the merchant-account template; a value at an intermediate step is itself parsed as tag-length-value. VietQR (NAPAS): template 38, GUID A000000727, sub-tag 01 is a nested template whose 00 is the acquirer BIN and whose 01 is the beneficiary account number. Add a rail only with its published template layout.",
+    "entries": {
+      "A000000727": {
+        "rail": "vietqr",
+        "name": "VietQR (NAPAS)",
+        "country": "VN",
+        "acquirer_path": ["01", "00"],
+        "account_path": ["01", "01"]
+      }
+    }
+  },
+
+  "acquirer_bins": {
+    "_comment": "Per rail: acquirer BIN -> bank name, written as \"<rail>\": {\"<BIN>\": \"<bank name>\"}. DELIBERATELY EMPTY: no bank list was verified against a published source when this file was written, and a guessed BIN would name the wrong bank as a scam beneficiary. An empty map means the bank stays unnamed (bank_id is still reported). Add a BIN only from the scheme's own published member list, and say where it came from in this comment.",
+    "vietqr": {}
+  }
+}

@@ -21,12 +21,31 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+def _state_status(case: str) -> str | None:
+    """The lifecycle status recorded in cases/<case>/state.json, or None when unreadable."""
+    try:
+        with open(os.path.join(ROOT, "cases", case, "state.json"), encoding="utf-8") as fh:
+            st = json.load(fh)
+        return st.get("status") if isinstance(st, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def compute_actions(case: str, *, pending: list[str] | None = None,
                     metered: list[dict] | None = None,
                     status: str | None = None,
                     seeds: list[str] | None = None) -> list[dict[str, Any]]:
-    """Build the list of viable next actions for `case`."""
+    """Build the list of viable next actions for `case`. A CLOSED case offers `reopen` only:
+    nothing else may expand, spend or report on it until it is reopened."""
     actions: list[dict[str, Any]] = []
+
+    if status == "closed" or _state_status(case) == "closed":
+        return [{
+            "id": "reopen",
+            "label": "Reopen the closed case (its disposition moves into history)",
+            "description": "The case is closed — loop, harness and cti refuse it until it is reopened",
+            "command": [sys.executable, os.path.join(HERE, "case_state.py"), "reopen", case],
+        }]
 
     dispatcher = os.path.join(os.path.dirname(ROOT), "scripts", "backend", "intel.py")
 

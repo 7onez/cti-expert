@@ -863,6 +863,12 @@ def rdap_lookup(domain, timeout=25, keep_raw=True):
             reg, reg_vcard = ent, vcard
     ns = sorted({(n.get("ldhName") or "").lower() for n in (data.get("nameservers") or [])
                  if n.get("ldhName")})
+    # the registrar's ABUSE contact (role "abuse", usually nested inside the registrar entity) —
+    # where an abuse notice goes. Never the registrant: kept in its own registrar_abuse_* fields.
+    abuse_vcard = (_find_abuse_entity(data).get("vcardArray") or [None, []])[1]
+    abuse_tel = _vcard_get(abuse_vcard, "tel")
+    if abuse_tel and abuse_tel.lower().startswith("tel:"):
+        abuse_tel = abuse_tel[4:].strip() or None
     res = {
         "domain": (data.get("ldhName") or domain).lower(),
         "registrant_email": (_vcard_get(reg_vcard, "email") or "").lower() or None,
@@ -873,6 +879,8 @@ def rdap_lookup(domain, timeout=25, keep_raw=True):
         "registrant_phone": _vcard_get(reg_vcard, "tel"),
         "registrant_address": _vcard_get(reg_vcard, "adr"),
         "registrar": registrar.get("name"),
+        "registrar_abuse_email": (_vcard_get(abuse_vcard, "email") or "").lower().strip() or None,
+        "registrar_abuse_phone": abuse_tel,
         "created": ev.get("registration"),
         "updated": ev.get("last changed") or ev.get("last update of rdap database"),
         "expires": ev.get("expiration"),
@@ -883,6 +891,22 @@ def rdap_lookup(domain, timeout=25, keep_raw=True):
     if keep_raw:
         res["_raw"] = data
     return res
+
+
+def _find_abuse_entity(data, _depth=0):
+    """Depth-first search of an RDAP object's `entities[]` (registrars nest their abuse contact
+    inside the registrar entity) for the first entity whose `roles` include "abuse"; {} if none."""
+    if not isinstance(data, dict) or _depth > 4:
+        return {}
+    for ent in data.get("entities") or []:
+        if not isinstance(ent, dict):
+            continue
+        if "abuse" in [str(r).lower() for r in (ent.get("roles") or [])]:
+            return ent
+        nested = _find_abuse_entity(ent, _depth + 1)
+        if nested:
+            return nested
+    return {}
 
 
 # port-43 whois fields → normalized keys (best-effort; ccTLD servers vary wildly)

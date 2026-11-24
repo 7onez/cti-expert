@@ -489,6 +489,45 @@ def bundle_digest(files) -> str:
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
+def stored_js(capdir: str, manifest: dict = None) -> list:
+    """[(url, text)] for every JavaScript file STORED in a capture bundle, read from disk — no
+    request. The kit-signature and wallet-drainer scanners read the operator's code from here, so
+    a scan never re-contacts the host. A file the manifest lists but that is missing, or whose
+    stored path escapes the bundle, is skipped."""
+    return stored_files(capdir, "js", manifest)
+
+
+def stored_files(capdir: str, role: str, manifest: dict = None, max_bytes: int = None) -> list:
+    """[(url, text)] for every file of manifest `role` ("dom", "js", "css") STORED in a capture
+    bundle, read from disk — no request; each read stops at `max_bytes` when given. Same skips as
+    stored_js: a listed file that is missing or whose stored path escapes the bundle."""
+    if not capdir:
+        return []
+    try:
+        if manifest is None:
+            with open(os.path.join(capdir, LAYOUT.get("manifest_filename", "manifest.json")),
+                      encoding="utf-8") as fh:
+                manifest = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    root = os.path.realpath(capdir)
+    out = []
+    for f in (manifest or {}).get("files") or []:
+        if not isinstance(f, dict) or f.get("role") != role or not f.get("stored_as"):
+            continue
+        rel = str(f["stored_as"])
+        path = os.path.realpath(os.path.join(capdir, *str(rel).split("/")))
+        if not path.startswith(root + os.sep):
+            continue
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read(max_bytes) if max_bytes else fh.read()
+            out.append((f.get("url") or rel, raw.decode("utf-8", "replace")))
+        except OSError:
+            continue
+    return out
+
+
 def verify(capdir: str, seal: bool = None, actor: str = None, note: str = None) -> dict:
     with wp_custody.ExitStack() as stack:
         try:

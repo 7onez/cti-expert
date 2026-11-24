@@ -12,6 +12,7 @@ python3 scripts/backend/backend.py status      # tier + $INTEL_HOME resolution
 python3 scripts/backend/intel.py list          # every dispatchable op
 python3 scripts/backend/intel.py cases         # what is in the case store
 python3 scripts/backend/intel.py api-usage     # metered credits spent
+python3 scripts/backend/intel.py api-usage report --yield   # what each vendor endpoint returned
 python3 scripts/proxy/proxy.py status          # egress proxy / rotation pool (if configured)
 ```
 

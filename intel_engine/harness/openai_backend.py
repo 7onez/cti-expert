@@ -269,7 +269,7 @@ def _params_schema(input_schema: dict, optional: Optional[dict] = None) -> dict:
     props = {k: {"type": _JSON_TYPE.get(v, "string")} for k, v in (input_schema or {}).items()}
     required = list(props.keys())
     for name, spec in (optional or {}).items():
-        extra = {k: v for k, v in spec.items() if k in ("type", "description", "enum")}
+        extra = {k: v for k, v in spec.items() if k in ("type", "description", "enum", "items")}
         if name in props:
             # A REQUIRED param keeps its declared type but still gains the description and — the
             # part that matters — the `enum`. censys.mode is required and accepts exactly six

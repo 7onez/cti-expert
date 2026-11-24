@@ -116,10 +116,10 @@ def dork(keyword, index="buckets"):
     return f'site:{index}.grayhatwarfare.com "{keyword}"'
 
 
-def _record(action, results, ok=True):
+def _record(action, results, ok=True, query=None):
     if api_usage:
         try:
-            api_usage.record("grayhatwarfare", action, credits=1, query=None,
+            api_usage.record("grayhatwarfare", action, credits=1, query=query,
                              results=results, ok=ok)
         except Exception:
             pass
@@ -241,7 +241,7 @@ def buckets(keyword, limit=20, exact=False, timeout=None):
             return dict(out, **err)
         rows = [{"id": b.get("id"), "bucket": b.get("bucket"), "fileCount": b.get("fileCount"),
                  "type": b.get("type")} for b in (data.get("buckets") or [])]
-        _record("buckets", len(rows), ok=True)
+        _record("buckets", len(rows), ok=True, query=keyword)
         return dict(out, results=(data.get("meta") or {}).get("results"), buckets=rows)
     return _memo(f"buckets|{keyword}|{limit}|{bool(exact)}", _go)
 
@@ -259,7 +259,7 @@ def files(keyword, limit=20, timeout=None):
             return dict(out, **err)
         rows = [{"filename": f.get("filename") or f.get("fullPath"), "bucket": f.get("bucket"),
                  "size": f.get("size"), "url": f.get("url")} for f in (data.get("files") or [])]
-        _record("files", len(rows), ok=True)
+        _record("files", len(rows), ok=True, query=keyword)
         return dict(out, results=(data.get("meta") or {}).get("results"), files=rows)
     return _memo(f"files|{keyword}|{limit}", _go)
 
@@ -304,7 +304,7 @@ def short_subdomains(apex, limit=None, timeout=None):
             if h == apex or h.endswith("." + apex):
                 seen[h] = (seen.get(h) or 0) + int(s.get("urlsCount") or 0)
         rows = [{"host": h, "urls": n} for h, n in sorted(seen.items(), key=lambda kv: -kv[1])]
-        _record("short_subdomains", len(rows), ok=True)
+        _record("short_subdomains", len(rows), ok=True, query=apex)
         return dict(out, results=len(rows), scanned=data.get("domainsCount"), subdomains=rows)
     return _memo(f"short_subdomains|{apex}|{limit}", _go)
 
@@ -336,7 +336,7 @@ def short_urls(hosts, limit=None, ext=None, timeout=None):
             return dict(out, **err)
         hs = set(want)
         rows = [_short_row(u) for u in (data.get("urls") or []) if str(u.get("subDomain") or "").lower() in hs]
-        _record("short_urls", len(rows), ok=True)
+        _record("short_urls", len(rows), ok=True, query=" ".join(want))
         return dict(out, results=data.get("urlsCount"), urls=rows)
     return _memo(f"short_urls|{','.join(want)}|{limit}|{ext or ''}", _go)
 
@@ -394,7 +394,7 @@ def short_handle(selector, limit=None, timeout=None):
                 hit = k2 == "telegram" and t2 == token
             if hit:
                 rows.append(_short_row(u))
-        _record("short_handle", len(rows), ok=True)
+        _record("short_handle", len(rows), ok=True, query=selector)
         return dict(out, results=len(rows), scanned=data.get("urlsCount"), urls=rows)
     return _memo(f"short_handle|{kind}|{token}|{limit}", _go)
 
@@ -441,7 +441,7 @@ def git_committers(selector, limit=None, timeout=None):
                 rows.append({"email": em, "name": u.get("name") or u.get("username") or "",
                              "username": u.get("username") or "", "repos": u.get("totalRepositories"),
                              "id": u.get("id")})
-        _record("git_committers", len(rows), ok=True)
+        _record("git_committers", len(rows), ok=True, query=selector)
         return dict(out, results=len(rows), scanned=(data.get("meta") or {}).get("results"),
                     committers=rows,
                     next="github_harvest each address — git author e-mails are unauthenticated")
@@ -520,7 +520,7 @@ def git_code(token, limit=20, verify=None, timeout=None):
                 r["verified"] = None if text is None else (tok.lower() in text.lower())
             else:
                 r["verified"] = None
-        _record("git_code", len(rows), ok=True)
+        _record("git_code", len(rows), ok=True, query=tok)
         return dict(out, results=(data.get("meta") or {}).get("results"), files=rows,
                     verified=sum(1 for r in rows if r["verified"]))
     return _memo(f"git_code|{tok}|{limit}|{verify}", _go)
@@ -554,7 +554,7 @@ def git_secrets(repo, timeout=None):
         rid = next((r.get("id") for r in (data.get("repositories") or [])
                     if _canon_repo(r.get("url")) == want), None)
         if rid is None:
-            _record("git_secrets", 0, ok=True)
+            _record("git_secrets", 0, ok=True, query=want)
             return dict(out, indexed=False, results=0, files=[])
         data, err = _call("git", "files", {"remote": rid, "limit": int(_lim("page_max"))}, timeout)
         if err:
@@ -567,7 +567,7 @@ def git_secrets(repo, timeout=None):
             row["tags"] = [t for t in row["tags"] if str(t).startswith("trufflehog_")]
             if row["tags"] or row["commits"]:
                 rows.append(row)
-        _record("git_secrets", len(rows), ok=True)
+        _record("git_secrets", len(rows), ok=True, query=want)
         return dict(out, indexed=True, repo_id=rid, files_total=(data.get("meta") or {}).get("results"),
                     results=len(rows), files=rows)
     return _memo(f"git_secrets|{want}", _go)

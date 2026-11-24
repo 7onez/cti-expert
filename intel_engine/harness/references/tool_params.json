@@ -569,6 +569,48 @@
           "description": "Run the HELD Telegram handle leads (@handle → numeric id + creation date, read-only resolve on the research account). Set true ONLY after showing the analyst the pending batch the previous run listed and getting an explicit yes. Off by default: the leads stay held and open."
         }
       },
+      "case_close": {
+        "note": {
+          "type": "string",
+          "description": "One line on why the case is closed (stored in state.json disposition.note)."
+        }
+      },
+      "watchlist": {
+        "mode": {
+          "type": "string",
+          "enum": ["list", "add", "rm", "run"],
+          "description": "list = show entries; add = new entry (needs kind + value); rm = remove by id; run = run every DUE entry once."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["brand", "domain", "case"],
+          "description": "mode=add: what the entry names — a brand keyword, a domain or a case id."
+        },
+        "value": {
+          "type": "string",
+          "description": "mode=add: the keyword, domain or case id (letters, digits, dot, underscore, hyphen)."
+        },
+        "sources": {
+          "type": "string",
+          "description": "mode=add: comma-separated sources (ct, impersonation, takedown, drift). Default: every source the kind allows."
+        },
+        "interval_hours": {
+          "type": "number",
+          "description": "mode=add: hours between runs (default from watchlist.json)."
+        },
+        "id": {
+          "type": "string",
+          "description": "mode=rm: the entry to remove. mode=run: run only this entry, now."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "mode=run: run every entry, due or not."
+        },
+        "allow_metered": {
+          "type": "boolean",
+          "description": "mode=run: let the lookalike source run its FOFA / urlscan sweeps (metered; gated like any paid call)."
+        }
+      },
       "case_reopen": {
         "seeds": {
           "type": "string",
@@ -1097,12 +1139,43 @@
         "as_of": {
           "type": "string",
           "description": "Answer as the KB held on this day (YYYY-MM-DD): only links whose source-stated validity covers it, else that had been observed by then. Use it to check a same-operator link was true at the time of the incident."
+        },
+        "domains": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "More domains to read in the SAME call (a list of strings): one `## <domain>` section each. More than the per-call limit is refused, not trimmed."
         }
       },
       "kb_entity": {
         "as_of": {
           "type": "string",
           "description": "Show only the facts/edges that held on this day (YYYY-MM-DD) — e.g. who was the registrant then, not now."
+        },
+        "values": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "More entities to read in the SAME call (a list of strings): one `## <value>` section each; a section cut for length is named in a closing `truncated:` line."
+        }
+      },
+      "reference_check": {
+        "values": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "More indicator strings / keywords to check in the SAME call (a list of strings)."
+        }
+      },
+      "which_cases": {
+        "artifacts": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "More domains or indicator strings to look up in the SAME call (a list of strings)."
+        }
+      },
+      "domain_verdict": {
+        "domains": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "More domains to get the prior verdict for in the SAME call (a list of strings)."
         }
       },
       "kb_query_shared": {
@@ -1134,6 +1207,10 @@
         "last": {
           "type": "integer",
           "description": "Also list the N most recent metered calls."
+        },
+        "yield": {
+          "type": "boolean",
+          "description": "Print per-endpoint failure / zero-result / repeat-query rates instead of the cost report."
         }
       },
       "case_scope": {

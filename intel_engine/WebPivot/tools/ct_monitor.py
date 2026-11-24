@@ -73,22 +73,31 @@ def save_state(path: str, state: dict) -> None:
     os.replace(tmp, path)
 
 
-def watch(patterns, state_path):
+def watch(patterns, state_path, status=None):
     """Poll each pattern; return (new_certs, baselined) where new_certs excludes those already
     seen. A pattern's first-ever run baselines and does NOT alert — but never on a degraded crt.sh:
     a partial baseline would make the certs it missed alert as "new" once crt.sh is back. A later
     degraded run still alerts on (and records) what the backups saw; a cert nobody saw stays unseen
-    and alerts when crt.sh returns."""
+    and alerts when crt.sh returns.
+
+    `status`, when a dict is passed, is filled per pattern with {ct_status, first_run, postponed,
+    certs}. It is the caller's only way to tell "nothing new" from "could not look": an empty
+    new_certs list is returned in both cases."""
     state = load_state(state_path)
     new_certs, baselined = [], []
     for pat in patterns:
         seen = set(state.get(pat, []))
         certs, crt_status, line, sources = poll(pat)
         first_run = pat not in state
+        if status is not None:
+            status[pat] = {"ct_status": crt_status, "first_run": first_run, "postponed": False,
+                           "certs": len(certs), "note": line}
         if crt_status == "degraded":
             print(f"[!] {pat}: {line}", file=sys.stderr)
             if first_run:
                 print(f"[!] {pat}: baseline postponed until crt.sh answers", file=sys.stderr)
+                if status is not None:
+                    status[pat]["postponed"] = True
                 continue
         fresh = [c for c in certs if not any(k in seen for k in _identities(c))]
         # keep the most recent 5000 ids per pattern so state doesn't grow unbounded
@@ -113,6 +122,10 @@ def main():
     w.add_argument("-f", "--file", help="file with one pattern per line")
     w.add_argument("--state", required=True, help="JSON state file (tracks seen cert ids)")
     w.add_argument("--json", action="store_true", help="emit new certs as JSON")
+    w.add_argument("--status-json", action="store_true",
+                   help="emit {\"new\": [...], \"patterns\": {pattern: {ct_status, first_run, "
+                        "postponed, certs, note}}} — for a caller that must tell 'nothing new' "
+                        "from 'crt.sh did not answer'")
     a = ap.parse_args()
 
     patterns = list(a.patterns)
@@ -123,12 +136,16 @@ def main():
     if not patterns:
         sys.exit("no patterns given (positional or -f FILE)")
 
-    new_certs, baselined = watch(patterns, a.state)
+    status = {}
+    new_certs, baselined = watch(patterns, a.state, status)
 
     for pat, n in baselined:
         print(f"[baseline] {pat}: recorded {n} existing cert(s) — will alert on new ones next run",
               file=sys.stderr)
 
+    if a.status_json:
+        print(json.dumps({"new": new_certs, "patterns": status}, indent=2, ensure_ascii=False))
+        return
     if a.json:
         print(json.dumps(new_certs, indent=2, ensure_ascii=False))
         return

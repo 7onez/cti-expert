@@ -206,7 +206,7 @@ def _denylist_search(api, key, label, timeout):
                   "limit": _DENYLIST_SEARCH_CFG.get("limit", 20)}
         s, r, e = api._request("GET", api.FEEDS, "/external/denylists/search", key,
                                params=params, timeout=timeout)
-        _record("denylist", e is None and (s or 0) < 400)
+        _record("denylist", e is None and (s or 0) < 400, query=label)
         return _norm(s, r, e)
     return _memo_shield("denylist", label, _fetch)
 
@@ -235,10 +235,10 @@ def _memo_shield(name, apex, fn):
         pass
     return val
 
-def _record(op: str, ok: bool):
+def _record(op: str, ok: bool, query=None):
     if api_usage is not None:
         try:
-            api_usage.record("chongluadao", op, credits=1 if ok else 0, ok=ok)
+            api_usage.record("chongluadao", op, credits=1 if ok else 0, ok=ok, query=query)
         except Exception:
             pass
 
@@ -265,7 +265,7 @@ def _checkwhois(api, key, host, timeout):
     """CLD checkwhois GET -> normalised dict, ledgered once."""
     s, r, e = api._request("GET", api.FEEDS, "/external/checkwhois", key,
                            params={"q": host}, timeout=timeout)
-    _record("checkwhois", e is None and (s or 0) < 400)
+    _record("checkwhois", e is None and (s or 0) < 400, query=host)
     return _norm(s, r, e)
 
 _WHOIS_SIGNAL_ATTR = "whois_has_signal"  # cld_api.whois_has_signal — canonical impl (#15)
@@ -312,7 +312,7 @@ def cld_domain(host: str, timeout: int = _DEFAULT_TIMEOUT, page_title: str = Non
         s, r, e = api._request("POST", api.FEEDS, "/external/checkurl", key,
                                    body={"url": url}, timeout=timeout)
         out["checkurl"] = _norm(s, r, e)
-        _record("checkurl", e is None and (s or 0) < 400)
+        _record("checkurl", e is None and (s or 0) < 400, query=url)
     except Exception as e:  # noqa: BLE001
         out["checkurl"] = {"error": str(e)[:200]}
     # 2) IoC analyzer (POST /api/v1/ioc/external/url) — Shield reputation
@@ -320,7 +320,7 @@ def cld_domain(host: str, timeout: int = _DEFAULT_TIMEOUT, page_title: str = Non
         s, r, e = api._request("POST", api.TI, "/api/v1/ioc/external/url", key,
                                body={"url": url}, timeout=timeout)
         out["ioc_url"] = _norm(s, r, e)
-        _record("ioc/url", e is None and (s or 0) < 400)
+        _record("ioc/url", e is None and (s or 0) < 400, query=url)
     except Exception as e:  # noqa: BLE001
         out["ioc_url"] = {"error": str(e)[:200]}
     # 3) Shield list modules, once per registrable apex. A 25-subdomain estate
@@ -337,7 +337,8 @@ def cld_domain(host: str, timeout: int = _DEFAULT_TIMEOUT, page_title: str = Non
              {"search": apex, "limit": 50}, False)):
         def _fetch(path=path, params=params, name=name):
             s, r, e = api._request("GET", api.TI, path, key, params=params, timeout=timeout)
-            _record(name, e is None and (s or 0) < 400)
+            _record(name, e is None and (s or 0) < 400,
+                    query=params.get("q") or params.get("search"))
             return _norm(s, r, e)
         try:
             block = _memo_shield(name, apex, _fetch)
@@ -423,13 +424,13 @@ def cld_email(email: str, timeout: int = 25) -> dict | None:
     try:
         s, r, e = api._request("POST", api.TI, "/api/v1/ioc/external/email", key,
                                body={"email": email}, timeout=timeout)
-        _record("ioc/email", e is None and (s or 0) < 400)
+        _record("ioc/email", e is None and (s or 0) < 400, query=email)
         out = _norm(s, r, e)
         if isinstance(out, dict):
             domain = email.split("@", 1)[-1]
             bs, br, be = api._request("GET", api.FEEDS, "/external/checkburneremail", key,
                                       params={"q": domain}, timeout=timeout)
-            _record("burner", be is None and (bs or 0) < 400)
+            _record("burner", be is None and (bs or 0) < 400, query=domain)
             out["feeds_burner"] = _norm(bs, br, be)
         return out
     except Exception as e:  # noqa: BLE001

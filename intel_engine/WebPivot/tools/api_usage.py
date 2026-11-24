@@ -17,6 +17,10 @@ labelled "estimated units" for the same reason.
 
 CLI:
   python3 api_usage.py report [--log PATH] [--case ID] [--since YYYY-MM-DD] [--last N]
+  python3 api_usage.py report --yield [--since YYYY-MM-DD] [--case ID] [--json]
+      what each provider endpoint RETURNED: failure, zero-result and repeat rates. Unscoped by
+      case it also rewrites route_yield.json beside the ledger (read by case_state.propose);
+      --no-save prints without writing it.
 """
 import argparse
 import collections
@@ -93,7 +97,7 @@ def _now():
 
 
 def record(provider, action, credits=1, query=None, results=None,
-           remaining=None, limit=None, ok=True, path=None):
+           remaining=None, limit=None, ok=True, path=None, cached=False):
     """Log one licensed-API call. Returns the record dict; never raises (best-effort append).
 
     `ok` means THE CALL SUCCEEDED — not that it returned results. Credits are zeroed when ok is
@@ -102,6 +106,10 @@ def record(provider, action, credits=1, query=None, results=None,
     flagging it as failed silently under-reports the month. Record emptiness with `results=0`
     instead. This exact confusion made the SerpApi ledger read 8 spent against an account that had
     really spent 12, and the monthly guard enforces its cap from this field.
+
+    `cached=True` marks an answer served from the cross-case cache (wp_respcache): no request was
+    made, so pass credits=0. The row exists so the saving is visible; the yield report counts it
+    apart from the vendor's calls.
     """
     rec = {"ts": _now(), "provider": provider, "action": action,
            "credits": (credits if ok else 0),
@@ -113,6 +121,8 @@ def record(provider, action, credits=1, query=None, results=None,
            # nothing for anything that wasn't the top-level collector itself.
            "case": _ctx.get("case") or os.environ.get("INTEL_CASE"),
            "skill": _ctx.get("skill") or os.environ.get("INTEL_SKILL")}
+    if cached:
+        rec["cached"] = True
     with _lock:
         _session.append(rec)
         try:
@@ -141,9 +151,14 @@ def rl_headers(resp):
 
 
 def session_summary():
+    """Per provider: vendor calls and credits this run. An answer served from the cross-case
+    cache is not a call; it is counted under `cached`."""
     agg = collections.OrderedDict()
     for r in _session:
-        a = agg.setdefault(r["provider"], {"calls": 0, "credits": 0})
+        a = agg.setdefault(r["provider"], {"calls": 0, "credits": 0, "cached": 0})
+        if r.get("cached"):
+            a["cached"] += 1
+            continue
         a["calls"] += 1
         a["credits"] += (r.get("credits") or 0)
     return agg
@@ -160,8 +175,118 @@ def print_session_summary(file=sys.stderr):
         rem = next((r["remaining"] for r in reversed(_session)
                     if r["provider"] == prov and r.get("remaining") is not None), None)
         remtxt = f" · quota remaining≈{rem}" if rem is not None else ""
+        remtxt += f" · {a['cached']} answer(s) from the cross-case cache" if a.get("cached") else ""
         print(f"  {prov:<10} {a['calls']:>3} call(s) · ~{a['credits']} credit(s){remtxt}", file=file)
     print(f"  {'TOTAL':<10} ~{total} estimated units   (ledger: {_log_path()})", file=file)
+
+
+# ---------------------------------------------------------------------------- yield
+YIELD_FILE = "route_yield.json"
+
+
+def yield_path(log=None):
+    """The measured yield table lives beside the ledger it was computed from (MEMORY/ by default),
+    so a redirected $API_USAGE_LOG never overwrites the real measurement."""
+    return os.path.join(os.path.dirname(log or _log_path()), YIELD_FILE)
+
+
+def _rate(n, d):
+    return round(n / d, 4) if d else None
+
+
+def yield_table(rows):
+    """Per `provider:action`: calls, credits, failed calls, and two rates with their own
+    denominators — `zero_rate` over the answered rows that recorded a result count (`counted`),
+    `dup_rate` over the answered rows that recorded a query (`with_query`), a duplicate being an
+    (action, query) pair already answered earlier in `rows`. A rate is None when nothing was
+    recorded to compute it from: an endpoint that never logs `results` has no yield figure.
+    A row served from the cross-case cache is no vendor call: it is counted in `cached` only."""
+    table = collections.OrderedDict()
+    seen = set()
+    for r in rows:
+        key = f"{r.get('provider')}:{r.get('action')}"
+        t = table.setdefault(key, {"calls": 0, "credits": 0, "failed": 0, "counted": 0, "zero": 0,
+                                   "with_query": 0, "duplicates": 0, "cached": 0})
+        if r.get("cached"):
+            t["cached"] += 1
+            continue
+        t["calls"] += 1
+        c = r.get("credits")
+        t["credits"] += c if isinstance(c, (int, float)) and not isinstance(c, bool) else 0
+        if r.get("ok") is False:
+            t["failed"] += 1
+            continue
+        res = r.get("results")
+        if isinstance(res, (int, float)) and not isinstance(res, bool):
+            t["counted"] += 1
+            t["zero"] += 1 if res == 0 else 0
+        q = r.get("query")
+        if q:
+            t["with_query"] += 1
+            if (key, q) in seen:
+                t["duplicates"] += 1
+            seen.add((key, q))
+    for t in table.values():
+        t["fail_rate"] = _rate(t["failed"], t["calls"])
+        t["zero_rate"] = _rate(t["zero"], t["counted"])
+        t["dup_rate"] = _rate(t["duplicates"], t["with_query"])
+    return table
+
+
+def write_yield(table, rows, path, since=None):
+    """Persist the table with the ledger span it covers. Atomic; returns the path or None."""
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        stamps = sorted(s for s in (r.get("ts") for r in rows) if isinstance(s, str) and s)
+        doc = {"generated": _now(),
+               "ledger": {"rows": len(rows), "first": stamps[0] if stamps else None,
+                          "last": stamps[-1] if stamps else None, "since": since},
+               "routes": table}
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=1, ensure_ascii=False)
+        os.replace(tmp, path)
+        return path
+    except Exception:  # noqa: BLE001 — a report must never fail on its own side file
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return None
+
+
+def _pct(v):
+    return "    -" if v is None else f"{100 * v:4.0f}%"
+
+
+def _yield_report(rows, a):
+    table = yield_table(rows)
+    keep = not a.case and not a.no_save
+    saved = write_yield(table, rows, yield_path(a.log), since=a.since) if keep else None
+    if a.json:
+        print(json.dumps({"rows": len(rows), "saved": saved, "routes": table}, ensure_ascii=False))
+        return 0
+    scope = f" (case={a.case})" if a.case else ""
+    scope += f" (since {a.since})" if a.since else ""
+    print(f"# Vendor yield{scope} — {len(rows)} ledger rows\n")
+    print(f"{'provider:action':<38} {'calls':>6} {'credits':>8} {'fail':>5} "
+          f"{'zero':>5} {'(n)':>6} {'repeat':>6} {'(n)':>6} {'cached':>6}")
+    for key, t in sorted(table.items(), key=lambda kv: -kv[1]["calls"]):
+        print(f"{key:<38} {t['calls']:>6} {t['credits']:>8.0f} {_pct(t['fail_rate'])} "
+              f"{_pct(t['zero_rate'])} {t['counted']:>6} {_pct(t['dup_rate']):>6} {t['with_query']:>6} "
+              f"{t['cached']:>6}")
+    print("\nzero = answered calls that returned nothing, over the calls that recorded a result "
+          "count (n).\nrepeat = an (action, query) already answered earlier in this window (the pages "
+          "of one paginated search count as repeats), over the "
+          "calls that recorded a query (n).\ncached = answers served from the cross-case cache: no "
+          "request, no credit, not in any other column.\nA dash means the endpoint records no such field.")
+    if saved:
+        print(f"\nsaved {saved}")
+    elif a.case:
+        print("\n(case-scoped: route_yield.json not rewritten)")
+    elif a.no_save:
+        print("\n(--no-save: route_yield.json not rewritten)")
+    return 0
 
 
 # ---------------------------------------------------------------------------- CLI report
@@ -173,10 +298,18 @@ def _report(argv):
     ap.add_argument("--case", default=None)
     ap.add_argument("--since", default=None, help="YYYY-MM-DD (inclusive)")
     ap.add_argument("--last", type=int, default=0, help="also print the last N individual calls")
+    ap.add_argument("--yield", dest="yield_", action="store_true",
+                    help="per-endpoint failure / zero-result / repeat rates instead of the cost report")
+    ap.add_argument("--json", action="store_true", help="with --yield: machine-readable output")
+    ap.add_argument("--no-save", action="store_true",
+                    help="with --yield: do not rewrite route_yield.json")
     a = ap.parse_args(argv)
-    if not os.path.exists(a.log):
-        print(f"no ledger at {a.log} — no licensed-API calls recorded yet.")
+
+    def _nothing(msg):       # --yield --json stays machine-readable when there is nothing to report
+        print(json.dumps({"rows": 0, "saved": None, "routes": {}}) if a.yield_ and a.json else msg)
         return 0
+    if not os.path.exists(a.log):
+        return _nothing(f"no ledger at {a.log} — no licensed-API calls recorded yet.")
     rows = []
     for line in open(a.log, encoding="utf-8"):
         line = line.strip()
@@ -192,8 +325,12 @@ def _report(argv):
             continue
         rows.append(r)
     if not rows:
-        print("no matching records.")
-        return 0
+        return _nothing("no matching records.")
+    if a.yield_:
+        return _yield_report(rows, a)
+    # an answer served from the cross-case cache is not a vendor call: counted apart, below
+    n_cached = sum(1 for r in rows if r.get("cached"))
+    rows = [r for r in rows if not r.get("cached")]
     by_prov = collections.OrderedDict()
     by_day = collections.defaultdict(int)
     by_case = collections.defaultdict(int)
@@ -214,7 +351,9 @@ def _report(argv):
     scope = f" (case={a.case})" if a.case else ""
     scope += f" (since {a.since})" if a.since else ""
     print(f"# Licensed-API usage{scope} — {len(rows)} calls, ~{total} estimated units "
-          "(not a bill — see the cost classes below)\n")
+          "(not a bill — see the cost classes below)"
+          + (f"\n# plus {n_cached} answer(s) served from the cross-case cache: no request, no units"
+             if n_cached else "") + "\n")
     print("By cost class:")
     for cls, k in by_class.items():
         print(f"  {cls:<10} {k['calls']:>4} calls · ~{k['credits']:>4} units")

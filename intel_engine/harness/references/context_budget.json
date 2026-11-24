@@ -34,5 +34,10 @@
     "max_total_chars": 360000,
     "max_tool_result_chars": 24000,
     "keep_recent_rounds": 6
+  },
+  "batch": {
+    "_comment": "Lookup tools that accept a LIST (kb_entity values, kb_cluster/domain_verdict domains, reference_check values, which_cases artifacts) answer with one `## <value>` section per item. `max_values` is the most items one call may carry; more is refused, never trimmed, because a silently shortened list reads as 'the rest had no record'. Set it to 1 to switch batching off. `min_share_chars` is the least room one section is given however many share the budget; a section cut to fit is named in a closing `truncated:` line so the model knows which value to look up alone.",
+    "max_values": 12,
+    "min_share_chars": 600
   }
 }

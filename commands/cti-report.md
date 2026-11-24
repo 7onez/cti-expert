@@ -48,7 +48,7 @@ python3 scripts/backend/intel.py report <assessment.md> <out-stem> --pdf --docx
 wrote; `house-report` composes that markdown for you from `assessment.json`/`assessment.md`, `whois/`,
 `raw/`, `clusters.json` and the ledgers. For the **flat-JSON deliverable bundle** — interactive HTML,
 the IOC/selector exports (STIX/CSV/JSONL/TXT), and the chart-rich dashboard DOCX/PDF for cases with no
-case dir — build the report JSON deterministically first, then run the generators (see SKILL.md §8):
+case dir — build the report JSON deterministically first, then run the generators (see `handbook/report-export.md`):
 
 ```bash
 uv run "$SKILL_DIR/scripts/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"

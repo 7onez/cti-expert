@@ -1,0 +1,38 @@
+{
+  "_comment": "WALLET-DRAINER PATTERN markers (wp_extract.extract_web3 -> artifacts.web3). The scan reads the page and every JavaScript file already stored in the capture bundle; it makes no request. Verdict: `none` (no wallet-connect library), `web3-site` (a connect library only — every dApp has one), `suspected-drainer` (a connect library AND at least one approval-harvest call AND no legitimate-application marker). It is an UNTESTED HEURISTIC until an evaluation card exists (docs/evaluation-hygiene.md): every rendering reads 'suspected drainer pattern (untested heuristic)', and it never raises a risk score on its own. Tune by evidence: a legitimate application flagged here earns a legitimate-application marker; a drainer missed earns an approval-call or connect entry. Markers are public library and method names — never a case's contract address or host.",
+
+  "connect_libs": {
+    "_comment": "Wallet-connect library -> case-insensitive substrings that show the page loads it (package scope, CDN path, global name). One hit names the library in `connect_libs`. Add a library when a case shows a connect stack this list misses; keep each needle specific enough that ordinary prose never contains it.",
+    "entries": {
+      "walletconnect": ["@walletconnect/", "walletconnectprovider", "walletconnect.com"],
+      "web3modal": ["web3modal", "@web3modal/"],
+      "reown-appkit": ["@reown/appkit"],
+      "rainbowkit": ["@rainbow-me/rainbowkit"],
+      "connectkit": ["connectkit"],
+      "web3-onboard": ["@web3-onboard/"],
+      "wagmi": ["wagmi"],
+      "ethers": ["ethers.min.js", "ethers.umd", "ethers@"],
+      "web3js": ["web3.min.js", "web3@"],
+      "solana-wallet-adapter": ["@solana/wallet-adapter", "solana-wallet-adapter"],
+      "injected-provider": ["eth_requestaccounts"]
+    }
+  },
+
+  "approval_calls": {
+    "_comment": "Method names that hand a third party the right to move the victim's assets (unlimited NFT approval, allowance increase, Permit2 signature transfer, blind raw signing). Matched as an exact, case-sensitive identifier (never inside a longer name: eth_sign does not match eth_signTypedData_v4). A library that merely defines one of these (a full ABI bundle) can produce a false positive — that is why the verdict also needs a connect library and no legitimate-application marker, and why it stays labelled untested.",
+    "values": ["setApprovalForAll", "increaseAllowance", "permitTransferFrom",
+               "permitBatchTransferFrom", "eth_sign"]
+  },
+
+  "legit_markers": {
+    "_comment": "Case-insensitive substrings that mark the build of an established decentralised application (its own SDK package scope). A page carrying one is held at `web3-site` even with an approval call, because real applications legitimately request approvals. A cloned front-end can carry these too: the marker lowers false positives at the cost of missed clones, and the reasons list says which marker held the verdict back.",
+    "values": ["@uniswap/", "@aave/", "@opensea/", "@1inch/", "@pancakeswap/", "@sushiswap/",
+               "@curvefi/", "@lido-sdk/"]
+  },
+
+  "contracts": {
+    "_comment": "Contract-address harvest around approval calls: EVM addresses within `window_chars` characters of an approval-call hit are listed in web3.contracts (at most `max_contracts`). On a `suspected-drainer` page they are drainer-contract CANDIDATES — rung wallet.drainer_contract (kit): drainer services share contracts across affiliates, so a shared contract is lineage, never ownership, and ingest records it as a fact, never a wallet edge. On a `none` or `web3-site` page the list is informational only: an address there may be the operator's payee wallet and keeps its owner edge (wp_extract.drainer_contracts).",
+    "window_chars": 2000,
+    "max_contracts": 20
+  }
+}

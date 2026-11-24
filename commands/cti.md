@@ -25,13 +25,15 @@ If it is already attributed, **report that and stop** unless the user asks to ex
 
 ## Step 1 — Match the target and auto-run its route
 
+**MUST read [`handbook/technique-activation.md`](../handbook/technique-activation.md) before the Acquire phase of any `/case` or `/cti` run.**
+
 Classify `$ARGUMENTS` before invoking a tool. In a full `/cti`, run **every applicable
 matching leg below without a second invocation or an opt-in prompt**; a seed is not complete
 after its first successful lookup. For each result, classify newly discovered identifiers
 and repeat Step 2c. `--quick` is the explicit one-pass exception (see Flags). Deduplicate
 by `(tool, normalized selector)` and use the case memo where available. Do not send a name,
 brand, favicon, JARM or certificate fingerprint to a file-hash/IoC endpoint.
-Use SKILL.md §Technique Activation Matrix for the rest of the target-matched techniques
+Use the activation matrix in `handbook/technique-activation.md` for the rest of the target-matched techniques
 (e.g. `/icp` for domains, MSFTRecon only on M365 DNS, `/cn-corp` on a company/USCC,
 `/iban` on payment details, and `/hash-id` on discovered hashes). A checkmark means
 **eligible when its input/precondition exists**, not permission to send every source
@@ -442,7 +444,7 @@ ran — say so and run `intel.py enrich <CASE-ID> --leak-only`, never report "no
 
 **Deliver — build the report bundle deterministically (do NOT hand-author the report JSON).** Once
 the case has an `assessment.md`, turn it into the presentation bundle via the converter, then the
-generators (see SKILL.md §8 for the full flow and the format prompt):
+generators (see `handbook/report-export.md` for the full flow and the format prompt; contract in SKILL.md §8):
 ```bash
 uv run "$SKILL_DIR/scripts/build_report_data.py" "$INTEL_HOME/cases/<CASE-ID>" -o "CTI-REPORT-<CASE-ID>-<DATE>.json"
 # after any analyst merge onto the JSON — the CSV must carry the imported rows
@@ -452,7 +454,7 @@ This emits the exact flat schema the generators consume — operator/registrant 
 selectors, the full domain estate as network indicators, findings/timeline/connections, and the
 §2.5 exclusion set in `ioc_exclude` (so no excluded CDN/shared IP, registrar, or nameserver leaves
 as an IOC). Merge any analyst-supplied evidence onto that JSON before rendering. **Before the HTML
-export, confirm it (SKILL.md §8 Step C):** run `python3 "$SKILL_DIR/scripts/cti_archify.py" <REPORT.json>
+export, confirm it (`handbook/report-export.md` Step C):** run `python3 "$SKILL_DIR/scripts/cti_archify.py" <REPORT.json>
 --plan`, state the path plus what Auto (compact apex-level fold) and Force (`CTI_ARCHIFY=force`, the widest
 25-node grid) would embed, and let the analyst pick Auto / Force / `CTI_ARCHIFY=0` / skip; then quote the
 generator's `Blueprint (Archify):` line back. `--yolo` skips the prompt (Auto).

@@ -75,7 +75,8 @@
   "mutating_tools": {
     "_comment": "Tools that write to shared, cross-case state (the knowledge base, the benign/signal reference, the operator registry, a MISP instance). Never blocked, but flagged in the ledger: when a later case turns out to have clustered on a bad fingerprint — or when someone asks which indicators we put on the sharing platform and when — this is how you find the run and the round that did it.",
     "values": ["kb_ingest", "reference_add", "case_reopen", "case_loop", "misp_push",
-               "misp_publish", "corpus_search", "case_approve", "quarry", "evidence_import"]
+               "misp_publish", "corpus_search", "case_approve", "quarry", "evidence_import",
+               "case_close", "watchlist"]
   },
 
   "redact_args": {
@@ -121,13 +122,13 @@
   },
 
   "arg_metered_tools": {
-    "_comment": "Tools that spend ONLY when an argument is truthy: tool -> argument name. search_pivot builds dork URLs offline by default; with run=true it executes them, DuckDuckGo first (free) and SerpApi Google (1 metered search per query) for any query the free path could not answer. Counted as metered only then, and free_only=true keeps it on the free path (it is in free_only_capable_tools).",
-    "entries": {"search_pivot": "run", "quarry": "start"}
+    "_comment": "Tools that spend ONLY when an argument is truthy: tool -> argument name. search_pivot builds dork URLs offline by default; with run=true it executes them, DuckDuckGo first (free) and SerpApi Google (1 metered search per query) for any query the free path could not answer. Counted as metered only then, and free_only=true keeps it on the free path (it is in free_only_capable_tools). watchlist runs keyless monitors unless allow_metered=true, which adds the FOFA / urlscan lookalike sweeps.",
+    "entries": {"search_pivot": "run", "quarry": "start", "watchlist": "allow_metered"}
   },
 
   "operator_only_tools": {
-    "_comment": "The analyst's consent step for the cross-type loop. Denied whenever the call comes from a harness PHASE (collect/correlate/verify/assess/plan…), allowed only interactively — otherwise the loop could approve its own metered pivots.",
-    "values": ["case_approve"]
+    "_comment": "The analyst's own actions. Denied whenever the call comes from a harness PHASE (collect/correlate/verify/assess/plan…), allowed only interactively. case_approve is the consent step for the cross-type loop — otherwise the loop could approve its own metered pivots. case_close ends a case, notice_draft writes notices addressed to third parties, and watchlist decides what is monitored from now on: a phase may recommend any of them, never do them.",
+    "values": ["case_approve", "case_close", "notice_draft", "watchlist"]
   },
 
   "free_only_capable_tools": {

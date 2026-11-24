@@ -83,10 +83,10 @@ def quake_configured() -> bool:
     return ENABLED and bool(quake_key())
 
 
-def _record(action, results, ok=True):
+def _record(action, results, ok=True, query=None):
     if api_usage:
         try:
-            api_usage.record("quake", action, credits=1, query=None, results=results, ok=ok)
+            api_usage.record("quake", action, credits=1, query=query, results=results, ok=ok)
         except Exception:
             pass
 
@@ -143,13 +143,13 @@ def favicon_reverse(mmh3, timeout=25):
     body = {"query": 'favicon.hash:"%s"' % mmh3, "start": 0, "size": _PAGE_SIZE, "latest": True}
     data, err = _post(EP["search"], body, timeout=timeout)
     if err:
-        _record("favicon", 0, ok=False)
+        _record("favicon", 0, ok=False, query=str(mmh3))
         return err
     code = (data or {}).get("code")
     if code not in (0, "0"):                 # API-level error (bad token, no points, etc.)
         return {"skipped": "Quake: %s (code %s)" % ((data or {}).get("message") or "error", code)}
     hosts = _hosts_from_data((data or {}).get("data") or [])
-    _record("favicon", len(hosts), ok=True)
+    _record("favicon", len(hosts), ok=True, query=str(mmh3))
     return {"total": len(hosts), "hosts": hosts}
 
 

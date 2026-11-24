@@ -91,6 +91,25 @@ disagrees with the stated bank country is malformed or invented.
 VietQR payloads decode with any EMVCo TLV parser — the account number and BIN are in plain
 text inside the string, so a screenshot of a QR yields a hard selector once decoded.
 
+### The collector does this automatically
+
+Every QR payload `pivot_extract` decodes is offered to the EMVCo parser
+(`intel_engine/WebPivot/tools/wp_emvqr.py`, or `python3 wp_emvqr.py '<payload>'` by hand):
+
+- **Structure:** 2-digit tag, 2-digit length, value; merchant-account templates (26–51) nest the
+  same structure. VietQR/NAPAS is template 38 with GUID `A000000727`; inside it, sub-tag 01 is a
+  nested template whose 00 is the acquirer **BIN** and whose 01 is the **account number**.
+- **Checksum:** tag 63 is a CRC-16/CCITT-FALSE over the payload up to and including `6304`. A
+  payload whose CRC fails is reported (`crc_ok: false`) and **never** becomes a selector — a
+  damaged decode would otherwise mint a stranger's account number.
+- **Output:** `artifacts.payment_accounts` = `[{rail, bank_id, bank_name, account, country,
+  source}]` for CRC-valid payloads on a listed rail. The merchant (account-holder) name stays in
+  the raw `artifacts.emv_qr` record only — never in the account list, a selector or a KB key.
+- **Rails and banks are data:** `WebPivot/references/payment_rails.json` maps the GUID to the rail
+  and where the BIN/account sit, and BIN → bank name. The bank map ships **empty** — no BIN list
+  has been verified for it — so `bank_name` stays null until an analyst adds BINs from the
+  scheme's own published member list. Never guess a BIN.
+
 ---
 
 ## 5. The account-reuse pivot
@@ -108,8 +127,12 @@ IBAN / account no.
 Search the account **with and without formatting spaces** — pages render it both ways, and
 search engines index the literal string.
 
-Confidence: an exact account match across two properties is **HIGH (85)** for same-operator —
-comparable to a shared registrant email. Same *bank* only is worthless; do not cluster on it.
+Confidence: an exact account match across two properties is a **high-value lead**, comparable in
+investigative weight to a shared registrant email — but it is **not** an owner link. Mule
+accounts are rented and resold across crews, so the engine stores a bank account at the **kit**
+rung (`rungs.json` `bank_account`): two hosts sharing one account stay in different clusters
+until an independent owner-rung artifact (registrant contact, analytics id, exact certificate)
+joins them. Same *bank* only is worthless; do not cluster on it.
 
 ---
 
@@ -120,6 +143,15 @@ comparable to a shared registrant email. Same *bank* only is worthless; do not c
 - **Orchestrator:** `iban` is a typed identifier with its own edges (validate → issuing bank;
   account-string reuse → domains/emails/persons). See
   [`engine/pivot-orchestration.md`](../engine/pivot-orchestration.md).
+- **Typed selector:** `bank_account` (`intel_engine/tools/selector_types.py`). KB key
+  `bank:<country>:<bank-id>:<account>` (VietQR: `bank:vn:<BIN>:<account>`; the account keeps its
+  letters and digits, only spacing and separators are dropped), and IBANs as `bank:<cc>:iban:<IBAN>`
+  — validated by `scripts/iban_analyze.py`'s own check, never a second copy, and only when the
+  country's IBAN length is known and matches; a domain is never read as an IBAN. Ingest writes it
+  as kit-rung **facts** (`payment_account` on the domain; `kind`, `seen_on`, `rail` on the key) —
+  never an edge.
+- **Across cases:** `which_cases bank:vn:<BIN>:<account>` (`tools/case_index.py`; any spacing,
+  or a bare IBAN) lists every case whose collected pages carried the account.
 - **Role:** an account found on a scam page is an **actor** selector; one found in a victim
   statement is a **victim** selector. Set `subjects[].role` so the report separates them.
 - **Exposure scoring:** a validated receiving account on a confirmed scam property is a

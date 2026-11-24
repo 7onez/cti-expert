@@ -499,7 +499,8 @@ def harvest(target: str, *, max_repos: int = MAX_REPOS_DEFAULT, max_contributors
     out["api"] = {"calls": http.calls, "rate_limit_remaining": http.remaining, "errors": http.errors[:10]}
     if api_usage is not None:
         try:
-            api_usage.record("github", http.calls, note=target, credits=0)
+            api_usage.record("github", "harvest", credits=0, query=target,
+                             results=len(out["identities"]))
         except Exception:
             pass
     return out

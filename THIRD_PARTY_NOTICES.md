@@ -204,6 +204,7 @@ None of these is committed to the repository.
 | diagrams | <https://github.com/mingrammer/diagrams> · unpinned | MIT, Copyright (c) 2020 MinJae Kwon | Cloud-architecture figure. It is provisioned on demand with `uv run --with diagrams`. | `scripts/cti_cloud_arch.py` |
 | book-to-skill | <https://github.com/virgiliojr94/book-to-skill> · v1.4.0 | MIT, Copyright (c) 2025 virgiliojr94 | Maintainer-side PDF/EPUB extractor for research fold-ins. It lives outside the tracked tree. | `docs/research-sources.md` (Method, Next fold-in) |
 | Hayabusa · Takajō · Suzaku | <https://github.com/Yamato-Security/hayabusa> · <https://github.com/Yamato-Security/takajo> · <https://github.com/Yamato-Security/suzaku> | AGPL-3.0 | Named only, as the engines that run the indexed rules on the consumer's own logs. cti-expert never bundles or runs them. | `hunt_rules_yamato.json` (`runs_with`) |
+| phish.report IOK (Indicator Of Kit) rules | <https://github.com/phish-report/IOK> · unpinned (`main`; checked at commit `142f762`, 2026-11-24) | ODbL-1.0 (upstream LICENSE) | Public phishing-kit rule set. **Not redistributed:** `scripts/kit_rules_import.py update` downloads it on the analyst's command into the git-ignored `intel_engine/cache/kit_rules/iok.json` and converts the rules the kit matcher can express. The ODbL attribution is printed on every update and stored in the cache file. A database made from it and shared outside the machine would fall under ODbL share-alike. | `scripts/kit_rules_import.py`, `intel_engine/WebPivot/tools/wp_iok.py` |
 
 ---
 

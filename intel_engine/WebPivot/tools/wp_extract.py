@@ -32,6 +32,7 @@ from wp_hash import *  # noqa
 from wp_net import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa: E402 — reference DATA in references/*.json
 from wp_crypto_refs import reference_label, token_contract  # noqa: E402 — public crypto constants
+import wp_emvqr  # noqa: E402 — EMVCo merchant QR parser (payment QR → bank account)
 
 # DATA: references/generic_labels.json — base-rate floors for the structural fingerprints.
 # Below these a fingerprint is universal boilerplate and identifies nobody, so emitting it
@@ -675,6 +676,150 @@ def extract_qr(html: str, base_url: str = "", ua: str = DEFAULT_UA,
     if undecoded:
         out["undecoded_images"] = uniq(undecoded)[:15]
     return out
+
+# --- EMVCo payment QR → typed bank account (VietQR and its siblings) -----------------------
+# A QR payload that is an EMVCo merchant-presented code carries the receiving bank and account in
+# plain text. wp_emvqr parses it and verifies the CRC; only a CRC-valid payload on a rail listed in
+# references/payment_rails.json becomes a payment account. The merchant (account-holder) name may
+# be a real person — a mule or a victim — so it stays in the raw `emv_qr` artifact only and never
+# enters `payment_accounts`, a selector or a KB key.
+def extract_payment_accounts(qr_codes):
+    """(payment_accounts, emv_qr) from extract_qr's payloads.
+    payment_accounts = [{rail, bank_id, bank_name, account, country, source}] (CRC-valid only);
+    emv_qr = every parsed EMVCo payload (crc_ok, merchant fields, raw tags) with its source."""
+    accounts, raw, seen = [], [], set()
+    for item in (qr_codes or {}).get("payloads") or []:
+        parsed = wp_emvqr.parse((item or {}).get("payload"))
+        if not parsed:
+            continue
+        src = item.get("source")
+        raw.append(dict(parsed, source=src))
+        if not (parsed.get("crc_ok") and parsed.get("rail") and parsed.get("account")):
+            continue                       # a damaged decode never mints a stranger's account
+        # the EMVCo account field is alphanumeric: drop only whitespace/separators, never letters —
+        # stripping them would mint a different (digit-only) account. selector_types agrees.
+        account = re.sub(r"[^0-9A-Za-z]", "", parsed["account"])
+        if not account:
+            continue
+        key = (parsed["rail"], parsed.get("acquirer_id"), account)
+        if key in seen:
+            continue
+        seen.add(key)
+        accounts.append({"rail": parsed["rail"], "bank_id": parsed.get("acquirer_id"),
+                         "bank_name": wp_emvqr.bank_name(parsed["rail"], parsed.get("acquirer_id")),
+                         "account": account, "country": parsed.get("country"), "source": src})
+    return accounts, raw
+
+
+# --- web3 surface: wallet-connect libraries, approval-harvest calls, drainer verdict ----------
+# DATA: references/drainer_markers.json. Fallback: no marker at all, so every verdict is `none`.
+_DM_FALLBACK = {"connect_libs": {}, "approval_calls": [], "legit_markers": [],
+                "contracts": {"window_chars": 2000, "max_contracts": 20}}
+_DM_REF = load_ref(ref_path(__file__, "drainer_markers.json"), _DM_FALLBACK)
+WEB3_CONNECT_LIBS = {str(k): [str(n).lower() for n in v if n]
+                     for k, v in (_DM_REF.get("connect_libs") or {}).items() if isinstance(v, list)}
+WEB3_APPROVAL_CALLS = [str(x) for x in (_DM_REF.get("approval_calls") or []) if x]
+WEB3_LEGIT_MARKERS = [str(x).lower() for x in (_DM_REF.get("legit_markers") or []) if x]
+_DM_CONTRACTS = _DM_REF.get("contracts") or _DM_FALLBACK["contracts"]
+_APPROVAL_RX = (re.compile(r"(?<![A-Za-z0-9_$])(" + "|".join(map(re.escape, WEB3_APPROVAL_CALLS))
+                           + r")(?![A-Za-z0-9_$])") if WEB3_APPROVAL_CALLS else None)
+_EVM_RX = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
+
+# How every report renders the verdict. The drainer verdict is an UNTESTED HEURISTIC until an
+# evaluation card exists (docs/evaluation-hygiene.md), and it says so wherever it is shown.
+WEB3_VERDICT_LABELS = {
+    "none": "no wallet-connect surface",
+    "web3-site": "web3 site (wallet-connect library only)",
+    "suspected-drainer": "suspected drainer pattern (untested heuristic)",
+}
+
+
+def web3_verdict_label(verdict) -> str:
+    return WEB3_VERDICT_LABELS.get(verdict or "none", WEB3_VERDICT_LABELS["none"])
+
+
+def web3_verdict(connect_libs, approval_calls, legit_markers) -> str:
+    """`suspected-drainer` = a connect library AND an approval-harvest call AND no legitimate-
+    application marker; `web3-site` = a connect library otherwise; `none` = no connect library."""
+    if not connect_libs:
+        return "none"
+    return "suspected-drainer" if approval_calls and not legit_markers else "web3-site"
+
+
+def drainer_contracts(web3) -> set:
+    """Lower-cased addresses to treat as rung wallet.drainer_contract — ONLY on a page whose verdict
+    is `suspected-drainer`. `web3.contracts` merely lists EVM addresses near an approval-harvest
+    string; on a `none` / `web3-site` page one of them can be the operator's PAYEE wallet, and
+    demoting it would drop an owner link (a missed link). Ingest and pivot_extract both ask here."""
+    w3 = web3 if isinstance(web3, dict) else {}
+    if w3.get("verdict") != "suspected-drainer":
+        return set()
+    return {str(c).lower() for c in (w3.get("contracts") or []) if c}
+
+
+_LEGIT_HOLD_REASON = "a legitimate-application marker holds the verdict at web3-site"
+
+
+def _web3_result(libs, calls, legit, contracts, reasons):
+    verdict = web3_verdict(libs, calls, legit)
+    reasons = [r for r in reasons if r != _LEGIT_HOLD_REASON]
+    if verdict == "web3-site" and calls and legit:
+        reasons.append(_LEGIT_HOLD_REASON)
+    return {"connect_libs": sorted(libs), "approval_calls": sorted(calls),
+            "legit_markers": sorted(legit), "contracts": list(contracts), "verdict": verdict,
+            "label": web3_verdict_label(verdict), "reasons": reasons}
+
+
+def extract_web3(html: str, js_files=()):
+    """Scan the page and the already-captured JavaScript (`js_files` = [(source, text)]) for a
+    wallet-drainer pattern. Makes no request. Returns {connect_libs, approval_calls,
+    legit_markers, contracts, verdict, label, reasons} — see web3_verdict for the rule."""
+    try:
+        window = max(0, int(_DM_CONTRACTS.get("window_chars", 2000)))
+        cap = max(0, int(_DM_CONTRACTS.get("max_contracts", 20)))
+    except (TypeError, ValueError):
+        window, cap = 2000, 20
+    libs, calls, legit, contracts, seen = {}, {}, {}, [], set()
+    for src, text in [("page", html or "")] + [(s, t) for s, t in (js_files or ()) if t]:
+        low = text.lower()
+        for lib, needles in WEB3_CONNECT_LIBS.items():
+            if lib not in libs and any(n in low for n in needles):
+                libs[lib] = src
+        for mk in WEB3_LEGIT_MARKERS:
+            if mk not in legit and mk in low:
+                legit[mk] = src
+        if _APPROVAL_RX is None:
+            continue
+        for m in _APPROVAL_RX.finditer(text):
+            calls.setdefault(m.group(1), src)
+            if len(contracts) >= cap:
+                continue
+            for addr in _EVM_RX.findall(text[max(0, m.start() - window):m.end() + window]):
+                if addr.lower() not in seen and valid_crypto_address("eth", addr):
+                    seen.add(addr.lower())
+                    contracts.append(addr)
+                    if len(contracts) >= cap:
+                        break
+    reasons = ([f"wallet-connect library {lib} ({src})" for lib, src in libs.items()]
+               + [f"approval-harvest call {c} ({src})" for c, src in calls.items()]
+               + [f"legitimate-application marker {mk} ({src})" for mk, src in legit.items()])
+    return _web3_result(libs, calls, legit, contracts, reasons)
+
+
+def merge_web3(a, b):
+    """Union two web3 blocks (seed page + crawled pages + captured JS) and judge the union again,
+    so a merged block never carries a verdict its own lists contradict."""
+    a, b = a or {}, b or {}
+    def _u(key):
+        return list(dict.fromkeys(list(a.get(key) or []) + list(b.get(key) or [])))
+    contracts, seen = [], set()
+    for c in _u("contracts"):
+        if c.lower() not in seen:
+            seen.add(c.lower())
+            contracts.append(c)
+    reasons = _u("reasons")
+    return _web3_result(_u("connect_libs"), _u("approval_calls"), _u("legit_markers"),
+                        contracts, reasons)
 
 def fetch_assetlinks(host: str, timeout: int = 10, ua: str = DEFAULT_UA, proxy: str = None):
     """Fetch /.well-known/assetlinks.json (Android App Links). Returns the declared

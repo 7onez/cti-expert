@@ -1,6 +1,8 @@
 {{scope}}
 ADVERSARIAL VERIFICATION. You just proposed the same-operator cluster(s) for case `{{case}}` (domains: {{seed_csv}}). Now switch sides and try HARD to REFUTE your own attribution. A link that survives a genuine attempt to break it is defensible; one you never attacked is not. Use ONLY the provided tools; reason only — do NOT emit the final JSON yet.
 
+FETCH FIRST, IN BATCHES: before attacking anything, call reference_check ONCE with every shared indicator (`value` + the rest as `values`) and kb_entity ONCE with the same list. One call takes at most {{batch_max}} values: a longer list is refused, so split it into calls of that size first. A section marked truncated was cut for length — look that one up alone. Then attack each link with what came back; single follow-up lookups are fine.
+
 For EACH same-operator link you drew (each shared artifact tying two domains together), attack it:
 - **reference_check** the shared hash/keyword — a BENIGN verdict KILLS the link (it is a common logo / CDN / CSS / parking artifact, not an operator signal).
 - **kb_entity** (and, only if needed, kb_query_shared) the indicator to gauge PREVALENCE — an indicator shared by many unrelated domains is noise, not an operator link: managed-DNS nameservers, parking favicons, registrar-privacy emails, platform-wide GA/GTM, default-template hashes. Over-prevalent → REFUTED.

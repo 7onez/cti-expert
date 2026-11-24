@@ -34,6 +34,7 @@ except Exception:
     api_usage = None
 from wp_refs import ref_path, load_ref  # noqa — endpoint templates are reference DATA (RULE 3)
 import wp_http  # noqa: E402 — the one transport
+import wp_respcache  # noqa: E402 — cross-case reuse of the few answers that are safe to reuse
 
 def _floor_to(t):
     """Raise a per-call timeout to CALL_TIMEOUT (the ceiling). Used on the requests/Playwright paths
@@ -657,7 +658,31 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
     the search hit). Returns {'score','malicious','brands','categories','tags','engines','labels',
     'result'} or None. Works on a normal key; a Pro key adds the engine verdicts (`verdicts.engines`
     — e.g. urlscan-ml score/100) and result `labels` (e.g. visual.brandai), which are evidence for the
-    ledger at zero extra cost. NEVER raises."""
+    ledger at zero extra cost. NEVER raises.
+
+    The verdict of a scan that finished days ago no longer changes, so it is reused across cases
+    (wp_respcache, policy `urlscan.result`): a hit makes no request and is ledgered with zero
+    credits and `cached`. A recent scan is never kept - engines may still add their verdict - and
+    a keyed answer with no engine verdict is kept only for the short lifetime: it may come from a
+    key without the Pro product, and an upgraded key must not be served it for a week."""
+    key = _secret("URLSCAN_API_KEY")
+    variant = wp_respcache.variant_for(key)          # answers of different keys are stored apart
+    hit = wp_respcache.lookup("urlscan", "result", uuid, variant=variant)
+    if hit is not None:
+        if api_usage:
+            api_usage.record("urlscan", "result", credits=0, query=uuid, cached=True)
+        return hit.value
+    answered, out, scanned_at = _urlscan_verdict_live(uuid, ua, timeout)
+    if answered:
+        incomplete = out is None or (bool(key) and not out.get("engines"))
+        wp_respcache.store("urlscan", "result", uuid, out, empty=incomplete, variant=variant,
+                           subject_time=scanned_at)
+    return out
+
+
+def _urlscan_verdict_live(uuid, ua, timeout):
+    """(answered, verdict | None, scan time). `answered` is False only when the call failed; an
+    answered scan that carries no verdict field at all is (True, None, …)."""
     headers = {}
     key = _secret("URLSCAN_API_KEY")
     if key:
@@ -677,9 +702,11 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
     if v is None:
         if api_usage:
             api_usage.record("urlscan", "result", credits=0, query=uuid, ok=False)
-        return None
+        return False, None, None
     if api_usage:
         api_usage.record("urlscan", "result", credits=1, query=uuid, remaining=_rem, limit=_lim)
+    task = data.get("task") if isinstance(data.get("task"), dict) else {}
+    scanned_at = task.get("time")
     ov = v.get("overall") or {}
 
     def _bn(b):
@@ -701,11 +728,11 @@ def urlscan_verdict(uuid: str, ua: str = DEFAULT_UA, timeout: int = 30):
                    "tags": [str(x) for x in (eng.get("tags") or []) if x][:8]}
     labels = sorted({str(x) for x in (data.get("labels") or []) if x}) if isinstance(data.get("labels"), list) else []
     if not (ov or brands or engines or labels):
-        return None
-    return {"score": ov.get("score"), "malicious": ov.get("malicious"), "brands": brands,
-            "categories": ov.get("categories") or [], "tags": ov.get("tags") or [],
-            "engines": engines, "labels": labels,
-            "result": f"https://urlscan.io/result/{uuid}/"}
+        return True, None, scanned_at
+    return True, {"score": ov.get("score"), "malicious": ov.get("malicious"), "brands": brands,
+                  "categories": ov.get("categories") or [], "tags": ov.get("tags") or [],
+                  "engines": engines, "labels": labels,
+                  "result": f"https://urlscan.io/result/{uuid}/"}, scanned_at
 
 
 def urlscan_hostname(host: str, ua: str = DEFAULT_UA, timeout: int = 30, max_pages: int = None,

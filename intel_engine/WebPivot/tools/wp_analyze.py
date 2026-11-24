@@ -286,6 +286,8 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         elif _low.startswith("http") and self_host and self_host not in _low:
             trackers.setdefault("qr_url", []).append(_p)
     trackers = {k: uniq(v) for k, v in trackers.items()}
+    # EMVCo payment QR (VietQR …) → typed bank accounts; the holder name stays in `emv_qr` only.
+    payment_accounts, emv_qr = extract_payment_accounts(qr_codes)
 
     cookie_names = []
     if "set-cookie" in headers:
@@ -310,6 +312,10 @@ def analyze(source: str, html: str, base_url: str, headers: dict, ua: str,
         "cnames": cnames,
         "app_downloads": app_downloads,
         "qr_codes": qr_codes,
+        "payment_accounts": payment_accounts,
+        "emv_qr": emv_qr,
+        # wallet-connect surface of the page itself; pivot_extract re-scans with the captured JS
+        "web3": extract_web3(html),
         "assets": assets,
         "docmeta": docmeta,
         "trackers": trackers,

@@ -31,6 +31,7 @@ import urllib.error
 from wp_common import *  # noqa
 from wp_refs import ref_path, load_ref  # noqa — reference DATA lives in references/*.json
 import wp_http  # noqa: E402 — the one transport
+import wp_respcache  # noqa: E402 — cross-case reuse of the few answers that are safe to reuse
 try:
     import api_usage                      # licensed-API credit ledger
 except Exception:
@@ -303,11 +304,19 @@ def urlscan_field_query(field: str, value: str) -> str:
     return f'{f}:"{esc}"'
 
 
-def urlscan_count(query: str, timeout: int = 30, free_only: bool = False):
+def urlscan_count(query: str, timeout: int = 30, free_only: bool = False, case_dir: str = None,
+                  cache_above: int = None):
     """Cheap hit-count probe: size=1 search, read `total`. Returns int or None. Never raises.
 
     `free_only=True` forces the keyless path (no API-Key header) so a no-spend posture never
-    burns a Pro search credit on a count probe. Each call is ledgered via api_usage."""
+    burns a Pro search credit on a count probe. Each call is ledgered via api_usage.
+
+    `cache_above=N` lets a count be reused across cases (wp_respcache, policy `urlscan.count`),
+    but ONLY a count greater than N, where N is the caller's auto-run threshold. A count at or
+    below it decides that a pivot runs without approval, so it is always asked fresh; a larger
+    one only sends the pivot to approval, and a stale large count can err that way alone. A hit
+    makes no request and is ledgered with zero credits and `cached`. `case_dir` scopes the cache
+    for a caller with no $WP_CASE_DIR. Without `cache_above` nothing is cached."""
     q = str(query or "").strip()
     if not q:
         return None
@@ -315,6 +324,13 @@ def urlscan_count(query: str, timeout: int = 30, free_only: bool = False):
     key = None if free_only else _secret("URLSCAN_API_KEY")
     if key:
         headers["API-Key"] = key
+    variant = wp_respcache.variant_for(key)          # a key can see scans the keyless index hides
+    reuse = isinstance(cache_above, int) and not isinstance(cache_above, bool)
+    hit = wp_respcache.lookup("urlscan", "count", q, variant=variant, case_dir=case_dir) if reuse else None
+    if hit is not None and isinstance(hit.value, int) and hit.value > cache_above:
+        if api_usage:
+            api_usage.record("urlscan", "count", credits=0, query=q, results=hit.value, cached=True)
+        return hit.value
     api = f"https://urlscan.io/api/v1/search/?q={quote(q)}&size=1"
     rem = lim = None
     r = wp_http.request(api, headers=headers, timeout=timeout)
@@ -330,16 +346,21 @@ def urlscan_count(query: str, timeout: int = 30, free_only: bool = False):
         if api_usage:
             api_usage.record("urlscan", "count", credits=0, query=q, ok=False)
         return None
-    if api_usage:
-        api_usage.record("urlscan", "count", credits=1, query=q, remaining=rem, limit=lim)
     total = data.get("total") if isinstance(data, dict) else None
-    if isinstance(total, int):
-        return total
-    try:
-        return int(total)
-    except (TypeError, ValueError):
-        results = (data or {}).get("results") if isinstance(data, dict) else None
-        return len(results) if isinstance(results, list) else None
+    exact = isinstance(total, int) and not isinstance(total, bool)
+    if not exact:
+        try:
+            total = int(total)
+            exact = True
+        except (TypeError, ValueError, OverflowError):
+            results = (data or {}).get("results") if isinstance(data, dict) else None
+            total = len(results) if isinstance(results, list) else None   # a floor, not a count
+    if api_usage:
+        api_usage.record("urlscan", "count", credits=1, query=q, results=total,
+                         remaining=rem, limit=lim)
+    if reuse and exact and total > cache_above:
+        wp_respcache.store("urlscan", "count", q, total, variant=variant, case_dir=case_dir)
+    return total
 
 
 def urlscan_similar(host: str, timeout: int = 30, limit: int = 60, free_only: bool = False):

@@ -73,20 +73,13 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > username/phone/person targets.
 >
 > **Historical origin-IP sweep (automatic, offline join).** Every A/AAAA record any source ever saw
-> for a collected host or subdomain — CIRCL/HackerTarget passive DNS, SecurityTrails history,
-> Validin, urlscan's hostname index, Webamon servers, passive-SSL cert→IP, keyless urlscan scans — is
-> merged into one dated `origin_history` block on the domain pivot and classified: **CDN / WAF /
-> DDoS-protection edge** (CIDR index *plus* the ASN / org the source named: Cloudflare, Akamai,
-> Imperva, Sucuri …), **parking**, **bogon**, **ambiguous** (DDoS-Guard / StackPath — they sell both
-> proxying and servers), or **origin** (customer Google Cloud VMs included). The loop and the harness
-> then collect each **origin** and **ambiguous** IP as an IPPivot seed (ASN + abuse contact,
-> ports/banners, PTR, self-hosted MX, passive-SSL certificates, co-hosted domains — keyless
-> reverse-IP under `--free-only`). Rails: an address last seen **before the current registration**
+> for a collected host or subdomain is merged into one dated `origin_history` block, classified
+> (CDN / WAF edge, parking, bogon, ambiguous, origin), and each **origin** and **ambiguous** IP is
+> collected as an IPPivot seed. Rails: an address last seen **before the current registration**
 > is the previous owner's (lead, never collected); the **current co-tenants** of a
 > `historical`/`undated` origin or of an `ambiguous` network are held as dated leads, never seeds or
 > KB edges; a recent origin's co-tenants pass the usual shared-hosting guard and stay
-> neighbour-rung. The box's own IP lookup is checked again after collection, so an edge or
-> DDoS-Guard network the history could not name still holds its tenants. On a **cloud/VPS** network
+> neighbour-rung. On a **cloud/VPS** network
 > (Google Cloud, DigitalOcean, OVH, Hetzner, Vultr …) up to **10** co-tenants are queued and linked
 > automatically — counted the same way by the frontier and the KB, with the reverse index's own total
 > so a truncated list never hides a big shared host; above that **every** domain goes to
@@ -97,12 +90,8 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > is the evidence: exactly the approved sites are seeded, linked, and may bind the cluster with the
 > case host past both the shared-hosting bound and the clustering cap of 8 domains per indicator;
 > automatically linked sites keep that cap. Every unapproved site on the box stays a held lead,
-> never automatic. Every held origin-sweep lead lists all its domains. Without the CDN range
-> cache an address is `undetermined` and never collected.
-> Caps and the edge/ambiguous/parking lists live in
-> `intel_engine/WebPivot/references/origin_history.json`; the assessment renders a *Historical
-> Origin IPs* table (with tenancy overlap for shared boxes), the house report a *Historical origin
-> hosting* table, and `/origin-history <case>` prints the dated history on demand.
+> never automatic. Without the CDN range cache an address is `undetermined` and never collected.
+> Sources, classes, caps and report tables: [`handbook/case-pipeline-detail.md`](handbook/case-pipeline-detail.md#historical-origin-ip-sweep).
 >
 > **⭐ ChongLuaDao is the first-party premium upgrade.** With `CHONGLUADAO_API_KEY` set
 > (`/apikeys set chongluadao <KEY>`), Acquire/Enrich fold CLD's own datasets into `/scam-check`,
@@ -113,13 +102,10 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > pivot. Full catalog + AEAD placement: [`connectors/chongluadao-api.md`](connectors/chongluadao-api.md).
 >
 > **Archive IOC harvest runs by default too.** For domain/URL targets the Acquire phase also runs
-> `wayback_harvest.py <domain> --indicators` (add `--urlscan` when `URLSCAN_API_KEY` is set),
-> harvesting **emails, phones, crypto wallets, tracking/verification IDs, SaaS-operator IDs, and
-> socials from the *entire* Wayback history** — not just the live page — with first-seen/last-seen
-> per selector. It writes case-schema `indicators[]` to `<case>/raw/harvest.indicators.json`, which
-> merge into the case and flow into the **auto-saved IOC bundle** at Deliver. This is the step that
-> recovers selectors a network later scrubbed — across the whole snapshot corpus, not just the live page.
+> `wayback_harvest.py <domain> --indicators`, harvesting selectors from the whole Wayback history
+> into `<case>/raw/harvest.indicators.json` and on into the auto-saved IOC bundle.
 > Passive by construction — only web.archive.org (+ urlscan.io if keyed), never the target.
+> Detail: [`handbook/case-pipeline-detail.md`](handbook/case-pipeline-detail.md#archive-ioc-harvest).
 >
 > **The five v2.6 commands are in the pipeline too — no flags.** `/icp` runs for every
 > domain/URL/org target (and an IP's resolved hostname); `/cn-corp`, `/iban` and `/hash-id`
@@ -144,28 +130,18 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > deterministic pipeline in **reuse mode** (`--no-collect`) — one command, a complete case dir, and
 > nothing touches the target again:
 >
-> 1. Write each host's already-collected pivot JSON to `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/<host>.json`
->    and the host list to an absolute `<CASE-ID>-seeds.txt`, both **anchored at the engine root**
->    (`ROOT=$SKILL_DIR/intel_engine`) — never a CWD-relative path.
-> 2. `intel.py pipeline open <CASE-ID> <abs-seeds.txt> --no-collect` — `--no-collect` skips the live
->    fetch and runs the *rest of the existing pipeline* over the raw you just wrote: ingest →
->    prior-overlap (`/recall`) → risk (`/risk`) → shared cluster seeds → `clusters.json` →
->    `case_graph.json` → ICD-203 `assessment.md`. Every step is a KB/local read: zero egress, zero
->    metered calls.
-> 3. In a full `/cti` (not `--quick`), run `intel.py enrich <CASE-ID>` next. It reads stored
->    raw pivots, performs matching third-party identity/OSINT lookups, checkpoints results
->    in `cases/<CASE-ID>/enrichment/` (including `index.json`), and prints recorded credit
->    units per leg. `--free-only`/`no_spend` leave metered leads OPEN for a later full run;
->    passive posture forbids direct target contact, not third-party metered lookups. This
->    phase has third-party egress and can spend credits, unlike the reuse-mode handoff.
+> The three handoff steps are in [`handbook/case-pipeline-detail.md`](handbook/case-pipeline-detail.md#deep-pipeline-handoff-steps):
+> write the collected pivots, run `intel.py pipeline open <CASE-ID> <abs-seeds.txt> --no-collect`
+> (zero egress, zero metered calls), then in a full `/cti` run `intel.py enrich <CASE-ID>`
+> (third-party egress, may spend credits). Write each host's already-collected pivot JSON to
+> `$SKILL_DIR/intel_engine/cases/<CASE-ID>/raw/<host>.json` and the host list to an absolute
+> `<CASE-ID>-seeds.txt`, both **anchored at the engine root** (`ROOT=$SKILL_DIR/intel_engine`) —
+> never a CWD-relative path.
 >
-> **The persisted case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` — `raw/`, `shared.txt`,
-> `clusters.json`, `case_graph.json`, `assessment.md` — NOT the current working directory**, and it
-> is a COMPLETE case that `intel.py pipeline status <CASE-ID>` accepts (not the partial dir a hand-rolled
-> op sequence would leave). `<CASE-ID>` is the same id as the report filenames (mint
-> `CASE-YYYYMMDD-NN` when none is given). Its cluster/risk/assessment fold back into the auto-saved
-> report. Tier 3 (stateless), or a person/username/phone target with no host seeds → the handoff is
-> **skipped silently** and the tier noted; broad collection + report are unaffected.
+> **The persisted case lands at `$SKILL_DIR/intel_engine/cases/<CASE-ID>/` — NOT the current working
+> directory** — as a complete case `intel.py pipeline status <CASE-ID>` accepts, with the same
+> `<CASE-ID>` as the report filenames. Tier 3, or a target with no host seeds, skips the handoff
+> silently and notes the tier. Detail: [`handbook/case-pipeline-detail.md`](handbook/case-pipeline-detail.md#persisted-case-location).
 >
 > **A collecting run never starts without the analyst's go-ahead.** `/case`'s handoff stays
 > `--no-collect`, and `/cti`'s default engine — the cross-type harness loop (`intel.py cti
@@ -206,10 +182,9 @@ Run `/progress` at any point to see which phase you're in and what's pending.
 > → no escalation and the deterministic result stands.
 >
 > **Self-contained & self-resolving.** `/backend` resolves to **SELF** (in-repo) — no external
-> setup. The bundled installer (`scripts/install.{sh,ps1}`) provisions the deep layer; or by hand: `uv venv && uv pip install -r requirements.txt` (harness SDK/MCP + IntelGraph
-> renderers; the collector + KB + deterministic pipeline are stdlib and need none). An explicit
-> `$INTEL_HOME` still overrides for a shared external KB. Full architecture, the op map, and the
-> evidence-envelope schema: [`connectors/intel-backend.md`](connectors/intel-backend.md).
+> setup, and an explicit `$INTEL_HOME` overrides it for a shared external KB. Install steps and
+> pointers: [`handbook/case-pipeline-detail.md`](handbook/case-pipeline-detail.md#self-contained--self-resolving);
+> architecture and op map: [`connectors/intel-backend.md`](connectors/intel-backend.md).
 
 ---
 
@@ -576,200 +551,212 @@ T1 `capability_check`), `/impersonate` (T2 `impersonate`, T1 `impersonation_hunt
 
 Commands grouped by AEAD phase.
 
-### Acquire
+### Command index
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/case [target]` | Full pipeline — runs every applicable technique (**alias of `/cti`**) **T2:** `intel.py case <seed>` (= `pipeline`) | `/case example.com` |
-| `/sweep [target]` | Multi-vector recon on any target type **T2:** `intel.py sweep <target>` (= `pipeline`) | `/sweep @username` |
-| `/query [subject]` | Builds 12–15 advanced search operator queries **T2:** `intel.py query <indicator>` | `/query example.com` |
-| `/username [handle] [--offline]` | Enumerate handle across 3000+ platforms **T2:** `intel.py username <handle>`. **T1:** `username_enum` — HYPOTHESES, not findings. Also emits `numeric_suffix_hints`: a trailing YY / YYYY / DDMM / MMDD / YYYYMMDD read as a **possible** birth year or date fragment (rung `hint` — could be a jersey number, graduation or account year); never record one as a DOB. `--offline` derives the hints with no provider request | `/username johndoe` |
-| `/google-account [email\|gaia-id]` | Google-account leads through an installed **GHunt** and the analyst's own `ghunt login` research session (never cookies/tokens passed in): Gaia ID, public profile name/photo, Google **Maps contributions** URL + counts (places visited, not residence), public Calendar, Play Games, services, personal vs Workspace. Not set up → setup steps; a Gaia ID alone still yields the Maps URL. Leads only (RULE 5). **T2:** `intel.py google-account <email> --json [--dry-run]`. **T1:** `google_account` | `/google-account operator@example.com` |
-| `/telegram [phone\|@user\|t.me link]` | Telegram from the analyst's **research account** (Telethon; `intel.py telegram login` run by the analyst in a terminal; `TELEGRAM_API_ID`/`_HASH` in `.env`). `phone <E164>` → the account registered to that number via contact import then delete — **briefing first, `--confirm-import` / `confirm=true` only after the analyst approves THIS lookup** (logged on the research account, rate-limited; FloodWait stops the run). `resolve <@user\|t.me link\|invite\|-100id>` → id, usernames (incl. collectible), title, participants, restriction reasons, about — no import, invites never joined; **briefing first, `--confirm` / `confirm=true` only after the analyst approves** (it runs on the research account). `resolve … --messages [N]` (MCP `messages=N`, default off; bare flag = `references/telegram.json` → `messages.default_n`, clamped to `messages.max_n` 500) also reads the **dates** of up to N recent posts of a **public** channel/group (never joined, nothing sent; invites/private chats not read) as `operator_events` `{when UTC, kind post\|message, source telegram, host t.me/<handle>, url}` — no text, sender id or phone kept; forwarded, service and scheduled rows dropped with a count; FloodWait stops with a partial set; with `--case` the rows land in `cases/<case>/telegram/` and feed `/case-timeline --tempo`. `age <@user\|t.me link\|user id> …` → numeric **user id + account creation date**: a user/bot is dated from its id (isotonic curve over public id→date anchors in `references/telegram.json` → `id_date_anchors`; date + range + `error_days` + confidence; a numeric id is dated offline, no session, no confirm; a @username / link needs `--confirm` like `resolve`), a channel/group by Telegram's own `date`. Every user row from `resolve`/`phone` carries the same `created_estimate`. An estimate is a range, not a registration record; the id dates the account, not the current holder of a resold @username. Every row is a lead: a phone→account match proves registration, not identity; "not found" may be a privacy setting. **T2:** `intel.py telegram …`. **T1:** `telegram_lookup` | `/telegram resolve @example_channel` |
-| `/reverse-image [url\|file]` | Where else does this picture appear? sha256 + aHash/dHash + EXIF, Yandex / Bing Visual / Google Lens / TinEye links, and Yandex's keyless "sites containing this image" list (with Wayback hints). A URL query sends that URL to Yandex (`--links-only` avoids it); a **local file is uploaded only with `--confirm-upload` / `confirm=true`** after the briefing. PimEyes / FaceCheck.ID are manual links only. Hits are leads — image reuse is not identity; "blocked" is not a negative. **T2:** `intel.py reverse-image <target> --json`. **T1:** `reverse_image` | `/reverse-image https://example.com/avatar.jpg` |
-| `/phone [number]` | Carrier, line type, reputation, public associations, **infostealer exposure** (Hudson Rock); **VN scam-phone reports (ChongLuaDao)** when keyed **T2:** `intel.py phone +<E164>`. **T1:** `phone_osint` — carrier/line-type NOT determined. For **+84** numbers it adds Zalo deep links (`zalo.me/0<nsn>`, `zalo.me/84<nsn>`) and `prefix_allocation` — the network the prefix was **originally** allocated to, with a ported caveat (never the carrier); reverse the number to registered companies with `/vn-corp --by-phone`. Account existence on the number (caller-ID names, registered platforms): `/osint-industries phone +<E164>` (1 credit) | `/phone +84901234567` |
-| `/vn-corp [mst\|company]` | Keyless **Vietnamese business registry**: MST tax code or company name → name, tax code, legal representative, address, phone, status, registration date, each field with its source URL. Mirrors: doanhnghiep.biz, thuvienphapluat.vn, masothue.com, hsctvn.com; a page whose tax code differs from the query is `unmatched`, and a mirror behind a challenge or redirecting off-site is reported as that mirror's error. `--solve-cf` (+ `--flaresolverr URL` / `$FLARESOLVERR_URL`, optional `--proxy`) retries Cloudflare-walled mirrors — slow, opt-in: masothue first through the optional **CloakBrowser** search-box step (masothue serves a **decoy company** to direct search URLs; set up with `cloakbrowser login`), then FlareSolverr, then a Chromium render; each reports `cf_retry {attempted, ok, via, reason}`. thuvienphapluat.vn blocks datacenter IPs outright — it needs a residential `--proxy`. **Reverse:** `--by-phone <num>` → companies whose *registered* contact phone is the number (verified on the record page; a number on 3+ companies flags `shared_number` — agent/accountant); `--by-person "<full name>"` → companies where that name is legal representative — **homonym candidates** unless `--corroborate "province=…,address=…,phone=…"` matches on the same record (`linked: true`). Registry rows are leads, never edges (RULE 5). **T2:** `intel.py vn-corp <query> --json [--solve-cf]`. **T1:** `vn_corp` | `/vn-corp --by-phone 0900000000` |
-| `/email-deep [email]` | Accounts, breach history, infrastructure. When keyed, this command itself searches Hudson Rock, ZoneCruncher, IntelX (one stealer-log search), OSINT Industries (account existence), and WhoisXML reverse-WHOIS (preview, then purchase only if the count is not bulk). It does not buy WHOIS history. HIBP only if `HIBP_API_KEY` is set **T2:** `intel.py email-deep <email>` | `/email-deep u@domain.com` |
-| `/subdomain [domain]` | CT logs, brute-force, passive enumeration; flags admin/sensitive subdomains (`admin`,`adm`,`kef`,`ador`,`panel`…) per `handbook/admin-endpoint-indicators.md` **T2:** `intel.py subdomain <domain>` (keyless certspotter + hackertarget + crt.sh; names any source that was down) · `intel.py subenum <apex>` (subfinder auto-keyed from `.env`, amass, assetfinder, findomain → `cases/<id>/subenum/<apex>.json`). **T1:** `subdomain_enum` — the case-persisting form; live names are queued for the next collection round by `case_frontier` | `/subdomain example.com` |
-| `/breach-deep [email]` | Multi-source breach lookup — Hudson Rock + ZoneCruncher fire when keyed; ChongLuaDao when keyed. IntelX is the separate `/intelx` step, not this command **T2:** `intel.py breach-deep <email>`. **T1:** `deep_profile` (mode=breach) | `/breach-deep u@domain.com` |
-| `/traffic [domain]` | Traffic estimation, ranking, audience data **T2:** `intel.py traffic <domain>`. **T1:** `traffic_rank` — Tranco only; no paid-panel estimates | `/traffic example.com` |
-| `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics **T2:** `intel.py visitors <url>`. **T1:** `pivot_extract` (trackers) | `/visitors example.com` |
-| `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) **T2:** `intel.py techstack <url>`. **T1:** `pivot_extract` (tech_fingerprint) | `/techstack example.com` |
-| `/competitors [domain]` | Competitor & related site discovery **[unimplemented]** | `/competitors example.com` |
-| `/secrets [target]` | Exposed credentials in repos and paste sites **T2:** `intel.py secrets <target>`. **T1:** `github_osint` (secrets=true) — code search needs auth, so queries are EMITTED | `/secrets github.com/org` |
-| `/grayhatwarfare [mode] [selector]` | **GrayHatWarfare** (needs `GRAYHATWARFARE_API_KEY`; keyless → the `site:` dork). Three corpora, every hit **EXPOSURE or a LEAD, never a same-operator edge**: open buckets/files; the **shortener corpus** (long URLs goo.gl/bit.ly/tinyurl expanded to, discovered 2017–2025 — historical, never proof a URL is live): `short-subdomains <apex>`, `short-urls <host,host>` (hidden paths, documents, ref/invite params → `url_paths` patterns), `short-handle <t.me/h \| @h \| wa.me/n>`; the **git corpus**: `git-committers <email \| self-hosted mail domain>` (managed mail refused; author e-mails are self-asserted → confirm with `/github-osint`), `git-code <token>` (only raw-verified hits on github/gitlab/bitbucket = same KIT), `git-secrets <owner/repo>` (TruffleHog tags, never the secret). `pipeline open` auto-fires `exposure` per apex (≤ 50 shortener hosts, ≤ 1000 URLs; loop: `--full` only; never `--free-only`/`no_spend`) → `cases/<id>/grayhatwarfare/` + the assessment's *Exposure* section; the shortener hosts also feed `subdomain_enum`. The cross-type loop proposes `ghw.git_code` (tracker ids, wallets, distinctive tokens), `ghw.git_committers` (e-mails) and `ghw.short_handle` (Telegram/WhatsApp) as **metered routes — always in the round's approval proposal**. **T2:** `intel.py grayhatwarfare exposure <CASE> <apex>` · `intel.py grayhatwarfare lookup <mode> <selector> --case <CASE>` · `intel.py buckets <mode> <selector>` (stdout only) · `intel.py corpus-search ghw.<route> <selector> --case <CASE> --origin-type <type>`. **T1:** `grayhatwarfare` · `corpus_search` | `/grayhatwarfare short-handle t.me/example_channel` |
-| `/github-osint [target]` | GitHub user/org/repo recon: profiles, repos, code search, commits, forks. **Deterministic committer-identity harvest built in** — `wp_github.py <login|org|owner/repo|commit URL>` reads each repository's history and fetches `<commit>.patch`, whose `From:` line is git's own record of the author name + e-mail (personal mailbox, company address, or the `<id>+<login>@users.noreply.github.com` form that binds a user id to a login and exposes a **former login** after a rename). Sampling: >10 commits → **first 2 + last 2** (founder + current maintainer), else every commit. For an **organisation**: about-profile (e-mail, website, socials, location), public members, top contributors' profile selectors, then every repo. Rails: fork-only identities are upstream authors (never pivots), bots dropped, a commit e-mail identifies the committer, not the repo owner. Output is a pivot JSON `kb_ingest` joins on the `email` node. **T2:** `intel.py github <target>` (the harvest) · `intel.py github-osint <target>` (profile + repos + commit-author e-mails, keyless 60 req/h, rate-limit state always reported). **T1:** `github_harvest` (case-writing harvest) · `github_osint` (quick recon) | `/github-osint github.com/org/repo` |
-| `/cld [target]` ⭐ | **ChongLuaDao first-party premium connector** (`scripts/cld/cld_api.py`, needs `CHONGLUADAO_API_KEY`). **Now also wired into the deterministic `pipeline open`**: `wp_cld.py` runs per collected domain host in `enrich_live` — the denylist `checkurl` verdict + IoC-URL analyzer land in `live_results["cld"]` and ingest as **reputation FACTS** (`cld_verdict`/`cld_denylisted`/`cld_reputation_score`, never a cluster edge; an empty-evidence label is flagged, not adopted), and for **`.vn` hosts CLD WHOIS is the PRIMARY source** (WhoisXML has no .vn coverage; RDAP/port-43 fall back) so the Domain Summary registrar/registrant/dates fill in. **No per-call credit** → runs even under `--free-only`/`no_spend`, like Validin/Webamon; keys are **rate-limited** (TI 10/s · 100/min · 10k/day — short-window 429s are waited out, a day-window 429 is reported, `usage.rate_limit` shows what is left); CLD fetches the target server-side (posture-safe). Auto-routes any indicator (url/domain/ip/hash/email/phone/asn/CVE/.onion/t.me handle, and `bank:<digits>` → VN bank-account holder name + bank; non-indicators are skipped, never a blind call) to CLD's own datasets: URL verdict vs a ~20M denylist, deep **AI URL analysis** (risk 1–10 + findings), IoC verdict+evidence, denylist search, brand-protection lookalikes (SQL-like `--where`), the full **data-leak module** (aggregate preview, machines, stolen/exposed creds, cookies, breaches, internal documents, full-export — async start→poll), ransomware victims/groups/press/SEC filings/decryptors, CVE/KEV, threat actors + channels + forum usernames, dark-web incidents (IOCs + MITRE), ClickFix/PhaaS/Telegram/defacements/underground/seized markets, STIX/MISP feeds (`--all` follows `X-Next`) and TAXII 1.x/2.1, webhook management. Full OpenAPI parity (78 operations) — see the op table. Your client connects **only to CLD, never to the target**; CLD fetches server-side. **5-h per-call timeout ceiling** (`--timeout`; default = shared `CTI_CALL_TIMEOUT`: env → `.env` → `references/timeouts.json` → 18000s); **403/resource-404 → skip, not fail**. See `connectors/chongluadao-api.md` | `/cld https://scam-site.top` |
-| `/threat-check [target]` | IP/domain/URL/hash threat intelligence — **ChongLuaDao IoC verdict + evidence** (registration, reputation, threat feeds/reports) when keyed **T2:** `intel.py threat-check <indicator>`. **T1:** `threat_check` | `/threat-check 185.1.1.1` |
-| `/scam-check [domain]` | Phishing/scam/malicious domain check — upgraded by **ChongLuaDao** `checkurl` (20M-URL denylist verdict) + `analyze` (deep AI, risk 1–10); client talks only to CLD, which fetches the target server-side **T2:** `intel.py scam-check <domain>`. **T1:** `threat_check` (mode=scam) | `/scam-check susp-site.xyz` |
-| `/webpivot [url]` | Web-infra pivoting — extract favicon mmh3 / GA-GTM-AdSense / wallet / SaaS-operator artifacts from a page's DOM → ranked pivot queries (Shodan/PublicWWW/urlscan/FOFA). Flags: `--render`, `--crawl`, `--history` (Wayback GA), `--fetch` (pull archived page content — WebFetch can't reach Wayback), `--harvest` (full-IOC harvest across whole archive history → emails/phones/wallets/IDs/socials), `--whois`, `--graph` (cluster), `--rank` (score same-operator relations), `--cert` (cert-fingerprint pivot), `--suggest`, `--wallets`, `--paths`. See `techniques/web-pivot.md` (reverse-lookup engines per artifact → `handbook/pivot-services.md`) **T2:** `intel.py webpivot <url>`. **T1:** `pivot_extract` | `/webpivot https://scam-site.top` |
-| *(automatic — no flag)* | Four layers now run on **every** collection and need no command. **Asset layer:** fetches the page's own JS bundles and re-runs every extractor over the source — the fix for SPA/white-label kits where the shell HTML is empty; yields off-apex `api_endpoint`/`websocket_endpoint` (the backend survives a front-end re-skin), `build_env:<KEY>` tenant tokens, `js_bundle_sha256`, and via `sourceMappingURL` the operator's own `dev_username`/`dev_project`. **SPA route table:** reads the app's router literals — `spa_route:admin`, `spa_route:funnel`, and a `spa_route_signature` that survives a re-skin. Zero extra requests, routes are leads only and are never fetched. **Well-known/policy files:** a fixed standards list (never a wordlist, no path brute-forcing) → `adstxt_publisher`, `apple_team_id`, `security_contact`. **JARM:** TLS-stack fingerprint of the server. Suppress with `--no-assets` / `--no-well-known`; cap fetches with `--assets-max N` | *(runs inside `/cti-pivot`)* |
-| `/capabilities` | **Run this first, and again before reporting any "nothing found".** Which optional API keys are configured, and for each absent one the *evidence class that went unqueried* plus the free path that substitutes. A keyless run extracts every artifact but cannot **reverse** most of them — so "no sibling domains" with no FOFA/urlscan key is a fact about the credentials, not about the operator. Every collection also records this in `meta.capability`; carry the limitation statement into the assessment and cap confidence accordingly. It also reports the optional **REA** deep-static layer on its own line — version, path, source (`env` / `.env` / `PATH`) and whether it matches the pin; after a Node (nvm) upgrade it shows `stale_path` / `older_than_pin` / `newer_than_pin` / `unrunnable` / `missing` with the exact fix (`npm install --global rea-agents@<pin>` under the active Node, then `REA_BIN=<path>` in `.env`; no other `.env` value is printed). `scripts/smoke-test.sh` warns on the same check, never fails. T2: `capabilities` · T1: `capability_check` | `/capabilities` |
-| `/impersonate [domain]` | Hunt **lookalike / typosquat** domains of a seed — typosquat permutations (omission, insertion, adjacent-key, transposition, homoglyph, hyphenation, combosquat) + a curated scam-heavy TLD sweep + a crt.sh keyword hunt, then existence-checked by live DNS. Output separates **confirmed registered lookalikes** (each an `impersonation:candidate` — run `/cti-pivot` on it and compare) from an unregistered **monitoring watchlist**. FREE (crt.sh + DNS); `--fofa` / `--urlscan` add the metered sweeps. Never live-fetches the lookalike infra. Tune the TLDs/affixes per campaign in `intel_engine/WebPivot/references/impersonation.json`. T2: `impersonate` · T1: `impersonation_hunt` | `/impersonate example.com` |
-| `/search-pivot [indicator]` | Multi-engine **search-engine** pivot — the general-web complement to FOFA/PublicWWW, which only see served HTML. Takes any indicator (domain, slogan, tracking ID, wallet, Telegram/Zalo handle) and emits ready-to-open, URL-encoded dork queries across Google/Yandex/DuckDuckGo/Bing/Brave. By default it does **not** fetch: fire the queries with WebSearch, or WebFetch the DuckDuckGo html URL, then feed new hosts back into `/cti-pivot`. `--run` executes them itself: DuckDuckGo HTML first (free, per query); only queries the free path cannot answer (bot challenge, HTTP error, unparseable page, or 0 hits on an operator DDG ignores: `intext:`/`after:`/`before:`) fall back to **SerpApi Google** (1 metered search each, needs `SERPAPI_KEY`; `--free-only` never spends). `related:` is never bought (retired by Google) → NOT ANSWERED. T2: `search-pivot` · T1: `search_pivot` (`run=true`, `free_only=true`) | `/search-pivot "distinctive slogan"` |
-| `/censys [mode] [value]` | Censys Platform — the **server-side** view FOFA/urlscan don't give. `cert <sha256>` returns every hostname on that exact leaf certificate (near-decisive cross-brand same-operator evidence, and it works on a **free** plan); `host <ip>`, `webproperty <host>` also free-plan. `query <kind> <value>` builds the CenQL **offline and keyless**; `budget` reports the balance. ⚠️ configured **2000 credits/MONTH, 50/run** (free plan grants 100, no rollover) — a lookup is 1, a search 5, and running the emitted CenQL in the web UI costs the same 5. Prefer handing the analyst the query over spending a search. Needs `CENSYS_PAT`. T2: `censys` · T1: `censys` | `/censys cert 1a2b3c…` |
-| `/intelx [selector]` | **Intelligence X** — search ONE strong selector across a corpus nothing else here indexes: breach dumps, infostealer logs, pastes, darknet mirrors, historical WHOIS. Takes an email / domain (`*.apex` wildcard ok) / URL / IP / phone / wallet / IBAN — **never a brand or person name** (soft terms are refused *and still cost a unit*; `classify_selector()` blocks them locally). `--phonebook <domain>` inventories every email, subdomain and URL under an apex — the highest-value call, PAID-only. `item <storageid> --bucket <bucket>` **opens one record** (`/file/preview`, bounded + redacted, metered) — the only thing an infection/compromise claim may cite (§2.5 Claim discipline). Every search reports `status`: `clean`, or `partial (deadline)` / `partial (poll limit)` / `partial (budget)` with the records that arrived; the deadline scales with buckets searched (`--deadline N` overrides). **Grading is not optional:** a hit in a breach dump or stealer log is **EXPOSURE**, flagged NOT clusterable — two addresses in one combolist share *victims*, not an operator. Only `whois` / `pastes` / darknet hits may carry a same-operator edge. Keyless ≈ 50%: it still types the selector and hands you the intelx.io URL. T2: `intelx` · T1: `intelx_search` (mode=`search`/`phonebook`/`item`/`budget`) | `/intelx registrant@example.com` |
-| `/osint-industries [type] [selector]` | **OSINT Industries** account existence for ONE strong selector — `email`, `phone` (E.164), `username`, `name` (exact match by default), `wallet`; `auto` guesses email/phone/username. Returns the platforms with an account registered to it **today**, self-declared display names/handles, profile URLs, masked email/phone hints, HIBP breach rows and (email) WHOIS rows. 1 credit per lookup, +3 with `--premium`; `credits` reads the balance free. `--case <id>` saves the raw response under `cases/<id>/osint_industries/` and answers a repeat from it. Held under `--free-only`. **Leads, never attribution**: a hit never links two domains and never names an operator; display names are self-declared; masked hints are **not identity evidence in either direction** (a different tail can be a second number of the same person); never pivot to the current holders of a phone; a name search returns namesakes until a case selector joins them. A registrant email already gets this through `/email-deep` — do not buy it twice. T2: `osint-industries` · T1: `osint_industries` | `/osint-industries phone +61400000000` |
-| `/anyrun [indicator]` | **ANY.RUN TI Lookup — READ-ONLY.** What samples carrying this indicator *did* when **other people** detonated them: contacted domains/IPs/URLs/ports, family label, Suricata context, public task links. Run it after `/binary` on the sample's sha256, backend host or `ip:port`. It is the **only** way to recover a **packed** sample's real endpoints — those exist only at runtime, so a thin string sweep plus a `binary:protection` finding is exactly the cue. A shared *family* is same-KIT, never attribution on its own. Keyless ≈ 50%: composes the query + UI link. **⚠️ This tool never submits a sample — see the box below.** T2: `anyrun` · T1: `anyrun_lookup` | `/anyrun <sha256>` |
-| `/webamon [domain\|url]` | **Webamon scan corpus** — the seed's latest sandbox scan (server IPs, certs, resources, risk score) and its **kit fingerprints**: one query per fingerprint key (`dom_band`/`dom`/`links`/`scripts`/`dom_structure`) returns the other lures built from the same template, with per-key agreement as corroboration and a per-key prevalence guard. Plus reverse-IP hosting eras (`servers` index), NRD/removed-feed dates, and a **count-only** infostealer exposure. `pivot_extract` runs all of this automatically when `WEBAMON_API_KEY` is set. **Same kit ≠ same operator**: siblings are `related_leads` / `add_fact` — never a frontier seed, never an edge, never corroboration. `scan <url>` submits to Webamon's sandbox behind the **same two-step gate as `/anyrun`** (`--confirm-submission` / `confirm=true`, `HARNESS_ALLOW_SUBMIT=1`): the fetch is Webamon's egress (posture-safe), but the scan is **PUBLIC and permanent** in the corpus. Starter plan: `/search` only — campaigns/clusters need research_lab. T2: `webamon` · T1: `webamon_scan` (submit; the read-only layer rides `pivot_extract`) | `/webamon scam-site.top` · `/webamon scan https://scam-site.top/login` |
-| `/cert-pivot [domain]` | Cert-fingerprint pivot — other hosts serving the same TLS cert + SAN siblings (keyless; Shodan/Censys with keys). **T2:** `intel.py cert-pivot <domain>`. **T1:** `cert_pivot` | `/cert-pivot scam-site.top` |
-| `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths (.git/.env/backups/configs) — severity + per-year timeline. Pure matching, **no request reaches the target**. **T2:** `intel.py sensitive-paths --file <list>`. **T1:** `sensitive_paths` | `/sensitive-paths waymore_index.txt` |
-| `/email-hygiene [email]` | Grade an email domain 0–100 + A–F (disposable / MX / free / role). An RFC 7505 **null MX** (`0 .`) scores as undeliverable, not valid. Also grades **SPF/DMARC spoofability** (`spoofable` / `partial` / `protected`: SPF `all` qualifier, include depth / >10-lookup permerror, DMARC p/sp/pct/rua) for the address's domain plus a `--domains` estate (`--table` for markdown) — mail-posture facts for BEC/CEO-fraud scenarios, never ownership evidence. **T2:** `intel.py email-hygiene <email> [--domains a.example,b.example] [--table]`. **T1:** `email_hygiene` | `/email-hygiene admin@site.top` |
-| `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD; **ChongLuaDao CVE/KEV threat-feed** when keyed) **T2:** `intel.py vuln-check CVE-… | --product <p>`. **T1:** `vuln_check` | `/vuln-check CVE-2024-1234` or `/vuln-check apache/httpd` |
-| `/ransomware-check [org]` | Check if org is a ransomware victim **T2:** `intel.py ransomware-check <domain>`. **T1:** `threat_check` (mode=scam) | `/ransomware-check "Acme Corp"` |
-| `/stealer-log [folder]` | Triage an infostealer-log folder — stealer-family attribution, victim-vs-operator profiling, cross-log actor correlation, IOC extraction (raw passwords/cookies/autofill/history shown). `--subject-emails a@example.com,…` flags logins made with a subject's address; every credential gets **SaaS tags** (SSO/workspace, CRM/helpdesk, e-commerce, CMS admin, banking/payment, marketing/SEO, logistics) and every log a **machine triage** (`victim_endpoint` / `aggregator` holding combolists / `vendor_or_shared` agency machine) with its heuristic basis — leads, so a store employee's infection is not read as the executive's own machine. **T2:** `intel.py stealer-log <folder> [out] --subject-emails …` | `/stealer-log ./logs` |
-| `/gdoc [url]` | Extract metadata/owner from Google document **T2:** `intel.py gdoc <url>`. **T1:** `doc_metadata` | `/gdoc https://docs.google.com/...` |
-| `/msftrecon [domain]` | M365/Azure tenant recon — tenant ID, federation, MDI, SharePoint **T2:** `intel.py msftrecon <domain>`. **T1:** `msft_recon` | `/msftrecon example.com` |
-| `/icp [domain\|serial]` | ICP filing (工信部备案) → registered PRC entity + licence number; reverse the **licence serial** to sibling domains under the same filing (same-operator, HIGH). See `techniques/china-recon.md` **T2:** `intel.py icp <domain>`. **T1:** `cn_recon` — MIIT is CAPTCHA-walled; gates are named | `/icp scam-site.top` |
-| `/cn-corp [name\|USCC]` | PRC corporate registry chain — GSXT (ground truth) → TianYanCha/QCC/Aiqicha → 信用中国 blacklist → UBO; officers, shareholders, subsidiaries, revoked-status flags **T2:** `intel.py cn-corp --company "<name>"`. **T1:** `cn_recon` — GSXT/TianYanCha gated | `/cn-corp 深圳市某某科技有限公司` |
-| `/iban [value]` | Validate + decompose a bank account as a selector — mod-97 checksum, country, BBAN split, bank code, jurisdiction-mismatch signals. See `techniques/fiat-payment-osint.md` **T2:** `intel.py iban <IBAN>` | `/iban GB29NWBK60161331926819` |
-| `/hash-id [hash]` | Identify a hash's algorithm **before** lookup — separates file hashes from credential material (32 hex = MD5 *or* NTLM) so it routes to the right service **T2:** `intel.py hash-id <hash> [--context file|credential]`. **T1:** `hash_id` **T2:** `intel.py hash-id <hash> [--context file|credential]`. **T1:** `hash_id` | `/hash-id 5f4dcc3b5aa765d61d8327deb882cf99` |
-| `/appliance-scan [domain\|ip]` | **Built-in.** Passive edge/VPN appliance scan; the target is never contacted. Shodan InternetDB is keyless and runs first; Shodan host / Censys run only when keyed, only for IPs where InternetDB showed a catalogue CPE, a configured appliance port or a tag, capped at 4 IPs, with the planned credit count printed before spending, and are skipped under `--free-only` or scope `no_spend` (metered calls ledgered). Fingerprints Citrix/F5/Cisco ASA+Expressway/Ivanti/FortiGate/PAN-OS/Exchange and peers from CPEs and stored banners → CISA KEV family matches (catalogue cached; reason given if unavailable) → patch lag in days after a **verified** advisory (rows without a source URL are ignored; `--advisory` supplies your own), plus index uptime → "no reboot since" with the 497.1-day wrap caveat. **CRITICAL** only when the analyst confirms the version (`--version-confirmed` / `version_confirmed=true`; shown as `version_confirmed_by`) and a verified advisory shows it is below the fix for a KEV CVE. A version read from a CPE or the scan index's version field stays **TENTATIVE**, even when it is pre-fix (verify with `/vuln-check`). A version less specific than the fixed release (e.g. `13.1` vs `13.1.49.15`) is **`branch_only`** — never pre-fix, lag or CRITICAL, even when confirmed. Citrix standard / FIPS / NDcPP builds are compared against their own fixed releases; the edition comes from a FIPS/NDcPP marker in the version text, the vendor's standard-build list, or `--edition standard\|fips\|ndcpp` — an unknown edition whose answers differ stays TENTATIVE (`ambiguous_edition`), never guessed. Never says "vulnerable". Standalone — not auto-run by `/case`; run it on the case's edge hosts. `--case` writes `cases/<id>/appliances.json`; `--kb` writes facts only, never edges, and a `kev_exposure` fact only for a pre-fix version. See `techniques/fx-edge-appliance-recon.md`. **T2:** `intel.py appliance-scan <domain\|ip> [--free-only] [--case ID] [--kb DIR] [--advisory ID:YYYY-MM-DD[:fixed,…[:CVE]]] [--version-confirmed] [--edition standard\|fips\|ndcpp] --json`. **T1:** `appliance_scan` | `/appliance-scan vpn.example.com` |
-| `/saas-map [domain]` | Map SaaS tenancy + identity fabric — DNS-TXT tenancy tokens, non-Microsoft IdP fingerprint (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS), unauth API/GraphQL/spec discovery. See `techniques/fx-saas-identity-recon.md` **T2:** `intel.py saas-map <url>`. **T1:** `pivot_extract` (saas_ids) | `/saas-map example.com` |
-| `/suppliers <CASE> --subject <apex[,apex]>` | **Built-in.** The subject's **supplier map** from the case's stored raws — TXT verification tokens, SPF includes, MX, NS, CNAME, cert issuer, same-site document metadata → `cases/<id>/suppliers.json` (high/medium/low). A supplier is a relationship of the subject, never an operator link; `--kb` writes facts only. Then run the per-supplier breach / KEV / stealer checks and draw the suppliers card map in the house report. See `techniques/fx-supplier-exposure.md` **T2:** `intel.py suppliers <CASE> --subject <apex>`. **T1:** `supplier_map` | `/suppliers CASE-0001 --subject example.com` |
-| `/sharelink [url]` | Extract sharer identity from a share link, and the **platform IDs** behind it. Redirect-carrier params (`next`/`u`/`url`/`redirect_uri`/`continue`/`target`) are unwrapped recursively, so a chain that ends on a **login wall** (`/login/?next=…story_fbid=…&id=…`) still yields the content: Facebook page/profile/owner id, `story_fbid`, `fbid`, reel/video id, share token; Instagram shortcode, username, igshid; TikTok video id, `@user`, `sec_user_id`. `--no-follow` parses a URL you already hold without contacting anything. **T2:** `intel.py sharelink <url> [--no-follow]`. **T1:** `sharelink_resolve` — contacts the final host unless `no_follow` | `/sharelink https://www.facebook.com/share/r/AbCdEf/` |
-| `/meta-transparency [fb-page\|@ig-handle]` | **Keyless Meta account transparency.** Facebook Page (vanity / id / URL): Page plugin → Page id; Ad Library **About tab** → creation date, name-change and merge **dates**, admin-location countries, confirmed owning organisation, linked Instagram, category, likes, active/total ads, shared-disclaimer and related Pages, and the `page_name` each ad ran under (a dated name history). Instagram: public profile (name, bio, links, category, business email/phone if published, linked fbid). Name / username / bio / location **history** rebuilt from Wayback captures. Every field is tri-state (`found` / `not_exposed` / `login_required` / `blocked` / `rate_limited`, with Retry-After honoured); login-only panels come back as a **`capture_checklist`** of screenshots to request — never cookies or session tokens. Account-level facts, never owner identity. `--search "<name>"` = Ad Library page-name search. `--case` writes `cases/<id>/enrichment/meta_transparency/`. **T2:** `intel.py meta-transparency <target> [--platform instagram] [--case <id>] [--no-wayback]`. **T1:** `meta_transparency` | `/meta-transparency https://www.facebook.com/examplepage` |
-| `/binary [file\|url\|dir]` | **Built-in.** Static IOC extraction from a scam/fraud binary (sideloaded APK, desktop trading `.exe`/`.dmg`, bundled `.jar`) via the in-repo `BinaryPivot/` — signing-cert SHA-256, package name/permissions, embedded C2/backend hosts, Firebase/S3 tenants, wallets, Telegram/WhatsApp handles. Output is WebPivot-shaped → the signing cert clusters the app with web infra in the shared KB; embedded backend hosts stay facts/leads (never a cluster edge). The REA deep-static layer runs **by default** (.NET user strings, Flutter/Dart packages, Go module and Go string literals, Electron `.asar` literals with source locations; static commands only, REA `rea-agents` installed by hand at the pinned 6.9.0 (Node ^22.23.4 / ^24.22.1 / >=26.12.1); `--no-rea` / `rea=false` skips). In a case, REA's URL hosts / IPs / wallets / Telegram / e-mails become **kit** nodes the harness collects automatically — tiered out of the operator partition, never clustered. **Leaked source** (zip/tar/tgz or an extracted **directory**) adds three blocks: `git` (embedded `.git` — config, reflog, loose + packed commits → author/committer e-mails, TZ offsets, remotes; go.mod/package.json/composer/pyproject/Cargo module paths), `archive_time` (bulk-copy clusters, packaging time, sequential generation runs, stripped 1980 times, packer UTC offset from zip DOS-vs-UT/NTFS times, author-metadata presence) and `keys` (keys/certs deduped by SPKI SHA-256, hashes only). All three are **leads** — self-asserted committer strings, packer-set clocks, copied sample keys. **T1:** `analyze_artifact`. See `connectors/intel-backend.md` §7 and `techniques/fx-document-forensics.md` | `/binary ./trader.apk` |
-| `/container-registry [namespace\|image]` | **Public container-registry OSINT** (Docker Hub, GHCR, Quay; any OCI v2 image): a namespace's repositories, pull counts, profile; an image's config blob — Env names (redacted preview), Cmd/Entrypoint, Labels (`org.opencontainers.image.source` → hand to `/github-osint`), build history — secret-scanned; `--layers` streams byte-capped layers and scans `.env`/yml/properties/keys. Secrets are kind + path + 3-char preview + sha256, never the value. Namespaces and label authors are **leads** — often personal dev/contractor/CI accounts (RULE 5). **T2:** `intel.py container-registry <target> --json`. **T1:** `container_registry` | `/container-registry ghcr.io/example-org` |
-<!-- dork-integration:phase-05 start -->
-| `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Dork sweep: Telegram ecosystem, 18 doc-hosts, filetype families; 4-tier free fallback cascade, then Tier 5 SerpApi Google (metered, `SERPAPI_KEY`) only for a query every free tier failed on: `wp_serp.py web '<query>'` **T2:** `intel.py dork-sweep <target>` (`--run` executes: DDG per query, SerpApi for the failed ones) | `/dork-sweep example.com --filetype` |
-| `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification (CRITICAL/HIGH/MEDIUM/LOW). For an **organisation** (domain or company name) it adds `staff_emails` ("@domain" mentions), `jobs` (global + regional job boards — hiring geography, staff names, internal tools in job specs), `freelancer_profiles` and `company_socials` families; matches are leads **T2:** `intel.py docleak "<target>"`. **T1:** `dork_builder` — emits queries, never runs them | `/docleak "Acme Corp"` |
-<!-- dork-integration:phase-05 end -->
-| `/dns-history [domain]` | Historical DNS record changes (A, NS, MX) via passive DNS **T2:** `intel.py dns-history <domain>`. **T1:** `wayback_ga` | `/dns-history example.com` |
-| `/cert-history [domain]` | Certificate-transparency timeline with **per-source status** and one completeness line: crt.sh (web, then its public PostgreSQL) → only when crt.sh is degraded/empty: keyless Shodan CTL + CertSpotter, CertKit/CertIndex when keyed, Netlas only when crt.sh failed, Censys last. "Full CT history" only when crt.sh answered; a degraded crt.sh is never "no certificates". Historic cert → IP is `/pssl`. **T2:** `intel.py cert-history <domain>` (`--all` uncapped, `--json`). **T1:** `cert_pivot` (`crtsh` block: certs, `ct_status`, `completeness_line`) | `/cert-history example.com` |
-| `/proton-check [email]` | Proton Mail account age via its PGP key. Proton serves a **decoy key for every address** (including non-existent ones), so the key date is a lead (`rung: lead`, `account_exists: true`) only when the UID is certified by Proton's CA; otherwise `rung: unverified`. **T2:** `intel.py pgp-lookup <email>`. **T1:** `pgp_lookup` | `/proton-check user@proton.me` |
-| `/pgp-lookup [email\|fingerprint\|keyid]` | Keyless keyserver pivot (keys.openpgp.org, Ubuntu HKP, Proton for Proton addresses): fingerprint, key creation/expiry, UIDs, subkeys, third-party certifiers. UID e-mails/names and certifiers are **leads** — self-asserted, signatures parsed not verified (RULE 5). **T2:** `intel.py pgp-lookup <selector> --json`. **T1:** `pgp_lookup` | `/pgp-lookup dev@example.com` |
-| `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net **T2:** `intel.py wifi "<ssid>"`. **T1:** `wifi_ssid` — needs a WiGLE account; discloses the gap | `/wifi "HomeNetwork"` |
-| `/wifi --bssid [mac]` | Exact AP lookup by MAC address | `/wifi --bssid AA:BB:CC:DD:EE:FF` |
-| `/takedown-watch [domain…\|--case ID]` | Was the name **held / suspended / deleted** (RDAP EPP `clientHold`/`serverHold`, `redemptionPeriod`/`pendingDelete`; DNS NXDOMAIN / no NS / sinkhole NS) and **where did the kit move** — successors on the last known origin IPs (CDN/parking skipped), compared with the last capture by favicon / DOM skeleton / distinctive title. A co-tenant is a `lead`; a content match is a `kit` sibling — never an owner, never an edge (RULE 5). **T2:** `intel.py takedown-watch <domain> --json`. **T1:** `takedown_watch` | `/takedown-watch site-a.example` |
-| `/register [name]` | Add a subject to the case workspace | `/register JohnDoe` |
-| `/snapshots [url]` | List/fetch archived Wayback snapshots. WebFetch is blocked from web.archive.org (robots.txt) — this reads the archive instead, so **the request never reaches the target**. **T2:** `intel.py wayback-fetch <url> [--near latest\|earliest\|YYYY] [--list]`. **T1:** `wayback_fetch`. See `analysis/archive-explorer.md` | `/snapshots example.com` |
-| `/archive-harvest [domain]` | Sweep a domain's **whole** Wayback history for indicators an operator has since scrubbed — the GA ID that clusters the estate is often only in an old capture. **T2:** `intel.py wayback-harvest <domain> --indicators [--from YYYY --to YYYY]`. **T1:** `wayback_harvest` | `/archive-harvest site-a.example` |
-| `/fallback [domain]` | **Dead-seed recovery** (§2.5) — crt.sh + full Wayback timeline + archive.today + local KB when a seed returns zero pivots / parked / NXDOMAIN; enumerates CT + Wayback host history before a seed is written off. T2: `fallback` · T1: `fallback_probe` | `/fallback scam-site.top` |
+One line per command, grouped by AEAD phase. **Before running a command, read its row in
+[`handbook/command-reference.md`](handbook/command-reference.md)** — the row holds the flags, the
+backing **T2:** op / **T1:** tool or marker, the rails and an example.
 
-### Enrich
+**Acquire** — full rows: [`handbook/command-reference.md#acquire`](handbook/command-reference.md#acquire)
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/branch [data]` | Expand a discovered identifier laterally **[model]** | `/branch john@mail.com` |
-| `/pivot-suggest` | Rank "what to pivot on next" from findings — leet/variant/reuse/temporal/domain clusters; username pivots are capped by **handle rarity** (generic → low, rare → high; `username-osint.md` §7.2). **T2:** `intel.py pivot-suggest <findings.json>`. **T1:** `pivot_suggest` | `/pivot-suggest` |
-| `/email-permute [name\|handle]` | Derive email **candidates** from a person name or username against case domains. VN/CN/KR family-name-first aware; folds diacritics Unicode won't. `--verify` = MX gate + Gravatar. **Output is hypotheses — see the rule below** | `/email-permute "Nguyen Van A" --domain example.com --verify` |
-| `/rank-relations` | Score + rank same-operator relations across analyzed pages (noise-filtered). Mechanizes **one artifact = lead, two = cluster** — run it before asserting a cluster. **T2:** `intel.py rank-relations cases/<CASE>/raw/*.json`. **T1:** `rank_relations` | `/rank-relations` |
-| `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet, valued at spot. **T2:** `intel.py crypto-balance <addr>`. **T1:** `crypto_balance` | `/crypto-balance 1ExampleBitcoinAddressDoNotUse` |
-| `/masked-hint [hints]` | A reset/login flow shows a **masked recovery e-mail/phone** (`op*****@example.com`, `*******08`): test it against the case's known selectors. Verdict `corroborates` / `consistent` / `no_match`; mask runs are unknown-length unless `--provider generic_exact`. **Corroborating only** — never a join key or edge (RULE 5). **T2:** `intel.py masked-hint --hints "…" --case <ID>`. **T1:** `masked_hint_match` | `/masked-hint "op*****@example.com"` |
-| `/sellers [pub-id…]` | AdSense publisher id → the **legal payee** name/domain/seller type in Google's public sellers.json (keyless, free; the ~110 MB file is cached under `intel_engine/cache/` and refreshed after its TTL). A **named payee is an owner-rung signal** (`ads.payee`) — the pub id alone stays kit; a confidential row has no name. **T2:** `intel.py sellers ca-pub-0000000000000000 --json`. **T1:** `sellers_lookup` | `/sellers ca-pub-0000000000000000` |
-| `/app-developer [package\|app-id]` | App-store **developer account** behind an app (keyless). Play package / play.google.com URL → listing developer name, *About the developer* **legal name**, contact email (plus a distinct developer email), postal address, phone, website, and the account's other apps; App Store id / apps.apple.com URL (bundle id with `--store appstore`) → iTunes `artistName`, `artistId`, `sellerName`, `sellerUrl`, other apps, plus the EU-storefront page's **DSA trader block** (declared trader → Apple-displayed address/phone/email; `not_declared`; `geo_redirected` when the egress is served another storefront — absence then proves nothing) and support/privacy links. A developer website whose registrable domain equals a case domain is an **owner link** (`app.developer_url`); the email and any off-case website are seed **candidates** (`auto_seed: false`) — a listing is self-declared. Mach-O binaries through `analyze_artifact` also emit the Apple **team ID** from the signing identity as `apple_team` (`app.apple_team`, owner). **T2:** `intel.py app-developer com.example.app --case <id> --json`. **T1:** `app_developer` | `/app-developer com.example.app` |
-| `/timeline [subject]` | Assemble dated event sequence | `/timeline Company Inc` |
-| `/crossref` | Detect shared identifiers across subjects **T2:** `intel.py crossref [--case <id>]`. **T1:** `kb_crossref` | `/crossref` |
-| `/link-subjects [A] [B]` | Define a connection between two subjects **[model]** | `/link-subjects John Jane` |
-| `/show-connections` | Display all logged connections **[model]** | `/show-connections` |
-| `/show-trail [subject]` | Show the evidence chain for a subject **[model]** | `/show-trail JohnDoe` |
-| `/watch [subject]` | Add subject to active tracking list **[model]** | `/watch example.com` |
-| `/record-finding` | Log a finding with source and confidence **[model]** | Paste data after command |
-| `/show-findings` | List all recorded findings **[model]** | `/show-findings` |
-| `/graph` | Full ASCII subject relationship map | `/graph` |
-| `/pathfind [A] [B]` | Discover connection path between subjects **[model]** | `/pathfind A B` |
-| `/diff [url]` | Diff archived versions of a URL **[model]** | `/diff example.com/page` |
-### Assess
+| Command | Purpose |
+|---|---|
+| `/case [target]` | Full pipeline — runs every applicable technique |
+| `/sweep [target]` | Multi-vector recon on any target type |
+| `/query [subject]` | Builds 12–15 advanced search operator queries |
+| `/username [handle] [--offline]` | Enumerate handle across 3000+ platforms |
+| `/google-account [email\|gaia-id]` | Google-account leads through an installed GHunt |
+| `/telegram [phone\|@user\|t.me link]` | Telegram from the analyst's research account |
+| `/reverse-image [url\|file]` | Where else does this picture appear? |
+| `/phone [number]` | Carrier, line type, reputation, public associations |
+| `/vn-corp [mst\|company]` | Keyless Vietnamese business registry |
+| `/email-deep [email]` | Accounts, breach history, infrastructure |
+| `/subdomain [domain]` | CT logs, brute-force, passive enumeration |
+| `/breach-deep [email]` | Multi-source breach lookup |
+| `/traffic [domain]` | Traffic estimation, ranking, audience data |
+| `/visitors [domain]` | Full visitor intelligence: tech, geo, sources, analytics |
+| `/techstack [domain]` | Technology fingerprint (CMS, analytics, CDN, server) |
+| `/competitors [domain]` | Competitor & related site discovery |
+| `/secrets [target]` | Exposed credentials in repos and paste sites |
+| `/grayhatwarfare [mode] [selector]` | GrayHatWarfare: buckets, shortener and git corpora |
+| `/github-osint [target]` | GitHub user/org/repo recon; committer-identity harvest |
+| `/cld [target]` | ChongLuaDao first-party premium connector |
+| `/threat-check [target]` | IP/domain/URL/hash threat intelligence |
+| `/scam-check [domain]` | Phishing/scam/malicious domain check |
+| `/webpivot [url]` | Web-infra pivoting — extract page artifacts |
+| *(automatic — no flag)* | Four layers run on every collection |
+| `/capabilities` | Which optional API keys are configured |
+| `/impersonate [domain]` | Hunt lookalike / typosquat domains of a seed |
+| `/search-pivot [indicator]` | Multi-engine search-engine pivot |
+| `/censys [mode] [value]` | Censys Platform — the server-side view |
+| `/intelx [selector]` | Intelligence X — search ONE strong selector |
+| `/osint-industries [type] [selector]` | OSINT Industries account existence for ONE selector |
+| `/anyrun [indicator]` | ANY.RUN TI Lookup — READ-ONLY |
+| `/webamon [domain\|url]` | Webamon scan corpus and kit fingerprints |
+| `/cert-pivot [domain]` | Cert-fingerprint pivot — hosts serving the same cert |
+| `/sensitive-paths [list]` | Classify a Wayback/URL list for exposed paths |
+| `/email-hygiene [email]` | Grade an email domain 0–100 + A–F |
+| `/vuln-check [query]` | CVE/vulnerability lookup (CIRCL + NVD) |
+| `/ransomware-check [org]` | Check if org is a ransomware victim |
+| `/stealer-log [folder]` | Triage an infostealer-log folder |
+| `/gdoc [url]` | Extract metadata/owner from Google document |
+| `/msftrecon [domain]` | M365/Azure tenant recon |
+| `/icp [domain\|serial]` | ICP filing → registered PRC entity, licence number |
+| `/cn-corp [name\|USCC]` | PRC corporate registry chain |
+| `/iban [value]` | Validate and decompose a bank account selector |
+| `/hash-id [hash]` | Identify a hash's algorithm before lookup |
+| `/appliance-scan [domain\|ip]` | Passive edge/VPN appliance scan |
+| `/saas-map [domain]` | Map SaaS tenancy + identity fabric |
+| `/suppliers <CASE> --subject <apex[,apex]>` | The subject's supplier map from stored raws |
+| `/sharelink [url]` | Extract sharer identity from a share link |
+| `/meta-transparency [fb-page\|@ig-handle]` | Keyless Meta account transparency |
+| `/binary [file\|url\|dir]` | Static IOC extraction from a scam/fraud binary |
+| `/container-registry [namespace\|image]` | Public container-registry OSINT |
+| `/dork-sweep [target] [--telegram\|--docs\|--filetype\|--all] [--after DATE] [--clean]` | Dork sweep: Telegram ecosystem, doc-hosts, filetype families |
+| `/docleak [target] [--platform list] [--severity high]` | 18-platform document leak hunt with severity classification |
+| `/dns-history [domain]` | Historical DNS record changes via passive DNS |
+| `/cert-history [domain]` | Certificate-transparency timeline with per-source status |
+| `/proton-check [email]` | Proton Mail account age via its PGP key |
+| `/pgp-lookup [email\|fingerprint\|keyid]` | Keyless keyserver pivot |
+| `/wifi [ssid]` | WiFi SSID geolocation via Wigle.net |
+| `/wifi --bssid [mac]` | Exact AP lookup by MAC address |
+| `/takedown-watch [domain…\|--case ID]` | Was the name held / suspended / deleted? |
+| `/register [name]` | Add a subject to the case workspace |
+| `/snapshots [url]` | List/fetch archived Wayback snapshots |
+| `/archive-harvest [domain]` | Sweep a domain's whole Wayback history for indicators |
+| `/fallback [domain]` | Dead-seed recovery |
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/exposure [target]` | Composite exposure score (0–100) **T2:** `intel.py exposure --set k=v`. **T1:** `exposure_score`. `--model executive` = **key-personnel safety score**: start at 100, deduct eight analyst ratings c1–c8 (0–3: account footprint 15 · PII 20 · family/close relations 15 · address & habits 15 · corporate assets 10 · reputation 10 · breaches & stealer logs 10 · account security 5), with rationales, explicit coverage and a worst-case floor. `--model organisation` = **organisation risk by domain**: the analyst rates each of ten domains (affiliates · impersonation · edge · insider · personnel · actors · credentials · suppliers · mail_dns · code_docs) exploitability 0–3 × harm 0–3 (`--set edge=3x3 --set edge_rationale=… --set edge_issue=…`, or `--ratings '{json}'`; a rationale is required at harm 3), domain score 0–10, overall = mean of rated domains, Critical ≥8 · High ≥6 · Medium ≥4 · Low, P1 7d / P2 30d / P3 90d; unrated domains are listed as coverage gaps (warning below half) and never compared across coverage; `--case <id>` writes `cases/<id>/exposure_organisation.json` (the report's `risk_assessment`). `--model actor` = **actor Threat Score** (0–1) for ONE actor against ONE organisation: intent / capability / sectoral_reach / org_exposure in 0.25 steps, each with a rationale (intent ≥ 0.75 must cite evidence); Opportunity = 0.6·reach + 0.4·exposure; Score = 0.5·I + 0.25·C + 0.25·O; **Intent floor rule** (I = 0 → 0); bands Critical ≥ 0.85 / High ≥ 0.60 / Medium ≥ 0.35 / Low ≥ 0.10 / Negligible (needs a written rationale), each with a standing posture and review date; `--case` keeps `cases/<id>/actor_scores.json` with re-score history (a shift > 0.10 without a reason is flagged). `--model tier` = **Severity Tier Matrix**: threat severity × exposure → P1 7d / P2 30d / P3 90d / P4 track only (P1 needs both axes; nothing auto-closes); `--case` + `item=` keeps `cases/<id>/tier_log.json` and a re-tier must name a trigger. Organisation-specific leads, never attribution. Analyst judgement, not a probability (`analysis/weight-engine.md` §7–§10, `handbook/severity-tiers.md`) | `/exposure domain.com` |
-| `/threat-model` | Build threat model from findings; every attribution claim carries an **ACH matrix** (competing hypotheses scored by inconsistency, runner-up named) per `handbook/analytic-standards.md` §3. **Backend hook (Assess):** if `/backend` is up, calibrate confidence on your own priors first — `intel.py operators list` + `intel.py risk --case <id>` + read `knowledge/{calibration.jsonl,analyst_profile.md}` — instead of scoring from scratch. See `connectors/intel-backend.md` §6 **[model]** | `/threat-model` |
-| `/signatures` | Surface recurring behavioral patterns **T2:** `intel.py signatures --set k=v` (or an observations JSON path). **T1:** `signature_scan` — evaluates, does not observe. The **AGENTIC** family (AGT-01..09) reads captured attacker telemetry / server logs (`requests`, `payloads`, `log_lines`, `credential_events`) for autonomous / multi-agent attack tooling; a hit names the TOOLING (kit rung), never the operator | `/signatures` |
-| `/validate` | Quality audit — score 0–100 **[model]** | `/validate` |
-| `/coverage` | Coverage matrix with identified gaps — technique matrix **plus** the 5W1H substantive pass (`Why`/`How` unanswered blocks Deliver-ready) **[model]** | `/coverage` |
-| `/verify-finding [id]` | Re-check a specific finding's sources **[model]** | `/verify-finding 12` |
-| `/subject [name]` | View or create subject record **[model]** | `/subject JohnDoe` |
-| `/lookup [name]` | Retrieve a registered subject **[model]** | `/lookup JohnDoe` |
-| `/modify [name]` | Update a subject record **[model]** | `/modify JohnDoe` |
-| `/archive-subject [name]` | Remove subject from active tracking **[model]** | `/archive-subject JohnDoe` |
-| `/find [query]` | Search across all subjects **[model]** | `/find domain:example.com` |
-| `/blind-spots` | Prioritized investigation gap analysis **[model]** | `/blind-spots` |
-| `/source-check` | Batch source URL accessibility check **[model]** | `/source-check` |
-| `/drift [subject]` | Temporal risk score tracking **T2:** `intel.py drift <case> [--snapshot]`. **T1:** `case_drift` | `/drift example.com` |
-| `/clarify [finding]` | Plain-language finding explanation **[model]** | `/clarify fnd-003` |
-### Deliver
+**Enrich** — full rows: [`handbook/command-reference.md#enrich`](handbook/command-reference.md#enrich)
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/report` | Full report — always saves the base data bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl), then **asks which presentation to render: (a) PDF · (b) DOCX · (c) HTML · (d) all** | `/report` |
-| `/report html` | Interactive self-contained HTML report (primary deliverable) | `/report html` |
-| `/report brief` | Single-page executive brief | `/report brief` |
-| `/report json` | Raw data as JSON | `/report json` |
-| `/report csv` | Spreadsheet-compatible export | `/report csv` |
-| `/report docx` | Word document in the **PDF house style** (slate/steel palette, serif body + sans headings, cover/TOC, rich charts + Diagram Design editorial diagrams + cloud figure) — on request | `/report docx` |
-| `/report legal` | Evidence-formatted for legal proceedings (adds DOCX/PDF) | `/report legal` |
-| `/report journalist` | Source-citation-heavy format | `/report journalist` |
-| `/brief` | Plain-language summary (non-technical) **[model]** | `/brief` |
-| `/render entities` | ASCII subject relationship diagram **[model]** | `/render entities` |
-| `/render timeline` | Chronological event chart | `/render timeline` |
-| `/render risk` | Exposure heatmap | `/render risk` |
-| `/render network` | Network topology of connections | `/render network` |
-| `/stats` | Counts and coverage statistics **T2:** `intel.py stats` | `/stats` |
-| `/workspace save [name]` | Persist case state **[model]** | `/workspace save mycase` |
-| `/workspace open [name]` | Resume a saved case | `/workspace open mycase` |
-| `/workspace list` | Show saved cases | `/workspace list` |
-| `/workspace diff [a] [b]` | Diff two saved workspaces | `/workspace diff case1 case2` |
-| `/render threat-path` | ASCII attack path flow diagram | `/render threat-path` |
-| `/render attack-surface` | ASCII attack surface exposure map | `/render attack-surface` |
-| `/report ioc` | Export IOCs as STIX 2.1 or flat list | `/report ioc --format stix` |
-| `/redact [file]` | Shareable variant of a report — stable numbered placeholders (`[EMAIL_1]`) + reversible JSON map; `.md`/`.json`/`.csv`. **Opt-in** — the base data bundle stays unredacted; request with `/redact` or `--redact` | `/redact REPORT.md` |
+| Command | Purpose |
+|---|---|
+| `/branch [data]` | Expand a discovered identifier laterally |
+| `/pivot-suggest` | Rank "what to pivot on next" from findings |
+| `/email-permute [name\|handle]` | Derive email candidates from a name or username |
+| `/rank-relations` | Score + rank same-operator relations across analyzed pages |
+| `/crypto-balance [addr]` | On-chain balance + lifetime flow for a wallet |
+| `/masked-hint [hints]` | Test masked recovery hints against the case's selectors |
+| `/sellers [pub-id…]` | AdSense publisher id → the legal payee |
+| `/app-developer [package\|app-id]` | App-store developer account behind an app |
+| `/timeline [subject]` | Assemble dated event sequence |
+| `/crossref` | Detect shared identifiers across subjects |
+| `/link-subjects [A] [B]` | Define a connection between two subjects |
+| `/show-connections` | Display all logged connections |
+| `/show-trail [subject]` | Show the evidence chain for a subject |
+| `/watch [subject]` | Add subject to active tracking list |
+| `/record-finding` | Log a finding with source and confidence |
+| `/show-findings` | List all recorded findings |
+| `/graph` | Full ASCII subject relationship map |
+| `/pathfind [A] [B]` | Discover connection path between subjects |
+| `/diff [url]` | Diff archived versions of a URL |
 
-### UX & Navigation
+**Assess** — full rows: [`handbook/command-reference.md#assess`](handbook/command-reference.md#assess)
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/flow [type]` | Guided step-by-step case workflow **[model]** | `/flow person` |
-| `/template list` | Browse pre-built case templates **[model]** | `/template list` |
-| `/template run [name]` | Run a pre-built template | `/template run security-audit` |
-| `/novice` | Toggle simplified, low-jargon mode **[model]** | `/novice` |
-| `/terms` | OSINT term glossary **[model]** | `/terms` |
-| `/progress` | Current case phase and coverage **[model]** | `/progress` |
-| `/opsec` | OPSEC checklist for current task **[model]** | `/opsec` |
-| `/onboard` | Interactive first-time onboarding guide **[model]** | `/onboard` |
-| `/quality` | Investigation quality composite score **[model]** | `/quality` |
-### Configure
+| Command | Purpose |
+|---|---|
+| `/exposure [target]` | Composite exposure score (0–100) |
+| `/threat-model` | Build threat model from findings |
+| `/signatures` | Surface recurring behavioral patterns |
+| `/validate` | Quality audit — score 0–100 |
+| `/coverage` | Coverage matrix with identified gaps |
+| `/verify-finding [id]` | Re-check a specific finding's sources |
+| `/subject [name]` | View or create subject record |
+| `/lookup [name]` | Retrieve a registered subject |
+| `/modify [name]` | Update a subject record |
+| `/archive-subject [name]` | Remove subject from active tracking |
+| `/find [query]` | Search across all subjects |
+| `/blind-spots` | Prioritized investigation gap analysis |
+| `/source-check` | Batch source URL accessibility check |
+| `/drift [subject]` | Temporal risk score tracking |
+| `/clarify [finding]` | Plain-language finding explanation |
 
-| Command | What It Does | Example |
-|---------|-------------|---------|
-| `/apikeys` | Manage premium/pro API keys (**ChongLuaDao ⭐ first-party**, Shodan, Censys, FOFA, SecurityTrails, DNSLytics, urlscan-PRO, WhoisXML, Hudson Rock, IntelX, GitHub, SerpAPI…) — `status`/`set`/`unset`/`test`/`unlocks`. Keys **upgrade existing techniques** (especially `/cld` + `/webpivot`); keyless/free stays the default. Stored chmod-600 in `$SKILL_DIR/.env` (gitignored), env-var override. See `handbook/api-keys.md` | `/apikeys set chongluadao <KEY>` |
-| `/backend` | Detect/report the optional persistent-intelligence backend and pick the tier — **Tier 1** typed MCP (`intel-harness`) → **Tier 2** CLI → **Tier 3** stateless. Runs `scripts/backend/backend.py` to resolve `$INTEL_HOME` (env → `.mcp.json` → sibling dir → symlink) and print the tier line. All the backend commands below dispatch through `scripts/backend/intel.py <op>` at Tier 2 (or the typed MCP tool at Tier 1). `intel.py list` maps **all 73 engine ops** (full CLI parity — CDN ranges, graph-build, hypothesize, calibration, evidence-report, case-store, cost, deterministic `pipeline`, …); `intel.py mcp` prints/writes the `.mcp.json` that enables Tier 1 ("the server"). See `connectors/intel-backend.md` | `/backend` · `/backend check` |
-| `/kb [query]` | **Built-in.** Query the shared knowledge base. **T2:** `intel.py kb --stats`/`--entity <v>`/`--cluster <domain>`/`--shared --min N`; `intel.py operators list`. Add `--as-of YYYY-MM-DD` to any query for the KB **as it held that day** (source-stated validity windows — WHOIS eras, passive-DNS/hosting windows, archive captures — else what had been observed by then). `--entity` rows show `valid …` / `seen first..last ×N`, `[DISPUTED vs …]` and, in an as-of view, `[superseded by …]`. **T1:** `kb_entity`/`kb_cluster` (optional `as_of`)/`kb_query_shared` | `/kb --entity example.com --as-of 2025-06-01` |
-| `/recall [seed]` | **Built-in.** "Have I seen this before?" — check a seed against every prior case before collecting. Each prior case is shown as its **abstract** first (BLUF excerpt · attribution level · confidence · premise · cluster domains · recorded operator — `cases/<id>/abstract.json`, rebuilt whenever `assessment.json` changes); open the case for detail only if it passes the five-question gate (§2.5). **T1:** `which_cases`/`domain_verdict` (typed MCP). **T2:** `intel.py recall <seed>` (query.py `--prior-cases --entity`: the entity's KB `cases` provenance + `cases/*/raw` collections, then its facts/edges). Surfaces known operators up front | `/recall scam-site.top` |
-| `/kb-forget [case]` | **Built-in.** Remove one case's contribution from the KB, provenance-aware: a fact/edge **only** that case recorded is retracted (hidden from every reader, kept for audit; `--purge` deletes); one other cases also recorded stays, minus that case. Records older than case provenance are never guessed at — they are counted (incl. how many touch the case's hosts) and left for `clean --case <id> --value <selector>`. Dry-run unless `--apply`. A retracted record that is collected again comes back. **T2:** `intel.py clean --forget-case <id> [--purge] [--apply]` | `/kb-forget CASE-0001` |
-| `/risk [case]` | **Built-in.** Score a case's hosts for **NRD / bulletproof-hosting / money-trail** red flags. **T2:** `intel.py risk --case <id>` (or `--file <pivot.json>`). **T1:** `risk_signals` | `/risk CASE-0001` |
-| `/evidence import <case> <findings.json>` | **Built-in.** Import the analyst's **graded findings** (JSON list of `{claim, source_url, rung, rung_class, admiralty, indicators:[{type,value}], selector_links:[{from,to,rel}], attributes:[{entity,attribute,value,valid_from?,valid_until?}]}`) into the case: stored under `cases/<case>/evidence/imported/`; an **owner** finding (owner rung AND a `rung_class` rungs.json grades owner) writes its `selector_links` as KB edges, everything else is facts only (RULE 5 — a weaker class demotes the claim, with a note). Every row is tagged source `analyst_import` so the assessment can cite it; entries missing a claim or an admiralty grade (A-F + 1-6) are rejected with a message. Never writes `assessment.md`/`.json`. Optional **`attributes`** rows set a KB attribute at the **analyst** authority tier (analyst > registry > vendor > extractor, `tools/kb/references/kb_memory.json`) whatever the grade: on a single-valued attribute (registrar, ASN, verdict …) the analyst value replaces the standing one only if its `valid_from` (else the import day) is on or after it — dated earlier it is **disputed** beside it, since rank alone never wins; an analyst re-import of the same slot corrects its own earlier value. Other attributes are added as analyst facts; reserved names (link/rung facts) and malformed rows are skipped with a note, and the summary lists each row's outcome. **T2:** `intel.py evidence import CASE-0001 findings.json`. **T1:** `evidence_import` | `/evidence import CASE-0001 findings.json` |
-| `/report-sections [load\|sources\|lint] [case]` | **Built-in.** The analyst **report block** an `evidence import` file may carry beside `findings` — `{"findings": [...], "report": {key_questions (KQ-nn, answered/partial/open), open_questions (OQ-nn: decision at stake, sources needed, time window), roles (operator/supplier/publisher/intruder/facilitator/victim/unknown), scenarios (SC-nn, feasibility × impact, controls), roadmap (P1 this week / P2 this month / P3 ongoing), incident_timeline (Tnnn, proves / not_proven, evidence), attack_mapping (MAP-nn, T-id, observed/attempted/inferred, limits), counting_rules (metric, counts, does_not_mean), metrics, subject_profile (person identity card: entity, field name/alias/dob/birthplace/email/phone/address/company/account/relative/other, value, basis, source, grade, status confirmed/probable/possible — alias & relative rows need basis + source), client_seeds (what the client supplied; `sensitive: true` values render "provided by client — withheld" unless `--show-sensitive`), engagement {author, version, created, modified, hours, client} → report cover}}`; findings may add `confirmation` (confirmed / strong_indirect / attempted_unproven / unverified) and `not_proven`. **Organisation / threat / person sections:** `risk_assessment` (one object from `/exposure --model organisation`; falls back to `cases/<id>/exposure_organisation.json`), `key_findings` {n, finding, severity, priority}, `affiliate_exposure` {org, country, infected_hosts, latest_infection, stealer_family, portal}, `leak_claims` {actor, venue, date, claim, proven, evidence}, `threat_events` {event, start, end, location, why_it_raises_risk, local_legal_notes, grade}, `usernames_to_reserve` {platform, handle, status available\|taken_by_other\|reserved}, `negative_checks` {check, scope, result, date}, `email_services` {email, service, evidence, date}, and relationship-card-map rows `relationships` / `actors` — each rendered only when present (overall risk + key findings in the Executive Summary, rating scales in Methodology; exposure charts, claims with the "K of N proven" tally, e-mail services and threat events in Findings; without affiliate rows, stealer-triage charts appear under "Infected computers — stealer-log triage"; usernames in Recommendations; "Checked — nothing found" in Sources checked; schema in `handbook/report-template.md`). Malformed rows are rejected with a message; report rows (roles, profile and relatives included) never touch the KB (RULE 5). `load` shows the merged block; `sources` lists every source queried for the case, **zero hits kept**; `lint` runs the **QA check** — one identifier (platform id, phone, e-mail, handle) on two different people or under incompatible fields, unsourced identity rows, look-alike handles, client details contradicting confirmed rows, a Critical/High key finding without a priority, an overall risk score that is not the domain mean, a past threat event, a proven claim without evidence — warnings only, rendered as a "QA warnings" appendix. `house-report [--show-sensitive]` renders all of it. `build_report_data.py [--show-sensitive] [--no-figures]` carries every section into REPORT.json too — the organisation/threat/person sections included (affiliate exposure as counts only, `leak_claims_tally`, e-mails `(withheld)@domain` unless `--show-sensitive`; every readable TLP source kept in `tlp_sources`, unreadable ones in `tlp_unreadable`) plus `report_figures` (card maps and affiliate-exposure charts, drawn into `cases/<id>/report/report-data/` unless `--no-figures`; paths relative to REPORT.json, and a REPORT.json written outside the case copies them into an adjacent `figures/` — ship that folder with it; the copy refuses a symlinked `figures/`, never follows a symlink or overwrites a file, and a rebuild reuses a byte-identical copy); `generate-cti-html.py`, `generate-cti-docx.py` and `generate-cti-docx-hybrid.py` render them in house-report order, only when present, and embed only PNGs inside the REPORT.json directory or the case `report/` directory, read once through a no-follow handle so the bytes checked are the bytes embedded (size-capped; anything else is skipped with a stderr note). **T2:** `intel.py report-sections load CASE-0001`. **T1:** `evidence_import` | `/report-sections lint CASE-0001` |
-| `/reverse-whois [email\|name]` | **Built-in.** Reverse-WHOIS a registrant identity → only high-value pivots; refuses privacy/registrar terms, flags bulk resellers as noise. **T2:** `intel.py reverse-whois --reverse-email <e> --search-type historic --json`. **T1:** `reverse_whois` | `/reverse-whois owner@x.com` |
-| `/cert-overlap [d1 d2 …]` | **Built-in.** KB-aware TLS/SAN same-operator **verdict** (SHARED-CERT / SIBLING-OVERLAP / NO-CT-OVERLAP / INCONCLUSIVE-CT-DEGRADED — crt.sh unreachable, not a negative) across 2+ domains — corroborates a cluster at the TLS layer. Complements the keyless `/cert-pivot`. **T2:** `intel.py cert-overlap a.com b.com`. **T1:** `cert_overlap` | `/cert-overlap a.com b.com` |
-| `/reference [check\|add\|list]` | **Built-in.** Curated **false-positive control** ledger — is a fingerprint BENIGN (common logo/CDN → don't cluster), SIGNAL (distinctive, prior-case → pivot), or UNKNOWN. **T2:** `intel.py reference check <value>`. **T1:** `reference_check`/`reference_add` | `/reference check favicon:123` |
-| `/pipeline [open\|status] <case> <domains-file>` | **Built-in.** The **deterministic** chain (no LLM key) — broad collect (cti-expert's `pivot_extract`) → ingest → prior-overlap → risk → shared-cluster → ICD-203 assessment, persisted under `cases/<case>/`. Prints `collector: cti-expert`. **`--no-collect`** = reuse mode: skip the live fetch and run the whole chain over pivot JSONs already in `cases/<case>/raw/` — the zero-egress handoff `/case` uses (it re-fetches nothing). **T2:** `intel.py pipeline open <case> seeds.txt [--no-collect] [--no-graph]` | `/pipeline open case1 seeds.txt` |
-| `/harness [open\|continue\|status]` | **Built-in.** The **agent-driven** whole-case orchestration (IntelHarness) — persistent, versioned, cross-case Collect→Correlate→Assess to convergence. Cross-type loop: typed seeds → `propose` → Plan (`PLAN_TOOLS`) → auto ≤25 free/urlscan hits else digest-bound `proposal.json` — auto-approved in AUTO mode (the default; gated tools held for the analyst), or `--review` for per-round `harness approve` / `case_approve` / TTY; `corpus_search`; kit/neighbour hits collect-only. **Auto-escalates inside `/case`** when the deterministic pipeline hasn't converged and posture is active (`--no-harness` opts out). **Keyless-first:** run interactively in Claude Code it uses the CLI's own model on your subscription; `HARNESS_BACKEND=local` (Ollama/vLLM/LM Studio, keyless) or an API key are needed only for unattended SDK `continue`. **T2:** `intel.py harness open CASE-0001 <seeds…> [--review]` · `continue CASE-0001 --depth 4` · `status [CASE-0001]`. Persists to `cases/`; `status` needs no key | `/harness status CASE-0001` |
-| `/graph --render` | **Built-in.** **IntelGraph** publication-quality render of a case graph → PNG/SVG (distinct from the ASCII `/graph`). **Use it whenever a case has a graph** — any `/case`, `/pipeline`, `/harness` or multi-node `/report` — not only on request; it degrades to a note if the `dot`/mermaid renderer is absent. **⚠ Fidelity check FIRST:** `case_graph.json` holds only **raw-backed hosts** — clusters attributed via KB/reverse-WHOIS (no raw pivot) are **absent**, so an auto-render can silently under-represent the finding; compare its node count against the attributed cluster count (`operators.jsonl` / `/clusters`) and, if KB clusters are missing, hand-scope the figure (Mermaid/DOT of the real clusters) or caption it as the raw-backed subset. **Large infra:** above `--max-nodes` (default 45) the MAIN figure is reduced to a **readable, representative subset** (operator anchor + one hub per cluster + top-degree nodes; fan-out infra dropped first) so the picture never collapses into a hairball, and the figure title says so — **the full indicator set stays in the IOC bundle (CSV/Excel · Markdown · JSONL)**. `--full` forces the whole graph; `--split-clusters` emits one figure per cluster. **T2:** `intel.py graph <case_graph.json> <out-stem> --legend [--max-nodes N \| --full]`. **T1:** `render_diagram` | `/graph --render case_graph.json out` |
-| `/report pdf` | **Built-in.** **IntelReport** pandoc render of an assessment `.md` → polished **PDF + DOCX** in the **same editorial house style** (slate/steel/ochre/brick palette, serif body + sans headings, cover/TOC/figures, VN-safe) — the DOCX now uses a matching `reference.docx` so the Word file reads as the same document as the PDF. Rebuild that reference with `IntelReport/scripts/make_reference_docx.py`. **T2:** `intel.py report <assessment.md> <out-stem> --pdf --docx`. **T1:** `render_report` | `/report pdf assessment.md out` |
-| `/clusters [case]` | **Built-in.** Partition a case into same-operator clusters **before** judging it — the unit of judgment is the cluster, not the case. Shows each binding indicator's KB-wide prevalence, so an indicator that binds 3 domains here but sits on 400 KB-wide reads as noise. Pure KB read. **T2:** `intel.py clusters <case>`. **T1:** `case_clusters` | `/clusters CASE-0001` |
-| `/frontier [case]` | **Built-in.** Next free apex seeds, deferred metered owner pivots, and OPEN identity/OSINT leads. `open` and `loop` run structured machine-executable leads (registrant email/phone, CLD phone/Telegram/actor/org, IntelX phonebook, linked GitHub account) and persist evidence under `enrichment/index.json`. Missing keys, no-spend posture, and retryable errors leave metered legs (email-deep, IntelX) OPEN; **CLD has no per-call credit (rate-limited only) and runs regardless of posture**; query-only dork/secret and apex-level GitHub leads need `/cti` review. **T2:** `intel.py frontier <case>` · `intel.py enrichment-done <case> --key <k>` · `intel.py reopen <case> <seed…>`. **T1:** `case_frontier`/`case_reopen` | `/frontier CASE-0001` |
-| `/enrich [case]` | **Built-in.** Resume matching machine-executable enrichment from stored raw pivots without re-fetching hosts. Persists each actual vendor result under `cases/<case>/enrichment/`; completed lookups close, while missing-key, held and retryable legs remain OPEN for later full runs. Includes the **mandatory leak fan-out**: every confirmed selector (seed, owner-rung node, first-hop registrant email/phone, owned seed domain, social-intake username — never kit/neighbour) × ChongLuaDao, IntelX, Hudson Rock (email/domain/username typed), deep_profile → `enrichment/leak_coverage.json` (hit / clean / not_consulted + reason), KB `leak_exposure` facts only. `--leak-only` runs just that fan-out (the harness does so after round-1 collection). `--free-only` defers metered calls (email-deep, IntelX, Hudson Rock), `--passive` restricts direct target contact but still permits metered third-party sources, and `scope.json no_spend` defers spending regardless of flags; **ChongLuaDao has no per-call credit (rate-limited only) and runs under every posture**. `pipeline open --no-collect` preserves zero egress: invoke `/enrich` afterward. **T2:** `intel.py enrich <case> [--free-only] [--passive] [--leak-only]`. **T1:** `case_enrich` (`leak_only`) | `/enrich CASE-0001` |
-| `/loop [case]` | **Built-in.** Collect → assess repeatedly until the case converges, instead of stopping at an arbitrary depth. **T2:** `intel.py loop <case>`. **T1:** `case_loop` | `/loop CASE-0001` |
-| `/scope [case]` | **Built-in.** Case **intake**: the no-touch class, victim ownership and the egress gate, derived up front rather than assumed mid-run. A defaulted value is never rendered as an answer. **T2:** `intel.py scope <case>`. **T1:** `case_scope` | `/scope CASE-0001` |
-| `/liveness [domain]` | **Built-in.** Is it actually alive? A 200 parking/default/suspended/soft-404 page is **not** live and a 404/403/5xx/bot-wall is **not** dead — only NXDOMAIN reports dead, and every still-controlled name sets `reuse_watch`. **T2:** `intel.py liveness <domain>`. **T1:** `domain_liveness` | `/liveness scam-site.top` |
-| `/pssl [domain\|cert]` | **Built-in.** Passive SSL — the historical **cert → IP** direction that recovers an origin from behind a CDN, with the base-rate rail that keeps a shared CDN certificate out of the clustering. Free (same CIRCL account as passive DNS), so it is on by default in the pipeline. **T2:** `intel.py pssl <target>`. **T1:** `passive_ssl` | `/pssl example.com` |
-| `/origin-history [case] [--host H]` | **Built-in.** Every address each collected host has **ever** resolved to — merged passive DNS / DNS history / web-scan / passive-SSL rows, CDN / WAF / parking / bogon suppressed, origins dated with their era (`current` · `recent` · `historical` · `undated` · `previous_owner`) and marked collected or not. The read-only view of the loop's origin-IP sweep; offline, no credits. **T2:** `intel.py origin-history <case>`. **T1:** `origin_history` | `/origin-history CASE-0001` |
-| `/approve-cohost [case] [ip] [domain…\|--all]` | **Built-in, ANALYST-RUN** (no MCP tool — the model cannot approve for you). Approve named co-tenants of a cloud/VPS origin IP listed under an *APPROVAL REQUIRED* gap (`vps co-tenancy — approve`); `--all` approves the list as it stands now (sites that appear later need a new approval); with neither it refuses. Recorded per domain in `state.json → approved_cohosts`: the next round seeds exactly those as neighbours (never attributed), ingest links them to the IP, and the cluster partition lets only their edges (and the case hosts that led to the box) bind. Approving harness proposal items records the same, per item that ran. **T2:** `scripts/backend/intel.py approve-cohost <case> <ip> <domain…>` | `/approve-cohost CASE-0001 198.51.100.40 site-a.example` |
-| `/paths [url]` | **Built-in.** The URL **path** as a clustering indicator (`path_kit:`) — for an operator who rotates disposable hosts and selects the branded template by directory instead. A generic path (`/login`, `/assets`) emits nothing; the base-rate denylist is the whole reason this is safe. **T2:** `intel.py paths <url>`. **T1:** `url_paths` | `/paths https://host/kitname/` |
-| `/serp [domain]` | **Built-in.** The **advertising** layer — Google Ads Transparency (who *paid*: a verified, billed advertiser identity) plus the cloaking probe with its falsification control. Opt-in per run: it spends a SerpApi search per host. **T2:** `intel.py serp <domain>`. **T1:** `serp_ads` | `/serp scam-site.top` |
-| `/docmeta [url\|file]` | **Built-in.** Document/image metadata — PDF `/Info` + XMP, EXIF (incl. GPS), PNG chunks — the author string an operator forgot to strip. Base-rate filtered on both the pivot and ingest paths. **T2:** `intel.py docmeta <target>`. **T1:** `doc_metadata` | `/docmeta https://site/brochure.pdf` |
-| `/screenshot [url]` | **Built-in.** A rendered **full-page PNG** as timestamped, hashed **visual evidence** — the page as a human sees it (a channel bio naming admins, a members-area panel, a deposit page). Renders post-JS in a real browser, so it captures what the page *displays*, not what the DOM says. Each capture records collector (a case-salted pseudonym unless `CTI_COLLECTOR` is set), persona, egress_ip and clock_sync plus browser/tool versions; `--verify` re-hashes a stored capture against the **first digest logged for it**, seals a matching case PNG read-only and logs it to `evidence/custody.jsonl` (a mismatch is TAMPERED and never sealed). Every result carries `seal_status` — `sealed`, `not_sealed`, `failed` (the chmod itself failed, e.g. a read-only mount: content still verified, never TAMPERED) or `unavailable_on_platform` (no `fchmod`, e.g. Windows). Raw-bytes bundles (`capture_evidence`): `verify=true` seals an intact capture, `working_copy=true` copies it to `evidence/work/`, `fixity_sample=N [seed=S]` re-hashes a random sample; a capture whose writes fail (e.g. disk full) returns `{ok: false, error, cleanup}` instead of raising — an unlogged folder is removed, a logged one kept; manual hand-offs via `wp_capture.py --custody transfer\|export\|cite` (items must stay inside the case). Manifests and verify/fixity output carry `custody_head` (`SHA256:COUNT`); keep it elsewhere and check with `wp_capture.py --check-log --case <id> --expected-head SHA256:COUNT` — an unanchored chain cannot see tail truncation (`handbook/collection-preservation.md` §6). **T2:** `intel.py screenshot <url> --case <id>`. **T1:** `capture_screenshot` | `/screenshot https://scam-site.top` |
-| `/exhaust [case]` | **Built-in.** Which collection layers actually **RAN** versus silently never fired. A layer that never executed looks identical to a layer that found nothing — this names the difference, so "no wallets" is not read as a fact about the operator when the wallet extractor never ran. **T2:** `intel.py exhaust --file <pivot.json>`. **T1:** `collection_gaps` | `/exhaust CASE-0001` |
-| `/misp-export [case]` | **Built-in.** **IntelShare** — build a MISP event from the case's own collected pivots. **Local only, no network**: it writes the event JSON so you can read every attribute before anything leaves the machine. Sets TLP 2.0 (`clear` · `green` · `amber` · `amber+strict` = recipient organisation only · `red`), distribution, threat level and tags. **TLP follows the case** (same `cti_case_meta` parser and rule as STIX): with no `--tlp` the event takes the case's strictest readable marking (amber when none); an unreadable marking with no `--tlp` is refused; a `--tlp` looser than the case marking needs `--allow-downgrade` (warned); a case with any RED marking, or a RED event, needs `--allow-red`. A refused export writes nothing (exit 2); the authorisation is recorded in the event's `meta.tlp_gate`. **T2:** `intel.py misp-export <case> --tlp amber [--allow-downgrade] [--allow-red]`. **T1:** `misp_export` (`allow_downgrade`, `allow_red`) | `/misp-export CASE-0001` |
-| `/misp [search\|push\|publish]` | **Built-in. Two separate decisions, deliberately.** `search` asks the cheaper question first — is this indicator already known to the instance? `push` **stages** the event on your instance, organisation-only and unpublished (a real write, but still deletable) — and first re-reads the case markings: an export built before the TLP check, or whose case marking tightened since the build, is refused unless its recorded authorisation still covers it (rebuild with `/misp-export` and the needed flags; push has no override flags). `publish` syncs it to the community and **cannot be recalled** — every indicator becomes somebody else's blocking rule, so a false positive blocks innocent infrastructure on networks you will never see. Both write paths prompt via `hooks/actionguard.py`. **T2:** `intel.py misp keycheck\|budget\|search\|push\|publish`. **T1:** `misp_search`/`misp_push`/`misp_publish` | `/misp search 1.2.3.4` |
-| `/pivot-extract <.eml>` | **Built-in.** `pivot_extract` also takes a **victim's saved email**. The `.eml` is parsed to its HTML body, so every HTML-side extractor runs over **what the funnel actually sent** — then header/CDN-derived selectors (sender domains, sending platform) emit pivots like any other artifact. This is the funnel's *first hop*, and no live fetch of the landing page can recover it. **T2:** `intel.py pivot-extract ./saved.eml`. **T1:** `pivot_extract` | `/pivot-extract ./phish.eml` |
-| `/victims [case]` | **Built-in.** Infer the **access vector** from the victim set, plus demography (country + sector) — who was hit tells you how. **T2:** `intel.py victims --case <id>`. **T1:** `victim_profile` | `/victims CASE-0001` |
-| `/case-timeline [case]` | **Built-in.** **IntelGraph** infrastructure-lifecycle timeline — registration/expiry spans, registrant eras, IP hosting windows, cert validity, archive visibility — with an evidence ledger citing every dated fact to an online source. Optional `tempo=true` (CLI `--tempo`) adds a **lead-only operator tempo** read (`operator_tempo` in the ledger): an hour × weekday UTC histogram of operator-chosen timestamps only (non-bot commit author times, `operator_events` post/message/panel rows, manually issued certs, registrations — ACME/automated certs, crawls, scans, observation windows and date-only stamps are dropped with a reason), the UTC offsets whose local Mon–Fri 09:00–18:00 window holds most events, a second-rhythm flag, `insufficient` below 30 events / 10 distinct days, and its confounders; never feeds attribution, clustering or KB edges ("consistent with UTC+N business hours — lead"; `handbook/intrusion-modeling.md` §10, signature T-02). Telegram post times feed it too: with `--tempo`, the case's `telegram/*.json` files carrying `operator_events` (from `/telegram resolve … --messages N --case …`) are picked up alongside `raw/*.json`. **T2:** `intel.py timeline <case> [--tempo]`. **T1:** `case_timeline` | `/case-timeline CASE-0001` |
-| `/tool-calls [case]` | **Built-in.** Audit what the model **actually** called during a run, including the denied calls — `intel.py dashboard` serves the same data as a loopback-only inspector (cost, trace, tool pairing). **T2:** `intel.py tool-calls <case>` · `intel.py dashboard`. **T1:** `tool_calls` | `/tool-calls CASE-0001` |
-| `/login-detect [url]` | **Built-in.** **Engage** (detection half — passive and free): find the login form, the password field and the registration page, and classify by *fields* (a confirm-password means register; an invite code is a pivot, not an OTP). **T2:** `intel.py login-detect <url>`. **T1:** `detect_login` **T2:** `intel.py login-detect <url>`. **T1:** `detect_login` | `/login-detect https://scam-site.top` |
-| `/engage [url]` | **Built-in. GATED — outbound, attributable, irreversible.** Create a **synthetic-persona** account and log in to read the members area (panel, deposit/withdraw flow, affiliate tree, support handles). Refuses without explicit confirmation, refuses a non-synthetic persona or direct egress, and stops at a CAPTCHA. Same gate class as a sandbox submission — **ask first, always**. **T2:** `intel.py persona` → `intel.py engage <url>` → `intel.py engage-harvest` → `intel.py engage-report`. **T1:** `make_persona`/`engage_account`/`harvest_authenticated`/`engage_report` | `/engage https://scam-site.top` |
+**Deliver** — full rows: [`handbook/command-reference.md#deliver`](handbook/command-reference.md#deliver)
+
+| Command | Purpose |
+|---|---|
+| `/report` | Full report — base bundle, then presentation prompt |
+| `/report html` | Interactive self-contained HTML report (primary deliverable) |
+| `/report brief` | Single-page executive brief |
+| `/report json` | Raw data as JSON |
+| `/report csv` | Spreadsheet-compatible export |
+| `/report docx` | Word document in the PDF house style |
+| `/report legal` | Evidence-formatted for legal proceedings (adds DOCX/PDF) |
+| `/report journalist` | Source-citation-heavy format |
+| `/brief` | Plain-language summary (non-technical) |
+| `/render entities` | ASCII subject relationship diagram |
+| `/render timeline` | Chronological event chart |
+| `/render risk` | Exposure heatmap |
+| `/render network` | Network topology of connections |
+| `/stats` | Counts and coverage statistics |
+| `/workspace save [name]` | Persist case state |
+| `/workspace open [name]` | Resume a saved case |
+| `/workspace list` | Show saved cases |
+| `/workspace diff [a] [b]` | Diff two saved workspaces |
+| `/render threat-path` | ASCII attack path flow diagram |
+| `/render attack-surface` | ASCII attack surface exposure map |
+| `/report ioc` | Export IOCs as STIX 2.1 or flat list |
+| `/redact [file]` | Shareable variant of a report (opt-in) |
+
+**UX & Navigation** — full rows: [`handbook/command-reference.md#ux--navigation`](handbook/command-reference.md#ux--navigation)
+
+| Command | Purpose |
+|---|---|
+| `/flow [type]` | Guided step-by-step case workflow |
+| `/template list` | Browse pre-built case templates |
+| `/template run [name]` | Run a pre-built template |
+| `/novice` | Toggle simplified, low-jargon mode |
+| `/terms` | OSINT term glossary |
+| `/progress` | Current case phase and coverage |
+| `/opsec` | OPSEC checklist for current task |
+| `/onboard` | Interactive first-time onboarding guide |
+| `/quality` | Investigation quality composite score |
+
+**Configure** — full rows: [`handbook/command-reference.md#configure`](handbook/command-reference.md#configure)
+
+| Command | Purpose |
+|---|---|
+| `/apikeys` | Manage premium/pro API keys |
+| `/backend` | Detect/report the optional persistent-intelligence backend |
+| `/kb [query]` | Query the shared knowledge base |
+| `/recall [seed]` | "Have I seen this before?" |
+| `/kb-forget [case]` | Remove one case's contribution from the KB |
+| `/risk [case]` | Score a case's hosts for red flags |
+| `/evidence import <case> <findings.json>` | Import the analyst's graded findings |
+| `/report-sections [load\|sources\|lint] [case]` | The analyst report block: load, sources, lint |
+| `/reverse-whois [email\|name]` | Reverse-WHOIS a registrant identity |
+| `/cert-overlap [d1 d2 …]` | KB-aware TLS/SAN same-operator verdict |
+| `/reference [check\|add\|list]` | Curated false-positive control ledger |
+| `/pipeline [open\|status] <case> <domains-file>` | The deterministic chain (no LLM key) |
+| `/harness [open\|continue\|status]` | The agent-driven whole-case orchestration (IntelHarness) |
+| `/close <case> --outcome <o>` | Close a case with a disposition; no expansion until reopen |
+| `/action-log <case> --notice <file>` | Record a drafted notice as sent, or its result |
+| `/notice <case>` | Draft registrar/host/CDN/platform/bank/referral notices (nothing sent) |
+| `/watch [add\|list\|run\|rm]` | Watch-list over CT / lookalike / takedown / drift monitors (leads only) |
+| `/graph --render` | IntelGraph publication-quality render of a case graph |
+| `/report pdf` | IntelReport pandoc render → PDF + DOCX |
+| `/clusters [case]` | Partition a case into same-operator clusters |
+| `/frontier [case]` | Next free apex seeds, deferred pivots, open leads |
+| `/enrich [case]` | Resume machine-executable enrichment from stored raw pivots |
+| `/loop [case]` | Collect → assess repeatedly until the case converges |
+| `/scope [case]` | Case intake: no-touch class, ownership, egress gate |
+| `/liveness [domain]` | Is it actually alive? |
+| `/pssl [domain\|cert]` | Passive SSL — historical cert → IP direction |
+| `/origin-history [case] [--host H]` | Every address each collected host ever resolved to |
+| `/approve-cohost [case] [ip] [domain…\|--all]` | Approve named co-tenants of an origin IP (analyst-run) |
+| `/paths [url]` | The URL path as a clustering indicator |
+| `/kit-rules [update\|status]` | Import the public IOK kit rules into the local cache (never automatic) |
+| `/serp [domain]` | The advertising layer — Google Ads Transparency |
+| `/docmeta [url\|file]` | Document/image metadata |
+| `/screenshot [url]` | Rendered full-page PNG as hashed visual evidence |
+| `/exhaust [case]` | Which collection layers actually RAN |
+| `/misp-export [case]` | Build a MISP event from the case's pivots |
+| `/misp [search\|push\|publish]` | MISP search, stage, publish — separate decisions |
+| `/pivot-extract <.eml>` | pivot_extract on a victim's saved email |
+| `/victims [case]` | Infer the access vector from the victim set |
+| `/case-timeline [case]` | IntelGraph infrastructure-lifecycle timeline |
+| `/tool-calls [case]` | Audit what the model actually called |
+| `/login-detect [url]` | Find the login form, password field, registration page |
+| `/engage [url]` | GATED — synthetic-persona account in the members area |
 
 ---
 
@@ -960,7 +947,8 @@ Reference directory: `techniques/`
 | `cloud-audit.md` | Cloud infrastructure security (AWS/GCP/Azure): IAM, network, storage, compute, logging, secrets |
 | `microsoft-tenant-recon.md` | M365/Azure tenant enumeration — federation, tenant ID, Azure AD config, MDI detection |
 | `china-recon.md` | China/Sinophone layer — ICP filing → PRC entity + licence-serial sibling pivot, GSXT/信用中国/TianYanCha/QCC/Aiqicha registry chain, USCC validation, Quake/ZoomEye/FOFA cyberspace engines, Baidu dorking, CJK pinyin + Traditional variant generation, CN social platforms, access-reality gaps |
-| `fiat-payment-osint.md` | Bank accounts as selectors — IBAN mod-97 validation + BBAN decomposition, BIC, VN/SEA non-IBAN rails (VietQR/NAPAS BIN), account-reuse pivot, mule-pattern signals |
+| `fiat-payment-osint.md` | Bank accounts as selectors — IBAN mod-97 validation + BBAN decomposition, BIC, VN/SEA non-IBAN rails (VietQR/NAPAS BIN), account-reuse pivot, mule-pattern signals; EMVCo / VietQR parser (CRC-verified) → typed `bank_account` selector `bank:<cc>:<bank-id>:<account>`, kit rung, `which_cases` across cases |
+| `drainer-investigation.md` | Wallet-drainer heuristic over the page + captured JS — connect library, approval-harvest calls (setApprovalForAll / Permit2 / eth_sign), legitimate-app markers → `web3-site` / suspected drainer pattern (untested heuristic); drainer contracts are kit rung, never payee wallets (`artifacts.web3`, `drainer_markers.json`) |
 | `fx-edge-appliance-recon.md` | Edge/VPN appliance fingerprint → CISA KEV/CVE catalog (Citrix/F5/Cisco/Ivanti/Forti/PAN/Exchange) + exposed-service port-risk matrix + passive patch-lag inference (scan-index uptime → "no reboot since", announced build → lag after advisory), passive-first |
 | `fx-saas-identity-recon.md` | SaaS tenancy + identity-fabric mapping — DNS-TXT tenancy tokens, IdP fingerprinting (Okta/Auth0/OneLogin/Ping/Keycloak/ADFS/Entra), unauthenticated API/GraphQL/OpenAPI-spec discovery |
 | `fx-supplier-exposure.md` | Supplier map from collected DNS/mail/cert/document evidence — TXT verification tokens, SPF includes, MX, NS, cert issuer, document metadata and CNAME chains (`artifacts.cnames`, from `wp_recon.detect_cnames` on the collected host; guessed `www`/`sso`/`mail`/`status` under an apex only on organisation cases, `scope.json` `subject_type=org` — those queries reach the target's authoritative DNS) — via `wp_suppliers.py` → `cases/<id>/suppliers.json` (`references/suppliers.json`) + per-supplier third-party risk: public breaches, KEVs in supplier products, stealer infections among supplier staff carrying the subject. A supplier is a relationship of the subject, never an operator link |
@@ -976,7 +964,7 @@ Reference directory: `techniques/`
 | `clickfix-clipboard-hijack.md` | ClickFix / PasteJacking clipboard-hijack detection — clipboard-write + lure + OS-command co-occurrence, decodes PowerShell `-EncodedCommand` → C2 IOCs (`scripts/clickfix_detect.py`, offline, zero-dep); eCrime 2026 "PasteJacked" |
 | `visibility-aware-html.md` | Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen brand text a naive parser misses (`scripts/html_visibility_analysis.py`, offline, zero-dep); eCrime 2026 "Visibility-Aware HTML Analysis" |
 | `apk-permission-scope.md` | APK permission-scope risk scoring — dangerous-permission combos (accessibility+overlay+SMS) = on-device-fraud capability; combination is the signal, capability≠guilt (`scripts/apk_permission_scope.py`, offline, zero-dep); eCrime 2026 "The 'Allow' Reflex" |
-| `kit-template-attribution.md` | Phishing kit/template structural fingerprint + similarity → same-kit lineage; commodity-template match graded as noise, never auto-merged (`scripts/kit_template_fingerprint.py`, offline, zero-dep); eCrime 2026 tree-structured attribution |
+| `kit-template-attribution.md` | Phishing kit/template structural fingerprint + similarity → same-kit lineage; commodity-template match graded as noise, never auto-merged (`scripts/kit_template_fingerprint.py`, offline, zero-dep); eCrime 2026 tree-structured attribution; named kit signatures (`kit_signatures.json`, ships unseeded) → `artifacts.kit_matches`, kit-rung facts |
 | `renderer-confirmation.md` | Renderer-level confirmation of ClickFix + visibility — feeds runtime clipboard writes / computed-hidden elements into the static detectors and reconciles (`scripts/render_confirm.py`; renderer optional, degrades to a note); eCrime 2026 PasteJacked + Visibility-Aware HTML |
 | `phishtrace-dynamic-features.md` | Runtime-trace phishing characterization — redirects / exfil endpoints / cloaking; exfil hosts are IOCs not attribution; thin trace on a flagged page = cloaked, never benign (`scripts/phishtrace_features.py`, offline, zero-dep); eCrime 2026 "PhishTrace" |
 
@@ -1056,362 +1044,27 @@ missing map gives one warning, never a failure. A resolved ref is printed after 
 "— Windows audit setting: <name> (<event IDs>)" in every output, and REPORT.json carries it as
 `baseline_setting`; rows without a resolvable ref render unchanged.
 
-### Mandatory File Export (CRITICAL)
+### Deliver contract (CRITICAL)
 
-**Every `/report`, `/brief`, and `/case` command runs four steps at the end of delivery — an import prompt, then the always-saved base bundle, then the presentation prompt, then an export confirmation whenever HTML is among the outputs:**
+**MUST read [`handbook/report-export.md`](handbook/report-export.md) before the Deliver phase of any
+`/report`, `/brief` or `/case` run** — it holds every step, the generator commands, the report-JSON
+schema, the report formats, the visual outputs and the connectors. In order:
 
-**Step 0 — ASK whether to import more manually-collected evidence** (before building ANYTHING, so it enriches every artifact). Ask the user — via `AskUserQuestion` — **"Import more evidence data collected by manual investigation? (extra findings, subjects, indicators, selectors, timeline events, sources, screenshots, notes)"**. If **yes**, fold it into the report JSON (see Step 1) BEFORE Step A:
-- **Findings / subjects / indicators / selectors / timeline / sources** — append them to the corresponding arrays of the report JSON (same schema as Step 1); each still needs a `source_url`/source note and a confidence.
-- **Screenshots / evidence images** — base64-embed into `evidence_images[]` with `evidence-images.py`: explicit files `uv run "$SKILL_DIR/scripts/evidence-images.py" shot1.png shot2.png --caption "…" [--finding FND-003] --into REPORT.json`, or a whole case dir `… --case <case-dir> --into REPORT.json`.
-Re-run the Step 1 build / dash-normalizer after merging, then continue. Only once the manual evidence is in the JSON do Step A and Step B run — so the base bundle, the IOC bundle, and the chosen presentation report all include it. If **no**, proceed straight to Step A. (`--yolo`/guided-auto skip this prompt.)
-
-**Step A — ALWAYS auto-save the base data bundle** (no prompt, every run):
-
-| # | Format | File | Role |
-|---|--------|------|------|
-| 1 | **Markdown** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].md` | Diffable, greppable source of truth; also the input to the HTML/DOCX/PDF generators |
-| 2 | **JSON** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json` | Structured case data (the report JSON below); feeds the generators and downstream tooling |
-| 3 | **CSV** | `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv` | Findings **and** indicators, one row each with a `kind` column, credit + caveat header, formula-leading cells defused; written from the **finalized** JSON (after the Step 0 merge) by `build_report_data.py --from-report <JSON> --csv <CSV>`, for spreadsheets / SIEM lookups |
-| 4 | **IOC / selector bundle** | `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv,jsonl}` | Comprehensive indicators & selectors — STIX 2.1 + flat + CSV + JSONL |
-
-**Step B — ASK which presentation report to render**, then build the choice on top of the base bundle. This prompt is the default (interactive) behavior:
-
-| Choice | Format | Builder |
-|--------|--------|---------|
-| **a** | **PDF** — the **editorial house report** (IntelReport: cover, Roman-numbered sections I–XI, Methodology with the Admiralty × ICD-203 scales, relationship graph, entity relationship map, attribution inference chain, temporal view, registration heatmap + domain × shared-indicator matrix, ICD-203 × Admiralty confidence scatter, a captured landing page per estate host inline in the cluster section, per-domain dossiers, Appendices A–E incl. glossary). For a case dir this is **deterministic**: `python3 "$SKILL_DIR/scripts/backend/intel.py" house-report <CASE-ID>` writes `cases/<CASE-ID>/report/CTI-REPORT-<CASE-ID>-<date>.{pdf,docx,house.md}` + figures. **Egress caveat:** hosts with no screenshot on disk are rendered in headless Chromium through the research-egress proxy policy (proxied, or direct only if the store allows it; blocked → stated in the report, never forced); when the live page will not render or renders empty, a public web-scan screenshot or a rendered web-archive snapshot stands in — captioned as such, dated by the archive, linked in Appendix B, and flagged as a previous owner's page when it predates the current registration; `--no-screenshots` keeps the build fully offline, `--no-archive-fallback` disables the stand-in, `--max-screenshots N` / `--screenshot-timeout S` bound it. The four analytic charts are the dashboard's own (`scripts/cti_report_figures.py`, shared with `generate-cti-docx-hybrid.py`), drawn from `report/report-data.json` that `build_report_data.py` derives from the case dir. No case dir → `generate-cti-docx-hybrid.py … --pdf` (dashboard style) | `intel.py house-report` · fallback `generate-cti-docx-hybrid.py --pdf` |
-| **b** | **DOCX** — the editable twin of (a), emitted by the same `house-report` run; dashboard-style alternative (charts + confidence matrix + heatmaps) via `generate-cti-docx-hybrid.py` | `intel.py house-report` · alt `generate-cti-docx-hybrid.py` |
-| **c** | **HTML** — interactive, self-contained, OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search); the primary human-facing deliverable | `generate-cti-html.py` |
-| **d** | **All** — build PDF **and** DOCX **and** HTML | all of the above |
-
-**Step C — CONFIRM before exporting HTML** (choice **c** or **d**, and the explicit `/report html`). Before running `generate-cti-html.py`, get the Blueprint plan — `python3 "$SKILL_DIR/scripts/cti_archify.py" REPORT.json --plan` prints, offline and without rendering, what **auto** and **force** would embed (e.g. `auto  embed — apex level: 10 of 45 apexes shown for 105 hosts …` / `force embed — … 23 of 45 apexes …`) — state it with the output path, then ask, via `AskUserQuestion`, **"Export the HTML report now? Blueprint: (1) Auto — full graph if it fits, else the compact apex-level fold (recommended) · (2) Force — the widest map Archify's grid holds (`CTI_ARCHIFY=force`: up to 25 nodes, smaller labels, may need the frame's zoom) · (3) No Blueprint (`CTI_ARCHIFY=0`) · (4) Skip the HTML export"**. Run the generator with the matching env var and quote its `Blueprint (Archify):` line back so the analyst sees what was embedded (or the renderer's exact rejection). `--yolo`/guided-auto skip this prompt and build with Auto.
-
-> **Why two PDF/DOCX builders.** `house-report` composes the *document* — the analyst assessment folded
-> into the house structure with figures rendered from the case data (IntelGraph Mermaid graph with a
-> representative subset above 14 nodes, Graphviz inference chain from `assessment.json`, temporal view
-> from the raw pivots, temporal-correlation tables from the timeline events JSON, landing pages from
-> `screenshots/` + `evidence/screenshots/manifest.json` with full SHA-256 in the evidence ledger) and
-> pandoc + the LaTeX house template. It scrubs internal tool / vendor / path
-> names to public source classes (house Rule 12) and never emits the impersonated brand's genuine domain
-> as an indicator. `generate-cti-docx-hybrid.py` is the *dashboard* rendering of the flat report JSON —
-> keep it for report-JSON-only cases and for the chart appendix.
-**Save location:** Current working directory, or `./osint-reports/` subdirectory if it exists.
-
-**Attribution (MANDATORY — every exported artifact).** Every deliverable MUST credit this
-skill: `Generated by CTI Expert — https://github.com/7onez/cti-expert`. The generators
-inject it automatically — HTML (sidebar + page footer), DOCX (page footer, both generators),
-and the IOC bundle (flat header comment, CSV header comment, STIX producer identity
-`description` + bundle `x_cti_generator`). For the analyst-authored **Markdown** report,
-end the file with a footer line carrying that exact credit, e.g.:
-```markdown
----
-*Generated by [CTI Expert](https://github.com/7onez/cti-expert) — OSINT/CTI toolkit.*
-```
-The JSON deliverable carries a top-level `"generator"` field (see the report-JSON schema in
-Step 1) — generators ignore unknown keys, so it is safe and shipped in the file itself. Never
-strip the credit — the redactor leaves it intact (it is not PII).
-
-**The default set is unredacted** — it is the analyst's working record. A shareable variant is
-**opt-in**, never automatic, so nothing is ever quietly weakened. Request it with
-`/redact` or `/case … --redact`:
-```bash
-S="$SKILL_DIR/scripts"; R="CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]"
-for f in md json csv; do
-  uv run "$S/redact.py" "$R.$f" -o "$R.redacted.$f" --map "$R.map.json"
-done
-```
-One `--map` across all three files keeps a selector's placeholder identical everywhere.
-Infrastructure (URL/domain/IP) stays visible even then — in a CTI report the actor's
-infrastructure is the analysis, not incidental PII; add `--all-types` to cover it too.
-**Never ship the `.map.json`** — it reverses the redaction.
-
-- **Interactive mode (DEFAULT) — three prompts, in order:** (1) first ask **"Import more evidence data collected by manual investigation?"** (Step 0) and merge any supplied data into the report JSON; (2) then, after saving the base data bundle, ask — via `AskUserQuestion` — **"Which report format(s) do you want? (a) PDF · (b) DOCX · (c) HTML · (d) All"** (multi-select allowed); (3) when HTML is among them, confirm the export and its Blueprint mode (Step C: Auto · `CTI_ARCHIFY=force` · `CTI_ARCHIFY=0` · skip) before running `generate-cti-html.py`, then build exactly the chosen presentation format(s). Every choice ships alongside the base bundle (.md + .json + .csv + IOC .stix.json/.txt/.csv/.jsonl).
-- **`--yolo` / guided-auto / non-interactive:** skip **all three** prompts — no evidence-import question, no export confirmation (Blueprint runs in Auto), and default to **HTML** (lightest, zero external toolchain) on top of the base bundle. `/report legal` defaults to **All** (evidentiary — a fixed Word/PDF artifact is expected).
-- **Explicit subcommands bypass the format prompt** and emit that format directly on top of the base bundle: `/report html`, `/report docx`, `/report pdf`, plus the machine-only `/report json`, `/report csv`, `/report ioc`. `/report html` still runs the Step C export confirmation (it is the prompt that lets the analyst pick the Blueprint mode).
-- **DOCX/PDF caveat:** two builders, two toolchains. **Case dir → `intel.py house-report`** (IntelReport: pandoc + xelatex; the editorial document with sections I–XI, both confidence scales, relationship graph, entity map, inference chain, temporal view, heatmaps, confidence scatter, landing-page captures with web-scan / web-archive stand-ins, domain dossiers, Appendices A–E; PDF and DOCX are one composition rendered twice; the landing-page step is the only egress — proxy-gated, `--no-screenshots` to skip, `--no-archive-fallback` to forbid the stand-ins). **No case dir → `generate-cti-docx-hybrid.py`** (python-docx + LibreOffice; the dashboard DOCX with the two-axis ICD-203 × Admiralty confidence matrix and the campaign heatmaps, and `--pdf` renders that same DOCX to PDF via `scripts/cti_docx_pdf.py`). Both are the heaviest, most failure-prone step: check `pandoc`, `xelatex`, `dot` and `node` — Pele's runtime for the Mermaid figures, `IntelGraph/scripts/pele_fetch.py --check` — (house) or LibreOffice (dashboard) before promising a PDF, and fall back to HTML — which needs nothing — when a toolchain is missing. `house-report` scrubs internal tool/vendor/path names and masks third-party e-mails/phones/case ids (keeping the operator's own join key); the dashboard path relies on the analyst masking the Markdown first.
-- **Dash normalization (MANDATORY — covers every deliverable).** Em/en dashes (—, –) read as machine-authored, so no export may ship them. Two layers guarantee this: (1) the HTML, DOCX and pandoc PDF/DOCX generators normalize their prose automatically via `scripts/cti_text_normalize.py`; (2) for the on-disk **Markdown and JSON** deliverables — which no generator rewrites — run the normalizer in place as the final step before confirming files:
-  ```bash
-  S="$SKILL_DIR/scripts"; R="CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]"
-  uv run "$S/cti_text_normalize.py" "$R.md" "$R.json"   # rewrites — → - in place; no-op if clean
-  ```
-  Prefer writing plain `-` while drafting so this step is a no-op. It rewrites only when a dash is present and is safe for .md/.json/.csv alike (typographic dashes occur only inside string content, never in structural syntax).
-
-**The HTML, JSON, CSV and IOC outputs all derive from one `report JSON`.** Build it once, then run the generators below.
-
-**Step 1 — Build the report JSON file.** The generators expect a SPECIFIC flat format (NOT the engine `case-schema.json`).
-
-- **For a case produced by the pipeline (`/cti` · `/case` · `/harness`) — build it deterministically. Do NOT hand-author.** Run the converter; it reads `raw/*.json`, `whois/*.json`, `assessment.md` (BLUF + recommendations), `evidence/*.json` (leak-sweep, estate-seo-sweep) and the operator ledger (`knowledge/operators.jsonl`) — and consults `clusters.json` only to flag a multi-operator case — then emits the exact flat schema below: operator/registrant subject with selectors, the full domain estate as network indicators, findings/timeline/connections, and the §2.5 exclusion set (CDN/shared IPs, registrar, nameservers) in `ioc_exclude` so no excluded value ever leaves as an IOC:
-  ```bash
-  uv run "$SKILL_DIR/scripts/build_report_data.py" "${INTEL_HOME:-$SKILL_DIR/intel_engine}/cases/[CASE-ID]" -o "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json"
-  ```
-  Then apply the Step 0 import (merge any analyst-supplied findings/subjects/selectors/timeline) onto that JSON before rendering, and write the bundle CSV from the finalized JSON so the imported rows are in it: `uv run "$SKILL_DIR/scripts/build_report_data.py" --from-report "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].json" --csv "CTI-REPORT-[CASE-ID]-[YYYY-MM-DD].csv"` (`--csv` on the build itself is the same writer, for a report nothing is merged into). The manual schema below is the field reference for that enrichment — and the fallback when there is no case dir (e.g. a report authored purely from pasted evidence).
-- **Otherwise (no case dir) — construct the JSON by hand** matching this exact structure. Reference: `scripts/sample-cti-report-data.json`.
-
-```json
-{
-  "generator": "CTI Expert — https://github.com/7onez/cti-expert", // MANDATORY attribution (top-level)
-  "case": {
-    "id": "CTI-2026-001",          // string, case identifier
-    "label": "Case Title",         // string, human-readable name
-    "classification": "OPEN SOURCE", // string
-    "analyst": "AI-Assisted CTI",  // string
-    "date": "2026-04-08",          // ISO date
-    "subject": "target.com",       // string, primary subject
-    "status": "active"             // string
-  },
-  "executive_summary": "Full paragraph summarizing investigation findings...",
-  "subjects": [
-    {
-      "id": "SUB-001",            // string ID (not UUID)
-      "label": "target.com",      // human-readable name — REQUIRED for display
-      "type": "domain",           // lowercase: domain, person, ip, organization, email, username
-      "confidence": 95,           // INTEGER 0-100 (not string like "VERIFIED")
-      "verified": true,           // boolean
-      "aliases": ["alias1"],      // string array
-      "first_seen": "2025-01-15", // ISO date string
-      "notes": "Primary domain"   // string
-    }
-  ],
-  "findings": [
-    {
-      "id": "FND-001",            // string ID
-      "subject_id": "SUB-001",    // links to subject
-      "type": "infrastructure",   // credential, infrastructure, identity, exposure, behavioral, legal
-      "weight": "HIGH",           // CRITICAL, HIGH, MEDIUM, LOW, INFO — drives severity colors
-      "description": "Full description of the finding...",
-      "source_url": "https://...",
-      "collected_at": "2026-04-08T10:00:00Z",
-      "confidence": 88,           // INTEGER 0-100 (not string)
-      "tags": ["tag1", "tag2"]
-    }
-  ],
-  "connections": [
-    {
-      "id": "CON-001",
-      "from_id": "SUB-001",       // subject ID
-      "to_id": "SUB-002",         // subject ID
-      "relationship": "owns",     // string describing relationship
-      "strength": "confirmed"     // confirmed, probable, possible
-    }
-  ],
-  "timeline": [
-    {"date": "2025-01-15", "event": "Domain registered"}
-  ],
-  "sources": [
-    {"name": "Source Name", "url": "https://...", "date": "2026-04-08"}
-  ],
-  "intelligence_gaps": [
-    "Gap description string"
-  ],
-  "recommendations": [
-    "Action item string"
-  ],
-  "visitor_stats": {              // optional — enables visitor intelligence charts
-    "domain": "target.com",
-    "monthly_visits": 150000,
-    "traffic_sources": {"direct": 42, "search": 28, "referral": 15, "social": 10, "paid": 5},
-    "top_countries": [{"country": "Vietnam", "share": 60}, {"country": "US", "share": 20}]
-  },
-  "caveats": ["Caveat string"],  // optional — overrides default methodology notes
-  "evidence_images": [           // optional — screenshots that visually back findings
-    {
-      "caption": "Phishing login impersonating Bank X",  // human label
-      "host": "phish.example",                            // optional
-      "data_uri": "data:image/png;base64,....",           // REQUIRED — offline-safe base64
-      "sha256": "....",                                   // citable; auto-added by evidence-images.py
-      "captured_at": "2026-04-08T10:00:00Z",              // optional
-      "source_url": "https://phish.example/login",        // optional
-      "finding_id": "FND-001",                            // optional — ties the shot to a finding
-      "subject_id": "SUB-001"                             // optional
-    }
-  ]
-}
-```
-
-**CRITICAL FORMAT RULES:**
-- `confidence` on subjects and findings MUST be an **integer** (e.g., `85`), NOT a string (e.g., `"VERIFIED"`)
-- `findings` MUST be a **flat top-level array**, NOT nested inside subjects
-- `label` is REQUIRED on each subject (this is what displays in the report — not `value` or `display_name`)
-- `weight` on findings drives severity coloring — use CRITICAL/HIGH/MEDIUM/LOW/INFO
-- `recommendations` must be an array of **strings** (not objects with `priority`/`action` keys)
-- All fields shown above should be **populated with actual data** — empty strings or "N/A" defeat the purpose
-- Populate `executive_summary` with a full paragraph — this is the most-read section of the report
-
-**Optional enrichment fields (backward-compatible — used by the HTML report & IOC export when present):**
-- `subjects[].role` — `actor` | `victim` | `infrastructure` | `associate` | `witness` (drives the role chips and actor↔victim attribution; otherwise inferred from type/links)
-- `subjects[].selectors[]` — contact/social points attached to a person/org: `{type, value, platform, url}` (e.g. a victim's phone, an actor's Telegram or LinkedIn) — surfaced in the Indicators panel and IOC export
-- `indicators[]` — analyst-curated indicators to force into the export verbatim: `{type, value, category, role, confidence, source_url}`
-- `evidence_images[]` — screenshots that back findings, embedded into the HTML **Evidence** view and the DOCX **Visual Analytics → Evidence Screenshots** section (base64, offline-safe): `{caption, host, data_uri, sha256, captured_at, source_url, finding_id, subject_id}`. **`/cti` captures them automatically**: every host collected live, or recovered from a Wayback capture, gets one full-page PNG at `cases/<case>/evidence/screenshots/<host>/<UTC>.png` (sha256, custody line, seal; `HARNESS_SCREENSHOT=0` disables). Add more whenever it fits — a confirmed phishing/login page, a scam members-panel, a defacement — via the `capture_screenshot` tool (same store), or the deterministic pipeline's `--screenshots` flag. `--case` always writes under `$INTEL_HOME/cases/<id>/` whatever the cwd. Then build the array mechanically: `uv run "$SKILL_DIR/scripts/evidence-images.py" --case <case-dir> --into REPORT.json` (base64-embeds each PNG, dedupes by sha256; `--finding FND-00X` ties shots to a finding). A hostile target is shot only through the pool exit its fetch used, never direct.
-
-**Step 2 — Generate the interactive HTML report (PRIMARY human-facing deliverable).** Self-contained, OFFLINE, zero toolchain to view — opens in any browser:
-```bash
-S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md
-uv run "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   # any OS, zero setup
-# no uv installed: python3 "$S/generate-cti-html.py" "REPORT.json" "REPORT.html"   (Windows: py …)
-```
-It injects the report JSON into `cti-report-template.html` and renders, entirely client-side and offline (no CDN, no network calls): KPI cards, a finding-type pie, severity bars, a draggable/zoomable **2D entity graph**, **infrastructure topology**, an **event timeline**, and the **comprehensive Indicators & Selectors panel** (network IOCs + contacts + identities + social/messaging handles + wallets + actor↔victim attribution) — with global search, category menus, dark/light themes and a print-to-PDF stylesheet.
-
-The report also embeds an interactive **Blueprint** view — the case entity graph
-rendered as an [Archify](https://github.com/tt-a1i/archify) `architecture` diagram
-(typed nodes, directional relationships, exposure/finding cards) and inlined into
-the single offline file via an isolated iframe (theme + PNG/SVG export live inside
-it). This is the one build step that uses **Node.js** (a trimmed, zero-dependency
-Archify copy is vendored at `scripts/vendor/archify/`). It is best-effort: if
-Node.js is unavailable, the case has no subjects, or `CTI_ARCHIFY=0` is set, the
-report is still produced and the Blueprint tab is simply omitted — every other
-view (including the always-present 2D entity graph) is unaffected.
-
-Archify's architecture type draws small maps (≤ 12 nodes · 18 edges,
-`cti_archify.BLUEPRINT_LIMITS`), so a dense estate is **folded to apex level**
-automatically: every host under its registrable domain (PSL-aware, `Estate · N
-hosts`), the long tail of apexes into one `+N more apexes` node, apexes carrying a
-finding ranked first, the operator hub placed mid-row with its spokes above and
-below. The full host list stays in the Network Graph and Editorial views. The
-`CTI_ARCHIFY` env var selects the mode and the generator prints the outcome on its
-`Blueprint (Archify):` line — quote that line back to the analyst:
-
-| `CTI_ARCHIFY` | Blueprint |
-|---|---|
-| `1` (default) | full graph when it fits, else the apex-level fold, else skipped with the reason |
-| `force` | past the density gate: the full graph when it has ≤ 25 nodes, else the apex fold at the widest grid Archify holds (12 spokes above and below the hub, `cti_archify.FORCE_MAX_NODES`) — more apexes, smaller labels; Archify's own validator still has the last word and any rejection is printed verbatim |
-| `0` | never embedded |
-
-It also renders two print-ready figures shared across HTML, **PDF** and **DOCX**:
-an **Editorial** view — the entity map and infrastructure topology drawn as
-[Diagram Design](https://github.com/cathrynlavery/diagram-design) editorial SVG
-(atomic-tangerine accent on 1–2 focal nodes, hairlines, no shadows), inlined as
-vector in HTML/PDF and rasterized via **cairosvg** for DOCX; and, only when a case
-reveals cloud infrastructure, a **Cloud Architecture** figure applying
-[Diagram AI Generator](https://github.com/carlosmgv02/diagram-ai-generator) —
-real AWS/Azure/GCP/K8s provider icons via the `diagrams` library + **graphviz**.
-Both are best-effort: the editorial figures fall back to the matplotlib DOCX
-diagrams if cairosvg is unavailable, and the cloud figure auto-skips when no cloud
-infra is detected, graphviz/`diagrams` are missing, or `CTI_CLOUD_ARCH=0` is set.
-
-**Step 3 — Generate the comprehensive IOC / selector bundle.**
-```bash
-uv run "$S/generate-cti-iocs.py" "REPORT.json" "IOC-[CASE-ID]-[YYYY-MM-DD]" --format all
-# single format: --format stix | flat | csv
-```
-Extracts EVERY indicator that profiles or can reach an actor/victim — network IOCs, emails/phones, usernames/names/aliases, social-media profiles, messaging handles, crypto wallets, and the attribution links between subjects. A finding's `source_url` and the `sources[]` list are provenance, never indicators (a `sources[]` row only when tagged `"indicator": true`); cited registries / search platforms / scam-check sites (`scripts/references/ioc_reference_hosts.json`) are never harvested from prose, and analyst-graded findings (`ioc_scan: false`) export only their explicitly tagged indicators. Full spec: [`techniques/ioc-export.md`](techniques/ioc-export.md).
-
-**Step 4 — DOCX (on request, or automatically for `/report legal`).** Word is no longer auto-generated by default. When the user asks for it (or for evidentiary reports), build it from the SAME report JSON + MD. The generators carry **PEP 723 inline dependency metadata**, so the simplest, most portable runner is **`uv run`** — it provisions the deps on the fly with zero venv/pip setup, identically on every OS. The generator is also **self-healing**: it forces UTF-8 output and auto-locates pandoc (including Windows `%LOCALAPPDATA%\Pandoc`), so **no `PYTHONUTF8` / PATH prelude is needed**. Replace `REPORT` with `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]`.
-
-**Preferred — `uv run` (any OS, any agent, zero setup):**
-```bash
-S="$SKILL_DIR/scripts"     # $SKILL_DIR = dir containing SKILL.md (Claude Code: ~/.claude/skills/cti-expert; Codex/clone: the repo)
-# Primary: HYBRID — full narrative from MD + charts/diagrams from JSON (zero content loss)
-uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"
-# PDF — DOCX-STYLE document (the DOCX rendered by LibreOffice), NOT an HTML print:
-uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx" --pdf
-# Fallback 1: JSON-only (charts + structured data; no pandoc needed)
-uv run "$S/generate-cti-docx.py" "REPORT.json" "REPORT.docx"
-# Fallback 2: MD-only (styled narrative, no charts)
-uv run "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.docx"
-```
-> Both DOCX generators take `--lang en|vi` (cover, header/footer, TOC and generated appendix headings from `scripts/references/docx_i18n.json`; the Markdown body is never translated). The hybrid generator draws the campaign heatmaps only when the report JSON `verdict.malicious_supported` (from the case's `scope.json` target_class + `assessment.json` premise_verdict, `scripts/references/malicious_verdict.json`) supports a malicious classification; `--no-heatmaps` suppresses them outright.
-> Windows PowerShell: set `$S = "$env:USERPROFILE\.claude\skills\cti-expert\scripts"` (Claude Code) or `"<repo>\scripts"` (Codex/clone), and use backslash paths.
-
-**Fallback — no uv installed.** Use the OS interpreter; the script's `ensure_deps()` installs the libs on first run (via uv if present, else pip):
-- macOS / Linux (Bash): `python3 "$S/generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"`
-- Windows (PowerShell): `py "$S\generate-cti-docx-hybrid.py" "REPORT.md" "REPORT.json" "REPORT.docx"` — the Store `python3` stub will not run; use `py` or the venv python
-- Last resort (no styling/charts): `pandoc "REPORT.md" -o "REPORT.docx" --from markdown --to docx --standalone`
-
-**How the hybrid generator works:**
-1. **Phase 1:** pandoc converts the MD file to a base DOCX (preserving ALL narrative content — tables, lists, formatting)
-2. **Phase 2:** python-docx post-processes to add CTI professional styling, prepend cover page + TOC, and inject charts/diagrams from JSON at matching section headings
-
-**The MD file is the primary content source.** It carries the full narrative (detailed person profiles, infrastructure tables, wallet addresses, corporate structure, legal history, etc.). The JSON file provides structured data for visual elements (charts, diagrams, the ICD-203 × Admiralty confidence matrix, and the campaign heatmaps). Using both together produces a complete report with zero content loss.
-
-**Rich hybrid DOCX includes:** Cover page titled "CTI REPORT", table of contents, **all narrative content from MD** (every paragraph, table, list, code block), pie chart (finding types), bar chart (severity), **two-axis ICD-203 × Admiralty confidence matrix**, **campaign heatmaps** (malicious-domain registration timeline, domain×indicator correlation, domain×domain possible-relation), timeline chart, entity relationship diagram, network topology diagram, traffic/geo charts, CTI-themed styling (navy headings, styled tables), header/footer with classification and page numbers. **No overall exposure score / risk gauge** (removed). The PDF (`--pdf`) is this same DOCX rendered by LibreOffice.
-
-**After saving, confirm all files to the user:**
-```
-📄 Base data bundle saved (always):
-   → CTI-REPORT-CASE001-2026-03-30.md
-   → CTI-REPORT-CASE001-2026-03-30.json
-   → CTI-REPORT-CASE001-2026-03-30.csv
-   → IOC-CASE001-2026-03-30.stix.json / .txt / .csv / .jsonl   (indicators & selectors)
-
-📄 Presentation report (your choice) — e.g. when (c) HTML was chosen:
-   → CTI-REPORT-CASE001-2026-03-30.html   (interactive — open in any browser, fully offline)
-```
-
-### Report Formats
-
-| Format | Command | Audience |
-|--------|---------|---------|
-| Interactive HTML | `/report html` · choose **c** at the prompt | Everyone — analysts to execs; the primary deliverable |
-| Technical INTSUM | `/report` | Analysts, security teams |
-| Executive Brief | `/report brief` | Decision-makers, management |
-| Plain-Language Summary | `/brief` | Non-technical stakeholders |
-| Legal Evidence Format | `/report legal` | Attorneys, compliance teams (auto-adds DOCX/PDF) |
-| Journalist Format | `/report journalist` | Reporters, media |
-| JSON Export | `/report json` | Downstream tools, pipelines |
-| CSV Export | `/report csv` | Spreadsheets, databases |
-| IOC / selector bundle | `/report ioc` | SIEM/TIP ingest, threat-intel sharing |
-| Word document | `/report docx` · **b**/**d** at the prompt | Formal sharing |
-| PDF document | `/report pdf` · **a**/**d** at the prompt | Formal sharing / print (the DOCX rendered by LibreOffice) |
-
-Every narrative report **always** auto-saves the **base data bundle** (.md + .json + .csv + IOC bundle: .stix.json/.txt/.csv/.jsonl — see Mandatory File Export above), then **asks which presentation format to render** — (a) PDF · (b) DOCX · (c) HTML · (d) all. `/report legal` defaults to **all**; `--yolo`/guided-auto default to **HTML**. Machine-only subcommands (`json`, `csv`, `ioc`) emit their native format directly.
-
-### Visual Outputs
-
-| Type | Command | Format |
-|------|---------|--------|
-| Subject relationship map | `/render entities` | **ASCII** (default) — `--mermaid` for Mermaid |
-| Chronological timeline | `/render timeline` | **ASCII** Gantt |
-| Exposure heatmap | `/render risk` | **ASCII** |
-| Network topology | `/render network` | **ASCII** |
-
-**All visual outputs use ASCII box-drawing by default.** Mermaid only on explicit `--mermaid` flag.
-
-**Diagram tradecraft:** [`output/visuals/diagram-patterns.md`](output/visuals/diagram-patterns.md) — compile-check a Mermaid diagram before presenting it, and pick the right diagram type per CTI question (attack → sequence, lifecycle → state, handoffs → swimlane, infra → graph).
-
-The **interactive HTML report** (the primary human-facing deliverable, and the `--yolo`/guided-auto default) renders all of these as live, explorable visuals — a draggable/zoomable 2D force-directed entity graph, infrastructure topology, an event timeline, and SVG charts (pie/bar/gauge/donut) — alongside the ASCII versions in the `.md`.
-
-**IntelGraph — use it whenever a case has a graph.** For any multi-node case
-(`/case`, `/pipeline`, `/harness`, or a `/report` with an entity/infra graph),
-render the publication-quality figure with `/graph --render` and embed it in the
-report; do not reserve it for explicit requests. It degrades to a note when the
-`dot`/mermaid renderer is missing, so calling it is always safe. **But check fidelity
-first:** `case_graph.json` contains only raw-backed hosts, so KB/reverse-WHOIS-attributed
-clusters can be absent — if the graph's node count is below the attributed cluster count,
-hand-scope the figure (Mermaid/DOT of the real clusters) or caption it as the raw-backed
-subset, rather than auto-rendering a figure that under-represents the finding.
-
-**Relationship card maps — who the subject is connected to.** A hub-and-panel figure (subject at the
-top, grouped panels of cards: name, role, dates, country-code chip, relation chip, Admiralty badge;
-**dashed = claim not confirmed**). The house report draws a person map (`subject_profile` +
-`relationships` rows), a threat-landscape map (`actors` rows, grouped by type) and a suppliers map
-(`cases/<id>/suppliers.json`) — only when that data exists; card text passes the report's
-scrub/masking, and the builders strip e-mail, phone and birth-date patterns (full dates on person cards
-or next to a birth cue; ordinary year ranges stay) — pattern-based reduction, not guaranteed
-anonymisation of arbitrary prose. Standalone from a JSON spec, where `--mask` always reduces person names
-to initials and drops logos (logos load only from the spec or case `report/` directory):
-`python3 intel_engine/IntelGraph/scripts/card_map.py spec.json -o map.svg --png map.png [--mask]`
-(schema + example: `intel_engine/IntelGraph/SKILL.reference.md`, `references/card_map_example.json`).
-
-**Large infrastructure — show a representative example, point to the full list.**
-A case with hundreds of nodes is unreadable in one figure. Above `--max-nodes`
-(default 45) IntelGraph automatically renders a **representative subset** — the
-operator anchor, one hub per cluster, and the highest-degree nodes, dropping
-fan-out infrastructure (nameservers, registrars) first — and stamps the figure
-title `representative subset: N of M nodes`. **The complete indicator set is never
-lost:** it lives in the IOC bundle (`generate-cti-iocs.py` → `.csv` openable in
-**Excel**, plus the report `.md` and the JSON/JSONL exports). Always tell the
-reader, in the figure caption, that the graph is an example and the full details
-are in the IOC list. Use `--full` to force the entire graph, or `--split-clusters`
-for one readable figure per cluster.
-
-### Connectors
-
-| Tool | File | What It Exports |
-|------|------|----------------|
-| Maltego | `connectors/maltego-export.md` | GraphML entity graph |
-| Obsidian | `connectors/obsidian-setup.md` | Linked markdown notes |
-| Notion | `connectors/notion-schema.md` | Structured database |
-| Intel backend | `connectors/intel-backend.md` | **Optional** persistent KB + cross-case correlation via the `intel_engine` engine (MCP/CLI). Absent → stateless as normal. Enables `/backend`, `/kb`, `/recall`, `/binary` |
-| **ChongLuaDao** ⭐ | `connectors/chongluadao-api.md` | **First-party** premium connector (`scripts/cld/cld_api.py`) — IoC/denylist/breach/data-leak/AI/feeds. Enables `/cld`; upgrades `/scam-check`,`/threat-check`,`/phone`,`/breach-deep`,`/email-deep`,`/email-hygiene`,`/vuln-check`,`/impersonate`. Needs `CHONGLUADAO_API_KEY` |
+1. **Import prompt (Step 0).** First ask, via `AskUserQuestion`, whether to import more evidence
+   collected by manual investigation (findings, subjects, indicators, selectors, timeline events,
+   sources, screenshots, notes) and merge it into the report JSON before anything is built.
+2. **Base bundle (Step A) — always saved, no prompt:** `CTI-REPORT-[CASE-ID]-[YYYY-MM-DD]` `.md` +
+   `.json` + `.csv`, plus the IOC / selector bundle `IOC-[CASE-ID]-[YYYY-MM-DD].{stix.json,txt,csv,jsonl}`.
+3. **Presentation prompt (Step B).** Then ask which report to render — (a) PDF · (b) DOCX · (c) HTML ·
+   (d) All — and build it on top of the base bundle; when HTML is among them, confirm the export and
+   its Blueprint mode first (Step C). Explicit `/report html|docx|pdf|json|csv|ioc` skips this prompt.
+4. **`--yolo` / guided-auto / non-interactive:** skip all three prompts and render **HTML** (Blueprint
+   in Auto) on top of the base bundle. **`/report legal`** defaults to **All** (PDF + DOCX + HTML).
+5. **Pipeline cases (`/cti` · `/case` · `/harness`):** build the report JSON with
+   `scripts/build_report_data.py` from the case directory — never by hand. A hand-built JSON is only
+   for a report with no case dir.
+6. Every artifact carries the CTI Expert attribution credit, the Markdown and JSON pass the dash
+   normalizer, and every saved file is confirmed to the user.
 
 ---
 
@@ -1498,372 +1151,22 @@ Activate for session: `/cti-expert --yolo`
 
 ## 12. Architecture Reference
 
-```
-cti-expert/
-├── SKILL.md                    This file
-├── README.md                   User-facing overview
-│
-├── engine/                     Case data model and state management
-│   ├── case-schema.json        Subject and finding data structures
-│   ├── subject-registry.md     How subjects are tracked and versioned
-│   ├── finding-framework.md    Finding lifecycle, trust scores, evidence chains
-│   ├── pivot-orchestration.md  Recursive spider-map pivot engine (BFS loop, edge matrix, gating)
-│   ├── workspace-format.md     Workspace serialization spec
-│   ├── workspace-manager.md    Save/open/list workspace logic
-│   └── conflict-resolver.md    CONTESTED finding resolution
-│
-├── analysis/                   Pattern detection and intelligence engines
-│   ├── deviation-detector.md   Behavioral anomaly detection
-│   ├── auto-branch-rules.md    Automatic pivot trigger rules
-│   ├── drift-monitor.md        Subject state change tracking
-│   ├── cross-reference-engine.md Shared identifier detection across subjects
-│   ├── archive-explorer.md     Wayback Machine integration and diff
-│   ├── signature-catalog.md    Behavioral pattern library
-│   ├── exposure-model.md       Exposure score calculation framework
-│   ├── risk-trend-tracker.md   Temporal risk score tracking (/drift)
-│   ├── pattern-library.md      Username, email, bot detection patterns
-│   └── weight-engine.md        Finding aggregation and confidence weighting
-│
-├── techniques/                 Collection techniques and module specs
-│   ├── fx-metadata-parsing.md  EXIF, headers, document metadata
-│   ├── fx-image-verification.md Image authenticity and provenance
-│   ├── fx-breach-discovery.md  Breach database and paste site methods
-│   ├── fx-geolocation.md       GPS, W3W, Plus Codes, Street View
-│   ├── fx-social-topology.md   Social graph construction and topology
-│   ├── fx-email-header-analysis.md Header analysis, SPF/DKIM
-│   ├── fx-document-forensics.md Document forensics and extraction
-│   ├── fx-http-fingerprint.md  HTTP fingerprinting and signatures
-│   ├── fx-leak-monitoring.md   Leak and breach monitoring
-│   ├── username-osint.md       Platform enumeration (3000+)
-│   ├── phone-osint.md          Phone carrier/VoIP/spam lookup
-│   ├── email-osint.md          Deep email investigation
-│   ├── threat-intel.md         Threat intelligence free lookups
-│   ├── web-traffic-analysis.md Traffic estimation methods
-│   ├── secret-scanning.md      Credential/secret detection
-│   ├── github-osint.md         GitHub profiles, repos, code, commits, forks
-│   ├── domain-advanced.md      Subdomain enumeration methods
-│   ├── social-media-platforms.md Platform-specific techniques
-│   ├── advanced-geolocation-techniques.md Overpass Turbo, road signs, reflected text
-│   ├── wifi-ssid-osint.md      WiFi SSID/BSSID geolocation via Wigle.net
-│   ├── web-dns-forensics.md    DNS, GitHub, Telegram, WHOIS
-│   ├── fx-visitor-intelligence.md Visitor stats, tech stack, geo analysis
-│   ├── scam-check.md           Phishing/scam domain verification
-│   ├── cloud-audit.md          Cloud infrastructure security audit
-│   ├── microsoft-tenant-recon.md M365/Azure tenant enumeration
-│   ├── china-recon.md          ICP filings, PRC registries, CN cyberspace engines, CJK variants
-│   ├── fiat-payment-osint.md   IBAN/BIC/bank accounts as selectors, VN-SEA rails
-│   ├── fx-edge-appliance-recon.md Edge/VPN appliance fingerprint → KEV/CVE catalog + port-risk matrix + passive patch lag
-│   ├── fx-saas-identity-recon.md SaaS tenancy + IdP fingerprint + API/GraphQL/spec discovery
-│   ├── fx-supplier-exposure.md   Supplier map + third-party risk (breach / KEV / stealer per supplier)
-│   ├── dependency-audit.md     Supply chain security audit
-│   ├── disk-forensics.md       Digital evidence analysis
-│   ├── incident-triage.md      Security incident response
-│   ├── owasp-audit.md          OWASP Top 10 source code audit
-│   ├── prompt-injection-audit.md AI/LLM security audit
-│   ├── stealer-log-analysis.md Infostealer-log triage, actor attribution & IOC extraction
-│   ├── agent-browser.md        Interactive browser collection & evidence capture (vercel-labs/agent-browser)
-│   └── ioc-export.md           IOC export (STIX 2.1, flat list)
-│
-├── experience/                 UX, tiers, and guided flows
-│   ├── skill-tiers.md          Novice/Practitioner/Specialist spec
-│   ├── layered-detail.md       Progressive disclosure rules
-│   ├── guidance-system.md      How guided flows work
-│   ├── case-progress.md        Progress tracking logic
-│   ├── guided-flows/           Interactive step-by-step flows
-│   │   ├── flow-person-lookup.md Person investigation guided flow
-│   │   ├── flow-domain-sweep.md Domain reconnaissance guided flow
-│   │   └── flow-image-check.md Image verification guided flow
-│   ├── case-templates/         Pre-built case configurations
-│   │   ├── tpl-index.md        Template index and descriptions
-│   │   ├── tpl-due-diligence.md Due diligence case template
-│   │   ├── tpl-security-review.md Security audit case template
-│   │   └── tpl-background-check.md Background check case template
-│   ├── tutorial.md             First-time onboarding guide (/onboard)
-│   ├── feedback-system.md      Investigation quality feedback loops
-│   └── accessibility/          Glossary and accessibility settings
-│       ├── glossary.md         OSINT term glossary
-│       └── accessible-mode.md  Low-jargon mode settings
-│
-├── output/                     Report and visualization specs
-│   ├── reports/                Report format templates
-│   │   ├── format-catalog.md   Report format specifications
-│   │   ├── leadership-brief-template.md Executive brief template
-│   │   ├── export-specs.md     Export format specifications
-│   │   └── citation-guide.md   Source citation standards
-│   └── visuals/                Chart and visualization specs
-│       ├── chart-templates.md  Chart rendering templates
-│       ├── ui-components.md    UI component library
-│       ├── render-engine.md    ASCII render engine spec
-│       ├── case-dashboard.md   Dashboard layout spec
-│       ├── attack-path-diagram.md  Attack path flow visualization (/render threat-path)
-│       └── attack-surface-map.md   Attack surface exposure map (/render attack-surface)
-│
-├── scripts/                    Cross-platform install + HTML / IOC / DOCX report generation
-│   ├── platform-setup.md            Cross-platform reference: OS detection, uv-first install matrix, gotchas
-│   ├── install.ps1                  Windows installer (uv-first: uv venv/pip/tool; winget + pip/pipx fallback)
-│   ├── install.sh                   macOS/Linux/Git-Bash/WSL installer (uv-first; brew/apt + pip/pipx fallback)
-│   ├── stealer_log_parse.py         Infostealer-log analyzer — attribution, profiling, IOCs (PEP 723 / `uv run`, zero-dep)
-│   ├── iban_analyze.py              IBAN validate + decompose (ISO 13616/7064) → bank code, risk signals (PEP 723, zero-dep)
-│   ├── phish_domain_survival.py     Phishing-domain registration/DNS profiling → maliciously-registered vs compromised + survival outlook (PEP 723, zero-dep)
-│   ├── clickfix_detect.py           ClickFix / PasteJacking clipboard-hijack detector + `-enc` decode → C2 IOCs (PEP 723, zero-dep)
-│   ├── html_visibility_analysis.py  Visibility-aware HTML analysis — hidden credential forms / off-origin links / off-screen text (PEP 723, zero-dep)
-│   ├── apk_permission_scope.py      APK permission-scope risk scoring (BinaryPivot ext) — combo-based on-device-fraud capability; UTF-8/UTF-16 AXML decode (PEP 723, zero-dep)
-│   ├── kit_template_fingerprint.py  Phishing kit/template structural fingerprint + similarity + commodity-trap grading (PEP 723, zero-dep)
-│   ├── render_confirm.py            Renderer-level confirmation — reconciles static + rendered ClickFix/visibility evidence (PEP 723; optional Moli/Chromium/agent-browser)
-│   ├── phishtrace_features.py       PhishTrace dynamic-feature characterization from a runtime trace → verdict + exfil IOCs (PEP 723, zero-dep)
-│   ├── cld/cld_api.py               ChongLuaDao premium API client — IoC / denylist / data-leak dataset searches + bulk export / AI URL analysis / STIX-MISP-TAXII feeds (PEP 723 / `uv run`, zero-dep, X-API-Key)
-│   ├── redact.py                    Reversible PII redaction — stable placeholders + exportable map; md/json/csv (PEP 723, zero-dep)
-│   ├── cti-report-template.html     PRIMARY: interactive HTML report template — self-contained & OFFLINE (charts + 2D entity graph + topology + timeline + indicator panel + search; dark/light + print-to-PDF)
-│   ├── generate-cti-html.py         HTML report generator — injects the report JSON into the template + builds the embedded Archify Blueprint (`CTI_ARCHIFY=1|force|0`; PEP 723 / `uv run`, zero-dep, self-heals UTF-8)
-│   ├── cti_archify.py               CTI case → Archify `architecture` IR converter (drives the report's inline Blueprint diagram; folds dense estates to apex level + hub-and-spoke placement; stdlib-only, reuses the engine's PSL reducer when present)
-│   ├── vendor/archify/              Vendored zero-dep Archify render subset (v2.16.0, MIT) — renders the Blueprint diagram; needs Node.js (see vendor/archify/VENDOR.md)
-│   ├── cti_diagram_design.py        CTI case → Diagram Design editorial SVG (entity + topology); cairosvg rasterizer for DOCX (stdlib SVG)
-│   ├── cti_cloud_arch.py            CTI case → Diagram AI Generator cloud figure (diagrams+graphviz, cloud-gated, opt-in; isolated uv subprocess)
-│   ├── vendor/diagram-design/       Vendored Diagram Design style-guide + self_check + LICENSE (MIT) — editorial token/rule source
-│   ├── vendor/diagram-ai-generator/ LICENSE + VENDOR note (MIT) — cloud figure applies its spec/approach via the `diagrams` library
-│   ├── generate-cti-iocs.py         Comprehensive IOC/selector exporter → STIX 2.1 / flat / CSV (network IOCs + contacts + identities + social/messaging + wallets + attribution; PEP 723 / `uv run`, zero-dep)
-│   ├── generate-cti-docx-hybrid.py  Hybrid MD+JSON DOCX generator — on request / `/report legal` (PEP 723 / `uv run`; self-heals UTF-8 + pandoc)
-│   ├── generate-cti-docx.py         Fallback: JSON-only generator (PEP 723 / `uv run`)
-│   ├── cti_docx_postprocess.py      Post-processing: styling, chart injection, cover page
-│   ├── cti_docx_charts.py           Chart rendering (pie, bar, timeline, traffic, geo, ICD-203×Admiralty confidence matrix)
-│   ├── cti_docx_heatmaps.py         Campaign heatmaps (registration timeline, domain×indicator correlation, domain×domain relation)
-│   ├── cti_docx_pdf.py              DOCX→PDF via LibreOffice (document-style PDF; the --pdf path)
-│   ├── cti_docx_diagrams.py         Entity relationship + network topology diagrams
-│   ├── cti_docx_sections.py         Report section formatting (used by JSON-only generator)
-│   ├── cti_docx_styles.py           Document styling, colors, cover page, header/footer
-│   ├── requirements.txt             Python dependencies
-│   └── sample-cti-report-data.json  Example JSON report data
-│
-├── workflows/                  Professional workflow guides
-│   ├── wf-journalist.md
-│   ├── wf-hr-screening.md
-│   ├── wf-threat-analyst.md
-│   ├── wf-emerging-threat.md     Emerging-threat response (intake → exposure → advisory/assessment → +7/+30 checkpoints)
-│   └── wf-private-investigator.md
-│
-├── handbook/                   Reference material
-│   ├── operator-queries.md     Search operator catalog
-│   ├── quick-report.md         Rapid reporting reference
-│   ├── discovery-paths.md      Per-target-type search paths
-│   ├── report-template.md      INTSUM format specification
-│   ├── admin-endpoint-indicators.md  Admin-panel / sensitive-endpoint detection vocab & rules
-│   ├── analytic-standards.md    Likelihood bands, 5W1H coverage overlay, ACH (competing hypotheses), bias checks
-│   ├── intrusion-modeling.md   Diamond Model (events, activity threads/groups), Pyramid of Pain pivot priority, ATT&CK mapping limits
-│   ├── severity-tiers.md       Severity Tier Matrix: Axis 1 patterns per trigger type, Axis 2 exposure dimensions, P1–P4 grid, re-tiering log
-│   ├── collection-preservation.md  Evidence collection/preservation standard (Berkeley Protocol): risk check, plan, capture fields, chain of custody, 3-part verification
-│   ├── aam-actor-modeling.md   AAM actor-state overlay for /threat-model — OODA faces + Mirror/Twin/Opposite/Lever (eCrime 2026 "Modeling Adversaries Through Chaos")
-│   ├── pivot-artifacts.md      Pivot-artifact catalog (favicon, trackers, wallets, certs…)
-│   ├── pivot-services.md       Reverse-lookup engines per artifact — hash algo, cost, API/key notes
-│   ├── api-keys.md             Premium/pro API key management and unlocks
-│   └── tool-cascade-reference.md Tool priority and fallback chains
-│
-├── guides/                     Worked case walkthroughs
-│   └── walkthroughs/           Step-by-step investigation examples
-│       ├── walkthrough-person-lookup.md
-│       ├── walkthrough-domain-sweep.md
-│       └── walkthrough-username-trace.md
-│
-├── validation/                 Quality assurance
-│   ├── coverage-matrix.md      Investigation area coverage tracking
-│   ├── quality-scoring.md      Scoring methodology
-│   └── verification-checklist.md Finding verification steps
-│
-└── connectors/                 External tool integrations
-    ├── maltego-export.md
-    ├── obsidian-setup.md
-    ├── notion-schema.md
-    ├── intel-backend.md
-    └── chongluadao-api.md
-```
+cti-expert is **one skill, two layers**: the **broad collector** (cti-expert's own `scripts/`,
+`techniques/`, `handbook/`, report generators and docs) and the **vendored `intel_engine/`
+deep layer** (pipeline chains, case state, harness loop and the MCP tools).
+
+- [`handbook/architecture-reference.md`](handbook/architecture-reference.md) — the annotated
+  directory tree; read it to find where a capability lives.
+- [`STRUCTURE.md`](STRUCTURE.md) — the two-layer layout and the anti-drift rules.
+- [`connectors/intel-backend.md`](connectors/intel-backend.md) — backend tiers and the op map.
 
 ---
 
 ## Technique Activation Matrix
 
-Which techniques activate per target type in a `/case` run:
-
-| Technique | Person | Domain | Org | Username | Email | IP |
-|-----------|--------|--------|-----|----------|-------|----|
-| `/sweep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/query` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/username` | ✅ | — | ✅* | ✅ | — | — |
-| `/email-deep` | ✅ | — | ✅* | — | ✅ | — |
-| `/phone` | ✅ | — | ✅* | — | — | — |
-| `/breach-deep` (separate breach-focused command; NOT re-run on an email already sent through `/email-deep`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/intelx` (strong selectors only; `phonebook <apex>` for apex inventory, keyed and spend-gated) | — | ✅ | ✅* | — | ✅* | ✅ |
-| `/osint-industries` (email already covered by `/email-deep`; phone / username / name typed; spend-gated) | ✅ | — | ✅* | ✅ | ✅* | — |
-| `/subdomain` | — | ✅ | ✅ | — | — | — |
-| `/traffic` | — | ✅ | ✅ | — | — | — |
-| `/threat-check` | — | ✅ | ✅ | — | — | ✅ |
-| `/secrets` | — | ✅ | ✅ | ✅ | — | — |
-| `/github-osint` | ✅* | ✅ | ✅ | ✅ | ✅* | — |
-| `/scam-check` | — | ✅ | ✅ | — | — | — |
-| `phish-domain-survival` (registration/DNS class) | — | ✅ | ✅ | — | — | — |
-| `clickfix-detect` (page clipboard-hijack) | — | ✅ | ✅ | — | — | — |
-| `html-visibility` (hidden-content evasion) | — | ✅ | ✅ | — | — | — |
-| `/branch` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/gdoc` | — | ✅ | ✅ | — | — | — |
-| `/sharelink` | ✅ | — | ✅ | ✅ | ✅ | — |
-| `/meta-transparency` | ✅ | — | ✅ | ✅ | — | — |
-<!-- dork-integration:phase-05 start -->
-| `/dork-sweep` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
-| `/docleak` | ✅ | ✅ | ✅ | ✅* | — | — |
-<!-- dork-integration:phase-05 end -->
-| Social media platforms | ✅ | — | ✅ | ✅ | — | — |
-| Metadata forensics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Photo verification | ✅ | — | ✅* | ✅ | — | — |
-| Network analysis | — | ✅ | ✅ | — | — | ✅ |
-| Advanced geolocation | ✅ | — | — | ✅ | — | — |
-| Web & DNS forensics | — | ✅ | ✅ | — | ✅ | ✅ |
-| `/timeline` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/exposure` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/threat-model` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/wifi` (SSID/BSSID) | ✅ | ✅ | ✅ | — | — | ✅ |
-| Visitor intelligence | — | ✅ | ✅ | — | — | ✅ |
-| Cloud audit | — | ✅ | ✅ | — | — | ✅ |
-| MSFTRecon (M365/Azure tenant) | — | ✅ | ✅ | — | — | — |
-| `/icp` (ICP filing → PRC entity) | — | ✅ | ✅ | — | — | ✅ |
-| `/cn-corp` (PRC registry chain) | ✅* | ✅ | ✅ | — | — | — |
-| `/iban` (payment-rail selector) | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `/hash-id` (hash typing) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dependency audit | — | ✅ | ✅ | — | — | — |
-| Disk forensics | — | — | — | — | — | — |
-| Incident triage | — | ✅ | ✅ | — | — | ✅ |
-| OWASP audit | — | ✅ | ✅ | — | — | — |
-| Prompt injection audit | — | ✅ | ✅ | — | — | — |
-| `/snapshots` | — | ✅ | ✅ | — | — | ✅ |
-| Archive IOC harvest (`wayback_harvest.py`) | — | ✅ | ✅ | — | — | — |
-| `/diff` | — | ✅ | ✅ | — | — | ✅ |
-| `/drift` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/render threat-path` | — | ✅ | ✅ | — | — | ✅ |
-| `/render attack-surface` | — | ✅ | ✅ | — | — | ✅ |
-| `/blind-spots` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/source-check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/report ioc` | — | ✅ | ✅ | — | — | ✅ |
-| `/report` + `/brief` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Shodan InternetDB (ports/tags/vulns) | — | ✅ | ✅ | — | — | ✅ |
-| GreyNoise Community (noise/threat class) | — | ✅ | ✅ | — | — | ✅ |
-| URLScan.io passive (scan history) | — | ✅ | ✅ | — | — | — |
-| Disposable email check (kickbox) | ✅ | — | ✅* | — | ✅ | — |
-| URLhaus (malware URL hosting) | — | ✅ | ✅ | — | — | ✅ |
-| ThreatFox (IOC/C2 lookup) | — | ✅ | ✅ | — | — | ✅ |
-| MalwareBazaar (hash → malware family) | — | — | — | — | — | — |
-| ipwho.is (geo + ASN + ISP) | — | ✅ | ✅ | — | — | ✅ |
-| DMARC/SPF/DKIM check (DNS) | — | ✅ | ✅ | — | ✅ | — |
-
-`✅*` — runs for discovered key personnel within the organization
-`MalwareBazaar` — reached via `/hash [value]`, but only **after** `/hash-id` has typed the value
-
-### The five v2.6 commands in `/case`
-
-Four fire automatically as part of the standard pipeline — no flag needed. `/redact` is
-opt-in.
-
-| Command | Fires | Phase |
-|---|---|---|
-| **`/icp`** | **Unconditionally** for every domain/URL/org target, and on an IP target's resolved hostname. One cheap passive lookup — and a *missing* filing on CN-hosted infrastructure is itself a finding, so there is no CN-nexus precondition. A discovered **licence serial** re-enters the pivot loop as its own node and reverse-searches to sibling domains (same operator, HIGH). | Acquire |
-| **`/cn-corp`** | Automatically on any company name or USCC the case surfaces — from the ICP filing, WHOIS registrant org, page footer, or personnel discovery. Runs the GSXT → aggregator → 信用中国 chain; officers/shareholders/subsidiaries re-enter the loop as new nodes. | Acquire → Enrich |
-| **`/iban`** | Automatically on any payment detail that surfaces — page DOM, Wayback harvest, victim statement, invoice, stealer log. Validation is arithmetic on a string, so it is free and touches nothing. Valid accounts become `financial/iban` IOCs; a checksum-**invalid** account on a payment page is logged as a behavioural finding instead. | Acquire → Enrich |
-| **`/hash-id`** | Automatically on **every** discovered hash, and always **before** `/hash`. Decides file hash (→ MalwareBazaar/VT) vs credential material (→ `/breach-deep`, never a public service). 64-hex is queued for both the cert-fingerprint and file-hash readings, since it is genuinely ambiguous. | Acquire → Enrich |
-| **`/redact`** | **Opt-in, not automatic** — pass `--redact` (or run `/redact` later). Emits `REPORT.redacted.{md,json,csv}` + `REPORT.map.json` alongside the unredacted set. A redacted report is a *weaker* artifact, so producing one stays a deliberate choice. | Deliver |
-
-Registries needing mainland egress (TianYanCha/QCC/Aiqicha) are logged as **collection gaps**,
-never blockers ([`techniques/china-recon.md`](techniques/china-recon.md) §7). Non-IBAN rails
-(VN transfer, VietQR/NAPAS BIN, card BIN, e-wallet) follow
-[`techniques/fiat-payment-osint.md`](techniques/fiat-payment-osint.md) §4.
-
-**Flags:** `--no-cn` skips `/icp`+`/cn-corp` (both run by default). `--redact` *adds* the
-redacted variant (off by default). `--no-harness` disables the non-convergence auto-escalation
-to the harness deepening loop (on by default; see the deep-layer note above).
-
-**Recursive pivot orchestration (the spider-map).** `/case` is not a one-pass collector —
-it runs a **recursive BFS pivot engine**: every discovered identifier becomes a new seed,
-and the relationship graph expands **hop by hop until the frontier is exhausted** or a
-budget cap is hit. The state machine — identifier typing, dedup / cycle prevention,
-per-node depth, the identifier→pivot **edge matrix**, confidence gating, and per-depth
-checkpoints — is [`scripts/pivot_orchestrator.py`](scripts/pivot_orchestrator.py); the full
-spec is [`engine/pivot-orchestration.md`](engine/pivot-orchestration.md). The orchestrator
-**plans and tracks**; the agent **executes** each hop's technique commands and feeds results
-back via `--ingest`.
-
-- **Defaults:** `posture=active` (may fetch/scan targets; still passive-first for hostile
-  infra), `reach=exhaustive` (pivot till the frontier empties), **`autonomy=auto`** — the loop
-  **runs to closure unattended**, no per-depth approval prompts. Depth summaries are still
-  printed as they happen, so the expansion stays auditable. Safety caps: `max_nodes=500`,
-  `max_depth=6`.
-- **Gating** (reuses [`analysis/auto-branch-rules.md`](analysis/auto-branch-rules.md)):
-  exact-match links (≥95% — shared GA ID / cert / favicon / registrant email, handle
-  exact-match) **auto-pursue unbounded**; HIGH/MEDIUM capped per type; LOW held unless
-  corroborated; PII (`person`/`phone`) **auto-expands by default** (hold with `--authorization unconfirmed`); visited
-  nodes and past-depth-cap nodes suppressed (loop-safe).
-- **Example hops:** an **email** auto-pivots via reverse-WHOIS→domains, `/breach-deep`,
-  `/github-osint`; a **domain** discovered from a person (high-confidence link) continues
-  via `/webpivot`+`wayback_harvest`+`whois_enrich`+`cert_pivot`+subdomains; a shared **GA ID**
-  reverse-pivots to sibling domains; a discovered **document** (`.pdf`/office) or **image**
-  (`.jpg`/`.png`) is itself a node — metadata/authorship→person/email/org and EXIF GPS +
-  reverse-image/face→person/domain (face matches held pending corroboration) — each new node
-  re-enters the loop.
-  - **Media content is analyzed, not just fingerprinted.** An image/document node is **vision-analyzed** (`multix gemini` — OCR, sign/landmark/logo read, structured extraction) and A/V is **FFmpeg-preprocessed** (keyframes + audio track) then transcribed, *before* it is treated as terminal — see §Media Evidence Analysis. Extracted text / GPS / entities re-enter the loop as new seeds; face matches stay held pending corroboration.
-- **Control flags** (all *narrowing* — the defaults are already maximal):
-  `/case <t> --passive|--passive-first`, `--reach balanced|focused`,
-  **`--checkpoint`** (pause for approval after each depth level), `--depth N`, `--budget N`,
-  `--authorization unconfirmed` (re-hold PII), `--no-cn`, `--no-harness` (skip harness
-  auto-escalation); `--redact` opts *in* to the redacted variant.
-- **Termination** → if the loop **converged** (frontier exhausted): emit edges → `graph_build.py`
-  → interactive HTML force-graph + topology + timeline; findings/indicators roll into the
-  auto-saved report + IOC bundle. If it stopped on a **cap** (`max_nodes`/`max_depth`/`--budget`)
-  with the frontier still open — i.e. **not converged** — `/case` **auto-escalates to the harness
-  deepening loop** (posture-gated, keyless-first; `--no-harness` opts out) before Deliver, per the
-  deep-layer note above.
-
-Legacy one-hop domain collection may expose a registrant email: the collector runs the keyed
-CLD email IoC, then `/cti` runs `/email-deep` once with `--case`; it does not duplicate that
-selector in `/breach-deep` or `/intelx`.
-
-> **Canonical source:** the Step 1 (target→route) and Step 2c (discovered-identifier→auto-fire)
-> tables live in `commands/cti.md`; the leak/breach, GitHub-OSINT and dork sub-sections below add
-> per-topic detail on top of them and must not be read as a second, independent trigger matrix.
-
-**Leak / breach / infostealer auto-fire in `/case`:**
-- **Leak coverage is MANDATORY, not on request.** After round-1 collection — before any metered co-tenant/frontier pivot — the harness runs `intel.py enrich <case> --leak-only` on every **confirmed** selector (seeds, owner-rung nodes, seed/first-hop registrant email + phone, owned seed domains, social-intake account usernames); kit/neighbour selectors are never leak-checked. Per type: email → CLD exposure + `/email-deep` (Hudson Rock, IntelX via it); username → CLD exposure + Hudson Rock `search-by-login/usernames` (IntelX n/a — soft selector); phone → CLD route + IntelX logs; owned domain → CLD exposure + IntelX logs + Hudson Rock `search-by-domain`. Under `--free-only` / `no_spend` only CLD runs and each metered vendor is recorded `not_consulted` with the reason. **The final answer states, per selector, which leak vendors were consulted (result) and which were not, and why** — from `enrichment/leak_coverage.json`; a missing file means the fan-out never ran, never "no leaks". Hits are exposure facts, never attribution edges.
-- **Every discovered registrant email** → `/email-deep` with `--case`. That one command sends Hudson Rock, ZoneCruncher, one IntelX stealer-log search, OSINT Industries account existence, and reverse-WHOIS (preview, purchase only if the count is not bulk). A stealer-log hit tying the credential to a machine that also holds the registrar/hosting/CMS login is **direct attribution**. An OSINT Industries hit is not: it is account existence and self-declared names only. Do **not** also run `/breach-deep`, `/intelx` or `/osint-industries` on that email.
-- **Every discovered domain/URL** → the collector already sent Feeds and host-matched Shield. Do not re-run those. A registrant org that is not a privacy proxy still gets `intel.py cld ransomware <org>` and `internal-leaks <org>`.
-- **A registrant phone** → `/phone` + `intel.py cld route <phone>`; when spending is allowed, `/osint-industries phone <E164> --case <id>` for caller-ID names and registered platforms (historic corroboration only — the number may have changed hands). A number scraped from page text is not this lead.
-- **A Telegram handle** → `intel.py cld route t.me/<handle>`. Do not treat `t.me` as the target domain.
-- **A file hash** → `/hash-id` first. Shield IoC only if hash-id says it is a file hash. Never a favicon, JARM, or cert fingerprint.
-- **Every discovered wallet / IBAN** → `/intelx <selector>` (strong selectors only; a name is refused locally and still costs a unit).
-- **A local infostealer-log folder** → `/stealer-log` for family attribution, victim-vs-operator profiling and IOC extraction.
-- Domain ChongLuaDao (Feeds + host-matched Shield) and keyed registrant-email IoC run inside the collector. Full `pipeline open` then executes structured case leads for registrant email/phone, Telegram, organization, IntelX phonebook, and public GitHub links; `--no-collect` preserves zero egress and leaves enrichment for `intel.py enrich <case>`. The `/cti` agent still executes/reviews query-only dork/secret leads and newly verified owner links. Apply `--quick`/`--free-only`/`no_spend` and passive/hostile posture before calls; do not close a lead as `ran` if only its query was generated. State credits spent and capability gaps.
-- **Pipeline auto-fire (deterministic path):** `intel.py pipeline open` now appends `--intelx` to the collector whenever an IntelX key is present and the case is not a `no_spend` posture; `pipeline loop` appends it **only under `--full`** — the default loop stays free-only and never spends an IntelX search on its own.
-
-**GitHub OSINT auto-fire in `/case`:**
-- Domain/Org target → run `/github-osint` on the org name, primary domain, discovered GitHub orgs/repos, and developer-platform hits from `/query` or `/dork-sweep`.
-- Username target → run `/github-osint` directly when the handle has a GitHub profile or GitHub search hit.
-- Person target → run `/github-osint` only after discovering a likely GitHub handle, commit email, repo author, or developer profile link.
-- Email target → run `/github-osint` only after discovering commit attribution, GitHub noreply patterns, profile links, or repo references.
-- Every `/github-osint` run executes the committer harvest first (`github_harvest` / `intel.py github <target>`), on the user or org AND on each discovered repo, before any code search; the harvested e-mails and former logins re-enter the pivot loop as seeds (e-mail → `/breach-deep`·`/intelx`·reverse-WHOIS; login → `/username`).
-- Results feed into `/secrets`, `/branch`, `/timeline`, `/crossref`, `/exposure`, and final `/report` automatically.
-
-<!-- dork-integration:phase-05 start -->
-**`✅*` dork coverage notes:** `/dork-sweep` on IP runs against reverse-DNS hostname once resolved (graceful skip if no rDNS); `/docleak` on Username targets document-author/uploader fields on scribd, slideshare, academia.edu, researchgate.
-
-**Dork auto-fire matrix — every `/case` target type gains coverage:**
-- Person → `/dork-sweep --telegram --docs` + `/docleak` on full name
-- Domain → `/dork-sweep --filetype --docs` + `/docleak` on domain + org name
-- Org → `/dork-sweep --filetype --docs --telegram` + `/docleak` on org + primary domain
-- Username → `/dork-sweep --telegram --docs` + `/docleak` (author-angle)
-- Email → `/dork-sweep --telegram --docs` on email + `@domain`
-- IP → `/dork-sweep` on rDNS-resolved hostname (skipped if no rDNS)
-- Domain/Org → **GrayHatWarfare exposure** (`/grayhatwarfare` — open buckets for the label, shortener-corpus hosts + historical long URLs, git committers on a self-hosted apex mail domain; keyless dork fallback) — auto-fired once per apex by `pipeline open` (loop: `--full` only) and rendered in the assessment's *Exposure (leak surface — not attribution)* section. A bucket carrying the brand label, a short link, a committer e-mail are things to READ, never a same-operator pivot and never a frontier seed.
-
-Adaptive fan-out: discovered emails → Telegram dork; discovered personnel → `/docleak`; discovered subdomains → filetype dork; discovered usernames → Telegram + doc sweep; discovered IPs → rDNS → dork-sweep.
-<!-- dork-integration:phase-05 end -->
-
-When `/case` or `/sweep` runs on a Domain or Org target, it inspects the MX record and SPF TXT record. If MX ends in `protection.outlook.com` OR SPF contains `spf.protection.outlook.com`, `/msftrecon` auto-fires as part of the Acquire phase. Results feed back into the subject registry as `infrastructure` findings (tenant ID, federation type, MDI presence) and into `/exposure` scoring.
-
-**`/case` pipeline walkthrough (M365-hosted Domain/Org):** (a) standard DNS/WHOIS/subdomain/traffic/scam-check/breach-deep checks run first, (b) if M365 indicators present → `/msftrecon` fires automatically with no extra flag, (c) tenant ID discovered becomes a pivot for `/branch` in Enrich phase (search other domains under the same tenant). No user intervention required.
-
-**Parallel enrichment (3+ subjects):** When Acquire discovers 3+ subjects, enrichment commands fan out in parallel via AgentFlow DAG orchestration. Each subject's enrichment runs independently, results merge with dedup before Assess phase. Disable with `--sequential` flag. See `techniques/agentflow-enrichment.md`.
+**MUST read [`handbook/technique-activation.md`](handbook/technique-activation.md) before the Acquire phase of any `/case` or `/cti` run.**
+It holds the per-target-type matrix of techniques that fire without being asked, the five v2.6 commands (`/icp`, `/cn-corp`, `/iban`, `/hash-id`, `/redact`),
+the recursive pivot orchestration defaults, and the leak / GitHub / dork / M365 auto-fire rules.
 
 ---
 
@@ -1890,7 +1193,7 @@ Screenshots, photos, scanned documents, and audio/video are **nodes, not dead en
 - **Video / audio → preprocess with FFmpeg, then vision.** Extract keyframes and the audio track first, then analyze/transcribe them:
   - Keyframes → `ffmpeg -i clip.mp4 -vf "fps=1/5" frame_%03d.png`, then feed each frame to `multix gemini analyze`
   - Audio → `ffmpeg -i clip.mp4 -vn -c:a copy audio.m4a`, then `... multix gemini transcribe --files audio.m4a --prompt "Transcript with timestamps" --format markdown --output transcript.md`
-- **Feedback into the pivot loop.** OCR'd handles/emails/phones, extracted GPS/landmarks, transcribed names, and read logos become new seeds and re-enter the Enrich loop (§Recursive pivot loop). Face matches stay **held pending corroboration**.
+- **Feedback into the pivot loop.** OCR'd handles/emails/phones, extracted GPS/landmarks, transcribed names, and read logos become new seeds and re-enter the Enrich loop ("Recursive pivot orchestration" in [`handbook/technique-activation.md`](handbook/technique-activation.md)). Face matches stay **held pending corroboration**.
 - **Tags:** mark such findings `[vision]` (multix) and `[media]` (ffmpeg/imagemagick preprocessing).
 - **No Gemini key? Keyless fallback (own models).** OCR + sign/landmark/logo/face read → the **host agent's own vision** (read the image in-session — Claude Code/Codex are multimodal) plus `tesseract` for dense OCR; A/V transcription → **local Whisper** (`whisper-ctranslate2`, offline) after the same `ffmpeg` audio extraction. A `GEMINI_API_KEY` only upgrades quality. Tag these findings `[vision-local]`.
 
@@ -1900,76 +1203,7 @@ Screenshots, photos, scanned documents, and audio/video are **nodes, not dead en
 
 **Before running any CLI tool, detect the OS, check whether the tool exists, and if not, install it automatically and silently using the method correct for that OS.** This ensures zero-friction investigation on Windows, macOS, and Linux alike — the analyst never stalls on a missing dependency and never runs a Linux-only command on Windows.
 
-> **Full cross-platform reference:** [`scripts/platform-setup.md`](scripts/platform-setup.md) — OS detection, `$PY`/shell conventions, package managers, the complete per-tool × per-OS install matrix, and known gotchas. Consult it whenever this summary is not enough.
-
-### Step 0 — Detect the platform (once per session)
-
-Determine the OS before running anything, and cache it for the rest of the session. In Claude Code the environment block already reports it (e.g. `Platform: win32` → Windows). Otherwise probe: PowerShell `$IsWindows`/`$IsMacOS`, or Bash `uname -s` (`Darwin`=macOS, `Linux`=Linux, `MINGW*`/`MSYS*`/`CYGWIN*`=Windows/Git Bash). Then fix these conventions:
-
-| | Windows | macOS / Linux |
-|--|---------|---------------|
-| **Shell** | PowerShell | Bash |
-| **Python runner** (`$PY`) | **`uv run`** (preferred) · else venv `…\.venv\Scripts\python.exe` · else **`py`** | **`uv run`** (preferred) · else venv `…/.venv/bin/python3` · else **`python3`** |
-| **"exists?" check** | `Get-Command <tool> -ErrorAction SilentlyContinue` (or `where.exe <tool>`) | `command -v <tool>` |
-| **System pkg manager** | `winget` (→ `choco`/`scoop`) | `brew` (macOS) · `sudo apt`/`dnf`/`pacman` (Linux) |
-
-> On Windows, `python3`/`python` in the Bash tool is often a non-functional Microsoft Store stub. Prefer **uv** (it brings its own Python and sidesteps the stub); otherwise use `py` via PowerShell.
-
-### Step 0.5 — Ensure uv (the primary Python toolchain)
-
-**[uv](https://docs.astral.sh/uv/) is the preferred way to install and run everything Python in this skill.** It is a single fast, cross-platform tool that replaces `pip`, `pipx`, `venv`, and `pyenv`, manages its own Python (so the Windows Store-stub problem disappears), and resolves script dependencies on the fly. Using uv also **collapses the per-OS split for Python tools** — the same command works on Windows, macOS, and Linux.
-
-- **Check:** `uv --version`
-- **Install if missing:**
-  - Windows: `winget install --id astral-sh.uv` — or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
-  - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh` — or `brew install uv`
-  - Any OS that already has pip: `python -m pip install uv`
-
-If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv` path — nothing here hard-requires uv.
-
-### Auto-Install Protocol
-
-1. **Check:** OS-correct existence test from the table above (or `<$PY> -c "import <module>"` for Python modules)
-2. **Install:** If missing, run the OS-correct install command (see dispatch below / `platform-setup.md`)
-3. **Verify:** Confirm the tool resolves before proceeding — re-check; on Windows a fresh install may need a new shell or a probe of its install dir
-4. **Log:** Note `[auto-installed]` in the finding's collection method tag
-5. **Continue:** Proceed with the investigation — never block on tool availability
-
-### Install Dispatch by Category
-
-**Python tools — uv, identical on every OS** (the big win: no per-OS split). CLIs use `uv tool`; libraries go into the skill venv via `uv pip`. No-uv fallback in the last column.
-
-| Python tool(s) | Install (any OS, uv) | No-uv fallback |
-|----------------|----------------------|----------------|
-| CLIs — maigret, sherlock-project, holehe, h8mail, waymore, xeuledoc | `uv tool install <pkg>` | `pipx install <pkg>` |
-| Libraries — cloudscraper, oletools, whoisdomain, scrapling | `uv pip install --python <venv> <pkg>` | `<$PY> -m pip install <pkg>` |
-| Scrapling headless | `uv tool install "scrapling[fetchers]"` then `scrapling install` | `<$PY> -m pip install "scrapling[fetchers]"` then `scrapling install` |
-| AgentFlow | `uv pip install --python <venv> --no-deps agentflow` | `<$PY> -m pip install --no-deps agentflow` |
-| Git-only — theHarvester, msftrecon, blackbird, sharetrace | `uv tool install "git+https://…/theHarvester.git"` · `uv pip install "git+https://…/msftrecon.git"` · clone + `uv pip install -r requirements.txt` | `pipx install "git+https://…"` · clone + `<$PY> -m pip install -r requirements.txt` |
-| **Run a generator script** | `uv run <script.py> ARGS` (deps auto via inline metadata) | `<$PY> <script.py> ARGS` |
-
-`<$PY>` = `py` (Windows) / `python3` (macOS/Linux), or the venv python. On PEP-668 Linux add `--break-system-packages` to the pip fallback.
-
-**System binaries — OS package manager** (uv does not manage these):
-
-| Tool(s) | Windows | macOS | Linux |
-|---------|---------|-------|-------|
-| git, gh, jq, exiftool, pandoc, poppler/pdfinfo, qpdf, whois | `winget install <Id>` | `brew install <pkg>` | `sudo apt install -y <pkg>` |
-| Go toolchain | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` |
-| mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
-| **agent-browser** (interactive browser) | `npm i -g agent-browser` or `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` (or `cargo install`) → `agent-browser install` |
-| **ffmpeg, imagemagick (`magick`), rmbg-cli** — A/V + image evidence preprocessing (keyframes, audio extract, resize, bg-removal) | `winget install Gyan.FFmpeg ImageMagick.ImageMagick` + `npm i -g rmbg-cli` | `brew install ffmpeg imagemagick` + `npm i -g rmbg-cli` | `sudo apt install -y ffmpeg imagemagick` + `npm i -g rmbg-cli` |
-
-**Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga and TruffleHog → GitHub release binary per OS/arch (`go install` rejects TruffleHog's module for its `replace` directives; the PyPI `trufflehog` is the abandoned v2 Python tool and does not accept v3 syntax). **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
-
-**Vision / A-V analysis — `multix` CLI (standalone, `npx`, OS-identical):** no install step — run via `npx --yes --prefer-online --package=@mrgoonie/multix@latest -- multix ...`. Needs **Node.js 20+** (`winget install OpenJS.NodeJS.LTS` / `brew install node` / `sudo apt install -y nodejs npm`) and `GEMINI_API_KEY` (read from env or the skill's own `$SKILL_DIR/.env`; env-var override applies, same as every other key). Pre-warm the npm cache with `... multix --version` before network-restricted runs. Missing key/Node → log a collection gap and fall back to `exiftool` metadata.
-
-The exact winget IDs, brew formulae, apt packages, uv commands, import names, and Go module paths for **every** tool are tabulated in [`scripts/platform-setup.md`](scripts/platform-setup.md) §5. To provision a fresh machine in one shot, run the bundled installer for the detected OS:
-
-- **Windows:** `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-expert\scripts\install.ps1"`
-- **macOS / Linux / Git Bash / WSL:** `bash ~/.claude/skills/cti-expert/scripts/install.sh`
-
-(both accept `--headless`/`-Headless`, `--go`/`-Go`, `--all`/`-All`)
+> **Full cross-platform reference:** [`scripts/platform-setup.md`](scripts/platform-setup.md) — OS detection, `$PY`/shell conventions, package managers, the complete per-tool × per-OS install matrix, and known gotchas. Consult it whenever this summary is not enough. **Read §8 of [`scripts/platform-setup.md`](scripts/platform-setup.md#8-the-skills-install-procedure-step-by-step) before the first install of a session** — it holds the step-by-step procedure (platform detection, uv bootstrap, the auto-install protocol and the per-category install dispatch).
 
 ### Behavior Rules
 

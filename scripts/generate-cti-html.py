@@ -16,7 +16,7 @@ Usage:
     python3 generate-cti-html.py <case.json> <out.html> [template.html]
 
 The case JSON uses the same flat "report JSON" shape consumed by the DOCX
-generator (see scripts/sample-cti-report-data.json and SKILL.md §8).
+generator (see scripts/sample-cti-report-data.json and handbook/report-export.md).
 
 Author: Hieu Ngo - chongluadao.vn
 """

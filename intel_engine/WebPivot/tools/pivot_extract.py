@@ -100,6 +100,7 @@ import wp_ct       # noqa  (the one CT client: per-source status → meta.capabi
 import wp_paths    # noqa  (URL PATH as a campaign identifier — kit directory, template, patterns)
 import wp_serp     # noqa  (advertising: Ads Transparency advertiser + the click-keyed cloaking probe)
 import wp_capture  # noqa  (raw evidence bundle: the DOM + every JS/CSS the host served, hashed)
+import wp_kitsig   # noqa  (named kit signatures → artifacts.kit_matches; kit-rung facts only)
 import wp_ippivot  # noqa  (IPPivot: bare-IP source runs passive IP recon instead of HTML)
 import wp_impersonate  # noqa  (ImpersonationHunt: --hunt-impersonation hunts lookalikes of a seed)
 import wp_email    # noqa  (.eml input: parse a victim's saved email into HTML body + header selectors)
@@ -1211,6 +1212,48 @@ def main():
             # a run that reports no capture must not be mistaken for one that had nothing to store.
             print(f"[!] capture failed ({e}) — the analysis below stands, but the raw bytes were "
                   f"NOT stored for this run.", file=sys.stderr)
+
+    # --- TRADECRAFT: named kit + wallet-drainer surface, over the page and the STORED JavaScript ---
+    # Offline and free: both read the DOM we already hold plus the JS files the capture above wrote
+    # to disk — no new request. A kit match is lineage, not ownership (kit-rung fact, never an edge);
+    # a commodity match is noise context and never becomes a pivot. The drainer verdict is an
+    # untested heuristic and is labelled so wherever it is rendered.
+    _art = result.get("artifacts")
+    if isinstance(_art, dict):
+        _js = wp_capture.stored_js(((result.get("meta") or {}).get("capture") or {}).get("dir"))
+        if html:
+            _art["web3"] = wp_extract.merge_web3(_art.get("web3"), wp_extract.extract_web3(html, _js))
+        _inline = [s for s in INLINE_SCRIPT_RE.findall(html or "") if s.strip()]
+        try:
+            _art["kit_matches"] = wp_kitsig.match(result, js_texts=_inline + [t for _, t in _js],
+                                                  html=html)
+        except Exception as e:  # noqa: BLE001 — a broken rule file never costs the collection
+            _art["kit_matches"] = []
+            print(f"[!] kit-signature match failed ({e})", file=sys.stderr)
+        _kp = wp_kitsig.pivots(_art["kit_matches"])
+        if _kp:
+            _seen_kp = {(p.get("kind"), str(p.get("value"))) for p in result.get("pivots") or []}
+            result.setdefault("pivots", []).extend(
+                p for p in _kp if (p["kind"], str(p["value"])) not in _seen_kp)
+            sort_pivots(result["pivots"])
+        for _m in _art["kit_matches"]:
+            print(f"[+] kit signature: {_m['name']} ({_m['prevalence']}"
+                  f"{' — noise context, not a pivot' if not wp_kitsig.offer_pivot(_m) else ''})",
+                  file=sys.stderr)
+        _w3 = _art.get("web3") or {}
+        if _w3.get("verdict") == "suspected-drainer":
+            print(f"[!] web3: {_w3['label']}", file=sys.stderr)
+        # On a suspected-drainer page a contract candidate is rung wallet.drainer_contract (kit), not
+        # a payee wallet: relabel the wallet pivot the extractor built for it. Any other verdict keeps
+        # the wallet pivot — it may be the payee (wp_extract.drainer_contracts is the one rule).
+        _dc = wp_extract.drainer_contracts(_w3)
+        for _p in result.get("pivots") or []:
+            if (str(_p.get("kind", "")).startswith(("crypto:", "qr:crypto:"))
+                    and str(_p.get("value", "")).lower() in _dc):
+                _p.update(kind="web3:drainer_contract", confidence="low",
+                          note="Address beside an approval-harvest call (web3 scan) — a candidate "
+                               "drainer/spender contract (kit rung: shared across affiliates), "
+                               "never a payee wallet or an owner link.")
 
     # --- store the raw DOM on its own (superseded by --capture, kept for ad-hoc use) ---
     if args.save_dom and html:

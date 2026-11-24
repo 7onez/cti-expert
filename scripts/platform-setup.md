@@ -315,3 +315,80 @@ location differs (`%USERPROFILE%\go\bin` vs `$HOME/go/bin`); ensure it's on PATH
 - **Fall back, never block** — if an install fails, log a collection gap and move to
   the next tool. Tag findings with the collection method, adding `[auto-installed]`
   when a tool was installed on demand.
+
+---
+
+## 8. The skill's install procedure (step by step)
+
+Moved verbatim from `SKILL.md` "Tool Auto-Install Policy", which keeps the policy sentence and
+the behaviour rules. Read this section before the first install of a session.
+
+### Step 0 — Detect the platform (once per session)
+
+Determine the OS before running anything, and cache it for the rest of the session. In Claude Code the environment block already reports it (e.g. `Platform: win32` → Windows). Otherwise probe: PowerShell `$IsWindows`/`$IsMacOS`, or Bash `uname -s` (`Darwin`=macOS, `Linux`=Linux, `MINGW*`/`MSYS*`/`CYGWIN*`=Windows/Git Bash). Then fix these conventions:
+
+| | Windows | macOS / Linux |
+|--|---------|---------------|
+| **Shell** | PowerShell | Bash |
+| **Python runner** (`$PY`) | **`uv run`** (preferred) · else venv `…\.venv\Scripts\python.exe` · else **`py`** | **`uv run`** (preferred) · else venv `…/.venv/bin/python3` · else **`python3`** |
+| **"exists?" check** | `Get-Command <tool> -ErrorAction SilentlyContinue` (or `where.exe <tool>`) | `command -v <tool>` |
+| **System pkg manager** | `winget` (→ `choco`/`scoop`) | `brew` (macOS) · `sudo apt`/`dnf`/`pacman` (Linux) |
+
+> On Windows, `python3`/`python` in the Bash tool is often a non-functional Microsoft Store stub. Prefer **uv** (it brings its own Python and sidesteps the stub); otherwise use `py` via PowerShell.
+
+### Step 0.5 — Ensure uv (the primary Python toolchain)
+
+**[uv](https://docs.astral.sh/uv/) is the preferred way to install and run everything Python in this skill.** It is a single fast, cross-platform tool that replaces `pip`, `pipx`, `venv`, and `pyenv`, manages its own Python (so the Windows Store-stub problem disappears), and resolves script dependencies on the fly. Using uv also **collapses the per-OS split for Python tools** — the same command works on Windows, macOS, and Linux.
+
+- **Check:** `uv --version`
+- **Install if missing:**
+  - Windows: `winget install --id astral-sh.uv` — or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+  - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh` — or `brew install uv`
+  - Any OS that already has pip: `python -m pip install uv`
+
+If uv genuinely cannot be installed, fall back to the per-OS `pip`/`pipx`/`venv` path — nothing here hard-requires uv.
+
+### Auto-Install Protocol
+
+1. **Check:** OS-correct existence test from the table above (or `<$PY> -c "import <module>"` for Python modules)
+2. **Install:** If missing, run the OS-correct install command (see dispatch below / `platform-setup.md`)
+3. **Verify:** Confirm the tool resolves before proceeding — re-check; on Windows a fresh install may need a new shell or a probe of its install dir
+4. **Log:** Note `[auto-installed]` in the finding's collection method tag
+5. **Continue:** Proceed with the investigation — never block on tool availability
+
+### Install Dispatch by Category
+
+**Python tools — uv, identical on every OS** (the big win: no per-OS split). CLIs use `uv tool`; libraries go into the skill venv via `uv pip`. No-uv fallback in the last column.
+
+| Python tool(s) | Install (any OS, uv) | No-uv fallback |
+|----------------|----------------------|----------------|
+| CLIs — maigret, sherlock-project, holehe, h8mail, waymore, xeuledoc | `uv tool install <pkg>` | `pipx install <pkg>` |
+| Libraries — cloudscraper, oletools, whoisdomain, scrapling | `uv pip install --python <venv> <pkg>` | `<$PY> -m pip install <pkg>` |
+| Scrapling headless | `uv tool install "scrapling[fetchers]"` then `scrapling install` | `<$PY> -m pip install "scrapling[fetchers]"` then `scrapling install` |
+| AgentFlow | `uv pip install --python <venv> --no-deps agentflow` | `<$PY> -m pip install --no-deps agentflow` |
+| Git-only — theHarvester, msftrecon, blackbird, sharetrace | `uv tool install "git+https://…/theHarvester.git"` · `uv pip install "git+https://…/msftrecon.git"` · clone + `uv pip install -r requirements.txt` | `pipx install "git+https://…"` · clone + `<$PY> -m pip install -r requirements.txt` |
+| **Run a generator script** | `uv run <script.py> ARGS` (deps auto via inline metadata) | `<$PY> <script.py> ARGS` |
+
+`<$PY>` = `py` (Windows) / `python3` (macOS/Linux), or the venv python. On PEP-668 Linux add `--break-system-packages` to the pip fallback.
+
+**System binaries — OS package manager** (uv does not manage these):
+
+| Tool(s) | Windows | macOS | Linux |
+|---------|---------|-------|-------|
+| git, gh, jq, exiftool, pandoc, poppler/pdfinfo, qpdf, whois | `winget install <Id>` | `brew install <pkg>` | `sudo apt install -y <pkg>` |
+| Go toolchain | `winget install GoLang.Go` | `brew install go` | `sudo apt install -y golang` |
+| mat2 (metadata strip) | n/a → `exiftool -all= -overwrite_original <file>` | `brew install mat2` | `sudo apt install -y mat2` |
+| **agent-browser** (interactive browser) | `npm i -g agent-browser` or `cargo install agent-browser` → `agent-browser install` | `brew install agent-browser` → `agent-browser install` | `npm i -g agent-browser` (or `cargo install`) → `agent-browser install` |
+| **ffmpeg, imagemagick (`magick`), rmbg-cli** — A/V + image evidence preprocessing (keyframes, audio extract, resize, bg-removal) | `winget install Gyan.FFmpeg ImageMagick.ImageMagick` + `npm i -g rmbg-cli` | `brew install ffmpeg imagemagick` + `npm i -g rmbg-cli` | `sudo apt install -y ffmpeg imagemagick` + `npm i -g rmbg-cli` |
+
+**Go tools** (after Go is present — identical on all OSes): `go install <module>` for subfinder, amass, gau, gitleaks, httpx. PhoneInfoga and TruffleHog → GitHub release binary per OS/arch (`go install` rejects TruffleHog's module for its `replace` directives; the PyPI `trufflehog` is the abandoned v2 Python tool and does not accept v3 syntax). **ASN** → Git Bash/WSL `bash <(curl -sL …/nitefood/asn/master/asn)` on Windows, native bash on macOS/Linux, or RDAP/ipwho.is HTTP fallback.
+
+**Vision / A-V analysis — `multix` CLI (standalone, `npx`, OS-identical):** no install step — run via `npx --yes --prefer-online --package=@mrgoonie/multix@latest -- multix ...`. Needs **Node.js 20+** (`winget install OpenJS.NodeJS.LTS` / `brew install node` / `sudo apt install -y nodejs npm`) and `GEMINI_API_KEY` (read from env or the skill's own `$SKILL_DIR/.env`; env-var override applies, same as every other key). Pre-warm the npm cache with `... multix --version` before network-restricted runs. Missing key/Node → log a collection gap and fall back to `exiftool` metadata.
+
+The exact winget IDs, brew formulae, apt packages, uv commands, import names, and Go module paths for **every** tool are tabulated in [`scripts/platform-setup.md`](platform-setup.md) §5. To provision a fresh machine in one shot, run the bundled installer for the detected OS:
+
+- **Windows:** `powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\cti-expert\scripts\install.ps1"`
+- **macOS / Linux / Git Bash / WSL:** `bash ~/.claude/skills/cti-expert/scripts/install.sh`
+
+(both accept `--headless`/`-Headless`, `--go`/`-Go`, `--all`/`-All`)
+

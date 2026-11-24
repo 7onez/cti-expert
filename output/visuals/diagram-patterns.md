@@ -1,7 +1,7 @@
 # CTI Diagram Patterns
 
 cti-expert renders visuals as **ASCII by default** and **Mermaid on `--mermaid`** (see
-SKILL.md § Visual Outputs and [`render-engine.md`](render-engine.md)). This file adds two
+`handbook/report-export.md` § Visual Outputs and [`render-engine.md`](render-engine.md)). This file adds two
 things: a **compile-check discipline** so a diagram never ships broken, and a map of **which
 diagram type answers which CTI question**.
 

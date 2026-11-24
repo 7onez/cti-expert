@@ -217,10 +217,27 @@ def _wc(path: str) -> int:
         return sum(1 for line in f if line.strip())
 
 
+def _lifecycle(case_dir: str) -> tuple[dict, list[str]]:
+    """(state.json, status lines): lifecycle status, disposition outcome and per-action result
+    days — the same lines `intel.py status` prints (tools/case_state.py lifecycle_lines)."""
+    st = _load_json(os.path.join(case_dir, "state.json")) or {}
+    try:
+        tools_dir = os.path.join(ROOT, "tools")
+        if tools_dir not in sys.path:
+            sys.path.append(tools_dir)       # APPEND — harness/tools.py must keep the name `tools`
+        import case_state as cs
+        return st, cs.lifecycle_lines(st)
+    except Exception:  # noqa: BLE001 — status must work even if the pipeline module does not import
+        d = st.get("disposition") if isinstance(st.get("disposition"), dict) else {}
+        return st, [f"lifecycle  : {st.get('status') or '—'}", f"disposition: {d.get('outcome') or '—'}"]
+
+
 def _case_stat(case: str) -> dict:
     case_dir = os.path.join(CASES, case)
     a = _latest_assessment(case_dir) or {}
     rounds = _rounds(case_dir)
+    st, life = _lifecycle(case_dir)
+    disp = st.get("disposition") if isinstance(st.get("disposition"), dict) else {}
     return {
         "case": case,
         "collected": len(glob.glob(os.path.join(case_dir, "raw", "*.json"))),
@@ -233,6 +250,9 @@ def _case_stat(case: str) -> dict:
         "next_pivots": a.get("next_pivots") or [],
         "converged": _converged(rounds),
         "rounds": len(rounds),
+        "status": st.get("status") or "—",
+        "outcome": disp.get("outcome"),
+        "lifecycle": life,
     }
 
 
@@ -247,12 +267,13 @@ def _cmd_status(case: str | None) -> int:
         if not cases:
             print("no cases yet.")
             return 0
-        print(f"{'CASE':<28} {'DOM':>4} {'RND':>4} {'ATTRIB/CONF':<20} {'CONV':<5} BLUF")
+        print(f"{'CASE':<28} {'DOM':>4} {'RND':>4} {'ATTRIB/CONF':<20} {'CONV':<5} {'STATE':<22} BLUF")
         for c in cases:
             s = _case_stat(c)
             conv = "yes" if s["converged"] else ("—" if not s["rounds"] else "no")
+            state = s["status"] + (f" ({s['outcome']})" if s["outcome"] else "")
             print(f"{c:<28} {s['collected']:>4} {s['snapshots']:>4} "
-                  f"{(s['attribution'] + '/' + s['confidence']):<20} {conv:<5} {s['bluf'][:60]}")
+                  f"{(s['attribution'] + '/' + s['confidence']):<20} {conv:<5} {state:<22} {s['bluf'][:60]}")
         return 0
 
     # One case → the detail view.
@@ -261,6 +282,8 @@ def _cmd_status(case: str | None) -> int:
         return 1
     s = _case_stat(case)
     print(f"# {case}")
+    for line in s["lifecycle"]:
+        print(f"  {line}")
     print(f"  domains collected : {s['collected']}")
     print(f"  assessment rounds : {s['snapshots']}"
           + (f"   (converged after {s['rounds']} snapshot round(s))" if s["converged"]

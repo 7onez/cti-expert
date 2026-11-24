@@ -123,6 +123,44 @@ No grade ever emits a `same_operator` edge — that promotion requires an indepe
 
 ---
 
+## 8a. Named kit signatures (collector side)
+
+The fingerprint above *measures* how alike two pages are. The collector can also *name* the kit
+a single page belongs to: `pivot_extract` evaluates the declarative rules in
+`intel_engine/WebPivot/references/kit_signatures.json` (`wp_kitsig.match`) and writes every hit
+to `artifacts.kit_matches` as `{rule_id, name, kind, prevalence, matched, source}`.
+
+- **Rule shape:** `{id, name, kind, match: {all: [...], any: [...]}, min_any, prevalence,
+  source_url, added}`. A term is `{field, op, value}` over artifacts the collector already
+  produces — `path_template`, `dom_skeleton_sha1`, `favicon_mmh3`, `title`, `form_fields`,
+  `asset_tail`, `html_comment`, `js_marker` (inline scripts plus captured JavaScript) — with
+  `equals`, `contains` or `regex`. A term may also be a group (`{"all": [...]}`,
+  `{"any": [...], "min": n}`, `{"not": term}`); a rule never matches on negations alone.
+- **Public rules (IOK):** the tracked file names no real kit. `uv run scripts/kit_rules_import.py
+  update` downloads the phish.report IOK rule set (ODbL-1.0) into the git-ignored
+  `intel_engine/cache/kit_rules/iok.json` and converts what the matcher can express; `status`
+  shows what is loaded. The matcher reads tracked rules, then imported ones (`source: "iok"`),
+  then the reference ledger. IOK rules tagged as a specific kit or drainer are `limited`;
+  site builders, cloakers, anti-analysis and other techniques are `commodity`. Imported terms
+  match case-sensitively, as IOK does. The rules read the stored page document, scripts,
+  stylesheets, asset URLs, headers and cookies; requests made at run time by scripts are not seen.
+- **Prevalence:** `commodity` (mass-market or stock kit) is stored as noise context
+  (`kit_signature_context`) and never offered as a pivot; `limited` / `private` matches become a
+  low-confidence `kit_signature` pivot and a `kit_signature` fact. A ChongLuaDao PhaaS `family`
+  is stored in the same fact shape with source `cld` (commodity: PhaaS is sold to many crews).
+- **Rung:** every match is a kit_link-rung **fact** — never an edge, a cluster member or an
+  operator lead. The cluster report lists hosts sharing a named kit under *Kit Siblings*.
+- **The tracked library is unseeded.** It ships one synthetic rule (`example-kit`, matching only
+  `site-kit.example`). A rule naming a real kit may be added only from a public source fetched
+  for the purpose, with its licence checked and a `THIRD_PARTY_NOTICES.md` row.
+- **Case-derived signatures stay local.** Record them in the reference ledger with a kit tag —
+  `tools/kb/reference.py --kb knowledge add --value favicon:<mmh3> --verdict signal --label
+  "<kit name>" --tag kit` (also `dom_skeleton:`, `path_kit:`, `path_template:`, `title:`,
+  `js_marker:`); add `--tag commodity|limited|private` to set the prevalence. The matcher reads
+  them after the tracked rules. Never put one in the tracked rule file (CLAUDE.md RULE 1).
+
+---
+
 ## 9. Command Reference
 
 ### `kit_template_fingerprint.py <html> | --compare A B`

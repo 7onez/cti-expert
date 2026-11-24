@@ -116,6 +116,44 @@ except Exception:
         return {"ip": ip, "cdn": None, "provider": None, "kind": "unknown"}
 
 
+# Tradecraft layers (named kits, bank accounts, wallet drainers) — every one is KIT rung (RULE 5):
+# written with add_fact only. The rung table decides, so the class is read through rung_for; the
+# bank-account KB key comes from selector_types so a selector, a fact and the cross-case index
+# all spell one account the same way. Fail CLOSED: no key, no fact; unknown rung -> kit.
+try:
+    from wp_kitsig import cld_family_matches as _cld_family_matches, offer_pivot as _kit_offer  # noqa: E402
+except Exception:
+    def _cld_family_matches(_block):
+        return []
+
+    def _kit_offer(_m):
+        return False
+try:
+    from wp_extract import web3_verdict_label as _web3_label  # noqa: E402 — the one wording
+    from wp_extract import drainer_contracts as _drainer_contracts  # noqa: E402 — the one rule
+except Exception:
+    def _web3_label(verdict):
+        return ("suspected drainer pattern (untested heuristic)" if verdict == "suspected-drainer"
+                else "web3 site (wallet-connect library only)")
+
+    def _drainer_contracts(web3):
+        w3 = web3 if isinstance(web3, dict) else {}
+        if w3.get("verdict") != "suspected-drainer":
+            return set()
+        return {str(c).lower() for c in (w3.get("contracts") or []) if c}
+try:
+    _TOOLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _TOOLS_DIR not in sys.path:
+        sys.path.append(_TOOLS_DIR)
+    from selector_types import bank_account_key as _bank_key, rung_for as _rung_for  # noqa: E402
+except Exception:
+    def _bank_key(_value, country="", bank_id=""):
+        return None
+
+    def _rung_for(_rc):
+        return "kit"
+
+
 def _is_ipaddr(s):
     """True only for a real IPv4/IPv6 literal — guards against pdns records whose A/AAAA rdata is a
     hostname (CNAME chains / mislabeled rrtype), which must never become an `ip:<domain>` node."""
@@ -584,6 +622,69 @@ def _ingest_paths(kb, d, meta, host, observed, ev):
     if meta.get("locale"):
         kb.add_fact("domain", host, "path_locale", meta["locale"], "webpivot", COLLECTOR,
                     observed, "low", ev)
+    return n
+
+
+def _ingest_tradecraft(kb, d, art, host, observed, ev):
+    """Named kits, ChongLuaDao PhaaS families, receiving bank accounts and the web3 drainer surface.
+
+    Every row here is KIT rung (SKILL.md RULE 5): add_fact only — never an edge, never a cluster
+    member, never an operator lead. A named kit is lineage (kits are sold and cloned); a `commodity`
+    match is stored as noise context (`kit_signature_context`) and never offered as a pivot. A bank
+    account is rented and shared by mule networks, so two hosts sharing one stay in DIFFERENT
+    clusters; its `bank:` key is written as a fact so the cross-case index and the KB name one
+    account the same way. The drainer verdict is an untested heuristic and is stored with its
+    label saying so; the contracts beside approval calls are drainer-contract candidates (rung
+    wallet.drainer_contract). The account-holder name never reaches the KB."""
+    n = 0
+    kits = [m for m in (art.get("kit_matches") or []) if isinstance(m, dict) and m.get("rule_id")]
+    for piv in d.get("pivots") or []:
+        if piv.get("kind") == "domain" and piv.get("value") == host:
+            cld = (piv.get("live_results") or {}).get("cld")
+            if isinstance(cld, dict):
+                kits += _cld_family_matches(cld.get("phaas"))
+            break
+    for m in kits:
+        offer = _kit_offer(m)
+        val = {"rule_id": m["rule_id"], "name": m.get("name") or m["rule_id"],
+               "kind": m.get("kind") or "kit", "prevalence": m.get("prevalence") or "commodity",
+               "matched": [str(x) for x in (m.get("matched") or [])][:12],
+               "rung_class": "kit_link", "offer_pivot": offer}
+        kb.add_fact("domain", host, "kit_signature" if offer else "kit_signature_context", val,
+                    "cld" if m.get("source") == "cld" else "webpivot", COLLECTOR, observed,
+                    "medium" if offer else "low", ev)
+        n += 1
+    for acct in art.get("payment_accounts") or []:
+        if not isinstance(acct, dict):
+            continue
+        key = _bank_key(acct.get("account") or "", country=acct.get("country") or "",
+                        bank_id=acct.get("bank_id") or "")
+        if not key:
+            continue
+        kb.add_fact("domain", host, "payment_account", key, "webpivot", COLLECTOR, observed,
+                    "medium", ev)
+        kb.add_fact("indicator", key, "kind", "bank_account", "webpivot", COLLECTOR, observed,
+                    "high", ev)
+        kb.add_fact("indicator", key, "seen_on", host, "webpivot", COLLECTOR, observed, "medium", ev)
+        for attr in ("rail", "bank_name"):
+            if acct.get(attr):
+                kb.add_fact("indicator", key, attr, str(acct[attr]), "webpivot", COLLECTOR,
+                            observed, "medium", ev)
+        n += 1
+    w3 = art.get("web3") if isinstance(art.get("web3"), dict) else {}
+    if w3.get("verdict") in ("web3-site", "suspected-drainer"):
+        kb.add_fact("domain", host, "web3_verdict", w3.get("label") or _web3_label(w3["verdict"]),
+                    "webpivot", COLLECTOR, observed, "low", ev)
+        for reason in (w3.get("reasons") or [])[:20]:
+            kb.add_fact("domain", host, "web3_reason", str(reason)[:200], "webpivot", COLLECTOR,
+                        observed, "low", ev)
+        n += 1
+    _dc = _drainer_contracts(w3)              # only a suspected-drainer page has drainer contracts
+    for addr in [a for a in (w3.get("contracts") or []) if str(a).lower() in _dc][:20]:
+        kb.add_fact("domain", host, "drainer_contract_candidate",
+                    {"chain": "eth", "address": str(addr), "rung_class": "wallet.drainer_contract"},
+                    "webpivot", COLLECTOR, observed, "low", ev)
+        n += 1
     return n
 
 
@@ -1124,10 +1225,18 @@ def _ingest_file(kb, path):
             n += 1
 
     # --- money trail: crypto wallets (attribution-grade — a reused wallet = the same payee) ---
+    # On a page whose verdict is `suspected-drainer`, an address the scan listed beside an
+    # approval-harvest call is rung wallet.drainer_contract (kit): drainer services share contracts
+    # across affiliates, so it is a fact (_ingest_tradecraft), never a uses_wallet edge — unless the
+    # rung table says owner. On any other verdict it may be the payee wallet and keeps its edge.
+    _drainer = _drainer_contracts(art.get("web3"))
+    _drainer_kit = _rung_for("wallet.drainer_contract") != "owner"
     crypto = art.get("crypto") or {}
     for kind, vals in crypto.items():
         for v in (vals if isinstance(vals, list) else [vals]):
             if not v or not _valid_wallet(kind, v):   # checksum-reject md5/hash false-positives
+                continue
+            if _drainer_kit and str(v).lower() in _drainer:
                 continue
             ind = f"wallet:{kind}:{v}"
             kb.add_edge("domain", host, "uses_wallet", "indicator", ind, "webpivot", COLLECTOR, observed, "high", ev)
@@ -1142,6 +1251,8 @@ def _ingest_file(kb, path):
                         f"{tc.get('label') or 'token'}:{tc.get('chain') or ''}:{tc['address']}",
                         "webpivot", COLLECTOR, observed, "medium", ev)
             n += 1
+    # --- tradecraft: named kits, bank accounts, drainer surface (kit rung — facts only) ---
+    n += _ingest_tradecraft(kb, d, art, host, observed, ev)
     # --- money trail: on-page contact emails (how the operator gets reached to close the fraud) ---
     _GENERIC_EMAIL = ("support@", "info@", "admin@", "contact@", "hello@", "sales@",
                       "noreply@", "no-reply@", "office@")
