@@ -22,6 +22,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 | Primary | Cisco Umbrella Top 1M | DNS rank | Unlimited | daily CSV from S3 |
 | Secondary | CrUX API | Real user metrics | Unlimited | requires free Google API key |
 | Secondary | Majestic Million | Link-based rank | Unlimited | daily CSV download |
+| Secondary | NetAPI Top 1M | Rank list | 1,000 lookups/day keyless | daily, JSON per domain or full CSV |
 | Tertiary | Wayback Machine CDX | Crawl frequency | Unlimited | no key required |
 | Tertiary | crt.sh | CT log frequency | Unlimited | no key required |
 
@@ -31,7 +32,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 
 1. Normalize domain — strip `www.`, scheme, trailing slash
 2. Query primary sources (Tranco, Cloudflare, Umbrella) in parallel
-3. Query secondary sources (CrUX, Majestic) for corroboration
+3. Query secondary sources (CrUX, Majestic) for corroboration, and NetAPI as a second aggregated list next to Tranco (not independent of them, see Limitations). `/traffic` asks NetAPI only with `--netapi`: the lookup sends the domain under investigation to netapi.com
 4. Query tertiary signals (Wayback, crt.sh) for activity confirmation
 5. Apply scoring formula — compute weighted composite score (0–100)
 6. Assign tier from composite score
@@ -74,6 +75,14 @@ curl -s -X POST "https://chromeuxreport.googleapis.com/v1/records:queryRecord?ke
 curl -s "https://downloads.majestic.com/majestic_million.csv" -o /tmp/majestic.csv
 grep -i ",<domain>," /tmp/majestic.csv | cut -d',' -f1,3
 # Returns: GlobalRank,Domain or empty
+```
+
+**NetAPI Top 1M:**
+```bash
+curl -s "https://netapi.com/api-json/?method=domain-rank&domain=<domain>" | jq '{in_top_1m, rank, snapshot_date}'
+# Returns: {"in_top_1m":true,"rank":1523,"snapshot_date":"2024-01-15"}
+# rank is null when the domain is not in the list
+# Full list: curl -s "https://netapi.com/netapi_top1mln.csv" -o /tmp/netapi.csv
 ```
 
 **Wayback Machine crawl frequency:**
@@ -160,6 +169,10 @@ Composite = sum(source_score × weight)
 - **CrUX threshold**: < ~1000 monthly Chrome users → no record; absence ≠ zero traffic
 - **Majestic**: Measures inbound links; popular link farms can score falsely high
 - **Tranco lag**: Updated weekly; recent popularity changes not immediately reflected
+- **Aggregated lists are not independent**: Tranco averages Umbrella, Majestic, Farsight, CrUX and Cloudflare Radar over 30 days; the NetAPI Top 1M merges Majestic, DNS query popularity and CrUX daily with reciprocal rank fusion and drops domains registered less than 30 days ago. Both are built from the sources above, so a domain absent from both is one finding read twice, not two confirmations, and neither corroborates Majestic or CrUX
+- **Malformed answers**: a 200 without the documented fields (an error object, a missing rank, a top-1M rank above one million) is "unavailable", never "unranked"
+- **Subdomains and non-domains**: both lists hold registrable domains, so `/traffic` looks up `www.example.com` as `example.com`, looks up a platform such as `github.io` but not a site on it (`user.github.io`, the lists rank the platform as a whole), and does not look up an IP address or a public suffix (Tranco answers those with an empty list, which would read as "unranked")
+- **Tranco ranks above one million**: the Tranco API ranks its full list, so a rank such as 3,704,275 is kept and read as "outside the top 1M", not as "in the top 1M"
 - **Cloudflare rate limits**: Free tier has undocumented soft limits; space queries 1–2 s apart
 
 ---
