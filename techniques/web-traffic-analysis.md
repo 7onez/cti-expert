@@ -32,7 +32,7 @@ Estimates website traffic and popularity using free public ranking datasets and 
 
 1. Normalize domain — strip `www.`, scheme, trailing slash
 2. Query primary sources (Tranco, Cloudflare, Umbrella) in parallel
-3. Query secondary sources (CrUX, Majestic) for corroboration, and NetAPI as a second aggregated list next to Tranco (not independent of them, see Limitations)
+3. Query secondary sources (CrUX, Majestic) for corroboration, and NetAPI as a second aggregated list next to Tranco (not independent of them, see Limitations). `/traffic` asks NetAPI only with `--netapi`: the lookup sends the domain under investigation to netapi.com
 4. Query tertiary signals (Wayback, crt.sh) for activity confirmation
 5. Apply scoring formula — compute weighted composite score (0–100)
 6. Assign tier from composite score
@@ -170,7 +170,9 @@ Composite = sum(source_score × weight)
 - **Majestic**: Measures inbound links; popular link farms can score falsely high
 - **Tranco lag**: Updated weekly; recent popularity changes not immediately reflected
 - **Aggregated lists are not independent**: Tranco averages Umbrella, Majestic, Farsight, CrUX and Cloudflare Radar over 30 days; the NetAPI Top 1M merges Majestic, DNS query popularity and CrUX daily with reciprocal rank fusion and drops domains registered less than 30 days ago. Both are built from the sources above, so a domain absent from both is one finding read twice, not two confirmations, and neither corroborates Majestic or CrUX
-- **Malformed answers**: a 200 without the documented fields (an error object, a missing rank) is "not collected", never "unranked"
+- **Malformed answers**: a 200 without the documented fields (an error object, a missing rank, a top-1M rank above one million) is "unavailable", never "unranked"
+- **Subdomains and non-domains**: both lists hold registrable domains, so `/traffic` looks up `www.example.com` as `example.com`, looks up a platform such as `github.io` but not a site on it (`user.github.io`, the lists rank the platform as a whole), and does not look up an IP address or a public suffix (Tranco answers those with an empty list, which would read as "unranked")
+- **Tranco ranks above one million**: the Tranco API ranks its full list, so a rank such as 3,704,275 is kept and read as "outside the top 1M", not as "in the top 1M"
 - **Cloudflare rate limits**: Free tier has undocumented soft limits; space queries 1–2 s apart
 
 ---

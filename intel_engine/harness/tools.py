@@ -4088,13 +4088,19 @@ async def github_osint(args: dict[str, Any]) -> dict[str, Any]:
     "1M-entry lists is contradicting its own copy. Deliberately does NOT report traffic estimates "
     "or audience demographics — those come only from paid panels whose low-traffic figures are "
     "modelled guesses, and reporting a model as a measurement about a scam site would be inventing "
-    "evidence. Passive; Tranco and NetAPI are queried, never the target.",
-    {"domains": str},
+    "evidence. Each domain is looked up as its registrable domain (www.x.com -> x.com). The "
+    "NetAPI Top 1M is consulted only with `netapi=true` (or CTI_TRAFFIC_NETAPI=1): the lookup "
+    "sends the domain under investigation to netapi.com, so it is the analyst's call. Passive; "
+    "Tranco and NetAPI are queried, never the target.",
+    {"domains": str},  # netapi:bool
     annotations=READONLY,
 )
 async def traffic_rank(args: dict[str, Any]) -> dict[str, Any]:
     r = _run([PY, _os_("traffic_rank.py"),
-              *str(args.get("domains") or "").replace(",", " ").split()])
+              # A token that reads as an option is not a domain: the NetAPI switch is `netapi`.
+              *[d for d in str(args.get("domains") or "").replace(",", " ").split()
+                if not d.startswith("-")],
+              *(["--netapi"] if str(args.get("netapi")).strip().lower() in ("true", "1", "yes") else [])])
     return {"content": [{"type": "text", "text": r.stdout or r.stderr}], "is_error": r.returncode != 0}
 
 
